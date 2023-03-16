@@ -2,18 +2,18 @@ import http2 from 'http2'
 import { URL } from 'url'
 import zlib from 'zlib'
 
-function nodelink_makeSessionId() {
-  let result = '';
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  const charactersLength = characters.length;
+function generateSessionId() {
+  let result = ''
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  const charactersLength = characters.length
   
-  let counter = 0;
+  let counter = 0
   while (counter < 16) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength));
-    counter += 1;
+    result += characters.charAt(Math.floor(Math.random() * charactersLength))
+    counter += 1
   }
   
-  return result;
+  return result
 }
 
 function nodelink_makeRequest(url, options, forceParse) {
@@ -239,4 +239,4 @@ function nodelink_decodeTrack(track) {
   }
 }
 
-export default { nodelink_makeSessionId, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack }
+export default { nodelink_generateSessionId, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack }
