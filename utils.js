@@ -8,7 +8,7 @@ function nodelink_makeSessionId() {
   const charactersLength = characters.length;
   
   let counter = 0;
-  while (counter < 17) {
+  while (counter < 16) {
     result += characters.charAt(Math.floor(Math.random() * charactersLength));
     counter += 1;
   }

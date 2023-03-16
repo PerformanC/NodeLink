@@ -13,6 +13,10 @@ const clients = new Map()
 const adapters = new Map()
 
 let playerInfo = {}
+let nodelinkStats = {
+  players: 0,
+  playingPlayers: 0,
+}
 
 async function setIntervalNow(func, interval) {
   await func()
@@ -75,6 +79,8 @@ class VoiceConnection {
   }
 
   setup() {
+    nodelinkStats.players++
+
     this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: voiceAdapterCreator(this.client.userId, this.config.guildId) })
     this.player = djsVoice.createAudioPlayer()
 
@@ -87,6 +93,8 @@ class VoiceConnection {
             await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Signalling, config.threshold)
             await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.threshold)
           } catch (e) {
+            nodelinkStats.playingPlayers--
+            
             clearInterval(this.stateInterval)
 
             this.config.state = {
@@ -124,6 +132,8 @@ class VoiceConnection {
           try {
             await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.threshold)
           } catch {
+            nodelinkStats.playingPlayers--
+            
             clearInterval(this.stateInterval)
 
             this.config.state = {
@@ -150,6 +160,8 @@ class VoiceConnection {
   
     this.player.on('stateChange', (oldState, newState) => {
       if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {
+        nodelinkStats.playingPlayers--
+        
         clearInterval(this.stateInterval)
 
         this.config.state = {
@@ -169,6 +181,8 @@ class VoiceConnection {
         }))
       }
       if (newState.status == djsVoice.AudioPlayerStatus.Playing && oldState.status != djsVoice.AudioPlayerStatus.Paused && oldState.status != djsVoice.AudioPlayerStatus.AutoPaused) {
+        nodelinkStats.playingPlayers++
+        
         this.stateInterval = setInterval(() => {
           this.config.state = {
             time: Date.now(),
@@ -194,6 +208,8 @@ class VoiceConnection {
     })
   
     this.player.on('error', (error) => {
+      nodelinkStats.playingPlayers--
+      
       clearInterval(this.stateInterval)
 
       this.config.state = {
@@ -233,7 +249,7 @@ class VoiceConnection {
     this.player.stop()
     this.connection.destroy()
 
-    this.client.players.delete(`${this.client.userId}/${this.config.guildId}`)
+    this.client.players.delete(this.config.guildId)
   }
 
   async play(track) {
@@ -326,7 +342,7 @@ function voiceAdapterCreator(userId, guildId) {
 			},
 			destroy() {
 				return adapters.delete(`${userId}/${guildId}`)
-			},
+			}
 		}
 	}
 }
@@ -432,17 +448,9 @@ function requestListener(req, res) {
   if (parsedUrl.pathname == '/v4/stats') {
     console.log('[NodeLink]: Received stats request')
 
-    let players, playingPlayers
-
-    clients.get(req.socket.remoteAddress).players.forEach(() => {
-      players++
-      if (player.config.state.connected) playingPlayers++
-    })
-
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
-      players,
-      playingPlayers,
+      ...nodelinkStats,
       uptime: Math.floor(process.uptime() * 1000),
       memory: {
         free: process.memoryUsage().heapTotal - process.memoryUsage().heapUsed,
@@ -515,7 +523,8 @@ function requestListener(req, res) {
   }
 
   if (/^\/v4\/sessions\/\w+\/players\/\w+./.test(parsedUrl.pathname)) {
-    const client = clients.get(req.socket.remoteAddress)
+    console.log(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
+    const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
 
     if (req.method == 'GET') {
       if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players\/\d+$/.test(parsedUrl.pathname)) {
@@ -542,7 +551,7 @@ function requestListener(req, res) {
         buffer = JSON.parse(buffer)
 
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
-        let player = client.players.get(`${client.userId}/${guildId}`)
+        let player = client.players.get(guildId)
 
         // Voice update
         if (buffer.voice != undefined) {
@@ -557,7 +566,7 @@ function requestListener(req, res) {
 
           player.updateVoice(buffer.voice)
 
-          client.players.set(`${client.userId}/${guildId}`, player)
+          client.players.set(guildId, player)
         }
 
         // Play
@@ -573,7 +582,7 @@ function requestListener(req, res) {
             else player.play(buffer.encodedTrack, noReplace == true)
           }
 
-          client.players.set(`${client.userId}/${guildId}`, player)
+          client.players.set(guildId, player)
         }
 
         // Volume
@@ -584,7 +593,7 @@ function requestListener(req, res) {
 
           player.volume(buffer.volume)
 
-          client.players.set(`${client.userId}/${guildId}`, player)
+          client.players.set(guildId, player)
         }
 
         // Pause
@@ -595,7 +604,7 @@ function requestListener(req, res) {
 
           player.pause(buffer.paused == true)
 
-          client.players.set(`${client.userId}/${guildId}`, player)
+          client.players.set(guildId, player)
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -617,38 +626,32 @@ v4.on('connection', (ws, req) => {
 
   console.log('[NodeLink]: Connection established with v4 websocket server')
 
+  const sessionId = utils.nodelink_makeSessionId()
+
+  console.log(`[NodeLink]: Session ID: ${sessionId}`)
+
   const players = new Map()
-  clients.set(req.socket.remoteAddress, { userId: req.headers['user-id'], ws, players })
+  clients.set(sessionId, { userId: req.headers['user-id'], ws, players })
+
+  ws.send(JSON.stringify({
+    op: 'ready',
+    sessionId,
+    resumed: false
+  }))
 
   ws.on('close', (code, reason) => {
     console.log(`[NodeLink]: Connection closed with v4 websocket server (code: ${code}, reason: ${reason == '' ? 'No reason provided' : reason})`)
   
-    clients.get(req.socket.remoteAddress).players.forEach((player) => player.destroy())
-    clients.delete(req.socket.remoteAddress)
+    clients.get(sessionId).players.forEach((player) => player.destroy())
+    clients.delete(sessionId)
   })
-
-  ws.send(JSON.stringify({
-    op: 'ready',
-    sessionId: utils.nodelink_makeSessionId(),
-    resumed: false
-  }))
 
   setInterval(() => {
     if (ws.readyState != 1) return;
- 
-    console.log('[NodeLink]: Received stats request')
-  
-    let players = 0, playingPlayers = 0
-  
-    clients.get(req.socket.remoteAddress).players.forEach((player) => {
-      players++
-      if (player.config.state.connected) playingPlayers++
-    })
-  
+   
     ws.send(JSON.stringify({
       op: 'stats',
-      players,
-      playingPlayers,
+      ...nodelinkStats,
       uptime: Math.floor(process.uptime() * 1000),
       memory: {
         free: process.memoryUsage().heapTotal - process.memoryUsage().heapUsed,
@@ -665,8 +668,6 @@ v4.on('connection', (ws, req) => {
     }))
   }, config.statsInterval)
 })
-
-v4.on('wsClientError', (err, abc) => console.log(err, abc))
 
 server.on('upgrade', (req, socket, head) => {
   let { pathname } = parse(req.url)
