@@ -1,5 +1,5 @@
 export default {
-  NodeLinkVersion: '1.0.0',
+  NodeLinkVersion: '1.1.0',
   VoiceWSCloseCodes: {
     4000: 'Unknown error',
     4001: 'Unknown opcode',
