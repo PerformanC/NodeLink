@@ -16,30 +16,44 @@ function nodelink_generateSessionId() {
   return result
 }
 
-function nodelink_makeRequest(url, options, forceParse) {
+function nodelink_makeRequest(url, options) {
   return new Promise(async (resolve) => {
-    let compression, data = '', parsedURL = new URL(url)
+    let compression, data = '', parsedUrl = new URL(url)
 
-    if (!options) options = { headers: {} }
-    if (!options.headers) options.headers = {
-      'Accept-Encoding': 'gzip, deflate, br',
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:104.0) Gecko/20100101 Firefox/104.0'
-    }
-    if (options.body) options.headers['Content-Encoding'] = 'gzip'
+    if (!options) options = {}
 
-    const client = http2.connect(parsedURL.origin, { protocol: parsedURL.protocol })
+    const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol })
 
     let req = client.request({
-      ':method': options.method || 'GET',
-      ':path': parsedURL.pathname + parsedURL.search,
-      ...options.headers
+      ':method': options.method,
+      ':path': parsedUrl.pathname + parsedUrl.search,
+      'Accept-Encoding': 'gzip, deflate, br',
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0',
+      [options.body ? 'Content-Encoding' : '']: 'gzip'
     })
 
     req.on('response', (headers) => {
-      if (headers['content-encoding'] == 'deflate') compression = zlib.createInflate()
-      else if (headers['content-encoding'] == 'br') compression = zlib.createBrotliDecompress()
-      else if (headers['content-encoding'] == 'gzip') compression = zlib.createGunzip()
-      else if (headers['content-encoding'] == 'identity') compression = null
+      switch (headers['content-encoding']) {
+        case 'deflate': {
+          console.log('[NodeLink]: Deflate compression detected, decompressing...')
+          compression = zlib.createInflate()
+          break
+        }
+        case 'br': {
+          console.log('[NodeLink]: Brotli compression detected, decompressing...')
+          compression = zlib.createBrotliDecompress()
+          break
+        }
+        case 'gzip': {
+          console.log('[NodeLink]: Gzip compression detected, decompressing...')
+          compression = zlib.createGunzip()
+          break
+        }
+        default: {
+          console.log('[NodeLink]: No compression detected, skipping...')
+        }
+      }
+
       if (compression) {
         req.pipe(compression)
         req = compression
@@ -48,7 +62,7 @@ function nodelink_makeRequest(url, options, forceParse) {
       req.on('data', (chunk) => (data += chunk))
 
       req.on('end', () => {
-        resolve(headers['content-type'] == 'application/json; charset=UTF-8' || forceParse ? JSON.parse(data.toString()) : data.toString())
+        resolve(headers['content-type'] == 'application/json; charset=UTF-8' ? JSON.parse(data.toString()) : data.toString())
 
         client.close()
       })
