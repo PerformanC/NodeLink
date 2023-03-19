@@ -4,6 +4,7 @@ import { URLSearchParams, parse } from 'url'
 import config from '../config.js'
 import constants from '../constants.js'
 import utils from './utils.js'
+import sources from './sources.js'
 
 import * as djsVoice from '@discordjs/voice'
 
@@ -36,7 +37,10 @@ class VoiceConnection {
     this.connection
     this.player
     this.client = client
-    this.cachedTrack
+    this.cache = {
+      voice: null,
+      track: null
+    }
     this.stateInterval
   
     this.config = {
@@ -190,25 +194,28 @@ class VoiceConnection {
   }
   
   updateVoice(buffer) {
-    this.config.voice = buffer
-  
+    this.cache.voice = buffer
+
     const adapter = adapters.get(`${this.client.userId}/${this.config.guildId}`)
   
     if (!adapter) return;
   
     adapter.onVoiceStateUpdate({ channel_id: "", guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId, deaf: false, self_deaf: false, mute: false, self_mute: false, self_video: false, suppress: false, request_to_speak_timestamp: null })
     adapter.onVoiceServerUpdate({ token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
+
+    this.cache.voice = null
+    this.config.voice = buffer
   }
   
   destroy() {
-    this.player.stop()
-    this.connection.destroy()
+    if (this.player) this.player.stop()
+    if (this.connection) this.connection.destroy()
   
     this.client.players.delete(this.config.guildId)
   }
   
   async play(track, noReplace) {
-    if (this.player.state.status == djsVoice.AudioPlayerStatus.Playing && noReplace) return;
+    if (noReplace && this.config.track) return;
 
     const encodedTrack = utils.nodelink_decodeTrack(track)
   
@@ -322,14 +329,14 @@ function nodelink_setupConnection(ws, req) {
 
     if (client.timeoutFunction) {
       client.timeoutFunction = setTimeout(() => {
-        if (clients.size == 1)
+        if (clients.size == 1 && config.sources.youtube)
           clearInterval(playerInfo.innertubeInterval)
 
         client.players.forEach((player) => player.destroy())
         clients.delete(sessionId)
       })
     } else {
-      if (clients.size == 1)
+      if (clients.size == 1 && config.sources.youtube)
         clearInterval(playerInfo.innertubeInterval)
 
       clients.get(sessionId).players.forEach((player) => player.destroy())
@@ -372,7 +379,7 @@ function nodelink_setupConnection(ws, req) {
   }))
 }
 
-function nodelink_requestHandler(req, res) {
+async function nodelink_requestHandler(req, res) {
   const parsedUrl = parse(req.url)
 
   if (parsedUrl.pathname == '/v4/version') {
@@ -434,7 +441,7 @@ function nodelink_requestHandler(req, res) {
         return;
       }
 
-      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.writeHeWhad(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(utils.nodelink_encodeTrack(buffer)))
     })
   }
@@ -502,25 +509,29 @@ function nodelink_requestHandler(req, res) {
 
     const identifier = new URLSearchParams(parsedUrl.query).get('identifier')
 
-    if (identifier.startsWith('ytsearch:')) {
+    const ytSearch = identifier.startsWith('ytsearch:')
+    if (identifier.startsWith('ytsearch:') || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)) {
       utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/search', {
         method: 'POST',
         body: {
           context: playerInfo.innertube,
-          query: identifier.split('ytsearch:')[1]
+          query: ytSearch ? identifier.split('ytsearch:')[1] : identifier,
         }
       }).then((search) => {
         let tracks = []
-
         let i = 0
-        search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents.forEach((item) => {
+
+        let videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
+        if (videos[0].adSlotRenderer) videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].itemSectionRenderer.contents
+        
+        videos.forEach((item, index) => {
           if (item.videoRenderer) {
             const infoObj = {
               identifier: item.videoRenderer.videoId,
               isSeekable: true,
               author: item.videoRenderer.ownerText.runs[0].text,
-              length: parseInt(item.videoRenderer.lengthText.simpleText.split(':').map((v, i) => v * (60 ** (2 - i))).reduce((a, b) => a + b)) * 1000,
-              isStream: false,
+              length: item.videoRenderer.lengthText ? parseInt(item.videoRenderer.lengthText.simpleText.split(':').map((v, i) => v * (60 ** (2 - i))).reduce((a, b) => a + b)) * 1000 : 0,
+              isStream: item.videoRenderer.lengthText ? false : true,
               position: i++,
               title: item.videoRenderer.title.runs[0].text,
               uri: `https://www.youtube.com/watch?v=${item.videoRenderer.videoId}`,
@@ -534,15 +545,20 @@ function nodelink_requestHandler(req, res) {
               info: infoObj
             })
           }
-        })
 
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({
-          loadType: 'SEARCH_RESULT',
-          playlistInfo: null,
-          tracks: tracks,
-          exception: null
-        }))
+          if (index == videos.length - 1) {
+            if (tracks.length == 0)
+              console.log(`[NodeLink]: No matches found for "${identifier}".`)
+
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              loadType: tracks.length == 0 ? 'NO_MATCHES' : 'SEARCH_RESULT',
+              playlistInfo: null,
+              tracks: tracks,
+              exception: null
+            }))
+          }
+        })
       })
     }
   }
@@ -606,11 +622,11 @@ function nodelink_requestHandler(req, res) {
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          if (player.cachedTrack) {
+          if (player.cache.track) {
             player.setup()
-            player.play(player.cachedTrack, false)
+            player.play(player.cache.track, false)
 
-            player.cachedTrack = null
+            player.cache.track = null
           }
 
           player.updateVoice(buffer.voice)
@@ -624,8 +640,12 @@ function nodelink_requestHandler(req, res) {
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          if (!player.connection) player.cachedTrack = buffer.encodedTrack
-          else player.play(buffer.encodedTrack, noReplace == true)
+          if (!player.cache.voice) player.cache.track = buffer.encodedTrack
+          else {
+            if (!player.connection) player.setup()
+            if (!player.config.voice.endpoint) player.updateVoice(player.cache.voice)
+            player.play(buffer.encodedTrack, noReplace == true)
+          }
         }
 
         // Volume
@@ -655,45 +675,14 @@ function nodelink_requestHandler(req, res) {
   }
 }
 
-function setIntervalNow(func, interval) {
-  func()
-  return setInterval(func, interval)
-}
-
-function nodelink_startInnertube() {
+function nodelink_startSourceAPIs() {
   if (clients.size != 0) return;
 
-  playerInfo.innertubeInterval = setIntervalNow(async () => {
-    console.log('[NodeLink]: Fetching YouTube embed page...')
-    
-    const data = await utils.nodelink_makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      console.log(`[NodeLink]: Failed to fetch innertube data: ${err.message}`)
-    })
-        
-    const innertube = JSON.parse('{' + data.split('ytcfg.set({')[1].split('});')[0] + '}')
-    playerInfo.innertube = innertube.INNERTUBE_CONTEXT
-    playerInfo.innertube.client.clientName = 'WEB',
-    playerInfo.innertube.client.clientVersion = '2.20230316.00.00'
-    playerInfo.innertube.client.originalUrl = 'https://www.youtube.com/'
+  if (config.sources.youtube) {
+    const innertube = sources.innertubeStart((info) => playerInfo = info)
 
-    console.log('[NodeLink]: Sucessfully extracted InnerTube Context. Fetching player.js...')
-
-    const player = await utils.nodelink_makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
-      console.log(`[NodeLink]: Failed to fetch player js: ${err.message}`)
-    })
-
-    console.log('[NodeLink]: Fetch player.js from YouTube.')
-    
-    playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/gm.exec(player)[0]
-    
-    let dFunctionHighLevel = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
-    dFunctionHighLevel = ('function decipher(a)' + player.split(`${dFunctionHighLevel}=function(a)`)[1].split(')};')[0] + ')};')
-    let decipherLowLevel = player.split('this.audioTracks};')[1].split(')};var ')[1].split(')}};')[0]
-
-    playerInfo.decipherEval = `const ${decipherLowLevel})}};${dFunctionHighLevel}decipher('NODELINK_DECIPHER_URL');`
-
-    console.log('[NodeLink]: Successfully processed information for next loadtracks and play.')
-  }, 120000)
+    playerInfo.innertubeInterval = innertube.interval
+  }
 }
 
-export default { nodelink_setupConnection, nodelink_requestHandler, nodelink_startInnertube }
+export default { nodelink_setupConnection, nodelink_requestHandler, nodelink_startSourceAPIs }

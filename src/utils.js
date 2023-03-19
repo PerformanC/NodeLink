@@ -29,23 +29,21 @@ function nodelink_makeRequest(url, options) {
       ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'gzip, deflate, br',
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0',
-      [options.body ? 'Content-Encoding' : '']: 'gzip'
+      [options.body ? 'Content-Encoding' : '']: 'gzip',
+      ...(options.headers ? options.headers : {})
     })
 
     req.on('response', (headers) => {
       switch (headers['content-encoding']) {
         case 'deflate': {
-          console.log('[NodeLink]: Deflate compression detected, decompressing...')
           compression = zlib.createInflate()
           break
         }
         case 'br': {
-          console.log('[NodeLink]: Brotli compression detected, decompressing...')
           compression = zlib.createBrotliDecompress()
           break
         }
         case 'gzip': {
-          console.log('[NodeLink]: Gzip compression detected, decompressing...')
           compression = zlib.createGunzip()
           break
         }
@@ -89,7 +87,7 @@ class EncodeClass {
   }
 
   changeBytes(bytes) {
-    if (this.position + bytes >= this.buffer.length) {
+    if (this.position + bytes > 252) {
       const newBuffer = Buffer.alloc(Math.max(this.buffer.length * 2, this.position + bytes))
       this.buffer.copy(newBuffer)
       this.buffer = newBuffer

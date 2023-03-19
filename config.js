@@ -1,8 +1,11 @@
 export default {
   port: 2333,
-  password: 'FogueteLavalink',
-  threshold: 5000,
+  password: 'youshallnotpass',
+  threshold: 10000,
   stateInterval: 5000,
   statsInterval: 10000,
-  showReceivedRequestBody: true
+  showReceivedRequestBody: true,
+  sources: {
+    youtube: true
+  }
 }

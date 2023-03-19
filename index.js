@@ -15,7 +15,7 @@ v4.on('connection', (ws, req) => {
     return ws.close(4001, 'Invalid password')
   }
 
-  connectionHandler.nodelink_startInnertube()
+  connectionHandler.nodelink_startSourceAPIs()
   connectionHandler.nodelink_setupConnection(ws, req)
 })
 
