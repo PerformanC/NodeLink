@@ -217,8 +217,16 @@ class VoiceConnection {
   async play(track, noReplace) {
     if (noReplace && this.config.track) return;
 
+    if (this.config.track) this.client.ws.send(JSON.stringify({
+      op: 'event',
+      type: 'TrackEndEvent',
+      guildId: this.config.guildId,
+      track: this.config.track,
+      reason: 'REPLACED'
+    }))
+
     const encodedTrack = utils.nodelink_decodeTrack(track)
-  
+
     this.config.track = { encoded: track, info: encodedTrack }
   
     utils.nodelink_makeRequest(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
@@ -276,6 +284,18 @@ class VoiceConnection {
     })
   
     return this.config
+  }
+
+  stop() {
+    this.player.stop()
+  
+    this.client.ws.send(JSON.stringify({
+      op: 'event',
+      type: 'TrackEndEvent',
+      guildId: this.config.guildId,
+      track: this.config.track,
+      reason: 'STOPPED'
+    }))
   }
   
   volume(volume) {
@@ -633,18 +653,21 @@ async function nodelink_requestHandler(req, res) {
         }
 
         // Play
-        if (buffer.encodedTrack != undefined) {
+        if (buffer.encodedTrack !== undefined || buffer.encodedTrack === null) {
           console.log('[NodeLink]: Received play request')
 
           const noReplace = new URLSearchParams(parsedUrl.query).get('noReplace')
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          if (!player.cache.voice) player.cache.track = buffer.encodedTrack
+          if (buffer.encodedTrack == null && player.config.track) player.stop()
           else {
-            if (!player.connection) player.setup()
-            if (!player.config.voice.endpoint) player.updateVoice(player.cache.voice)
-            player.play(buffer.encodedTrack, noReplace == true)
+            if (!player.cache.voice && !player.config.voice.endpoint) player.cache.track = buffer.encodedTrack
+            else {
+              if (!player.connection) player.setup()
+              if (!player.config.voice.endpoint) player.updateVoice(player.cache.voice)
+              player.play(buffer.encodedTrack, noReplace == true)
+            }
           }
         }
 
