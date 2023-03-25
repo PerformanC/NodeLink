@@ -15,7 +15,6 @@ let nodelinkStats = {
   players: 0,
   playingPlayers: 0
 }
-let playerInfo = {}
 
 function nodelink_voiceAdapterCreator(userId, guildId) {
   return (methods) => {
@@ -229,59 +228,49 @@ class VoiceConnection {
 
     this.config.track = { encoded: track, info: encodedTrack }
   
-    utils.nodelink_makeRequest(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-      body: {
-        context: playerInfo.innertube,
-        videoId: encodedTrack.identifier,
-        playbackContext: {
-          contentPlaybackContext: {
-            signatureTimestamp: playerInfo.signatureTimestamp
-          }
+    const url = await sources.getTrackURL(encodedTrack.identifier)
+
+    if (!url) {
+      this.config.track = null
+  
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackExceptionEvent',
+        guildId: this.config.guildId,
+        track: encodedTrack,
+        exception: {
+          message: 'No playable sources found',
+          severity: 'COMMON',
+          cause: 'unknown'
         }
-      },
-      method: 'POST'
-    }).then(async (videos) => {
-      const audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
-      let url = audio.url
+      }))
   
-      if (audio.signatureCipher) {
-        url = audio.signatureCipher.split('&')
-          
-        const signature = eval(playerInfo.decipherEval.replace('NODELINK_DECIPHER_URL', decodeURIComponent(url[0].replace('s=', ''))))
+      return this.config
+    }
   
-        url = `${decodeURIComponent(url[2].replace('url=', ''))}&${url[1].replace('sp=', '')}=${signature}&sts=${playerInfo.signatureTimestamp}`
+    const resource = djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true })
+    resource.volume.setVolume(this.config.volume / 100)
   
-        console.log('[NodeLink]: Started playing track protected by cipher signature')
-      } else {
-        console.log('[NodeLink]: Started playing track with no cipher signature')
-      }
-  
-      const resource = djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true })
-      resource.volume.setVolume(this.config.volume / 100)
-  
-      this.player.play(resource, false)
-      this.connection.subscribe(this.player)
+    this.player.play(resource, false)
+    this.connection.subscribe(this.player)
       
-      try {
-        await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.threshold)
-      } catch (e) {
-        console.log('[NodeLink]: Connection timed out')
+    try {
+      await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.threshold)
+    } catch (e) {
+      console.log('[NodeLink]: Connection timed out')
   
-        this.config.track = null
+      this.config.track = null
   
-        this.client.ws.send(JSON.stringify({
-          op: 'event',
-          type: 'WebSocketClosedEvent',
-          guildId: this.config.guildId,
-          track: encodedTrack,
-          code: 4000,
-          reason: 'Connection timed out',
-          byRemote: true
-        }))
-  
-        return;
-      }
-    })
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'WebSocketClosedEvent',
+        guildId: this.config.guildId,
+        track: encodedTrack,
+        code: 4000,
+        reason: 'Connection timed out',
+        byRemote: true
+      }))
+    }
   
     return this.config
   }
@@ -350,14 +339,14 @@ function nodelink_setupConnection(ws, req) {
     if (client.timeoutFunction) {
       client.timeoutFunction = setTimeout(() => {
         if (clients.size == 1 && config.sources.youtube)
-          clearInterval(playerInfo.innertubeInterval)
+          sources.stopInnertube()
 
         client.players.forEach((player) => player.destroy())
         clients.delete(sessionId)
       })
     } else {
       if (clients.size == 1 && config.sources.youtube)
-        clearInterval(playerInfo.innertubeInterval)
+        sources.stopInnertube()
 
       clients.get(sessionId).players.forEach((player) => player.destroy())
       clients.delete(sessionId)
@@ -529,57 +518,14 @@ async function nodelink_requestHandler(req, res) {
 
     const identifier = new URLSearchParams(parsedUrl.query).get('identifier')
 
+    console.log(`[NodeLink]: Loading track for identifier "${identifier}"`)
+
     const ytSearch = identifier.startsWith('ytsearch:')
-    if (identifier.startsWith('ytsearch:') || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)) {
-      utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/search', {
-        method: 'POST',
-        body: {
-          context: playerInfo.innertube,
-          query: ytSearch ? identifier.split('ytsearch:')[1] : identifier,
-        }
-      }).then((search) => {
-        let tracks = []
-        let i = 0
+    if (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)) {
+      const search = await sources.searchOnYoutube(identifier, ytSearch ? 1 : sources.checkYouTubeURLType(identifier))
 
-        let videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
-        if (videos[0].adSlotRenderer) videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].itemSectionRenderer.contents
-        
-        videos.forEach((item, index) => {
-          if (item.videoRenderer) {
-            const infoObj = {
-              identifier: item.videoRenderer.videoId,
-              isSeekable: true,
-              author: item.videoRenderer.ownerText.runs[0].text,
-              length: item.videoRenderer.lengthText ? parseInt(item.videoRenderer.lengthText.simpleText.split(':').map((v, i) => v * (60 ** (2 - i))).reduce((a, b) => a + b)) * 1000 : 0,
-              isStream: item.videoRenderer.lengthText ? false : true,
-              position: i++,
-              title: item.videoRenderer.title.runs[0].text,
-              uri: `https://www.youtube.com/watch?v=${item.videoRenderer.videoId}`,
-              artworkUrl: `https://i.ytimg.com/vi/${item.videoRenderer.videoId}/maxresdefault.jpg`,
-              isrc: null,
-              sourceName: 'youtube'
-            }
-
-            tracks.push({
-              encoded: utils.nodelink_encodeTrack(infoObj),
-              info: infoObj
-            })
-          }
-
-          if (index == videos.length - 1) {
-            if (tracks.length == 0)
-              console.log(`[NodeLink]: No matches found for "${identifier}".`)
-
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({
-              loadType: tracks.length == 0 ? 'NO_MATCHES' : 'SEARCH_RESULT',
-              playlistInfo: null,
-              tracks: tracks,
-              exception: null
-            }))
-          }
-        })
-      })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(search))
     }
   }
 
@@ -611,11 +557,16 @@ async function nodelink_requestHandler(req, res) {
       if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players\/\d+$/.test(parsedUrl.pathname)) {
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
 
-        const player = client.players.get(`${client.userId}/${guildId}`)
+        let player = client.players.get(guildId)
 
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        if (!player) res.end('null')
-        else res.end(JSON.stringify(player.config))
+        if (!player) {
+          player = new VoiceConnection(guildId, client.userId, client.sessionId, client.timeout)
+
+          client.players.set(guildId, player)
+        }
+        
+        res.end(JSON.stringify(player.config))
       } else {
         const players = []
 
@@ -650,6 +601,8 @@ async function nodelink_requestHandler(req, res) {
           }
 
           player.updateVoice(buffer.voice)
+
+          client.players.set(guildId, player)
         }
 
         // Play
@@ -669,6 +622,8 @@ async function nodelink_requestHandler(req, res) {
               player.play(buffer.encodedTrack, noReplace == true)
             }
           }
+
+          client.players.set(guildId, player)
         }
 
         // Volume
@@ -678,6 +633,8 @@ async function nodelink_requestHandler(req, res) {
           if (!player) player = new VoiceConnection(guildId, client)
 
           player.volume(buffer.volume)
+
+          client.players.set(guildId, player)
         }
 
         // Pause
@@ -687,9 +644,9 @@ async function nodelink_requestHandler(req, res) {
           if (!player) player = new VoiceConnection(guildId, client)
 
           player.pause(buffer.paused == true)
-        }
 
-        client.players.set(guildId, player)
+          client.players.set(guildId, player)
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify(player.config))
@@ -701,11 +658,8 @@ async function nodelink_requestHandler(req, res) {
 function nodelink_startSourceAPIs() {
   if (clients.size != 0) return;
 
-  if (config.sources.youtube) {
-    const innertube = sources.innertubeStart((info) => playerInfo = info)
-
-    playerInfo.innertubeInterval = innertube.interval
-  }
+  if (config.sources.youtube)
+    sources.startInnertube()
 }
 
 export default { nodelink_setupConnection, nodelink_requestHandler, nodelink_startSourceAPIs }
