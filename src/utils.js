@@ -1,3 +1,5 @@
+import https from 'https'
+
 import http2 from 'http2'
 import { URL } from 'url'
 import zlib from 'zlib'
@@ -16,6 +18,51 @@ function nodelink_generateSessionId() {
   return result
 }
 
+function nodelink_http1makeRequest(url, options) {
+  return new Promise(async (resolve) => {
+    let compression, data = ''
+
+    https.request(url, {
+      method: options.method,
+      headers: {
+        'Accept-Encoding': 'gzip, deflate, br',
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
+      }
+    }, (res) => {
+      switch (res.headers['content-encoding']) {
+        case 'deflate': {
+          compression = zlib.createInflate()
+          break
+        }
+        case 'br': {
+          compression = zlib.createBrotliDecompress()
+          break
+        }
+        case 'gzip': {
+          compression = zlib.createGunzip()
+          break
+        }
+        default: {
+          console.log('[NodeLink]: No compression detected, skipping...')
+        }
+      }
+
+      if (compression) {
+        res.pipe(compression)
+        res = compression
+      }
+
+      res.on('data', (chunk) => (data += chunk))
+
+      res.on('end', () => resolve(JSON.parse(data.toString())))
+
+      res.on('error', (error) => {
+        throw new Error(`Failed sending HTTP request: ${error}`)
+      })
+    }).end()
+  })
+}
+
 function nodelink_makeRequest(url, options) {
   return new Promise(async (resolve) => {
     let compression, data = '', parsedUrl = new URL(url)
@@ -28,7 +75,7 @@ function nodelink_makeRequest(url, options) {
       ':method': options.method,
       ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'gzip, deflate, br',
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/110.0',
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
       [options.body ? 'Content-Encoding' : '']: 'gzip',
       ...(options.headers ? options.headers : {})
     })
@@ -60,7 +107,7 @@ function nodelink_makeRequest(url, options) {
       req.on('data', (chunk) => (data += chunk))
 
       req.on('end', () => {
-        resolve(headers['content-type'] == 'application/json; charset=UTF-8' ? JSON.parse(data.toString()) : data.toString())
+        resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
 
         client.close()
       })
@@ -251,4 +298,4 @@ function nodelink_decodeTrack(track) {
   }
 }
 
-export default { nodelink_generateSessionId, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack }
+export default { nodelink_generateSessionId, nodelink_http1makeRequest, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack }

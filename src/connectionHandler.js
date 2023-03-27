@@ -7,6 +7,7 @@ import utils from './utils.js'
 import sources from './sources.js'
 
 import * as djsVoice from '@discordjs/voice'
+import { encode } from 'punycode'
 
 const adapters = new Map()
 const clients = new Map()
@@ -117,6 +118,9 @@ class VoiceConnection {
         }
         case djsVoice.VoiceConnectionStatus.Signalling:
         case djsVoice.VoiceConnectionStatus.Connecting: {
+          if (oldState.status == djsVoice.VoiceConnectionStatus.Ready)
+            this.connection.configureNetworking()
+
           try {
             await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.threshold)
           } catch {
@@ -137,9 +141,7 @@ class VoiceConnection {
     })
     
     this.player.on('stateChange', (oldState, newState) => {
-      if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {
-        this._stopTrack()
-  
+      if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {  
         this.client.ws.send(JSON.stringify({
           op: 'event',
           type: 'TrackEndEvent',
@@ -147,6 +149,8 @@ class VoiceConnection {
           track: this.config.track,
           reason: 'FINISHED'
         }))
+
+        this._stopTrack()
       }
       if (newState.status == djsVoice.AudioPlayerStatus.Playing && oldState.status != djsVoice.AudioPlayerStatus.Paused && oldState.status != djsVoice.AudioPlayerStatus.AutoPaused) {
         nodelinkStats.playingPlayers++
@@ -228,7 +232,7 @@ class VoiceConnection {
 
     this.config.track = { encoded: track, info: encodedTrack }
   
-    const url = await sources.getTrackURL(encodedTrack.identifier)
+    const url = await sources.getTrackURL(encodedTrack.identifier, encodedTrack.sourceName)
 
     if (!url) {
       this.config.track = null
@@ -247,12 +251,12 @@ class VoiceConnection {
   
       return this.config
     }
-  
-    const resource = djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true })
+    
+    const resource = djsVoice.createAudioResource(url, { inputType: encodedTrack.sourceName == 'youtube' ? djsVoice.StreamType.WebmOpus : djsVoice.StreamType.Arbitrary, inlineVolume: true })
     resource.volume.setVolume(this.config.volume / 100)
-  
-    this.player.play(resource, false)
+
     this.connection.subscribe(this.player)
+    this.player.play(resource)
       
     try {
       await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.threshold)
@@ -285,6 +289,8 @@ class VoiceConnection {
       track: this.config.track,
       reason: 'STOPPED'
     }))
+
+    this._stopTrack()
   }
   
   volume(volume) {
@@ -516,17 +522,29 @@ async function nodelink_requestHandler(req, res) {
   if (parsedUrl.pathname == '/v4/loadtracks') {
     console.log('[NodeLink]: Received loadtracks request')
 
-    const identifier = new URLSearchParams(parsedUrl.query).get('identifier')
+    let identifier = new URLSearchParams(parsedUrl.query).get('identifier')
+    // identifier = identifier.replace('ytsearch:', 'scsearch:')
 
     console.log(`[NodeLink]: Loading track for identifier "${identifier}"`)
 
-    const ytSearch = identifier.startsWith('ytsearch:')
-    if (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)) {
-      const search = await sources.searchOnYoutube(identifier, ytSearch ? 1 : sources.checkYouTubeURLType(identifier))
+    let search
 
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(search))
-    }
+    const ytSearch = config.sources.youtube ? identifier.startsWith('ytsearch:') : null
+    if (config.sources.youtube && (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)))
+      search = await sources.searchOnYoutube(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.checkYouTubeURLType(identifier))
+
+    if (config.sources.spotify && /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier))
+      search = await sources.loadFromSpotify(identifier)
+
+    if (config.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
+      search = await sources.loadFromDeezer(identifier)
+
+    const scSearch = config.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
+    if (config.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier)))
+      search = await sources.searchOnSoundcloud(scSearch ? identifier.replace('scsearch:', '') : identifier, scSearch ? 1 : 0)
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(search))
   }
 
   if (/^\/v4\/sessions\/\{[a-zA-Z0-9_-]+\}$/.test(parsedUrl.pathname) && req.method == 'PATCH') {
@@ -660,6 +678,9 @@ function nodelink_startSourceAPIs() {
 
   if (config.sources.youtube)
     sources.startInnertube()
+
+  if (config.sources.spotify)
+    sources.setSpotifyToken()
 }
 
 export default { nodelink_setupConnection, nodelink_requestHandler, nodelink_startSourceAPIs }

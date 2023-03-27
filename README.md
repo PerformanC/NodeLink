@@ -8,20 +8,12 @@ NodeLink is a fast and light-weight Lavalink based (v4) audio sending node.
 
 - Fast and light-weight
 - Easy to modify
-- Fast to boot up
+- Instant boot up
 
 ## Lavalink features coverage
 
-- [x] Stats event
-- [x] Stats endpoint
-- [x] State event
-- [x] PlayerUpdate event
-- [x] TrackStart event
-- [x] TrackEnd event
-- [x] TrackException event
-- [x] TrackStuck event
-- [x] WebSocketClosed event
-- [x] LoadTracks endpoint (noReplace: yes, playlist & others: no)
+- [x] Events (ALL)
+- [x] LoadTracks endpoint (Spotify: yes, YouTube: yes, SoundCloud: yes, Bandcamp: no, Vimeo: no, Twitch: no, HTTP: no, Local: no)
 - [x] Track(s) encoding (NodeLink-only endpoint)
 - [x] Version endpoint
 - [x] Track(s) decoding
@@ -61,6 +53,8 @@ A small list of configurable settings, config.js, located in the root directory 
 * Threshold: How much time in milliseconds should NodeLink wait to do an action before disconnecting from a voice channel.
 * stateInterval: How much time in milliseconds should NodeLink wait before sending state to the client.
 * statsInterval: How much time in milliseconds should NodeLink wait before sending stats to the client.
+
+You can also enable or disable each source, and to enable soundcloud, you need to get a client ID from [here](https://soundcloud.com/you/apps).
 
 ### Running
 
