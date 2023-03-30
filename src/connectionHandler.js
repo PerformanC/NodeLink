@@ -88,8 +88,8 @@ class VoiceConnection {
           if (oldState.status == djsVoice.VoiceConnectionStatus.Disconnected) return;
   
           try {
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Signalling, config.threshold)
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.threshold)
+            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Signalling, config.options.threshold)
+            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold)
           } catch (e) {
             this._stopTrack()
   
@@ -121,7 +121,7 @@ class VoiceConnection {
             this.connection.configureNetworking()
 
           try {
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.threshold)
+            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.options.threshold)
           } catch {
             this._stopTrack()
   
@@ -167,7 +167,7 @@ class VoiceConnection {
             guildId: this.config.guildId,
             state: this.config.state
           }))
-        }, config.stateInterval)
+        }, config.options.stateInterval)
   
         this.client.ws.send(JSON.stringify({
           op: 'event',
@@ -260,7 +260,7 @@ class VoiceConnection {
     this.player.play(resource)
       
     try {
-      await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.threshold)
+      await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
     } catch (e) {
       console.log('[NodeLink]: Connection timed out')
   
@@ -336,7 +336,7 @@ function nodelink_setupConnection(ws, req) {
       },
       frameStats: null
     }))
-  }, config.statsInterval)
+  }, config.options.statsInterval)
 
   ws.on('close', (code, reason) => {
     console.log(`[NodeLink]: Connection closed with v4 websocket server (sessionId: ${sessionId}, code: ${code}, reason: ${reason == '' ? 'No reason provided' : reason})`)
@@ -345,14 +345,14 @@ function nodelink_setupConnection(ws, req) {
 
     if (client.timeoutFunction) {
       client.timeoutFunction = setTimeout(() => {
-        if (clients.size == 1 && config.sources.youtube)
+        if (clients.size == 1 && config.search.sources.youtube)
           sources.stopInnertube()
 
         client.players.forEach((player) => player.destroy())
         clients.delete(sessionId)
       })
     } else {
-      if (clients.size == 1 && config.sources.youtube)
+      if (clients.size == 1 && config.search.sources.youtube)
         sources.stopInnertube()
 
       clients.get(sessionId).players.forEach((player) => player.destroy())
@@ -421,7 +421,7 @@ async function nodelink_requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.showReceivedRequestBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+      if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
 
       buffer = JSON.parse(buffer)
 
@@ -469,7 +469,7 @@ async function nodelink_requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.showReceivedRequestBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+      if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
 
       buffer = JSON.parse(buffer)
 
@@ -529,18 +529,18 @@ async function nodelink_requestHandler(req, res) {
 
     let search
 
-    const ytSearch = config.sources.youtube ? identifier.startsWith('ytsearch:') : null
-    if (config.sources.youtube && (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)))
+    const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
+    if (config.search.sources.youtube && (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)))
       search = await sources.searchOnYoutube(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.checkYouTubeURLType(identifier))
 
-    if (config.sources.youtube && config.sources.spotify && /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier))
+    if (config.search.sources.youtube && config.search.sources.spotify && /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier))
       search = await sources.loadFromSpotify(identifier)
 
-    if (config.sources.youtube && config.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
+    if (config.search.sources.youtube && config.search.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
       search = await sources.loadFromDeezer(identifier)
 
-    const scSearch = config.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    if (config.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier)))
+    const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
+    if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier)))
       search = await sources.searchOnSoundcloud(scSearch ? identifier.replace('scsearch:', '') : identifier, scSearch ? 1 : 0)
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -554,7 +554,7 @@ async function nodelink_requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.showReceivedRequestBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+      if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
 
       buffer = JSON.parse(buffer)
 
@@ -598,7 +598,7 @@ async function nodelink_requestHandler(req, res) {
 
       req.on('data', (buf) => buffer += buf)
       req.on('end', () => {
-        if (config.showReceivedRequestBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+        if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
 
         buffer = JSON.parse(buffer)
 
@@ -676,10 +676,10 @@ async function nodelink_requestHandler(req, res) {
 function nodelink_startSourceAPIs() {
   if (clients.size != 0) return;
 
-  if (config.sources.youtube)
+  if (config.search.sources.youtube)
     sources.startInnertube()
 
-  if (config.sources.spotify)
+  if (config.search.sources.spotify)
     sources.setSpotifyToken()
 }
 

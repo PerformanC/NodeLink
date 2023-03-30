@@ -9,7 +9,7 @@ const server = createServer(connectionHandler.nodelink_requestHandler)
 const v4 = new WebSocketServer({ noServer: true })
 
 v4.on('connection', (ws, req) => {
-  if (req.headers.authorization !== config.password) {
+  if (req.headers.authorization !== config.server.password) {
     console.log('[NodeLink]: Invalid password. Closing connection...')
 
     return ws.close(4001, 'Invalid password')
@@ -33,6 +33,6 @@ server.on('upgrade', (req, socket, head) => {
   ]
 })
 
-server.listen(config.port || 2333, () => {
-  console.log(`[NodeLink]: Listening on port ${config.port || 2333}`)
+server.listen(config.server.port || 2333, () => {
+  console.log(`[NodeLink]: Listening on port ${config.server.port || 2333}`)
 })
