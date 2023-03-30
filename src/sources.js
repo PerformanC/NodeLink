@@ -415,7 +415,7 @@ async function loadFromSpotify(query) {
 
     switch (type[1]) {
       case 'track': {
-        const search = await searchWithDefault(`${data.name} ${data.artists[0].name}`, 1)
+        const search = await searchWithDefault(`"${data.name} ${data.artists[0].name}"`, 1)
 
         if (search.loadType == 'LOAD_FAILED')
           resolve(search)
@@ -447,7 +447,7 @@ async function loadFromSpotify(query) {
         break
       }
       case 'episode': {
-        const search = await searchWithDefault(`${data.name} ${data.publisher}`, 1)
+        const search = await searchWithDefault(`"${data.name} ${data.publisher}"`, 1)
 
         if (search.loadType == 'LOAD_FAILED')
           resolve(search)
@@ -485,8 +485,8 @@ async function loadFromSpotify(query) {
 
         data.tracks.items.forEach(async (track) => {
           let search
-          if (type[1] == 'playlist') search = await searchWithDefault(`${track.track.name} ${track.track.artists[0].name}`, 1)
-          else search = await searchWithDefault(`${track.name} ${track.artists[0].name}`, 1)
+          if (type[1] == 'playlist') search = await searchWithDefault(`"${track.track.name} ${track.track.artists[0].name}"`, 1)
+          else search = await searchWithDefault(`"${track.name} ${track.artists[0].name}"`, 1)
 
           if (search.loadType == 'LOAD_FAILED')
             resolve(search)
@@ -530,7 +530,7 @@ async function loadFromSpotify(query) {
         let i = 0
 
         data.episodes.items.forEach(async (episode) => {
-          const search = await searchWithDefault(`${episode.name} ${episode.publisher}`, 1)
+          const search = await searchWithDefault(`"${episode.name} ${episode.publisher}"`, 1)
 
           if (search.loadType == 'LOAD_FAILED')
             resolve(search)
@@ -605,7 +605,7 @@ async function loadFromDeezer(query) {
 
     switch (track[1]) {
       case 'track': {
-        const search = await searchWithDefault(`${data.title} ${data.artist.name}`, 1)
+        const search = await searchWithDefault(`"${data.title} ${data.artist.name}"`, 1)
 
         if (search.loadType == 'LOAD_FAILED')
           resolve(search)
@@ -641,7 +641,7 @@ async function loadFromDeezer(query) {
         const tracks = []
 
         data.tracks.data.forEach(async (track, index) => {
-          const search = await searchWithDefault(`${track.title} ${track.artist.name}`, 1)
+          const search = await searchWithDefault(`"${track.title} ${track.artist.name}"`, 1)
 
           if (search.loadType == 'LOAD_FAILED')
             resolve(search)
@@ -818,7 +818,7 @@ async function searchOnSoundcloud(query, type) {
 }
 
 async function searchWithDefault(query, type) {
-  switch (configs.defautlSearchSource) {
+  switch (configs.defaultSearchSource) {
     case 'youtube': {
       return searchOnYoutube(query, type)
     }

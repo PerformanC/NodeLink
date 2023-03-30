@@ -13,7 +13,7 @@ export default {
     showResBody: true
   },
   search: {
-    defautlSearchSource: 'soundcloud',
+    defaultSearchSource: 'soundcloud',
     sources: {
       youtube: true,
       spotify: true,
