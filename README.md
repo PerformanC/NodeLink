@@ -13,7 +13,7 @@ NodeLink is a fast and light-weight Lavalink based (v4) audio sending node.
 ## Lavalink features coverage
 
 - [x] Events (ALL)
-- [x] LoadTracks endpoint (Spotify: yes, YouTube: yes, SoundCloud: yes, Bandcamp: no, Vimeo: no, Twitch: no, HTTP: no, Local: no)
+- [x] LoadTracks endpoint (Spotify: yes (built-in), YouTube: yes, SoundCloud: yes, deezer: yes, Bandcamp: no, Vimeo: no, Twitch: no, HTTP: no, Local: no)
 - [x] Track(s) encoding (NodeLink-only endpoint)
 - [x] Version endpoint
 - [x] Track(s) decoding
@@ -44,6 +44,12 @@ $ cd NodeLink
 $ npm install @discordjs/voice @discordjs/opus libsodium-wrappers ws
 ```
 
+And if you don't have `ffmpeg` installed on your enviroment:
+
+```bash
+$ npm install ffmpeg-static
+```
+
 ### Configuration
 
 A small list of configurable settings, config.js, located in the root directory of NodeLink.
@@ -53,6 +59,7 @@ A small list of configurable settings, config.js, located in the root directory 
 * Threshold: How much time in milliseconds should NodeLink wait to do an action before disconnecting from a voice channel.
 * stateInterval: How much time in milliseconds should NodeLink wait before sending state to the client.
 * statsInterval: How much time in milliseconds should NodeLink wait before sending stats to the client.
+* showReceivedRequestBody: If true, NodeLink will log the received body from the requests.
 
 You can also enable or disable each source, and to enable soundcloud, you need to get a client ID from [here](https://soundcloud.com/you/apps).
 

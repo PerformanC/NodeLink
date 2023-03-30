@@ -316,7 +316,7 @@ async function getTrackURL(identifier, sourceName) {
         })
   
         if (videos.playabilityStatus.status != 'OK') {
-          console.log('[NodeLink]: Error while playing track')
+          console.log('[NodeLink]: The track is not playable, this is not a NodeLink issue.')
   
           return null
         }
@@ -483,7 +483,7 @@ async function loadFromSpotify(query) {
         const tracks = []
         let i = 0
 
-        data.tracks.items.forEach(async (track, index) => {
+        data.tracks.items.forEach(async (track) => {
           let search
           if (type[1] == 'playlist') search = await searchOnYoutube(`${track.track.name} ${track.track.artists[0].name}`, 1)
           else search = await searchOnYoutube(`${track.name} ${track.artists[0].name}`, 1)
@@ -500,7 +500,7 @@ async function loadFromSpotify(query) {
             position: i++,
             title: type[1] == 'playlist' ? track.track.name : track.name,
             uri: type[1] == 'playlist' ? track.track.external_urls.spotify : track.external_urls.spotify,
-            artworkUrl: type[1] == 'playlist' ? track.track.album.images[0].url : track.album.images[0].url,
+            artworkUrl: type[1] == 'playlist' ? data.images[0].url : data.images[0].url,
             isrc: null,
             sourceName: 'spotify'
           }
@@ -592,6 +592,8 @@ async function loadFromDeezer(query) {
         resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] })
     }
 
+    console.log(`[NodeLink]: Loading track from Deezer: ${endpoint}`)
+
     const data = await utils.nodelink_makeRequest(`https://api.deezer.com/${endpoint}`, { method: 'GET' })
 
     if (data.error) {
@@ -682,9 +684,10 @@ async function loadFromDeezer(query) {
 
 async function loadFromSoundCloud(url) {
   return new Promise(async (resolve) => {
+    console.log(`[NodeLink]: Loading track from Deezer: ${url}`)
+
     const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.sources.soundcloud.clientId}`, { method: 'GET' })
 
-    console.log(data)
     if (data.error) {
       if (data.error.status == 400) 
         resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
@@ -767,7 +770,7 @@ async function searchOnSoundcloud(query, type) {
   if (type == 0) return loadFromSoundCloud(query)
 
   return new Promise(async (resolve) => {
-    console.log('[NodeLink]: Searching on SoundCloud...')
+    console.log(`[NodeLink]: Loading track from SoundCloud: ${query}`)
 
     const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
       method: 'GET'
@@ -792,7 +795,7 @@ async function searchOnSoundcloud(query, type) {
         isStream: false,
         position: i++,
         title: track.title,
-        uri: track.permalink_url,
+        uri: track.uri,
         artworkUrl: track.artwork_url,
         isrc: null,
         sourceName: 'soundcloud'

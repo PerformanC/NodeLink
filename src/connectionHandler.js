@@ -7,7 +7,6 @@ import utils from './utils.js'
 import sources from './sources.js'
 
 import * as djsVoice from '@discordjs/voice'
-import { encode } from 'punycode'
 
 const adapters = new Map()
 const clients = new Map()
@@ -251,7 +250,9 @@ class VoiceConnection {
   
       return this.config
     }
-    
+
+    console.log(`[NodeLink]: Playing "${encodedTrack.title}", from ${encodedTrack.sourceName}.`)
+
     const resource = djsVoice.createAudioResource(url, { inputType: encodedTrack.sourceName == 'youtube' ? djsVoice.StreamType.WebmOpus : djsVoice.StreamType.Arbitrary, inlineVolume: true })
     resource.volume.setVolume(this.config.volume / 100)
 
@@ -523,7 +524,6 @@ async function nodelink_requestHandler(req, res) {
     console.log('[NodeLink]: Received loadtracks request')
 
     let identifier = new URLSearchParams(parsedUrl.query).get('identifier')
-    // identifier = identifier.replace('ytsearch:', 'scsearch:')
 
     console.log(`[NodeLink]: Loading track for identifier "${identifier}"`)
 
@@ -533,10 +533,10 @@ async function nodelink_requestHandler(req, res) {
     if (config.sources.youtube && (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)))
       search = await sources.searchOnYoutube(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.checkYouTubeURLType(identifier))
 
-    if (config.sources.spotify && /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier))
+    if (config.sources.youtube && config.sources.spotify && /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier))
       search = await sources.loadFromSpotify(identifier)
 
-    if (config.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
+    if (config.sources.youtube && config.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
       search = await sources.loadFromDeezer(identifier)
 
     const scSearch = config.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
