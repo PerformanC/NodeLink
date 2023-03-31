@@ -167,7 +167,7 @@ class VoiceConnection {
             guildId: this.config.guildId,
             state: this.config.state
           }))
-        }, config.options.stateInterval)
+        }, config.options.playerUpdateInterval)
   
         this.client.ws.send(JSON.stringify({
           op: 'event',
@@ -231,7 +231,7 @@ class VoiceConnection {
 
     this.config.track = { encoded: track, info: encodedTrack }
   
-    const url = await sources.getTrackURL(encodedTrack.identifier, encodedTrack.sourceName)
+    const url = await sources.getTrackURL(encodedTrack)
 
     if (!url) {
       this.config.track = null
@@ -533,15 +533,20 @@ async function nodelink_requestHandler(req, res) {
     if (config.search.sources.youtube && (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)))
       search = await sources.searchOnYoutube(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.checkYouTubeURLType(identifier))
 
-    if (config.search.sources.youtube && config.search.sources.spotify && /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier))
-      search = await sources.loadFromSpotify(identifier)
+    const spSearch = config.search.sources.spotify ? identifier.startsWith('spsearch:') : null
+    if (config.search.sources.youtube && config.search.sources.spotify && (spSearch || /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier)))
+       search = spSearch ? await sources.searchOnSpotify(identifier.replace('spsearch:', '')) : await sources.loadFromSpotify(identifier)
 
     if (config.search.sources.youtube && config.search.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
       search = await sources.loadFromDeezer(identifier)
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
     if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier)))
-      search = await sources.searchOnSoundcloud(scSearch ? identifier.replace('scsearch:', '') : identifier, scSearch ? 1 : 0)
+      search = scSearch ? await sources.searchOnSoundcloud(identifier.replace('scsearch:', '')) : await sources.loadFromSoundcloud(identifier)
+
+    const bcSearch = config.search.sources.bandcamp ? identifier.startsWith('bcsearch:') : null
+    if (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(identifier)))
+      search = bcSearch ? await sources.searchOnBandcamp(identifier.replace('bcsearch:', '')) : await sources.loadFromBandcamp(identifier)
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(search))

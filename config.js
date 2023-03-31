@@ -5,19 +5,21 @@ export default {
   },
   options: {
     threshold: 100000,
-    stateInterval: 5000,
+    playerUpdateInterval: 5000,
     statsInterval: 5000,
+    maxResults: 10,
   },
   debug: {
     showReqBody: true,
     showResBody: true
   },
   search: {
-    defaultSearchSource: 'soundcloud',
+    defaultSearchSource: 'youtube',
     sources: {
       youtube: true,
       spotify: true,
       deezer: true,
+      bandcamp: true,
       soundcloud: {
         clientId: 'YOUR_CLIENT_ID',
         enabled: true

@@ -21,6 +21,7 @@ function nodelink_generateSessionId() {
 function nodelink_http1makeRequest(url, options) {
   return new Promise(async (resolve) => {
     let compression, data = ''
+    console.log(url)
 
     https.request(url, {
       method: options.method,
@@ -107,12 +108,14 @@ function nodelink_makeRequest(url, options) {
       req.on('data', (chunk) => (data += chunk))
 
       req.on('end', () => {
-        resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
+        if (url == 'https://clienttoken.spotify.com/v1/clienttoken' || url.startsWith('https://api-partner.spotify.com')) resolve(data.toString())
+        else resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
 
         client.close()
       })
 
       req.on('error', (error) => {
+        console.log(error, url)
         throw new Error(`Failed sending HTTP request: ${error}`)
       })
     })

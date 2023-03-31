@@ -1,6 +1,8 @@
 import config from '../config.js'
 import utils from './utils.js'
-
+import https from 'https'
+import zlib from 'zlib'
+import fs from 'fs'
 let playerInfo = {}
 
 function setIntervalNow(func, interval) {
@@ -279,11 +281,13 @@ async function searchOnYoutube(query, type) {
   }
 }
 
-async function getTrackURL(identifier, sourceName) {
-  return new Promise(async (resolve) => {
-    switch (sourceName) {
+async function getTrackURL(track) {
+  return new Promise(async (resolve, reject) => {
+    if ([ 'deezer', 'spotify' ].includes(track.sourceName)) track.sourceName = config.search.defaultSearchSource
+
+    switch (track.sourceName) {
       case 'soundcloud': {
-        const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+        const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${track.identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
       
         if (data.errors) {
           console.log(`[NodeLink]: Failed to load track: ${data.errors[0].error_message}`)
@@ -301,11 +305,26 @@ async function getTrackURL(identifier, sourceName) {
 
         break
       }
+      case 'bandcamp': {
+        const data = await utils.nodelink_makeRequest(track.uri, { method: 'GET' })
+
+        const streamURL = data.match(/https?:\/\/t4\.bcbits\.com\/stream\/[a-zA-Z0-9]+\/mp3-128\/\d+\?p=\d+&amp;ts=\d+&amp;t=[a-zA-Z0-9]+&amp;token=\d+_[a-zA-Z0-9]+/)
+
+        if (!streamURL) {
+          console.log(`[NodeLink]: Failed to load track: No stream URL found.`)
+
+          reject()
+        }
+
+        resolve(streamURL[0])
+
+        break
+      }
       default: {
         const videos = await utils.nodelink_makeRequest(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           body: {
             context: playerInfo.innertube,
-            videoId: identifier,
+            videoId: track.identifier,
             playbackContext: {
               contentPlaybackContext: {
                 signatureTimestamp: playerInfo.signatureTimestamp
@@ -344,12 +363,414 @@ async function getTrackURL(identifier, sourceName) {
   })
 }
 
+async function searchOnSoundcloud(query) {
+  return new Promise(async (resolve) => {
+    console.log(`[NodeLink]: Loading track from SoundCloud: ${query}`)
+
+    const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
+      method: 'GET'
+    })
+    
+    if (data.error) {
+      if (data.error.status == 400) 
+        resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+
+      resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+    }
+
+    const tracks = []
+    let i = 0
+
+    data.collection.forEach(async (track, index) => {
+      if (track.kind == 'track') {
+        const infoObj = {
+          identifier: track.id.toString(),
+          isSeekable: true,
+          author: track.user.username,
+          length: track.duration,
+          isStream: false,
+          position: i++,
+          title: track.title,
+          uri: track.uri,
+          artworkUrl: track.artwork_url,
+          isrc: null,
+          sourceName: 'soundcloud'
+        }
+
+        tracks.push({
+          encoded: utils.nodelink_encodeTrack(infoObj),
+          info: infoObj
+        })
+      }
+
+      if (index == data.collection.length - 1) {
+        resolve({
+          loadType: 'SEARCH_RESULT',
+          playlistInfo: null,
+          tracks,
+          exception: null
+        })
+      }
+    })
+  })
+}
+
+async function loadFromSoundCloud(url) {
+  return new Promise(async (resolve) => {
+    console.log(`[NodeLink]: Loading track from SoundCloud: ${url}`)
+
+    const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+
+    if (data.error) {
+      if (data.error.status == 400) 
+        resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+
+      resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+    }
+
+    switch (data.kind) {
+      case 'track': {
+        const infoObj = {
+          identifier: data.id.toString(),
+          isSeekable: true,
+          author: data.user.username,
+          length: data.duration,
+          isStream: false,
+          position: 0,
+          title: data.title,
+          uri: data.permalink_url,
+          artworkUrl: data.artwork_url,
+          isrc: null,
+          sourceName: 'soundcloud'
+        }
+
+        resolve({
+          loadType: 'TRACK_LOADED',
+          playlistInfo: null,
+          tracks: [{
+            encoded: utils.nodelink_encodeTrack(infoObj),
+            info: infoObj
+          }],
+          exception: null
+        })
+
+        break
+      }
+      case 'playlist': {
+        const tracks = []
+
+        data.tracks.forEach(async (track, index) => {
+          const infoObj = {
+            identifier: track.id.toString(),
+            isSeekable: true,
+            author: track.user.username,
+            length: track.duration,
+            isStream: false,
+            position: index,
+            title: track.title,
+            uri: track.permalink_url,
+            artworkUrl: track.artwork_url,
+            isrc: null,
+            sourceName: 'soundcloud'
+          }
+
+          tracks.push({
+            encoded: utils.nodelink_encodeTrack(infoObj),
+            info: infoObj
+          })
+
+          if (index == data.tracks.length - 1) {
+            resolve({
+              loadType: 'PLAYLIST_LOADED',
+              playlistInfo: {
+                name: data.title,
+                selectedTrack: 0,
+              },
+              tracks,
+              exception: null
+            })
+          }
+        })
+
+        break
+      }
+    }
+  })
+}
+
+async function searchOnBandcamp(query) {
+  return new Promise(async (resolve) => {
+    console.log(`[NodeLink]: Loading track from BandCamp: ${query}`)
+
+    const data = await utils.nodelink_makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
+
+    let matches = data.matchAll(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
+
+    if (!matches)
+      resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+
+    const tracks = []
+    let i = 0
+    
+    for (const match of matches) {
+      if (i >= config.options.maxResults) break
+
+      tracks.push({
+        info: {
+          identifier: null,
+          isSeekable: true,
+          author: null,
+          length: -1,
+          isStream: false,
+          position: i++,
+          title: match[1].trim(),
+          uri: null,
+          artworkUrl: null,
+          isrc: null,
+          sourceName: 'bandcamp'
+        }
+      })
+    }
+
+    matches = data.match(/<div class="subhead">\s+by\s+(.*?)\s+<\/div>/gs)
+
+    for (i = 0; i <= tracks.length - 1; i++) {
+      tracks[i].info.author = matches[i].split('by')[1].split('</div>')[0].trim()
+    }
+
+    matches = data.match(/<div class="art">\s*<img src="(.+?)"/g)
+
+    for (i = 0; i <= tracks.length - 1; i++) {
+      tracks[i].info.artworkUrl = matches[i].split('"')[3].split('"')[0]
+    }
+
+    matches = data.match(/<div class="itemurl">\s+<a.*?>(.*?)<\/a>/gs)
+
+    for (i = 0; i <= tracks.length - 1; i++) {
+      tracks[i].info.uri = matches[i].split('"')[3].split('?from=')[0]
+      
+      const identifier = tracks[i].info.uri.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
+      tracks[i].info.identifier = `${identifier[1]}:${identifier[2]}`
+
+      tracks[i].encoded = utils.nodelink_encodeTrack(tracks[i].info)
+    }
+
+    resolve({
+      loadType: 'SEARCH_RESULT',
+      playlistInfo: null,
+      tracks,
+      exception: null
+    })
+  })
+}
+
+async function loadFromBandcamp(url) {
+  return new Promise(async (resolve) => {
+    console.log(`[NodeLink]: Loading track from BandCamp: ${url}`)
+
+    const data = await utils.nodelink_makeRequest(url, { method: 'GET' })
+
+    let matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
+
+    if (!matches)
+      resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+
+    const information = JSON.parse(matches[1])
+    const identifier = url.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
+
+    const infoObj = {
+      identifier: `${identifier[1]}:${identifier[2]}`,
+      isSeekable: true,
+      author: information.byArtist.name,
+      length: (information.duration.split('P')[1].split('H')[0] * 3600000) + (information.duration.split('H')[1].split('M')[0] * 60000) + (information.duration.split('M')[1].split('S')[0] * 1000),
+      isStream: false,
+      position: 0,
+      title: information.name,
+      uri: url,
+      artworkUrl: information.image,
+      isrc: null,
+      sourceName: 'bandcamp'
+    }
+
+    resolve({
+      loadType: 'TRACK_LOADED',
+      playlistInfo: null,
+      tracks: [{
+        encoded: utils.nodelink_encodeTrack(infoObj),
+        info: infoObj
+      }],
+      exception: null
+    })
+  })
+}
+
+async function searchWithDefault(query) {
+  switch (config.search.defaultSearchSource) {
+    case 'youtube': {
+      console.log('[NodeLink]: Default search source: YouTube, searching...')
+      return searchOnYoutube(query, 1)
+    }
+    case 'soundcloud': {
+      console.log('[NodeLink]: Default search source: SoundCloud, searching...')
+      return searchOnSoundcloud(query)
+    }
+    case 'bandcamp': {
+      console.log('[NodeLink]: Default search source: Bandcamp, searching...')
+      return searchOnBandcamp(query)
+    }
+    default: {
+      console.log('[NodeLink]: Default search source: unknown, stopping...')
+      throw Error('Unknown default search source')
+    }
+  }
+}
+
 async function setSpotifyToken() {
   const token = await utils.nodelink_makeRequest('https://open.spotify.com/get_access_token', {
     method: 'GET'
   })
 
-  playerInfo.spotifyToken = token.accessToken
+  const req = https.request({
+    hostname: 'clienttoken.spotify.com',
+    path: '/v1/clienttoken',
+    method: 'POST',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+      'Accept': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Referer': 'https://open.spotify.com/',
+      'Content-Type': 'application/json',
+      'Origin': 'https://open.spotify.com',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-site'
+    }
+  }, (res) => {
+    let data = ''
+
+    const compression = zlib.createGunzip()
+    res.pipe(compression)
+  
+    compression.on('data', (chunk) => data += chunk)
+  
+    compression.on('end', () => {
+      data = JSON.parse(data)
+
+      if (data.response_type == 'RESPONSE_GRANTED_TOKEN_RESPONSE') {
+        playerInfo.spotify = {
+          accessToken: token.accessToken,
+          clientToken: data.granted_token.token
+        }
+      }
+    })
+  })
+  
+  req.on('error', (error) => {
+    console.error(error)
+  })
+  
+  req.write(JSON.stringify({
+    client_data: {
+      client_version: '1.2.9.2269.g2fe25d39',
+      client_id: 'd8a5ed958d274c2e8ee717e6a4b0971d',
+      js_sdk_data: {
+        device_brand: 'unknown',
+        device_model: 'unknown',
+        os: 'linux',
+        os_version: 'unknown',
+        device_id: '0c5f7c36-855e-4d0a-a661-1a79958ee6de',
+        device_type: 'computer'
+      }
+    }
+  }))
+  req.end()
+}
+
+async function searchOnSpotify(query) {
+  return new Promise(async (resolve) => {
+    https.get({
+      hostname: 'api-partner.spotify.com',
+      path: `/pathfinder/v1/query?operationName=searchDesktop&variables=%7B%22searchTerm%22%3A%22${encodeURI(query)}%22%2C%22offset%22%3A0%2C%22limit%22%3A10%2C%22numberOfTopResults%22%3A5%2C%22includeAudiobooks%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%221d3a8f81abf4f33f49d1e389ed0956761af669eedb62a050c6c7bce5c66070bb%22%7D%7D`,
+      method: 'GET',
+      headers: {
+        'Host': 'api-partner.spotify.com',
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+        'Accept': 'application/json',
+        'Accept-Language': 'en',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Referer': 'https://open.spotify.com/',
+        'authorization': `Bearer ${playerInfo.spotify.accessToken}`,
+        'app-platform': 'WebPlayer',
+        'spotify-app-version': '1.2.9.1649.gd4540f47',
+        'content-type': 'application/json;charset=UTF-8',
+        'client-token': playerInfo.spotify.clientToken,
+        'Origin': 'https://open.spotify.com',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-site'
+      }
+    }, (res) => {
+      let data = ''
+
+      const compression = zlib.createGunzip()
+      res.pipe(compression)
+    
+      compression.on('data', (chunk) => data += chunk)
+    
+      compression.on('end', () => {
+        data = JSON.parse(data)
+
+        if (data.data.searchV2.tracksV2.totalCount == 0)
+          resolve({ loadType: 'NO_MATCHES', playlistInfo: null, tracks: [], exception: null })
+          
+        let tracks = []
+        let i = 0
+
+        data.data.searchV2.tracksV2.items.forEach(async (track, index) => {
+          if (track) {
+            track = track.item.data
+
+            const search = await searchWithDefault(`${track.name} ${track.artists.items[0].profile.name}`)
+
+            if (search.loadType == 'NO_MATCHES')
+              resolve(search)
+
+            const infoObj = {
+              identifier: search.tracks[0].info.identifier,
+              isSeekable: true,
+              author: track.artists.items.map((artist) => artist.profile.name).join(', '),
+              length: track.duration.totalMilliseconds,
+              isStream: false,
+              position: i++,
+              title: track.name,
+              uri: track.uri,
+              artworkUrl: track.albumOfTrack.coverArt.sources[0].url,
+              isrc: null,
+              sourceName: 'spotify'
+            }
+
+            tracks.push({
+              encoded: utils.nodelink_encodeTrack(infoObj),
+              info: infoObj
+            })
+          }
+
+          if (index == data.data.searchV2.tracksV2.items.length - 1)
+            resolve({
+              loadType: 'SEARCH_RESULT',
+              playlistInfo: null,
+              tracks,
+              exception: null
+            })
+        })
+      })
+    })
+  })    
 }
 
 async function loadFromSpotify(query) {
@@ -415,7 +836,7 @@ async function loadFromSpotify(query) {
 
     switch (type[1]) {
       case 'track': {
-        const search = await searchWithDefault(`"${data.name} ${data.artists[0].name}"`, 1)
+        const search = await searchWithDefault(`"${data.name} ${data.artists[0].name}"`)
 
         if (search.loadType == 'LOAD_FAILED')
           resolve(search)
@@ -447,7 +868,7 @@ async function loadFromSpotify(query) {
         break
       }
       case 'episode': {
-        const search = await searchWithDefault(`"${data.name} ${data.publisher}"`, 1)
+        const search = await searchWithDefault(`"${data.name} ${data.publisher}"`)
 
         if (search.loadType == 'LOAD_FAILED')
           resolve(search)
@@ -481,12 +902,11 @@ async function loadFromSpotify(query) {
       case 'playlist':
       case 'album': {
         const tracks = []
-        let i = 0
 
-        data.tracks.items.forEach(async (track) => {
+        data.tracks.items.forEach(async (track, index) => {
           let search
-          if (type[1] == 'playlist') search = await searchWithDefault(`"${track.track.name} ${track.track.artists[0].name}"`, 1)
-          else search = await searchWithDefault(`"${track.name} ${track.artists[0].name}"`, 1)
+          if (type[1] == 'playlist') search = await searchWithDefault(`"${track.track.name} ${track.track.artists[0].name}"`)
+          else search = await searchWithDefault(`"${track.name} ${track.artists[0].name}"`)
 
           if (search.loadType == 'LOAD_FAILED')
             resolve(search)
@@ -497,7 +917,7 @@ async function loadFromSpotify(query) {
             author: type[1] == 'playlist' ? track.track.artists[0].name : track.artists[0].name,
             length: search.tracks[0].info.length,
             isStream: false,
-            position: i++,
+            position: index,
             title: type[1] == 'playlist' ? track.track.name : track.name,
             uri: type[1] == 'playlist' ? track.track.external_urls.spotify : track.external_urls.spotify,
             artworkUrl: type[1] == 'playlist' ? data.images[0].url : data.images[0].url,
@@ -510,7 +930,7 @@ async function loadFromSpotify(query) {
             info: infoObj
           })
 
-          if (i == data.tracks.items.length) {
+          if (index == data.tracks.items.length - 1) {
             resolve({
               loadType: 'PLAYLIST_LOADED',
               playlistInfo: {
@@ -527,10 +947,9 @@ async function loadFromSpotify(query) {
       }
       case 'show': {
         const tracks = []
-        let i = 0
 
-        data.episodes.items.forEach(async (episode) => {
-          const search = await searchWithDefault(`"${episode.name} ${episode.publisher}"`, 1)
+        data.episodes.items.forEach(async (episode, index) => {
+          const search = await searchWithDefault(`"${episode.name} ${episode.publisher}"`)
 
           if (search.loadType == 'LOAD_FAILED')
             resolve(search)
@@ -541,7 +960,7 @@ async function loadFromSpotify(query) {
             author: episode.publisher,
             length: search.tracks[0].info.length,
             isStream: false,
-            position: i++,
+            position: index,
             title: episode.name,
             uri: episode.external_urls.spotify,
             artworkUrl: episode.images[0].url,
@@ -554,7 +973,7 @@ async function loadFromSpotify(query) {
             info: infoObj
           })
 
-          if (i == data.episodes.items.length) {
+          if (index == data.episodes.items.length - 1) {
             resolve({
               loadType: 'PLAYLIST_LOADED',
               playlistInfo: {
@@ -605,7 +1024,7 @@ async function loadFromDeezer(query) {
 
     switch (track[1]) {
       case 'track': {
-        const search = await searchWithDefault(`"${data.title} ${data.artist.name}"`, 1)
+        const search = await searchWithDefault(`"${data.title} ${data.artist.name}"`)
 
         if (search.loadType == 'LOAD_FAILED')
           resolve(search)
@@ -641,7 +1060,7 @@ async function loadFromDeezer(query) {
         const tracks = []
 
         data.tracks.data.forEach(async (track, index) => {
-          const search = await searchWithDefault(`"${track.title} ${track.artist.name}"`, 1)
+          const search = await searchWithDefault(`"${track.title} ${track.artist.name}"`)
 
           if (search.loadType == 'LOAD_FAILED')
             resolve(search)
@@ -664,90 +1083,8 @@ async function loadFromDeezer(query) {
             encoded: utils.nodelink_encodeTrack(infoObj),
             info: infoObj
           })
-        })
 
-        resolve({
-          loadType: 'PLAYLIST_LOADED',
-          playlistInfo: {
-            name: data.title,
-            selectedTrack: 0,
-          },
-          tracks,
-          exception: null
-        })
-
-        break
-      }
-    }
-  })
-}
-
-async function loadFromSoundCloud(url) {
-  return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Loading track from Deezer: ${url}`)
-
-    const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
-
-    if (data.error) {
-      if (data.error.status == 400) 
-        resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
-
-      resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
-    }
-
-    switch (data.kind) {
-      case 'track': {
-        const infoObj = {
-          identifier: data.id.toString(),
-          isSeekable: true,
-          author: data.user.username,
-          length: data.duration,
-          isStream: false,
-          position: 0,
-          title: data.title,
-          uri: data.permalink_url,
-          artworkUrl: data.artwork_url,
-          isrc: null,
-          sourceName: 'soundcloud'
-        }
-
-        resolve({
-          loadType: 'TRACK_LOADED',
-          playlistInfo: null,
-          tracks: [{
-            encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          }],
-          exception: null
-        })
-
-        break
-      }
-      case 'playlist': {
-        const tracks = []
-        let i = 0
-
-        data.tracks.forEach(async (track) => {
-          const infoObj = {
-            identifier: track.id.toString(),
-            isSeekable: true,
-            author: track.user.username,
-            length: track.duration,
-            isStream: false,
-            position: i++,
-            title: track.title,
-            uri: track.permalink_url,
-            artworkUrl: track.artwork_url,
-            isrc: null,
-            sourceName: 'soundcloud'
-          }
-
-          tracks.push({
-            encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          })
-
-          if (tracks.length == data.tracks.length) {
+          if (index == data.tracks.data.length) 
             resolve({
               loadType: 'PLAYLIST_LOADED',
               playlistInfo: {
@@ -757,7 +1094,6 @@ async function loadFromSoundCloud(url) {
               tracks,
               exception: null
             })
-          }
         })
 
         break
@@ -766,66 +1102,4 @@ async function loadFromSoundCloud(url) {
   })
 }
 
-async function searchOnSoundcloud(query, type) {
-  if (type == 0) return loadFromSoundCloud(query)
-
-  return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Loading track from SoundCloud: ${query}`)
-
-    const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
-      method: 'GET'
-    })
-    
-    if (data.error) {
-      if (data.error.status == 400) 
-        return { loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] }
-
-      return { loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } }
-    }
-
-    const tracks = []
-    let i = 0
-
-    data.collection.forEach(async (track) => {
-      const infoObj = {
-        identifier: track.id.toString(),
-        isSeekable: true,
-        author: track.user.username,
-        length: track.duration,
-        isStream: false,
-        position: i++,
-        title: track.title,
-        uri: track.uri,
-        artworkUrl: track.artwork_url,
-        isrc: null,
-        sourceName: 'soundcloud'
-      }
-
-      tracks.push({
-        encoded: utils.nodelink_encodeTrack(infoObj),
-        info: infoObj
-      })
-
-      if (i == data.collection.length)
-        resolve({
-          loadType: 'SEARCH_RESULT',
-          playlistInfo: null,
-          tracks,
-          exception: null
-        })
-    })
-  })
-}
-
-async function searchWithDefault(query, type) {
-  switch (configs.defaultSearchSource) {
-    case 'youtube': {
-      return searchOnYoutube(query, type)
-    }
-    case 'soundcloud': {
-      return searchOnSoundcloud(query, type)
-    }
-  }
-}
-
-export default { startInnertube, stopInnertube, checkYouTubeURLType, searchOnYoutube, getTrackURL, setSpotifyToken, loadFromSpotify, loadFromDeezer, searchOnSoundcloud }
+export default { startInnertube, stopInnertube, checkYouTubeURLType, searchOnYoutube, getTrackURL, searchOnSoundcloud, loadFromSoundCloud, searchOnBandcamp, loadFromBandcamp, setSpotifyToken, searchOnSpotify, loadFromSpotify, loadFromDeezer }
