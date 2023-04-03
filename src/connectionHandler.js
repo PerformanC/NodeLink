@@ -219,15 +219,9 @@ class VoiceConnection {
   async play(track, noReplace) {
     if (noReplace && this.config.track) return;
 
-    if (this.config.track) this.client.ws.send(JSON.stringify({
-      op: 'event',
-      type: 'TrackEndEvent',
-      guildId: this.config.guildId,
-      track: this.config.track,
-      reason: 'REPLACED'
-    }))
-
     const encodedTrack = utils.nodelink_decodeTrack(track)
+
+    let oldTrack = this.config.track
 
     this.config.track = { encoded: track, info: encodedTrack }
   
@@ -242,13 +236,30 @@ class VoiceConnection {
         guildId: this.config.guildId,
         track: encodedTrack,
         exception: {
-          message: 'No playable sources found',
-          severity: 'COMMON',
-          cause: 'unknown'
+          message: 'No playable sources found, this shouldn\'t happen, did you create the encodedTrack manually?',
+          severity: 'UNCOMMON',
+          cause: 'URI was not found'
         }
       }))
   
       return this.config
+    }
+
+    if (this.config.track) {
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackEndEvent',
+        guildId: this.config.guildId,
+        track: oldTrack,
+        reason: 'REPLACED'
+      }))
+
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackStartEvent',
+        guildId: this.config.guildId,
+        track: this.config.track
+      }))
     }
 
     console.log(`[NodeLink]: Playing "${encodedTrack.title}", from ${encodedTrack.sourceName}.`)
@@ -346,14 +357,14 @@ function nodelink_setupConnection(ws, req) {
     if (client.timeoutFunction) {
       client.timeoutFunction = setTimeout(() => {
         if (clients.size == 1 && config.search.sources.youtube)
-          sources.stopInnertube()
+          sources.youtube.stopInnertube()
 
         client.players.forEach((player) => player.destroy())
         clients.delete(sessionId)
       })
     } else {
       if (clients.size == 1 && config.search.sources.youtube)
-        sources.stopInnertube()
+        sources.youtube.stopInnertube()
 
       clients.get(sessionId).players.forEach((player) => player.destroy())
       clients.delete(sessionId)
@@ -457,7 +468,7 @@ async function nodelink_requestHandler(req, res) {
         return;
       }
 
-      res.writeHeWhad(200, { 'Content-Type': 'application/json' })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(utils.nodelink_encodeTrack(buffer)))
     })
   }
@@ -530,23 +541,32 @@ async function nodelink_requestHandler(req, res) {
     let search
 
     const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
-    if (config.search.sources.youtube && (ytSearch || /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier)))
-      search = await sources.searchOnYoutube(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.checkYouTubeURLType(identifier))
+    if (config.search.sources.youtube && (ytSearch || (identifier.startsWith('https://youtube.com') && /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier))))
+      search = await sources.youtube.search(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.youtube.checkURLType(identifier))
 
     const spSearch = config.search.sources.spotify ? identifier.startsWith('spsearch:') : null
     if (config.search.sources.youtube && config.search.sources.spotify && (spSearch || /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier)))
-       search = spSearch ? await sources.searchOnSpotify(identifier.replace('spsearch:', '')) : await sources.loadFromSpotify(identifier)
+       search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier)
 
     if (config.search.sources.youtube && config.search.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
       search = await sources.loadFromDeezer(identifier)
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
     if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier)))
-      search = scSearch ? await sources.searchOnSoundcloud(identifier.replace('scsearch:', '')) : await sources.loadFromSoundcloud(identifier)
+      search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', '')) : await sources.soundcloud.loadFrom(identifier)
 
     const bcSearch = config.search.sources.bandcamp ? identifier.startsWith('bcsearch:') : null
     if (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(identifier)))
-      search = bcSearch ? await sources.searchOnBandcamp(identifier.replace('bcsearch:', '')) : await sources.loadFromBandcamp(identifier)
+      search = bcSearch ? await sources.bandcamp.search(identifier.replace('bcsearch:', '')) : await sources.bandcamp.loadFrom(identifier)
+
+    if (config.search.sources.http && !search && (identifier.startsWith('http://') || identifier.startsWith('https://')))
+      search = await sources.http.loadFrom(identifier)
+    
+    if (config.search.sources.local && identifier.startsWith('local:'))
+      search = await sources.local.loadFrom(identifier.replace('local:', ''))
+
+    if (!search)
+      search = { loadType: 'NO_MATCHES', playlistInfo: null, tracks: [], exception: NULL }
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(search))
@@ -682,10 +702,10 @@ function nodelink_startSourceAPIs() {
   if (clients.size != 0) return;
 
   if (config.search.sources.youtube)
-    sources.startInnertube()
+    sources.youtube.startInnertube()
 
   if (config.search.sources.spotify)
-    sources.setSpotifyToken()
+    sources.spotify.setSpotifyToken()
 }
 
 export default { nodelink_setupConnection, nodelink_requestHandler, nodelink_startSourceAPIs }

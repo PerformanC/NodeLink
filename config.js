@@ -4,14 +4,13 @@ export default {
     password: 'youshallnotpass'
   },
   options: {
-    threshold: 100000,
+    threshold: 5000,
     playerUpdateInterval: 5000,
     statsInterval: 5000,
     maxResults: 10,
   },
   debug: {
-    showReqBody: true,
-    showResBody: true
+    showReqBody: true
   },
   search: {
     defaultSearchSource: 'youtube',
@@ -20,6 +19,8 @@ export default {
       spotify: true,
       deezer: true,
       bandcamp: true,
+      http: true,
+      local: true,
       soundcloud: {
         clientId: 'YOUR_CLIENT_ID',
         enabled: true
