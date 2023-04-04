@@ -18,8 +18,8 @@ async function searchWithDefault(query) {
       return bandcamp.search(query)
     }
     default: {
-      console.log('[NodeLink]: Default search source: unknown, stopping...')
-      throw Error('Unknown default search source')
+      console.log('[NodeLink]: Default search source: unknown, falling back to YouTube...')
+      return youtube.search(query, 1)
     }
   }
 }

@@ -2,6 +2,7 @@ import https from 'https'
 import zlib from 'zlib'
 
 import utils from '../utils.js'
+import searchWithDefault from './default.js'
 
 let playerInfo = {}
 
@@ -40,7 +41,7 @@ async function setSpotifyToken() {
       data = JSON.parse(data)
 
       if (data.response_type == 'RESPONSE_GRANTED_TOKEN_RESPONSE') {
-        playerInfo.spotify = {
+        playerInfo = {
           accessToken: token.accessToken,
           clientToken: data.granted_token.token
         }
@@ -82,11 +83,11 @@ async function search(query) {
         'Accept-Language': 'en',
         'Accept-Encoding': 'gzip, deflate, br',
         'Referer': 'https://open.spotify.com/',
-        'authorization': `Bearer ${playerInfo.spotify.accessToken}`,
+        'authorization': `Bearer ${playerInfo.accessToken}`,
         'app-platform': 'WebPlayer',
         'spotify-app-version': '1.2.9.1649.gd4540f47',
         'content-type': 'application/json;charset=UTF-8',
-        'client-token': playerInfo.spotify.clientToken,
+        'client-token': playerInfo.clientToken,
         'Origin': 'https://open.spotify.com',
         'DNT': '1',
         'Connection': 'keep-alive',
@@ -106,7 +107,7 @@ async function search(query) {
         data = JSON.parse(data)
 
         if (data.data.searchV2.tracksV2.totalCount == 0)
-          resolve({ loadType: 'NO_MATCHES', playlistInfo: null, tracks: [], exception: null })
+          return resolve({ loadType: 'NO_MATCHES', playlistInfo: null, tracks: [], exception: null })
           
         let tracks = []
         let i = 0
@@ -118,7 +119,7 @@ async function search(query) {
             const search = await searchWithDefault(`${track.name} ${track.artists.items[0].profile.name}`)
 
             if (search.loadType == 'NO_MATCHES')
-              resolve(search)
+              return resolve(search)
 
             const infoObj = {
               identifier: search.tracks[0].info.identifier,
@@ -153,11 +154,8 @@ async function search(query) {
   })    
 }
 
-async function loadFrom(query) {
-  return new Promise(async (resolve, reject) => {
-    const spotifyRegex = /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/
-
-    let type = spotifyRegex.exec(query)
+async function loadFrom(query, type) {
+  return new Promise(async (resolve) => {
     let endpoint
 
     switch (type[1]) {
@@ -182,7 +180,7 @@ async function loadFrom(query) {
         break
       }
       default: {
-        resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] })
+        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] })
       }
     }
 
@@ -191,7 +189,7 @@ async function loadFrom(query) {
     let data = await utils.nodelink_makeRequest(`https://api.spotify.com/v1${endpoint}`, {
       method: 'GET',
       headers: {
-        Authorization: `Bearer ${playerInfo.spotifyToken}`
+        Authorization: `Bearer ${playerInfo.accessToken}`
       }
     })
 
@@ -202,16 +200,16 @@ async function loadFrom(query) {
         data = await utils.nodelink_makeRequest(`https://api.spotify.com/v1${endpoint}`, {
           method: 'GET',
           headers: {
-            Authorization: `Bearer ${playerInfo.spotifyToken}`
+            Authorization: `Bearer ${playerInfo.accessToken}`
           }
         })
       }
 
       if (data.error.status == 400) 
-        resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
     
       if (data.error)
-        resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+        return resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
     }
 
     switch (type[1]) {
@@ -219,7 +217,7 @@ async function loadFrom(query) {
         const search = await searchWithDefault(`"${data.name} ${data.artists[0].name}"`)
 
         if (search.loadType == 'LOAD_FAILED')
-          resolve(search)
+          return resolve(search)
 
         const infoObj = {
           identifier: search.tracks[0].info.identifier,
@@ -251,7 +249,7 @@ async function loadFrom(query) {
         const search = await searchWithDefault(`"${data.name} ${data.publisher}"`)
 
         if (search.loadType == 'LOAD_FAILED')
-          resolve(search)
+          return resolve(search)
 
         const infoObj = {
           identifier: search.tracks[0].info.identifier,
@@ -289,7 +287,7 @@ async function loadFrom(query) {
           else search = await searchWithDefault(`"${track.name} ${track.artists[0].name}"`)
 
           if (search.loadType == 'LOAD_FAILED')
-            resolve(search)
+            return resolve(search)
 
           const infoObj = {
             identifier: search.tracks[0].info.identifier,
@@ -332,7 +330,7 @@ async function loadFrom(query) {
           const search = await searchWithDefault(`"${episode.name} ${episode.publisher}"`)
 
           if (search.loadType == 'LOAD_FAILED')
-            resolve(search)
+            return resolve(search)
 
           const infoObj = {
             identifier: search.tracks[0].info.identifier,

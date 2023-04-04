@@ -58,7 +58,7 @@ function nodelink_http1makeRequest(url, options) {
       res.on('end', () => resolve(JSON.parse(data.toString())))
 
       res.on('error', (error) => {
-        throw new Error(`Failed sending HTTP request: ${error}`)
+        console.log(`[NodeLink]: Failed sending HTTP request: ${error}`)
       })
     }).end()
   })
@@ -115,14 +115,13 @@ function nodelink_makeRequest(url, options) {
       })
 
       req.on('error', (error) => {
-        console.log(error, url)
-        throw new Error(`Failed sending HTTP request: ${error}`)
+        console.log(`[NodeLink]: Failed sending HTTP request: ${error}`)
       })
     })
 
     if (options.body) {
       zlib.gzip(JSON.stringify(options.body), (error, data) => {
-        if (error) throw new Error(`Failed sending HTTP request: ${error}`)
+        if (error) throw new Error(`[NodeLink]: Failed gziping body: ${error}`)
         req.write(data, () => req.end())
       })
     }
@@ -174,9 +173,6 @@ class EncodeClass {
         const start = this.changeBytes(len)
         this.buffer.write(value, start, len, 'utf8')
         break
-      }
-      default: {
-        throw new Error(`Unknown type ${type}, please report that.`)
       }
     }
   }

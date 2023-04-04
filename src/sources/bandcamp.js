@@ -1,8 +1,6 @@
 import config from '../../config.js'
 import utils from '../utils.js'
 
-import fs from 'fs'
-
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
     console.log(`[NodeLink]: Loading track from BandCamp: ${url}`)
@@ -12,7 +10,7 @@ async function loadFrom(url) {
     let matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
     if (!matches.length)
-      resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+      return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
 
     const information = JSON.parse(matches[1])
     const identifier = url.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
@@ -120,10 +118,10 @@ async function retrieveStream(uri) {
     if (!streamURL) {
       console.log(`[NodeLink]: Failed to load track: No stream URL found.`)
 
-      reject()
+      return resolve({ status: 1, exception: { severity: 'UNCOMMON', message: 'Failed to retrieve stream url from deezer.' } })
     }
 
-    resolve(streamURL[0])
+    resolve({ status:0 , url: streamURL[0] })
   })
 }
 

@@ -65,7 +65,7 @@ async function loadFrom(url) {
             info: infoObj
           })
 
-          if (index == data.tracks.length - 1) {
+          if (index == data.tracks.length - 1)
             resolve({
               loadType: 'PLAYLIST_LOADED',
               playlistInfo: {
@@ -75,7 +75,6 @@ async function loadFrom(url) {
               tracks,
               exception: null
             })
-          }
         })
 
         break
@@ -143,14 +142,14 @@ async function retrieveStream(identifier) {
     if (data.errors) {
       console.log(`[NodeLink]: Failed to load track: ${data.errors[0].error_message}`)
 
-      reject()
+      return resolve({ status: 1, exception: { severity: 'UNKNOWN', message: data.errors[0].error_message } })
     }
 
     data.media.transcodings.forEach(async (transcoding) => {
       if (transcoding.format.protocol == 'progressive') {
         const stream = await utils.nodelink_http1makeRequest(transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
-        resolve(stream.url)
+        resolve({ status: 0, url: stream.url })
       }
     })
   })

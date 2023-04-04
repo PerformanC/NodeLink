@@ -300,7 +300,7 @@ async function retrieveStream(identifier) {
     if (videos.playabilityStatus.status != 'OK') {
       console.log('[NodeLink]: The track is not playable, this is not a NodeLink issue.')
 
-      return null
+      return resolve({ status: 1, exception: { severity: 'COMMON', message: 'This video is marked as not playable.' } })
     }
 
     const audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
@@ -318,7 +318,7 @@ async function retrieveStream(identifier) {
       console.log('[NodeLink]: Started playing track with no cipher signature')
     }
 
-    resolve(url)
+    resolve({ status: 0, url })
   })
 }
 

@@ -14,7 +14,7 @@ async function getTrackURL(track) {
     switch (track.sourceName) {
       case 'local':
       case 'http': {
-        resolve(track.uri)
+        resolve({ status: 0, url: track.uri })
         
         break
       }
@@ -31,6 +31,11 @@ async function getTrackURL(track) {
       case 'youtube': {
         resolve(youtube.retrieveStream(track.identifier))
   
+        break
+      }
+      default: {
+        resolve({ status: 1, exception: { severity: 'COMMON', message: 'Unknown source' } })
+
         break
       }
     }

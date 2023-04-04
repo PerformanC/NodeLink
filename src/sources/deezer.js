@@ -1,9 +1,8 @@
 import utils from '../utils.js'
 import searchWithDefault from './default.js'
 
-async function loadFrom(query) {
+async function loadFrom(query, track) {
   return new Promise(async (resolve) => {
-    const track = /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.exec(query)
     let endpoint
 
     switch (track[1]) {
@@ -17,7 +16,7 @@ async function loadFrom(query) {
         endpoint = `album/${track[2]}`
         break
       default:
-        resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] })
+        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] })
     }
 
     console.log(`[NodeLink]: Loading track from Deezer: ${endpoint}`)
@@ -26,9 +25,9 @@ async function loadFrom(query) {
 
     if (data.error) {
       if (data.error.status == 400) 
-        resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
 
-      resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+      return resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
     }
 
     switch (track[1]) {
@@ -36,7 +35,7 @@ async function loadFrom(query) {
         const search = await searchWithDefault(`"${data.title} ${data.artist.name}"`)
 
         if (search.loadType == 'LOAD_FAILED')
-          resolve(search)
+          return resolve(search)
 
         const infoObj = {
           identifier: search.tracks[0].info.identifier,
@@ -72,7 +71,7 @@ async function loadFrom(query) {
           const search = await searchWithDefault(`"${track.title} ${track.artist.name}"`)
 
           if (search.loadType == 'LOAD_FAILED')
-            resolve(search)
+            return resolve(search)
 
           const infoObj = {
             identifier: search.tracks[0].info.identifier,

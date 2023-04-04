@@ -225,9 +225,9 @@ class VoiceConnection {
 
     this.config.track = { encoded: track, info: encodedTrack }
   
-    const url = await sources.getTrackURL(encodedTrack)
+    const urlInfo = await sources.getTrackURL(encodedTrack)
 
-    if (!url) {
+    if (urlInfo.status == 1) {
       this.config.track = null
   
       this.client.ws.send(JSON.stringify({
@@ -235,11 +235,7 @@ class VoiceConnection {
         type: 'TrackExceptionEvent',
         guildId: this.config.guildId,
         track: encodedTrack,
-        exception: {
-          message: 'No playable sources found, this shouldn\'t happen, did you create the encodedTrack manually?',
-          severity: 'UNCOMMON',
-          cause: 'URI was not found'
-        }
+        exception: urlInfo.exception
       }))
   
       return this.config
@@ -264,7 +260,7 @@ class VoiceConnection {
 
     console.log(`[NodeLink]: Playing "${encodedTrack.title}", from ${encodedTrack.sourceName}.`)
 
-    const resource = djsVoice.createAudioResource(url, { inputType: encodedTrack.sourceName == 'youtube' ? djsVoice.StreamType.WebmOpus : djsVoice.StreamType.Arbitrary, inlineVolume: true })
+    const resource = djsVoice.createAudioResource(urlInfo.url, { inputType: encodedTrack.sourceName == 'youtube' ? djsVoice.StreamType.WebmOpus : djsVoice.StreamType.Arbitrary, inlineVolume: true })
     resource.volume.setVolume(this.config.volume / 100)
 
     this.connection.subscribe(this.player)
@@ -545,11 +541,13 @@ async function nodelink_requestHandler(req, res) {
       search = await sources.youtube.search(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.youtube.checkURLType(identifier))
 
     const spSearch = config.search.sources.spotify ? identifier.startsWith('spsearch:') : null
-    if (config.search.sources.youtube && config.search.sources.spotify && (spSearch || /(?:https:\/\/open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.test(identifier)))
-       search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier)
+    const spRegex = config.search.sources.youtube && config.search.sources.spotify && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
+    if (config.search.sources.youtube && config.search.sources.spotify && (spSearch || spRegex))
+       search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
 
-    if (config.search.sources.youtube && config.search.sources.deezer && /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.test(identifier))
-      search = await sources.loadFromDeezer(identifier)
+    const dzRegex = config.search.sources.youtube && config.search.sources.deezer ? /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.exec(identifier) : null
+    if (config.search.sources.youtube && config.search.sources.deezer && dzRegex)
+      search = await sources.deezer.loadFrom(identifier, deezerRegex)
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
     if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier)))
