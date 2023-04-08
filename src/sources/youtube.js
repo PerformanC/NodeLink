@@ -71,15 +71,7 @@ async function search(query, type) {
         if (search.error) {
           console.log(`[NodeLink]: Failed to search for "${query}": ${search.error.message}`)
 
-          return resolve({
-            loadType: 'LOAD_FAILED',
-            playlistInfo: null,
-            tracks: [],
-            exception: {
-              severity: 'COMMON',
-              message: search.error.message
-            }
-          })
+          return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'COMMON', cause: 'unknown' } })
         }
       
         let tracks = []
@@ -113,14 +105,15 @@ async function search(query, type) {
           }
         })
 
-        if (tracks.length == 0)
+        if (tracks.length == 0) {
           console.log(`[NodeLink]: No matches found for "${identifier}".`)
 
+          return resolve({ loadType: 'empty', data: {} })
+        }
+
         return resolve({
-          loadType: tracks.length == 0 ? 'NO_MATCHES' : 'SEARCH_RESULT',
-          playlistInfo: null,
-          tracks,
-          exception: null
+          loadType: 'search',
+          data: tracks
         })
       }
       case 2: {
@@ -135,15 +128,7 @@ async function search(query, type) {
         if (video.playabilityStatus.status == 'ERROR') {
           console.log(`[NodeLink]: Failed to load track: ${video.playabilityStatus.reason}`)
           
-          return resolve({
-            loadType: 'LOAD_FAILED',
-            playlistInfo: null,
-            tracks: [],
-            exception: {
-              severity: 'COMMON',
-              message: video.playabilityStatus.reason
-            }
-          })
+          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
 
         const infoObj = {
@@ -161,13 +146,12 @@ async function search(query, type) {
         }
 
         return resolve({
-          loadType: 'TRACK_LOADED',
-          playlistInfo: null,
-          tracks: [{
+          loadType: 'track',
+          data: {
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          }],
-          exception: null
+            info: infoObj,
+            pluginInfo: {}
+          }
         })
       }
       case 3: {
@@ -183,12 +167,11 @@ async function search(query, type) {
           console.log(`[NodeLink]: Failed to load playlist.`)
         
           return resolve({
-            loadType: 'LOAD_FAILED',
-            playlistInfo: null,
-            tracks: [],
-            exception: {
+            loadType: 'error',
+            data: {
               severity: 'COMMON',
-              message: 'Failed to load playlist.'
+              message: 'Failed to load playlist.',
+              cause: 'unknown'
             }
           })
         }
@@ -216,19 +199,22 @@ async function search(query, type) {
 
             tracks.push({
               encoded: utils.nodelink_encodeTrack(infoObj),
-              info: infoObj
+              info: infoObj,
+              pluginInfo: {}
             })
           }
         })
 
         return resolve({
-          loadType: 'PLAYLIST_LOADED',
-          playlistInfo: {
-            name: playlist.contents.twoColumnWatchNextResults.playlist.playlist.title,
-            selectedTrack: 0
-          },
-          tracks,
-          exception: null
+          loadType: 'playlist',
+          data: {
+            info: {
+              name: playlist.contents.twoColumnWatchNextResults.playlist.playlist.title,
+              selectedTrack: 0
+            },
+            pluginInfo: {},
+            tracks
+          }
         })
       }
       case 4: {
@@ -243,15 +229,7 @@ async function search(query, type) {
         if (short.playabilityStatus.status == 'ERROR') {
           console.log(`[NodeLink]: Failed to load track: ${short.playabilityStatus.reason}`)
 
-          return resolve({
-            loadType: 'LOAD_FAILED',
-            playlistInfo: null,
-            tracks: [],
-            exception: {
-              severity: 'COMMON',
-              message: short.playabilityStatus.reason
-            }
-          })
+          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
 
         const infoObj = {
@@ -270,12 +248,11 @@ async function search(query, type) {
 
         return resolve({
           loadType: 'SHORT_LOADED',
-          playlistInfo: null,
-          tracks: [{
+          data: {
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          }],
-          exception: null
+            info: infoObj,
+            pluginInfo: {}
+          }
         })
       }
     }
@@ -300,7 +277,7 @@ async function retrieveStream(identifier) {
     if (videos.playabilityStatus.status != 'OK') {
       console.log('[NodeLink]: The track is not playable, this is not a NodeLink issue.')
 
-      return resolve({ status: 1, exception: { severity: 'COMMON', message: 'This video is marked as not playable.' } })
+      return resolve({ status: 1, exception: { severity: 'COMMON', message: 'This video is marked as not playable.', cause: 'unknown' } })
     }
 
     const audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]

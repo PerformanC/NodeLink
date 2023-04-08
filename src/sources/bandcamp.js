@@ -10,7 +10,7 @@ async function loadFrom(url) {
     let matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
     if (!matches.length)
-      return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+      return resolve({ loadType: 'empty', data: {} })
 
     const information = JSON.parse(matches[1])
     const identifier = url.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
@@ -30,13 +30,12 @@ async function loadFrom(url) {
     }
 
     resolve({
-      loadType: 'TRACK_LOADED',
-      playlistInfo: null,
-      tracks: [{
+      loadType: 'track',
+      data: {
         encoded: utils.nodelink_encodeTrack(infoObj),
-        info: infoObj
-      }],
-      exception: null
+        info: infoObj,
+        pluginInfo: {}
+      }
     })
   })
 }
@@ -75,7 +74,7 @@ async function search(query) {
     }
 
     if (!tracks.length)
-      return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+      return resolve({ loadType: 'empty', data: {} })
 
     const authors = data.match(/<div class="subhead">\s+by\s+(.*?)\s+<\/div>/gs)
 
@@ -98,13 +97,12 @@ async function search(query) {
       tracks[i].info.identifier = `${identifier[1]}:${identifier[2]}`
 
       tracks[i].encoded = utils.nodelink_encodeTrack(tracks[i].info)
+      tracks[i].pluginInfo = {}
     }
 
     resolve({
-      loadType: 'SEARCH_RESULT',
-      playlistInfo: null,
-      tracks,
-      exception: null
+      loadType: 'search',
+      data: tracks
     })
   })
 }
@@ -118,7 +116,7 @@ async function retrieveStream(uri) {
     if (!streamURL) {
       console.log(`[NodeLink]: Failed to load track: No stream URL found.`)
 
-      return resolve({ status: 1, exception: { severity: 'UNCOMMON', message: 'Failed to retrieve stream url from deezer.' } })
+      return resolve({ status: 1, exception: { severity: 'UNCOMMON', message: 'Failed to retrieve stream url from deezer.', cause: 'unknown' } })
     }
 
     resolve({ status:0 , url: streamURL[0] })

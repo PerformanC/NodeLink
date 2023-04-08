@@ -6,7 +6,7 @@ async function loadFrom(path) {
   return new Promise(async (resolve) => {
     fs.open(path, (err) => {
       if (err)
-        return resolve({ loadType: 'LOAD_FAILED', exception: { severity: 'COMMON', message: 'File not found' } })
+        return resolve({ loadType: 'error', exception: { message: 'File not found', severity: 'COMMON', cause: 'unknown' } })
     
       const infoObj = {
         identifier: 'unknown',
@@ -23,13 +23,12 @@ async function loadFrom(path) {
       }
 
       resolve({
-        loadType: 'TRACK_LOADED',
-        playlistInfo: null,
-        tracks: [{
+        loadType: 'track',
+        data: {
           encoded: utils.nodelink_encodeTrack(infoObj),
-          info: infoObj
-        }],
-        exception: null
+          info: infoObj,
+          pluginInfo: {}
+        }
       })
     })
   })

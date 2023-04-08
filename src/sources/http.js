@@ -14,13 +14,12 @@ async function loadFrom(uri) {
   }
 
   return {
-    loadType: 'TRACK_LOADED',
-    playlistInfo: null,
-    tracks: [{
+    loadType: 'track',
+    data: {
       encoded: utils.nodelink_encodeTrack(infoObj),
-      info: infoObj
-    }],
-    exception: null
+      info: infoObj,
+      pluginInfo: {}
+    }
   }
 }
 

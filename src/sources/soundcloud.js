@@ -9,9 +9,9 @@ async function loadFrom(url) {
 
     if (data.error) {
       if (data.error.status == 400) 
-        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+        return resolve({ loadType: 'empty', data: {} })
 
-      return resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+      return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
     switch (data.kind) {
@@ -31,13 +31,12 @@ async function loadFrom(url) {
         }
 
         resolve({
-          loadType: 'TRACK_LOADED',
-          playlistInfo: null,
-          tracks: [{
+          loadType: 'track',
+          data: {
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          }],
-          exception: null
+            info: infoObj,
+            playlistInfo: {}
+          }
         })
 
         break
@@ -62,18 +61,21 @@ async function loadFrom(url) {
 
           tracks.push({
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
+            info: infoObj,
+            playlistInfo: {}
           })
 
           if (index == data.tracks.length - 1)
             resolve({
-              loadType: 'PLAYLIST_LOADED',
-              playlistInfo: {
-                name: data.title,
-                selectedTrack: 0,
-              },
-              tracks,
-              exception: null
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: data.title,
+                  selectedTrack: 0,
+                },
+                pluginInfo: {},
+                tracks,
+              }
             })
         })
 
@@ -93,9 +95,9 @@ async function search(query) {
     
     if (data.error) {
       if (data.error.status == 400) 
-        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+        return resolve({ loadType: 'empty', data: {} })
 
-      return resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+      return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
     const tracks = []
@@ -119,16 +121,15 @@ async function search(query) {
 
         tracks.push({
           encoded: utils.nodelink_encodeTrack(infoObj),
-          info: infoObj
+          info: infoObj,
+          pluginInfo: {}
         })
       }
 
       if (index == data.collection.length - 1) {
         resolve({
-          loadType: 'SEARCH_RESULT',
-          playlistInfo: null,
-          tracks,
-          exception: null
+          loadType: 'search',
+          data: tracks
         })
       }
     })
@@ -142,7 +143,7 @@ async function retrieveStream(identifier) {
     if (data.errors) {
       console.log(`[NodeLink]: Failed to load track: ${data.errors[0].error_message}`)
 
-      return resolve({ status: 1, exception: { severity: 'UNKNOWN', message: data.errors[0].error_message } })
+      return resolve({ status: 1, exception: { message: data.errors[0].error_message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
     data.media.transcodings.forEach(async (transcoding) => {

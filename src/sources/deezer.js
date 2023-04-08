@@ -16,7 +16,7 @@ async function loadFrom(query, track) {
         endpoint = `album/${track[2]}`
         break
       default:
-        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] })
+        return resolve({ loadType: 'empty', data: {} })
     }
 
     console.log(`[NodeLink]: Loading track from Deezer: ${endpoint}`)
@@ -25,16 +25,16 @@ async function loadFrom(query, track) {
 
     if (data.error) {
       if (data.error.status == 400) 
-        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+        return resolve({ loadType: 'empty', data: {} })
 
-      return resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+      return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
     switch (track[1]) {
       case 'track': {
         const search = await searchWithDefault(`"${data.title} ${data.artist.name}"`)
 
-        if (search.loadType == 'LOAD_FAILED')
+        if (search.loadType == 'error')
           return resolve(search)
 
         const infoObj = {
@@ -52,13 +52,12 @@ async function loadFrom(query, track) {
         }
 
         resolve({
-          loadType: 'TRACK_LOADED',
-          playlistInfo: null,
-          tracks: [{
+          loadType: 'track',
+          data: {
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          }],
-          exception: null
+            info: infoObj,
+            pluginInfo: {}
+          }
         })
 
         break
@@ -70,7 +69,7 @@ async function loadFrom(query, track) {
         data.tracks.data.forEach(async (track, index) => {
           const search = await searchWithDefault(`"${track.title} ${track.artist.name}"`)
 
-          if (search.loadType == 'LOAD_FAILED')
+          if (search.loadType == 'error')
             return resolve(search)
 
           const infoObj = {
@@ -89,18 +88,21 @@ async function loadFrom(query, track) {
 
           tracks.push({
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
+            info: infoObj,
+            pluginInfo: {}
           })
 
           if (index == data.tracks.data.length) 
             resolve({
-              loadType: 'PLAYLIST_LOADED',
-              playlistInfo: {
-                name: data.title,
-                selectedTrack: 0,
-              },
-              tracks,
-              exception: null
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: data.title,
+                  selectedTrack: 0
+                },
+                pluginInfo: {},
+                tracks
+              }
             })
         })
 

@@ -107,7 +107,7 @@ async function search(query) {
         data = JSON.parse(data)
 
         if (data.data.searchV2.tracksV2.totalCount == 0)
-          return resolve({ loadType: 'NO_MATCHES', playlistInfo: null, tracks: [], exception: null })
+          return resolve({ loadType: 'empty', data: {} })
           
         let tracks = []
         let i = 0
@@ -118,7 +118,7 @@ async function search(query) {
 
             const search = await searchWithDefault(`${track.name} ${track.artists.items[0].profile.name}`)
 
-            if (search.loadType == 'NO_MATCHES')
+            if (search.loadType == 'empty')
               return resolve(search)
 
             const infoObj = {
@@ -137,16 +137,15 @@ async function search(query) {
 
             tracks.push({
               encoded: utils.nodelink_encodeTrack(infoObj),
-              info: infoObj
+              info: infoObj,
+              pluginInfo: {}
             })
           }
 
           if (index == data.data.searchV2.tracksV2.items.length - 1)
             resolve({
-              loadType: 'SEARCH_RESULT',
-              playlistInfo: null,
-              tracks,
-              exception: null
+              loadType: 'search',
+              data: tracks
             })
         })
       })
@@ -180,7 +179,7 @@ async function loadFrom(query, type) {
         break
       }
       default: {
-        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [] })
+        return resolve({ loadType: 'empty', data: {} })
       }
     }
 
@@ -206,17 +205,17 @@ async function loadFrom(query, type) {
       }
 
       if (data.error.status == 400) 
-        return resolve({ loadType: 'NO_MATCHES', playlistInfo: {}, tracks: [], exception: null })
+        return resolve({ loadType: 'empty', data: {} })
     
       if (data.error)
-        return resolve({ loadType: 'LOAD_FAILED', playlistInfo: {}, tracks: [], exception: { message: data.error.message, severity: 'UNKNOWN' } })
+        return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
     switch (type[1]) {
       case 'track': {
         const search = await searchWithDefault(`"${data.name} ${data.artists[0].name}"`)
 
-        if (search.loadType == 'LOAD_FAILED')
+        if (search.loadType == 'error')
           return resolve(search)
 
         const infoObj = {
@@ -234,13 +233,12 @@ async function loadFrom(query, type) {
         }
 
         resolve({
-          loadType: 'TRACK_LOADED',
-          playlistInfo: null,
-          tracks: [{
+          loadType: 'track',
+          data: {
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          }],
-          exception: null
+            info: infoObj,
+            pluginInfo: {}
+          }
         })
 
         break
@@ -248,7 +246,7 @@ async function loadFrom(query, type) {
       case 'episode': {
         const search = await searchWithDefault(`"${data.name} ${data.publisher}"`)
 
-        if (search.loadType == 'LOAD_FAILED')
+        if (search.loadType == 'error')
           return resolve(search)
 
         const infoObj = {
@@ -266,13 +264,12 @@ async function loadFrom(query, type) {
         }
 
         resolve({
-          loadType: 'TRACK_LOADED',
-          playlistInfo: null,
-          tracks: [{
+          loadType: 'track',
+          data: {
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
-          }],
-          exception: null
+            info: infoObj,
+            pluginInfo: {}
+          }
         })
 
         break
@@ -286,7 +283,7 @@ async function loadFrom(query, type) {
           if (type[1] == 'playlist') search = await searchWithDefault(`"${track.track.name} ${track.track.artists[0].name}"`)
           else search = await searchWithDefault(`"${track.name} ${track.artists[0].name}"`)
 
-          if (search.loadType == 'LOAD_FAILED')
+          if (search.loadType == 'error')
             return resolve(search)
 
           const infoObj = {
@@ -305,18 +302,21 @@ async function loadFrom(query, type) {
 
           tracks.push({
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
+            info: infoObj,
+            pluginInfo: {}
           })
 
           if (index == data.tracks.items.length - 1) {
             resolve({
-              loadType: 'PLAYLIST_LOADED',
-              playlistInfo: {
-                name: type[1] == 'playlist' ? data.name : data.name,
-                selectedTrack: 0,
-              },
-              tracks,
-              exception: null
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: data.name,
+                  selectedTrack: 0
+                },
+                pluginInfo: {},
+                tracks
+              }
             })
           }
         })
@@ -329,7 +329,7 @@ async function loadFrom(query, type) {
         data.episodes.items.forEach(async (episode, index) => {
           const search = await searchWithDefault(`"${episode.name} ${episode.publisher}"`)
 
-          if (search.loadType == 'LOAD_FAILED')
+          if (search.loadType == 'error')
             return resolve(search)
 
           const infoObj = {
@@ -348,18 +348,21 @@ async function loadFrom(query, type) {
 
           tracks.push({
             encoded: utils.nodelink_encodeTrack(infoObj),
-            info: infoObj
+            info: infoObj,
+            pluginInfo: {}
           })
 
           if (index == data.episodes.items.length - 1) {
             resolve({
-              loadType: 'PLAYLIST_LOADED',
-              playlistInfo: {
-                name: data.name,
-                selectedTrack: 0,
-              },
-              tracks,
-              exception: null
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: data.name,
+                  selectedTrack: 0
+                },
+                pluginInfo: {},
+                tracks
+              }
             })
           }
         })

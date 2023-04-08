@@ -11,10 +11,7 @@ import * as djsVoice from '@discordjs/voice'
 const adapters = new Map()
 const clients = new Map()
 
-let nodelinkStats = {
-  players: 0,
-  playingPlayers: 0
-}
+let nodelinkPlayersCount = 0, nodelinkPlayingPlayersCount = 0
 
 function nodelink_voiceAdapterCreator(userId, guildId) {
   return (methods) => {
@@ -63,7 +60,7 @@ class VoiceConnection {
   }
 
   _stopTrack() {
-    nodelinkStats.playingPlayers--
+    nodelinkPlayingPlayersCount--
               
     clearInterval(this.stateInterval)
 
@@ -77,7 +74,7 @@ class VoiceConnection {
   }
   
   setup() {
-    nodelinkStats.players++
+    nodelinkPlayersCount++
   
     this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: nodelink_voiceAdapterCreator(this.client.userId, this.config.guildId) })
     this.player = djsVoice.createAudioPlayer()
@@ -146,13 +143,13 @@ class VoiceConnection {
           type: 'TrackEndEvent',
           guildId: this.config.guildId,
           track: this.config.track,
-          reason: 'FINISHED'
+          reason: 'finished'
         }))
 
         this._stopTrack()
       }
       if (newState.status == djsVoice.AudioPlayerStatus.Playing && oldState.status != djsVoice.AudioPlayerStatus.Paused && oldState.status != djsVoice.AudioPlayerStatus.AutoPaused) {
-        nodelinkStats.playingPlayers++
+        nodelinkPlayingPlayersCount++
           
         this.stateInterval = setInterval(() => {
           this.config.state = {
@@ -247,7 +244,7 @@ class VoiceConnection {
         type: 'TrackEndEvent',
         guildId: this.config.guildId,
         track: oldTrack,
-        reason: 'REPLACED'
+        reason: 'replaced'
       }))
 
       this.client.ws.send(JSON.stringify({
@@ -295,7 +292,7 @@ class VoiceConnection {
       type: 'TrackEndEvent',
       guildId: this.config.guildId,
       track: this.config.track,
-      reason: 'STOPPED'
+      reason: 'stopped'
     }))
 
     this._stopTrack()
@@ -327,8 +324,8 @@ function nodelink_setupConnection(ws, req) {
    
     ws.send(JSON.stringify({
       op: 'stats',
-      players: nodelinkStats.playingPlayers,
-      playingPlayers: nodelinkStats.playingPlayers,
+      players: nodelinkPlayingPlayersCount,
+      playingPlayers: nodelinkPlayingPlayersCount,
       uptime: Math.floor(process.uptime() * 1000),
       memory: {
         free: process.memoryUsage().heapTotal - process.memoryUsage().heapUsed,
@@ -509,8 +506,8 @@ async function nodelink_requestHandler(req, res) {
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
-      players: nodelinkStats.players,
-      playingPlayers: nodelinkStats.playingPlayers,
+      players: nodelinkPlayersCount,
+      playingPlayers: nodelinkPlayingPlayersCount,
       uptime: Math.floor(process.uptime() * 1000),
       memory: {
         free: process.memoryUsage().heapTotal - process.memoryUsage().heapUsed,
@@ -564,7 +561,7 @@ async function nodelink_requestHandler(req, res) {
       search = await sources.local.loadFrom(identifier.replace('local:', ''))
 
     if (!search)
-      search = { loadType: 'NO_MATCHES', playlistInfo: null, tracks: [], exception: NULL }
+      search = { loadType: 'empty', playlistInfo: null, tracks: [], exception: NULL }
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(search))
