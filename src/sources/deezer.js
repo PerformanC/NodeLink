@@ -19,7 +19,7 @@ async function loadFrom(query, track) {
         return resolve({ loadType: 'empty', data: {} })
     }
 
-    console.log(`[NodeLink]: Loading track from Deezer: ${endpoint}`)
+    console.log(`[NodeLink]: Loading ${track[1]} from Deezer: ${query}`)
 
     const data = await utils.nodelink_makeRequest(`https://api.deezer.com/${endpoint}`, { method: 'GET' })
 

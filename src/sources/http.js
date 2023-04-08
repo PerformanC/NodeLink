@@ -1,4 +1,6 @@
 async function loadFrom(uri) {
+  console.log(`[NodeLink]: Loading track from HTTP: ${uri}`)
+
   const infoObj = {
     identifier: 'unknown',
     isSeekable: false,

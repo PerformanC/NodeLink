@@ -529,8 +529,6 @@ async function nodelink_requestHandler(req, res) {
 
     let identifier = new URLSearchParams(parsedUrl.query).get('identifier')
 
-    console.log(`[NodeLink]: Loading track for identifier "${identifier}"`)
-
     let search
 
     const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
@@ -560,8 +558,11 @@ async function nodelink_requestHandler(req, res) {
     if (config.search.sources.local && identifier.startsWith('local:'))
       search = await sources.local.loadFrom(identifier.replace('local:', ''))
 
-    if (!search)
+    if (!search) {
+      console.log('[NodeLink]: No possible search source found.')
+
       search = { loadType: 'empty', playlistInfo: null, tracks: [], exception: NULL }
+    }
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(search))

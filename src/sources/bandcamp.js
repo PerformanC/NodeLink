@@ -42,7 +42,7 @@ async function loadFrom(url) {
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Searching track from BandCamp: ${query}`)
+    console.log(`[NodeLink]: Searching track on BandCamp: ${query}`)
 
     const data = await utils.nodelink_makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 

@@ -4,6 +4,8 @@ import utils from '../utils.js'
 
 async function loadFrom(path) {
   return new Promise(async (resolve) => {
+    console.log(`[NodeLink]: Loading track from local: ${path}`)
+
     fs.open(path, (err) => {
       if (err)
         return resolve({ loadType: 'error', exception: { message: 'File not found', severity: 'COMMON', cause: 'unknown' } })

@@ -60,6 +60,8 @@ async function search(query, type) {
   return new Promise(async (resolve) => {
     switch (type) {
       case 1: {
+        console.log(`[NodeLink]: Searching track on YouTube: ${query}`)
+
         const search = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/search', {
           method: 'POST',
           body: {
@@ -117,6 +119,8 @@ async function search(query, type) {
         })
       }
       case 2: {
+        console.log(`[NodeLink]: Loading track from YouTube: ${query}`)
+
         const video = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
           body: {
@@ -155,6 +159,8 @@ async function search(query, type) {
         })
       }
       case 3: {
+        console.log(`[NodeLink]: Loading playlist from YouTube: ${query}`)
+
         const playlist = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
           body: {
@@ -218,6 +224,8 @@ async function search(query, type) {
         })
       }
       case 4: {
+        console.log(`[NodeLink]: Loading track from YouTube Shorts: ${query}`)
+
         const short = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
           body: {

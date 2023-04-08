@@ -87,7 +87,7 @@ async function loadFrom(url) {
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Loading track from SoundCloud: ${query}`)
+    console.log(`[NodeLink]: Searching track on SoundCloud: ${query}`)
 
     const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
       method: 'GET'
