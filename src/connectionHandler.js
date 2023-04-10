@@ -85,8 +85,8 @@ class VoiceConnection {
           if (oldState.status == djsVoice.VoiceConnectionStatus.Disconnected) return;
   
           try {
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Signalling, config.options.threshold)
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold)
+            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Signalling, config.options.threshold || -1)
+            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold || -1)
           } catch (e) {
             this._stopTrack()
   
@@ -118,7 +118,7 @@ class VoiceConnection {
             this.connection.configureNetworking()
 
           try {
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.options.threshold)
+            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.options.threshold || -1)
           } catch {
             this._stopTrack()
   
@@ -151,7 +151,7 @@ class VoiceConnection {
       if (newState.status == djsVoice.AudioPlayerStatus.Playing && oldState.status != djsVoice.AudioPlayerStatus.Paused && oldState.status != djsVoice.AudioPlayerStatus.AutoPaused) {
         nodelinkPlayingPlayersCount++
           
-        this.stateInterval = setInterval(() => {
+        if (config.options.playerUpdateInterval) this.stateInterval = setInterval(() => {
           this.config.state = {
             time: Date.now(),
             position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? this.player.state.resource.playbackDuration : 0,
@@ -257,7 +257,7 @@ class VoiceConnection {
     this.player.play(resource)
       
     try {
-      await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
+      await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold || -1)
     
       if (oldTrack) {
         this.client.ws.send(JSON.stringify({
@@ -319,7 +319,7 @@ class VoiceConnection {
 function nodelink_setupConnection(ws, req) {
   let sessionId
 
-  setInterval(() => {
+  if (config.options.statsInterval) setInterval(() => {
     if (ws.readyState != 1) return;
    
     ws.send(JSON.stringify({

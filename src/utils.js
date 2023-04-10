@@ -1,8 +1,9 @@
 import https from 'https'
-
 import http2 from 'http2'
 import { URL } from 'url'
 import zlib from 'zlib'
+import cp from 'child_process'
+
 import config from '../config.js'
 
 function nodelink_generateSessionId() {
@@ -328,4 +329,28 @@ async function nodelink_sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export default { nodelink_generateSessionId, nodelink_http1makeRequest, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack, nodelink_forEach, nodelink_sleep }
+async function checkForUpdates() {
+  const version = `v${config.version}`
+
+  const data = await nodelink_makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
+
+  if (data.message) {
+    console.log(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
+
+    return;
+  }
+
+  if (data.name != version) {
+    console.log(`[NodeLink] A new version of NodeLink is available! (${data.name})`)
+
+    if (config.options.autoUpdate[0]) {
+      console.log(`[NodeLink] Updating NodeLink, downloading ${config.options.autoUpdate[2]}...`)
+      await nodelink_makeRequest(config.options.autoUpdate[2] == 'zip' ? data.zipball_url : data.tarball_url, { method: 'GET '})
+      cp.exec(config.options.autoUpdate[2] == 'zip' ? 'unzip PerformanC-Nodelink*.zip' : 'tar -xvf PerformanC-Nodelink*.tar.gz')
+      cp.exec('rm -rf PerformanC-Nodelink*.zip PerformanC-Nodelink*.tar.gz')
+      console.log('[NodeLink] Nodelink has been updated, please restart NodeLink to apply the changes.')
+    }
+  }
+}
+
+export default { nodelink_generateSessionId, nodelink_http1makeRequest, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack, nodelink_forEach, nodelink_sleep, checkForUpdates }
