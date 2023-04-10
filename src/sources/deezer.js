@@ -21,7 +21,7 @@ async function loadFrom(query, track) {
 
     console.log(`[NodeLink:sources]: Loading ${track[1]} from Deezer: ${query}`)
 
-    const data = await utils.nodelink_makeRequest(`https://api.deezer.com/${endpoint}`, { method: 'GET' })
+    const data = await utils.makeRequest(`https://api.deezer.com/${endpoint}`, { method: 'GET' })
 
     if (data.error) {
       if (data.error.code == 800) 
@@ -54,7 +54,7 @@ async function loadFrom(query, track) {
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           }
@@ -87,7 +87,7 @@ async function loadFrom(query, track) {
           }
 
           tracks.push({
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           })

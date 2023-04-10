@@ -13,7 +13,7 @@ const clients = new Map()
 
 let nodelinkPlayersCount = 0, nodelinkPlayingPlayersCount = 0
 
-function nodelink_voiceAdapterCreator(userId, guildId) {
+function voiceAdapterCreator(userId, guildId) {
   return (methods) => {
     adapters.set(`${userId}/${guildId}`, methods)
 
@@ -76,7 +76,7 @@ class VoiceConnection {
   setup() {
     nodelinkPlayersCount++
   
-    this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: nodelink_voiceAdapterCreator(this.client.userId, this.config.guildId) })
+    this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: voiceAdapterCreator(this.client.userId, this.config.guildId) })
     this.player = djsVoice.createAudioPlayer()
   
     this.connection.on('stateChange', async (oldState, newState) => {
@@ -216,7 +216,7 @@ class VoiceConnection {
   async play(track, noReplace) {
     if (noReplace && this.config.track) return;
 
-    const encodedTrack = utils.nodelink_decodeTrack(track)
+    const encodedTrack = utils.decodeTrack(track)
 
     const oldTrack = this.config.track
 
@@ -316,7 +316,7 @@ class VoiceConnection {
   }
 }
 
-function nodelink_setupConnection(ws, req) {
+function setupConnection(ws, req) {
   let sessionId
 
   if (config.options.statsInterval) setInterval(() => {
@@ -386,7 +386,7 @@ function nodelink_setupConnection(ws, req) {
     }
   }
 
-  sessionId = utils.nodelink_generateSessionId()
+  sessionId = utils.generateSessionId()
 
   console.log(`[NodeLink:websocket]: Connection established with websocket. (sessionId: ${sessionId})`)
 
@@ -399,7 +399,7 @@ function nodelink_setupConnection(ws, req) {
   }))
 }
 
-async function nodelink_requestHandler(req, res) {
+async function requestHandler(req, res) {
   const parsedUrl = parse(req.url)
 
   if (parsedUrl.pathname == '/v4/version') {
@@ -415,7 +415,7 @@ async function nodelink_requestHandler(req, res) {
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(utils.nodelink_decodeTrack(encodedTrack)))
+    res.end(JSON.stringify(utils.decodeTrack(encodedTrack)))
   }
 
   if (parsedUrl.pathname == '/v4/decodetracks') {
@@ -431,7 +431,7 @@ async function nodelink_requestHandler(req, res) {
 
       const tracks = []
 
-      buffer.forEach((encodedTrack) => tracks.push(utils.nodelink_decodeTrack(encodedTrack)))
+      buffer.forEach((encodedTrack) => tracks.push(utils.decodeTrack(encodedTrack)))
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(tracks))
@@ -462,7 +462,7 @@ async function nodelink_requestHandler(req, res) {
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify(utils.nodelink_encodeTrack(buffer)))
+      res.end(JSON.stringify(utils.encodeTrack(buffer)))
     })
   }
 
@@ -493,7 +493,7 @@ async function nodelink_requestHandler(req, res) {
 
           return;
         }
-        tracks.push(utils.nodelink_encodeTrack(track))
+        tracks.push(utils.encodeTrack(track))
       })
 
       res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -715,7 +715,7 @@ async function nodelink_requestHandler(req, res) {
   }
 }
 
-function nodelink_startSourceAPIs() {
+function startSourceAPIs() {
   if (clients.size != 0) return;
 
   if (config.search.sources.youtube || config.search.sources.youtubeMusic)
@@ -728,4 +728,4 @@ function nodelink_startSourceAPIs() {
     sources.pandora.setToken()
 }
 
-export default { nodelink_setupConnection, nodelink_requestHandler, nodelink_startSourceAPIs }
+export default { setupConnection, requestHandler, startSourceAPIs }

@@ -11,7 +11,7 @@ function startInnertube() {
   playerInfo.innertubeInterval = setIntervalNow(async () => {
     console.log('[NodeLink:sources]: Fetching YouTube embed page...')
   
-    const data = await utils.nodelink_makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
+    const data = await utils.makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
       console.log(`[NodeLink:sources]: Failed to fetch innertube data: ${err.message}`)
     })
       
@@ -23,7 +23,7 @@ function startInnertube() {
 
     console.log('[NodeLink:sources]: Sucessfully extracted InnerTube Context. Fetching player.js...')
 
-    const player = await utils.nodelink_makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
+    const player = await utils.makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
       console.log(`[NodeLink:sources]: Failed to fetch player js: ${err.message}`)
     })
 
@@ -71,14 +71,14 @@ async function search(query, type, search) {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      utils.nodelink_sleep(200)
+      utils.sleep(200)
     }
 
     switch (search ? 1 : checkURLType(query, type)) {
       case 1: {
         console.log(`[NodeLink:sources]: Searching track on YouTube: ${query}`)
 
-        const search = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
+        const search = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -98,7 +98,7 @@ async function search(query, type, search) {
         let videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
         if (videos[0].adSlotRenderer) videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].itemSectionRenderer.contents
         
-        utils.nodelink_forEach(videos, (item, index) => {
+        utils.forEach(videos, (item, index) => {
           item = item.videoRenderer
 
           if (item) {
@@ -117,7 +117,7 @@ async function search(query, type, search) {
             }
 
             tracks.push({
-              encoded: utils.nodelink_encodeTrack(infoObj),
+              encoded: utils.encodeTrack(infoObj),
               info: infoObj
             })
           }
@@ -142,7 +142,7 @@ async function search(query, type, search) {
       case 2: {
         console.log(`[NodeLink:sources]: Loading track from YouTube: ${query}`)
 
-        const video = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const video = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -173,7 +173,7 @@ async function search(query, type, search) {
         return resolve({
           loadType: 'track',
           data: {
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           }
@@ -182,7 +182,7 @@ async function search(query, type, search) {
       case 3: {
         console.log(`[NodeLink:sources]: Loading playlist from YouTube: ${query}`)
 
-        const playlist = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false+`, {
+        const playlist = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false+`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -206,7 +206,7 @@ async function search(query, type, search) {
         let tracks = []
         let i = 0
 
-        utils.nodelink_forEach(playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents, (item, index) => {
+        utils.forEach(playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents, (item, index) => {
           item = item.playlistPanelVideoRenderer
 
           if (item) {
@@ -225,7 +225,7 @@ async function search(query, type, search) {
             }
 
             tracks.push({
-              encoded: utils.nodelink_encodeTrack(infoObj),
+              encoded: utils.encodeTrack(infoObj),
               info: infoObj,
               pluginInfo: {}
             })
@@ -257,7 +257,7 @@ async function search(query, type, search) {
       case 4: {
         console.log(`[NodeLink:sources]: Loading track from YouTube Shorts: ${query}`)
 
-        const short = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
+        const short = await utils.makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -288,7 +288,7 @@ async function search(query, type, search) {
         return resolve({
           loadType: 'short',
           data: {
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           }
@@ -310,10 +310,10 @@ async function retrieveStream(identifier, type) {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      utils.nodelink_sleep(200)
+      utils.sleep(200)
     }
 
-    const videos = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const videos = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
         videoId: identifier,

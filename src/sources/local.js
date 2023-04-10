@@ -27,7 +27,7 @@ async function loadFrom(path) {
       resolve({
         loadType: 'track',
         data: {
-          encoded: utils.nodelink_encodeTrack(infoObj),
+          encoded: utils.encodeTrack(infoObj),
           info: infoObj,
           pluginInfo: {}
         }

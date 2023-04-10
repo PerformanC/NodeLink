@@ -4,7 +4,7 @@ async function loadFrom(uri) {
   console.log(`[NodeLink:sources]: Loading track from HTTP: ${uri}`)
 
   try {
-    const data = await utils.nodelink_http1makeRequest(uri, { method: 'GET', retrieveHeaders: true })
+    const data = await utils.http1makeRequest(uri, { method: 'GET', retrieveHeaders: true })
 
     if (!data['content-type'].startsWith('audio/')) {
       return {
@@ -34,7 +34,7 @@ async function loadFrom(uri) {
     return {
       loadType: 'track',
       data: {
-        encoded: utils.nodelink_encodeTrack(infoObj),
+        encoded: utils.encodeTrack(infoObj),
         info: infoObj,
         pluginInfo: {}
        }

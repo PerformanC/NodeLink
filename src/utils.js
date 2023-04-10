@@ -3,10 +3,11 @@ import http2 from 'http2'
 import { URL } from 'url'
 import zlib from 'zlib'
 import cp from 'child_process'
+import fs from 'fs'
 
 import config from '../config.js'
 
-function nodelink_generateSessionId() {
+function generateSessionId() {
   let result = ''
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   const charactersLength = characters.length
@@ -20,7 +21,7 @@ function nodelink_generateSessionId() {
   return result
 }
 
-function nodelink_http1makeRequest(url, options) {
+function http1makeRequest(url, options) {
   return new Promise(async (resolve, reject) => {
     let compression, data = ''
 
@@ -72,7 +73,7 @@ function nodelink_http1makeRequest(url, options) {
   })
 }
 
-function nodelink_makeRequest(url, options) {
+function makeRequest(url, options) {
   return new Promise(async (resolve, reject) => {
     let compression, data = '', parsedUrl = new URL(url)
 
@@ -198,7 +199,7 @@ class EncodeClass {
   }
 }
 
-function nodelink_encodeTrack(obj) {
+function encodeTrack(obj) {
   const buf = new EncodeClass()
 
   buf.write('byte', 3)
@@ -265,7 +266,7 @@ class DecodeClass {
   }
 }
 
-function nodelink_decodeTrack(track) {
+function decodeTrack(track) {
   const buf = new DecodeClass(Buffer.from(track, 'base64'))
 
   const version = ((buf.read('int') & 0xC0000000) >> 30 & 1) !== 0 ? buf.read('byte') : 1
@@ -313,7 +314,7 @@ function nodelink_decodeTrack(track) {
   }
 }
 
-async function nodelink_forEach(obj, callback) {
+async function forEach(obj, callback) {
   // Performance
   if (config.options.opt == 1) obj.forEach((value, index) => callback(value, index))
 
@@ -325,14 +326,14 @@ async function nodelink_forEach(obj, callback) {
   }
 }
 
-async function nodelink_sleep(ms) {
+async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function checkForUpdates() {
   const version = `v${config.version}`
 
-  const data = await nodelink_makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
+  const data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
 
   if (data.message) {
     console.log(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
@@ -345,7 +346,7 @@ async function checkForUpdates() {
 
     if (config.options.autoUpdate[0]) {
       console.log(`[NodeLink] Updating NodeLink, downloading ${config.options.autoUpdate[2]}...`)
-      await nodelink_makeRequest(config.options.autoUpdate[2] == 'zip' ? data.zipball_url : data.tarball_url, { method: 'GET '})
+      await makeRequest(config.options.autoUpdate[2] == 'zip' ? data.zipball_url : data.tarball_url, { method: 'GET '})
       cp.exec(config.options.autoUpdate[2] == 'zip' ? 'unzip PerformanC-Nodelink*.zip' : 'tar -xvf PerformanC-Nodelink*.tar.gz')
       cp.exec('rm -rf PerformanC-Nodelink*.zip PerformanC-Nodelink*.tar.gz')
       console.log('[NodeLink] Nodelink has been updated, please restart NodeLink to apply the changes.')
@@ -353,4 +354,59 @@ async function checkForUpdates() {
   }
 }
 
-export default { nodelink_generateSessionId, nodelink_http1makeRequest, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack, nodelink_forEach, nodelink_sleep, checkForUpdates }
+function checkNCreateFiles(name, path, content) {
+  fs.access('./cache', (err) => {
+    if (err) {
+      console.log(`[NodeLink:cache]: The ${name} not found. Creating...`)
+
+      fs.mkdir('./cache', (err) => {
+        if (err) {
+          console.log(`[NodeLink:cache]: Error creating the ${name}. Disabling cache...`)
+          config.options.allowCache = false
+        }
+
+        fs.writeFile(path, content, (err) => {
+          if (err) {
+            console.log(`[NodeLink:cache]: Error creating the ${name}. Disabling cache...`)
+            config.options.allowCache = false
+          }
+    
+          console.log(`[NodeLink:cache]: The ${name} has been created.`)
+        })
+      })
+    }
+
+    console.log(`[NodeLink:cache]: The ${name} has been found.`)
+  })
+}
+
+function safelyWriteFile(path, content) {
+  const tempPath = `cache/${generateSessionId()}.tmp`
+
+  fs.writeFile(tempPath, content, (err) => {
+    if (err) { 
+      console.log(`[NodeLink:cache]: Error writing the cache file. Disabling cache...`)
+      config.options.allowCache = false
+    }
+
+    fs.rename(tempPath, path, (err) => {
+      if (err) {
+        console.log(`[NodeLink:cache]: Error writing the cache file. Disabling cache...`)
+        config.options.allowCache = false
+      }
+    })
+  })
+}
+
+export default {
+  generateSessionId,
+  http1makeRequest,
+  makeRequest,
+  encodeTrack,
+  decodeTrack,
+  forEach,
+  sleep,
+  checkForUpdates,
+  checkNCreateFiles,
+  safelyWriteFile
+}

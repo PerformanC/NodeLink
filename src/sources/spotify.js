@@ -7,7 +7,7 @@ import searchWithDefault from './default.js'
 let playerInfo = {}
 
 async function setSpotifyToken() {
-  const token = await utils.nodelink_makeRequest('https://open.spotify.com/get_access_token', {
+  const token = await utils.makeRequest('https://open.spotify.com/get_access_token', {
     method: 'GET'
   })
 
@@ -75,7 +75,7 @@ async function search(query) {
     if (!playerInfo.accessToken) while (1) {
       if (playerInfo.accessToken) break
 
-      utils.nodelink_sleep(200)
+      utils.sleep(200)
     }
 
     console.log(`[NodeLink:sources]: Searching track on Spotify: ${query}`)
@@ -120,7 +120,7 @@ async function search(query) {
         let tracks = []
         let i = 0
 
-        utils.nodelink_forEach(data.data.searchV2.tracksV2.items, async (track, index) => {
+        utils.forEach(data.data.searchV2.tracksV2.items, async (track, index) => {
           if (track) {
             track = track.item.data
 
@@ -144,7 +144,7 @@ async function search(query) {
             }
 
             tracks.push({
-              encoded: utils.nodelink_encodeTrack(infoObj),
+              encoded: utils.encodeTrack(infoObj),
               info: infoObj,
               pluginInfo: {}
             })
@@ -193,7 +193,7 @@ async function loadFrom(query, type) {
 
     console.log(`[NodeLink:sources]: Loading ${type[1]} from Spotify: ${query}`)
 
-    let data = await utils.nodelink_makeRequest(`https://api.spotify.com/v1${endpoint}`, {
+    let data = await utils.makeRequest(`https://api.spotify.com/v1${endpoint}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${playerInfo.accessToken}`
@@ -204,7 +204,7 @@ async function loadFrom(query, type) {
       if (data.error.status == 401) {
         setSpotifyToken()
 
-        data = await utils.nodelink_makeRequest(`https://api.spotify.com/v1${endpoint}`, {
+        data = await utils.makeRequest(`https://api.spotify.com/v1${endpoint}`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${playerInfo.accessToken}`
@@ -243,7 +243,7 @@ async function loadFrom(query, type) {
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           }
@@ -274,7 +274,7 @@ async function loadFrom(query, type) {
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           }
@@ -310,7 +310,7 @@ async function loadFrom(query, type) {
           }
 
           tracks.push({
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           })
@@ -371,7 +371,7 @@ async function loadFrom(query, type) {
           }
 
           tracks.push({
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             pluginInfo: {}
           })

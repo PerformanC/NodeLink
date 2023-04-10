@@ -5,7 +5,7 @@ async function loadFrom(url) {
   return new Promise(async (resolve) => {
     console.log(`[NodeLink:sources]: Loading track from BandCamp: ${url}`)
 
-    const data = await utils.nodelink_makeRequest(url, { method: 'GET' })
+    const data = await utils.makeRequest(url, { method: 'GET' })
 
     let matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
@@ -32,7 +32,7 @@ async function loadFrom(url) {
     resolve({
       loadType: 'track',
       data: {
-        encoded: utils.nodelink_encodeTrack(infoObj),
+        encoded: utils.encodeTrack(infoObj),
         info: infoObj,
         pluginInfo: {}
       }
@@ -44,7 +44,7 @@ async function search(query) {
   return new Promise(async (resolve) => {
     console.log(`[NodeLink:sources]: Searching track on BandCamp: ${query}`)
 
-    const data = await utils.nodelink_makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
+    const data = await utils.makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
     const regex = /<div class="heading">\s+<a.*?>(.*?)<\/a>/gs
     const names = data.matchAll(regex)
@@ -96,7 +96,7 @@ async function search(query) {
       const identifier = tracks[i].info.uri.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
       tracks[i].info.identifier = `${identifier[1]}:${identifier[2]}`
 
-      tracks[i].encoded = utils.nodelink_encodeTrack(tracks[i].info)
+      tracks[i].encoded = utils.encodeTrack(tracks[i].info)
       tracks[i].pluginInfo = {}
     }
 
@@ -109,7 +109,7 @@ async function search(query) {
 
 async function retrieveStream(uri) {
   return new Promise(async (resolve) => {
-    const data = await utils.nodelink_makeRequest(uri, { method: 'GET' })
+    const data = await utils.makeRequest(uri, { method: 'GET' })
 
     const streamURL = data.match(/https?:\/\/t4\.bcbits\.com\/stream\/[a-zA-Z0-9]+\/mp3-128\/\d+\?p=\d+&amp;ts=\d+&amp;t=[a-zA-Z0-9]+&amp;token=\d+_[a-zA-Z0-9]+/)
 

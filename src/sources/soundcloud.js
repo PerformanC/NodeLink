@@ -5,7 +5,7 @@ async function loadFrom(url) {
   return new Promise(async (resolve) => {
     console.log(`[NodeLink:sources]: Loading track from SoundCloud: ${url}`)
 
-    const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+    const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
     if (JSON.stringify(data) == '{}')
       return resolve({ loadType: 'empty', data: {} })
@@ -29,7 +29,7 @@ async function loadFrom(url) {
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             playlistInfo: {}
           }
@@ -40,7 +40,7 @@ async function loadFrom(url) {
       case 'playlist': {
         const tracks = []
 
-        utils.nodelink_forEach(data.tracks, async (track, index) => {
+        utils.forEach(data.tracks, async (track, index) => {
           const infoObj = {
             identifier: track.id.toString(),
             isSeekable: true,
@@ -56,7 +56,7 @@ async function loadFrom(url) {
           }
 
           tracks.push({
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             playlistInfo: {}
           })
@@ -85,7 +85,7 @@ async function search(query) {
   return new Promise(async (resolve) => {
     console.log(`[NodeLink:sources]: Searching track on SoundCloud: ${query}`)
 
-    const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
+    const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
       method: 'GET'
     })
 
@@ -95,7 +95,7 @@ async function search(query) {
     const tracks = []
     let i = 0
 
-    utils.nodelink_forEach(data.collection, async (track, index) => {
+    utils.forEach(data.collection, async (track, index) => {
       if (track.kind == 'track') {
         const infoObj = {
           identifier: track.id.toString(),
@@ -112,7 +112,7 @@ async function search(query) {
         }
 
         tracks.push({
-          encoded: utils.nodelink_encodeTrack(infoObj),
+          encoded: utils.encodeTrack(infoObj),
           info: infoObj,
           pluginInfo: {}
         })
@@ -130,7 +130,7 @@ async function search(query) {
 
 async function retrieveStream(identifier) {
   return new Promise(async (resolve) => {
-    const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+    const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
       
     if (data.errors) {
       console.log(`[NodeLink:sources]: Failed to load track: ${data.errors[0].error_message}`)
@@ -138,9 +138,9 @@ async function retrieveStream(identifier) {
       return resolve({ status: 1, exception: { message: data.errors[0].error_message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
-    utils.nodelink_forEach(data.media.transcodings, async (transcoding) => {
+    utils.forEach(data.media.transcodings, async (transcoding) => {
       if (transcoding.format.protocol == 'progressive') {
-        const stream = await utils.nodelink_http1makeRequest(transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+        const stream = await utils.http1makeRequest(transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
         resolve({ status: 0, url: stream.url })
       }

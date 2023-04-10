@@ -8,13 +8,13 @@ let authToken = null
 async function setToken() {
   console.log('[NodeLink:sources]: Fetching Pandora page...')
 
-  const csfr = await utils.nodelink_makeRequest('https://www.pandora.com', { method: 'GET', retrieveCookies: true })
+  const csfr = await utils.makeRequest('https://www.pandora.com', { method: 'GET', retrieveCookies: true })
 
   if (!csfr[1]) return console.log('[NodeLink:sources]: Failed to set CSRF token from Pandora')
 
   csrfToken = { raw: csfr[1], parsed: /csrftoken=([a-f0-9]{16});/.exec(csfr[1])[1] }
 
-  const token = await utils.nodelink_makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
+  const token = await utils.makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
     headers: {
       'Cookie': csrfToken.raw,
       'Content-Type': 'application/json',
@@ -46,7 +46,7 @@ async function search(query) {
       annotationRecipe: 'CLASS_OF_2019'
     }
    
-    const data = await utils.nodelink_makeRequest('https://www.pandora.com/api/v3/sod/search', {
+    const data = await utils.makeRequest('https://www.pandora.com/api/v3/sod/search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -86,7 +86,7 @@ async function search(query) {
       }
 
       tracks.push({
-        encoded: utils.nodelink_encodeTrack(infoObj),
+        encoded: utils.encodeTrack(infoObj),
         info: infoObj,
         playlistInfo: {}
       })
@@ -126,7 +126,7 @@ async function loadFrom(query) {
       case 'artist': {
         if (!csrfToken) return resolve({ loadType: 'error', data: { message: 'Pandora not avaible in current country.', severity: 'COMMON', cause: 'Pandora avaibility'} })
 
-        const data = await utils.nodelink_makeRequest(query, { method: 'GET' })
+        const data = await utils.makeRequest(query, { method: 'GET' })
 
         if (!data)
           return resolve({ loadType: 'error', data: { message: 'Pandora website not avaible on your region', severity: 'COMMON', cause: 'Pandora limitations' } })
@@ -158,7 +158,7 @@ async function loadFrom(query) {
           return resolve({
             loadType: 'track',
             data: {
-              encoded: utils.nodelink_encodeTrack(infoObj),
+              encoded: utils.encodeTrack(infoObj),
               info: infoObj,
               playlistInfo: {}
             }
@@ -190,7 +190,7 @@ async function loadFrom(query) {
             }
       
             tracks.push({
-              encoded: utils.nodelink_encodeTrack(infoObj),
+              encoded: utils.encodeTrack(infoObj),
               info: infoObj,
               playlistInfo: {}
             })
@@ -251,7 +251,7 @@ async function loadFrom(query) {
             }
       
             tracks.push({
-              encoded: utils.nodelink_encodeTrack(infoObj),
+              encoded: utils.encodeTrack(infoObj),
               info: infoObj,
               playlistInfo: {}
             })
@@ -305,7 +305,7 @@ async function loadFrom(query) {
           }
         }
 
-        const data = await utils.nodelink_makeRequest('https://www.pandora.com/api/v7/playlists/getTracks', {
+        const data = await utils.makeRequest('https://www.pandora.com/api/v7/playlists/getTracks', {
           method: 'POST',
           headers: {
             'Cookie': csrfToken.raw,
@@ -345,7 +345,7 @@ async function loadFrom(query) {
           }
     
           tracks.push({
-            encoded: utils.nodelink_encodeTrack(infoObj),
+            encoded: utils.encodeTrack(infoObj),
             info: infoObj,
             playlistInfo: {}
           })
