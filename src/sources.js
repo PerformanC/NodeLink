@@ -3,13 +3,14 @@ import bandcamp from './sources/bandcamp.js'
 import deezer from './sources/deezer.js'
 import http from './sources/http.js'
 import local from './sources/local.js'
+import pandora from './sources/pandora.js'
 import soundcloud from './sources/soundcloud.js'
 import spotify from './sources/spotify.js'
 import youtube from './sources/youtube.js'
 
 async function getTrackURL(track) {
   return new Promise(async (resolve) => {
-    if ([ 'deezer', 'spotify' ].includes(track.sourceName)) track.sourceName = config.search.defaultSearchSource
+    if ([ 'deezer', 'spotify', 'pandora' ].includes(track.sourceName)) track.sourceName = config.search.defaultSearchSource
 
     switch (track.sourceName) {
       case 'local':
@@ -28,8 +29,9 @@ async function getTrackURL(track) {
 
         break
       }
+      case 'ytmusic':
       case 'youtube': {
-        resolve(youtube.retrieveStream(track.identifier))
+        resolve(youtube.retrieveStream(track.identifier, track.sourceName))
   
         break
       }
@@ -49,13 +51,18 @@ export default {
     search: bandcamp.search
   },
   deezer: {
-    loadFrom: deezer,
+    loadFrom: deezer
   },
   http: {
-    loadFrom: http,
+    loadFrom: http
   },
   local: {
-    loadFrom: local,
+    loadFrom: local
+  },
+  pandora: {
+    loadFrom: pandora.loadFrom,
+    search: pandora.search,
+    setToken: pandora.setToken
   },
   soundcloud: {
     loadFrom: soundcloud.loadFrom,
@@ -69,7 +76,6 @@ export default {
   youtube: {
     search: youtube.search,
     startInnertube: youtube.startInnertube,
-    stopInnertube: youtube.stopInnertube,
-    checkURLType: youtube.checkURLType
+    stopInnertube: youtube.stopInnertube
   }
 }

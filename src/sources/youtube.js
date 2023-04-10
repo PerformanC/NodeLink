@@ -9,10 +9,10 @@ function setIntervalNow(func, interval) {
 
 function startInnertube() {
   playerInfo.innertubeInterval = setIntervalNow(async () => {
-    console.log('[NodeLink]: Fetching YouTube embed page...')
+    console.log('[NodeLink:sources]: Fetching YouTube embed page...')
   
     const data = await utils.nodelink_makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      console.log(`[NodeLink]: Failed to fetch innertube data: ${err.message}`)
+      console.log(`[NodeLink:sources]: Failed to fetch innertube data: ${err.message}`)
     })
       
     const innertube = JSON.parse('{' + data.split('ytcfg.set({')[1].split('});')[0] + '}')
@@ -21,13 +21,13 @@ function startInnertube() {
     playerInfo.innertube.client.clientVersion = '2.20230316.00.00'
     playerInfo.innertube.client.originalUrl = 'https://www.youtube.com/'
 
-    console.log('[NodeLink]: Sucessfully extracted InnerTube Context. Fetching player.js...')
+    console.log('[NodeLink:sources]: Sucessfully extracted InnerTube Context. Fetching player.js...')
 
     const player = await utils.nodelink_makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
-      console.log(`[NodeLink]: Failed to fetch player js: ${err.message}`)
+      console.log(`[NodeLink:sources]: Failed to fetch player js: ${err.message}`)
     })
 
-    console.log('[NodeLink]: Fetch player.js from YouTube.')
+    console.log('[NodeLink:sources]: Fetch player.js from YouTube.')
   
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/gm.exec(player)[0]
   
@@ -37,7 +37,7 @@ function startInnertube() {
 
     playerInfo.decipherEval = `const ${decipherLowLevel})}};${dFunctionHighLevel}decipher('NODELINK_DECIPHER_URL');`
 
-    console.log('[NodeLink]: Successfully processed information for next loadtracks and play.')
+    console.log('[NodeLink:sources]: Successfully processed information for next loadtracks and play.')
   }, 120000)
 }
 
@@ -45,24 +45,40 @@ function stopInnertube() {
   clearInterval(playerInfo.innertubeInterval)
 }
 
-function checkURLType(url) {
-  const videoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+/;
-  const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/;
-  const shortsRegex = /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/;
+function checkURLType(url, type) {
+  if (type == 'ytmusic') {
+    const videoRegex = /^https?:\/\/music\.youtube\.com\/watch\?v=[\w-]+/
+    const playlistRegex = /^https?:\/\/music\.youtube\.com\/playlist\?list=[\w-]+/
+    
+    if (videoRegex.test(url)) return 2
+    else if (playlistRegex.test(url)) return 3
+    else return -1
+  } else {
+    const videoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+/
+    const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/
+    const shortsRegex = /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/
   
-  if (videoRegex.test(url)) return 2
-  else if (playlistRegex.test(url)) return 3
-  else if (shortsRegex.test(url)) return 4
-  else return -1
+    if (videoRegex.test(url)) return 2
+    else if (playlistRegex.test(url)) return 3
+    else if (shortsRegex.test(url)) return 4
+    else return -1
+  }
 }
 
-async function search(query, type) {
+async function search(query, type, search) {
   return new Promise(async (resolve) => {
-    switch (type) {
-      case 1: {
-        console.log(`[NodeLink]: Searching track on YouTube: ${query}`)
 
-        const search = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/search', {
+    if (!playerInfo.innertube) while (1) {
+      if (playerInfo.innertube) break
+
+      utils.nodelink_sleep(200)
+    }
+
+    switch (search ? 1 : checkURLType(query, type)) {
+      case 1: {
+        console.log(`[NodeLink:sources]: Searching track on YouTube: ${query}`)
+
+        const search = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -71,7 +87,7 @@ async function search(query, type) {
         })
 
         if (search.error) {
-          console.log(`[NodeLink]: Failed to search for "${query}": ${search.error.message}`)
+          console.log(`[NodeLink:sources]: Failed to search for "${query}": ${search.error.message}`)
 
           return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'COMMON', cause: 'unknown' } })
         }
@@ -82,7 +98,7 @@ async function search(query, type) {
         let videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
         if (videos[0].adSlotRenderer) videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].itemSectionRenderer.contents
         
-        videos.forEach((item) => {
+        utils.nodelink_forEach(videos, (item, index) => {
           item = item.videoRenderer
 
           if (item) {
@@ -97,7 +113,7 @@ async function search(query, type) {
               uri: `https://www.youtube.com/watch?v=${item.videoId}`,
               artworkUrl: `https://i.ytimg.com/vi/${item.videoId}/maxresdefault.jpg`,
               isrc: null,
-              sourceName: 'youtube'
+              sourceName: type
             }
 
             tracks.push({
@@ -105,23 +121,28 @@ async function search(query, type) {
               info: infoObj
             })
           }
+          
+          if (index == videos.length - 1) {
+            if (tracks.length == 0) {
+              console.log(`[NodeLink:sources]: No matches found for "${query}".`)
+              console.log(videos)
+
+              return resolve({ loadType: 'empty', data: {} })
+            }
+
+            return resolve({
+              loadType: 'search',
+              data: tracks
+            })
+          }
         })
 
-        if (tracks.length == 0) {
-          console.log(`[NodeLink]: No matches found for "${identifier}".`)
-
-          return resolve({ loadType: 'empty', data: {} })
-        }
-
-        return resolve({
-          loadType: 'search',
-          data: tracks
-        })
+        break
       }
       case 2: {
-        console.log(`[NodeLink]: Loading track from YouTube: ${query}`)
+        console.log(`[NodeLink:sources]: Loading track from YouTube: ${query}`)
 
-        const video = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
+        const video = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -130,7 +151,7 @@ async function search(query, type) {
         })
 
         if (video.playabilityStatus.status == 'ERROR') {
-          console.log(`[NodeLink]: Failed to load track: ${video.playabilityStatus.reason}`)
+          console.log(`[NodeLink:sources]: Failed to load track: ${video.playabilityStatus.reason}`)
           
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
@@ -146,7 +167,7 @@ async function search(query, type) {
           uri: `https://www.youtube.com/watch?v=${video.videoDetails.videoId}`,
           artworkUrl: `https://i.ytimg.com/vi/${video.videoDetails.videoId}/maxresdefault.jpg`,
           isrc: null,
-          sourceName: 'youtube'
+          sourceName: type
         }
 
         return resolve({
@@ -159,9 +180,9 @@ async function search(query, type) {
         })
       }
       case 3: {
-        console.log(`[NodeLink]: Loading playlist from YouTube: ${query}`)
+        console.log(`[NodeLink:sources]: Loading playlist from YouTube: ${query}`)
 
-        const playlist = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
+        const playlist = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false+`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -170,7 +191,7 @@ async function search(query, type) {
         })
 
         if (!playlist.contents.twoColumnWatchNextResults.playlist) {
-          console.log(`[NodeLink]: Failed to load playlist.`)
+          console.log(`[NodeLink:sources]: Failed to load playlist.`)
         
           return resolve({
             loadType: 'error',
@@ -185,7 +206,7 @@ async function search(query, type) {
         let tracks = []
         let i = 0
 
-         playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.forEach((item) => {
+        utils.nodelink_forEach(playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents, (item, index) => {
           item = item.playlistPanelVideoRenderer
 
           if (item) {
@@ -209,22 +230,32 @@ async function search(query, type) {
               pluginInfo: {}
             })
           }
-        })
 
-        return resolve({
-          loadType: 'playlist',
-          data: {
-            info: {
-              name: playlist.contents.twoColumnWatchNextResults.playlist.playlist.title,
-              selectedTrack: 0
-            },
-            pluginInfo: {},
-            tracks
+          if (index == playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.length - 1) {
+            if (tracks.length == 0) {
+              console.log(`[NodeLink:sources]: No matches found for "${query}".`)
+
+              return resolve({ loadType: 'empty', data: {} })
+            }
+
+            return resolve({
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: playlist.contents.twoColumnWatchNextResults.playlist.playlist.title,
+                  selectedTrack: 0
+                },
+                pluginInfo: {},
+                tracks
+              }
+            })
           }
         })
+
+        break
       }
       case 4: {
-        console.log(`[NodeLink]: Loading track from YouTube Shorts: ${query}`)
+        console.log(`[NodeLink:sources]: Loading track from YouTube Shorts: ${query}`)
 
         const short = await utils.nodelink_makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
@@ -235,7 +266,7 @@ async function search(query, type) {
         })
 
         if (short.playabilityStatus.status == 'ERROR') {
-          console.log(`[NodeLink]: Failed to load track: ${short.playabilityStatus.reason}`)
+          console.log(`[NodeLink:sources]: Failed to load track: ${short.playabilityStatus.reason}`)
 
           return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
@@ -255,7 +286,7 @@ async function search(query, type) {
         }
 
         return resolve({
-          loadType: 'SHORT_LOADED',
+          loadType: 'short',
           data: {
             encoded: utils.nodelink_encodeTrack(infoObj),
             info: infoObj,
@@ -263,13 +294,26 @@ async function search(query, type) {
           }
         })
       }
+
+      default: {
+        console.log(`[NodeLink:sources]: No matches found for "${query}".`)
+
+        return resolve({ loadType: 'empty', data: {} })
+      }
     }
   })
 }
 
-async function retrieveStream(identifier) {
+async function retrieveStream(identifier, type) {
   return new Promise(async (resolve) => {
-    const videos = await utils.nodelink_makeRequest(`https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+
+    if (!playerInfo.innertube) while (1) {
+      if (playerInfo.innertube) break
+
+      utils.nodelink_sleep(200)
+    }
+
+    const videos = await utils.nodelink_makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
         videoId: identifier,
@@ -283,7 +327,7 @@ async function retrieveStream(identifier) {
     })
 
     if (videos.playabilityStatus.status != 'OK') {
-      console.log('[NodeLink]: The track is not playable, this is not a NodeLink issue.')
+      console.log('[NodeLink:sources]: The track is not playable, this is not a NodeLink issue.')
 
       return resolve({ status: 1, exception: { severity: 'COMMON', message: 'This video is marked as not playable.', cause: 'unknown' } })
     }
@@ -298,9 +342,9 @@ async function retrieveStream(identifier) {
 
       url = `${decodeURIComponent(url[2].replace('url=', ''))}&${url[1].replace('sp=', '')}=${signature}&sts=${playerInfo.signatureTimestamp}`
 
-      console.log('[NodeLink]: Started playing track protected by cipher signature')
+      console.log('[NodeLink:sources]: Started playing track protected by cipher signature')
     } else {
-      console.log('[NodeLink]: Started playing track with no cipher signature')
+      console.log('[NodeLink:sources]: Started playing track with no cipher signature')
     }
 
     resolve({ status: 0, url })
@@ -310,7 +354,6 @@ async function retrieveStream(identifier) {
 export default {
   startInnertube,
   stopInnertube,
-  checkURLType,
   search,
   retrieveStream
 }

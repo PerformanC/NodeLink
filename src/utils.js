@@ -3,6 +3,7 @@ import https from 'https'
 import http2 from 'http2'
 import { URL } from 'url'
 import zlib from 'zlib'
+import config from '../config.js'
 
 function nodelink_generateSessionId() {
   let result = ''
@@ -19,17 +20,22 @@ function nodelink_generateSessionId() {
 }
 
 function nodelink_http1makeRequest(url, options) {
-  return new Promise(async (resolve) => {
+  return new Promise(async (resolve, reject) => {
     let compression, data = ''
-    console.log(url)
 
-    https.request(url, {
+    const req = https.request(url, {
       method: options.method,
       headers: {
         'Accept-Encoding': 'gzip, deflate, br',
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
       }
     }, (res) => {
+      if (options.retrieveHeaders) {
+        req.destroy()
+
+        return resolve(res.headers)
+      }
+
       switch (res.headers['content-encoding']) {
         case 'deflate': {
           compression = zlib.createInflate()
@@ -44,7 +50,7 @@ function nodelink_http1makeRequest(url, options) {
           break
         }
         default: {
-          console.log('[NodeLink]: No compression detected, skipping...')
+          console.log('[NodeLink:makeRequest1]: No compression detected, skipping...')
         }
       }
 
@@ -56,32 +62,44 @@ function nodelink_http1makeRequest(url, options) {
       res.on('data', (chunk) => (data += chunk))
 
       res.on('end', () => resolve(JSON.parse(data.toString())))
-
-      res.on('error', (error) => {
-        console.log(`[NodeLink]: Failed sending HTTP request: ${error}`)
-      })
     }).end()
+
+    req.on('error', (error) => {
+      console.log(`[NodeLink:makeRequest1]: Failed sending HTTP request: ${error}`)
+      reject()
+    })
   })
 }
 
 function nodelink_makeRequest(url, options) {
-  return new Promise(async (resolve) => {
+  return new Promise(async (resolve, reject) => {
     let compression, data = '', parsedUrl = new URL(url)
-
-    if (!options) options = {}
 
     const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol })
 
-    let req = client.request({
+    let reqOptions = {
       ':method': options.method,
       ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'gzip, deflate, br',
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
-      [options.body ? 'Content-Encoding' : '']: 'gzip',
-      ...(options.headers ? options.headers : {})
+    }
+    if (options.body && !options.disableBodyCompression) reqOptions['Content-Encoding'] = 'gzip'
+    if (options.headers) reqOptions = { ...reqOptions, ...options.headers }
+
+    let req = client.request(reqOptions)
+
+    req.on('error', (error) => {
+      console.log(`[NodeLink:makeRequest]: Failed sending HTTP request: ${error}`)
+      reject()
     })
 
     req.on('response', (headers) => {
+      if (options.retrieveCookies) {
+        req.destroy()
+
+        return resolve(headers['set-cookie'])
+      }
+
       switch (headers['content-encoding']) {
         case 'deflate': {
           compression = zlib.createInflate()
@@ -96,7 +114,7 @@ function nodelink_makeRequest(url, options) {
           break
         }
         default: {
-          console.log('[NodeLink]: No compression detected, skipping...')
+          console.log('[NodeLink:makeRequest]: No compression detected, skipping...')
         }
       }
 
@@ -105,23 +123,20 @@ function nodelink_makeRequest(url, options) {
         req = compression
       }
 
-      req.on('data', (chunk) => (data += chunk))
+      req.on('data', (chunk) => data += chunk)
 
       req.on('end', () => {
-        if (url == 'https://clienttoken.spotify.com/v1/clienttoken' || url.startsWith('https://api-partner.spotify.com')) resolve(data.toString())
-        else resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
+        resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
 
         client.close()
-      })
-
-      req.on('error', (error) => {
-        console.log(`[NodeLink]: Failed sending HTTP request: ${error}`)
       })
     })
 
     if (options.body) {
-      zlib.gzip(JSON.stringify(options.body), (error, data) => {
-        if (error) throw new Error(`[NodeLink]: Failed gziping body: ${error}`)
+      if (options.disableBodyCompression)
+        req.write(JSON.stringify(options.body), () => req.end())
+      else zlib.gzip(JSON.stringify(options.body), (error, data) => {
+        if (error) throw new Error(`[NodeLink:makeRequest]: Failed gziping body: ${error}`)
         req.write(data, () => req.end())
       })
     }
@@ -297,4 +312,20 @@ function nodelink_decodeTrack(track) {
   }
 }
 
-export default { nodelink_generateSessionId, nodelink_http1makeRequest, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack }
+async function nodelink_forEach(obj, callback) {
+  // Performance
+  if (config.options.opt == 1) obj.forEach((value, index) => callback(value, index))
+
+  // Quality
+  if (config.options.opt == 2) {
+    for (let i = 0; i < obj.length; i++) {
+      await callback(obj[i], i)
+    }
+  }
+}
+
+async function nodelink_sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export default { nodelink_generateSessionId, nodelink_http1makeRequest, nodelink_makeRequest, nodelink_encodeTrack, nodelink_decodeTrack, nodelink_forEach, nodelink_sleep }

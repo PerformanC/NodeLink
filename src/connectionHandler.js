@@ -218,13 +218,13 @@ class VoiceConnection {
 
     const encodedTrack = utils.nodelink_decodeTrack(track)
 
-    let oldTrack = this.config.track
+    const oldTrack = this.config.track
 
     this.config.track = { encoded: track, info: encodedTrack }
   
     const urlInfo = await sources.getTrackURL(encodedTrack)
 
-    if (urlInfo.status == 1) {
+    if (urlInfo.status) {
       this.config.track = null
   
       this.client.ws.send(JSON.stringify({
@@ -238,7 +238,7 @@ class VoiceConnection {
       return this.config
     }
 
-    if (this.config.track) {
+    if (oldTrack) {
       this.client.ws.send(JSON.stringify({
         op: 'event',
         type: 'TrackEndEvent',
@@ -246,16 +246,9 @@ class VoiceConnection {
         track: oldTrack,
         reason: 'replaced'
       }))
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackStartEvent',
-        guildId: this.config.guildId,
-        track: this.config.track
-      }))
     }
 
-    console.log(`[NodeLink]: Playing "${encodedTrack.title}", from ${encodedTrack.sourceName}.`)
+    console.log(`[NodeLink:play]: Playing track from ${encodedTrack.sourceName}: ${encodedTrack.title}`)
 
     const resource = djsVoice.createAudioResource(urlInfo.url, { inputType: encodedTrack.sourceName == 'youtube' ? djsVoice.StreamType.WebmOpus : djsVoice.StreamType.Arbitrary, inlineVolume: true })
     resource.volume.setVolume(this.config.volume / 100)
@@ -265,19 +258,26 @@ class VoiceConnection {
       
     try {
       await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
+    
+      if (oldTrack) {
+        this.client.ws.send(JSON.stringify({
+          op: 'event',
+          type: 'TrackStartEvent',
+          guildId: this.config.guildId,
+          track: this.config.track
+        }))
+      }
     } catch (e) {
-      console.log('[NodeLink]: Connection timed out')
+      console.log('[NodeLink:play]: Couldn\'t start playing track in time of threshold.')
   
       this.config.track = null
   
       this.client.ws.send(JSON.stringify({
         op: 'event',
-        type: 'WebSocketClosedEvent',
+        type: 'TrackStuckEvent',
         guildId: this.config.guildId,
         track: encodedTrack,
-        code: 4000,
-        reason: 'Connection timed out',
-        byRemote: true
+        thresholdMs: config.options.threshold
       }))
     }
   
@@ -343,20 +343,20 @@ function nodelink_setupConnection(ws, req) {
   }, config.options.statsInterval)
 
   ws.on('close', (code, reason) => {
-    console.log(`[NodeLink]: Connection closed with v4 websocket server (sessionId: ${sessionId}, code: ${code}, reason: ${reason == '' ? 'No reason provided' : reason})`)
+    console.log(`[NodeLink:websocket]: Connection closed with websocket. (sessionId: ${sessionId}, code: ${code}, reason: ${reason == '' ? 'No reason provided' : reason})`)
 
     const client = clients.get(sessionId)
 
     if (client.timeoutFunction) {
       client.timeoutFunction = setTimeout(() => {
-        if (clients.size == 1 && config.search.sources.youtube)
+        if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
           sources.youtube.stopInnertube()
 
         client.players.forEach((player) => player.destroy())
         clients.delete(sessionId)
       })
     } else {
-      if (clients.size == 1 && config.search.sources.youtube)
+      if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
         sources.youtube.stopInnertube()
 
       clients.get(sessionId).players.forEach((player) => player.destroy())
@@ -368,9 +368,9 @@ function nodelink_setupConnection(ws, req) {
     sessionId = req.headers['session-id']
 
     if (!clients.has(sessionId)) 
-      console.log(`[NodeLink]: Failed to resume connection with v4 websocket server: The sessionId does not exist (sessionId: ${sessionId}). Starting a new connection instead.`)
+      console.log(`[NodeLink:websocket]: Failed to resume connection with websocket: The sessionId does not exist (sessionId: ${sessionId}). Starting a new connection instead.`)
     else {
-      console.log(`[NodeLink]: Connection re-established with v4 websocket server, sessionId: ${sessionId}`)
+      console.log(`[NodeLink:websocket]: Connection re-established with websocket. (sessionId: ${sessionId})`)
 
       const client = clients.get(sessionId)
 
@@ -388,7 +388,7 @@ function nodelink_setupConnection(ws, req) {
 
   sessionId = utils.nodelink_generateSessionId()
 
-  console.log(`[NodeLink]: Connection established with v4 websocket server, sessionId: ${sessionId}`)
+  console.log(`[NodeLink:websocket]: Connection established with websocket. (sessionId: ${sessionId})`)
 
   clients.set(sessionId, { userId: req.headers['user-id'], ws, players: new Map() })
 
@@ -403,14 +403,14 @@ async function nodelink_requestHandler(req, res) {
   const parsedUrl = parse(req.url)
 
   if (parsedUrl.pathname == '/v4/version') {
-    console.log('[NodeLink]: Received version request')
+    console.log('[NodeLink:version]: Received request.')
 
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end(constants.NodeLinkVersion)
   }
 
   if (parsedUrl.pathname == '/v4/decodetrack') {
-    console.log('[NodeLink]: Received decodetrack request')
+    console.log('[NodeLink:decodetrack]: Received request.')
     
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
@@ -419,13 +419,13 @@ async function nodelink_requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/decodetracks') {
-    console.log('[NodeLink]: Received decodetracks request')
+    console.log('[NodeLink:decodetracks]: Received request.')
 
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+      if (config.debug.showReqBody) console.log(`[NodeLink:decodetracks]: Received request body: ${buffer}`)
 
       buffer = JSON.parse(buffer)
 
@@ -439,7 +439,7 @@ async function nodelink_requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/encodetrack') {
-    console.log('[NodeLink]: Received encodetrack request (NodeLink endpoint only)')
+    console.log('[NodeLink:encodetrack]: Received request. (NodeLink endpoint only)')
 
     let buffer = ''
 
@@ -467,13 +467,13 @@ async function nodelink_requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/encodetracks') {
-    console.log('[NodeLink]: Received encodetracks request (NodeLink endpoint only)')
+    console.log('[NodeLink:encodetracks]: Received request. (NodeLink endpoint only)')
 
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+      if (config.debug.showReqBody) console.log(`[NodeLink:encodetracks]: Received request body: ${buffer}`)
 
       buffer = JSON.parse(buffer)
 
@@ -502,7 +502,7 @@ async function nodelink_requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/stats') {
-    console.log('[NodeLink]: Received stats request')
+    console.log('[NodeLink:stats]: Received request.')
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
@@ -525,43 +525,53 @@ async function nodelink_requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/loadtracks') {
-    console.log('[NodeLink]: Received loadtracks request')
+    console.log('[NodeLink:loadtracks]: Received request.')
 
-    let identifier = new URLSearchParams(parsedUrl.query).get('identifier')
+    const identifier = new URLSearchParams(parsedUrl.query).get('identifier')
+
+    console.log(`[NodeLink:loadtracks]: Identifier: ${identifier}`)
 
     let search
 
     const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
-    if (config.search.sources.youtube && (ytSearch || (identifier.startsWith('https://youtube.com') && /^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|(?:youtube\.com\/(?:watch\?(?=.*v=[\w-]+)(?:\S+&)?list=([\w-]+)))?(?:\S*\/)?([\w-]+))(?:\S*)?$/.test(identifier))))
-      search = await sources.youtube.search(ytSearch ? identifier.replace('ytsearch:', '') : identifier, ytSearch ? 1 : sources.youtube.checkURLType(identifier))
+    if (!search && (config.search.sources.youtube && (ytSearch || /^(https?:\/\/)?(www\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier))))
+      search = await sources.youtube.search(ytSearch ? identifier.replace('ytsearch:', '') : identifier, 'youtube', ytSearch)
+
+    const ytMusicSearch = config.search.sources.youtubeMusic ? identifier.startsWith('ytmsearch:') : null
+    if (config.search.sources.youtubeMusic && (ytMusicSearch || /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier)))
+      search = await sources.youtube.search(ytMusicSearch ? identifier.replace('ytmsearch:', '') : identifier, 'ytmusic', ytMusicSearch)
 
     const spSearch = config.search.sources.spotify ? identifier.startsWith('spsearch:') : null
     const spRegex = config.search.sources.youtube && config.search.sources.spotify && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
-    if (config.search.sources.youtube && config.search.sources.spotify && (spSearch || spRegex))
+    if (!search && (config.search.sources.youtube && config.search.sources.spotify && (spSearch || spRegex)))
        search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
 
     const dzRegex = config.search.sources.youtube && config.search.sources.deezer ? /^https?:\/\/(?:www\.)?deezer\.com\/(track|album|playlist)\/(\d+)$/.exec(identifier) : null
-    if (config.search.sources.youtube && config.search.sources.deezer && dzRegex)
-      search = await sources.deezer.loadFrom(identifier, deezerRegex)
+    if (!search && (config.search.sources.youtube && config.search.sources.deezer && dzRegex))
+      search = await sources.deezer.loadFrom(identifier, dzRegex)
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier)))
+    if (!search && (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/[a-zA-Z0-9-_]+$/.test(identifier))))
       search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', '')) : await sources.soundcloud.loadFrom(identifier)
 
     const bcSearch = config.search.sources.bandcamp ? identifier.startsWith('bcsearch:') : null
-    if (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(identifier)))
+    if (!search && (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(identifier))))
       search = bcSearch ? await sources.bandcamp.search(identifier.replace('bcsearch:', '')) : await sources.bandcamp.loadFrom(identifier)
 
-    if (config.search.sources.http && !search && (identifier.startsWith('http://') || identifier.startsWith('https://')))
+    const pdSearch = config.search.sources.pandora ? identifier.startsWith('pdsearch:') : null
+    if (!search && (config.search.sources.pandora && (pdSearch || /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.test(identifier))))
+      search = pdSearch ? await sources.pandora.search(identifier.replace('pdsearch:', '')) : await sources.pandora.loadFrom(identifier)
+
+    if (!search && (config.search.sources.http && (identifier.startsWith('http://') || identifier.startsWith('https://'))))
       search = await sources.http.loadFrom(identifier)
     
-    if (config.search.sources.local && identifier.startsWith('local:'))
+    if (!search && (config.search.sources.local && identifier.startsWith('local:')))
       search = await sources.local.loadFrom(identifier.replace('local:', ''))
 
     if (!search) {
-      console.log('[NodeLink]: No possible search source found.')
+      console.log('[NodeLink:loadtracks]: No possible search source found.')
 
-      search = { loadType: 'empty', playlistInfo: null, tracks: [], exception: NULL }
+      search = { loadType: 'empty', data: {} }
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -575,7 +585,7 @@ async function nodelink_requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+      if (config.debug.showReqBody) console.log(`[NodeLink:updateSession]: Received request body: ${buffer}`)
 
       buffer = JSON.parse(buffer)
 
@@ -592,19 +602,30 @@ async function nodelink_requestHandler(req, res) {
   if (/^\/v4\/sessions\/\w+\/players\/\w+./.test(parsedUrl.pathname)) {
     const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
 
+    if (!client) {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({
+        timestamp: new Date(),
+        status: 404,
+        trace: null,
+        message: 'The provided session Id doesn\'t exist.',
+        path: parsedUrl.pathname
+      }))
+    }
+
     if (req.method == 'GET') {
       if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players\/\d+$/.test(parsedUrl.pathname)) {
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
 
         let player = client.players.get(guildId)
 
-        res.writeHead(200, { 'Content-Type': 'application/json' })
         if (!player) {
           player = new VoiceConnection(guildId, client.userId, client.sessionId, client.timeout)
 
           client.players.set(guildId, player)
         }
         
+        res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify(player.config))
       } else {
         const players = []
@@ -619,7 +640,7 @@ async function nodelink_requestHandler(req, res) {
 
       req.on('data', (buf) => buffer += buf)
       req.on('end', () => {
-        if (config.debug.showReqBody) console.log(`[NodeLink]: Received request body: ${buffer}`)
+        if (config.debug.showReqBody) console.log(`[NodeLink:updatePlayer]: Received request body: ${buffer}`)
 
         buffer = JSON.parse(buffer)
 
@@ -628,7 +649,7 @@ async function nodelink_requestHandler(req, res) {
 
         // Voice update
         if (buffer.voice != undefined) {
-          console.log('[NodeLink]: Received voice state update')
+          console.log('[NodeLink:updatePlayer]: Received voice state update.')
 
           if (!player) player = new VoiceConnection(guildId, client)
 
@@ -646,7 +667,7 @@ async function nodelink_requestHandler(req, res) {
 
         // Play
         if (buffer.encodedTrack !== undefined || buffer.encodedTrack === null) {
-          console.log('[NodeLink]: Received play request')
+          console.log(`[NodeLink:updatePlayer]: Received ${buffer.encodedTrack == null && player.config.track ? 'stop' : 'play'} request.`)
 
           const noReplace = new URLSearchParams(parsedUrl.query).get('noReplace')
 
@@ -667,7 +688,7 @@ async function nodelink_requestHandler(req, res) {
 
         // Volume
         if (buffer.volume != undefined) {
-          console.log('[NodeLink]: Received volume request')
+          console.log('[NodeLink:updatePlayer]: Received volume request.')
 
           if (!player) player = new VoiceConnection(guildId, client)
 
@@ -678,7 +699,7 @@ async function nodelink_requestHandler(req, res) {
 
         // Pause
         if (buffer.paused != undefined) {
-          console.log('[NodeLink]: Received pause request')
+          console.log('[NodeLink:updatePlayer]: Received pause request.')
 
           if (!player) player = new VoiceConnection(guildId, client)
 
@@ -697,11 +718,14 @@ async function nodelink_requestHandler(req, res) {
 function nodelink_startSourceAPIs() {
   if (clients.size != 0) return;
 
-  if (config.search.sources.youtube)
+  if (config.search.sources.youtube || config.search.sources.youtubeMusic)
     sources.youtube.startInnertube()
 
   if (config.search.sources.spotify)
     sources.spotify.setSpotifyToken()
+
+  if (config.search.sources.pandora)
+    sources.pandora.setToken()
 }
 
 export default { nodelink_setupConnection, nodelink_requestHandler, nodelink_startSourceAPIs }

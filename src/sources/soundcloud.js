@@ -3,16 +3,12 @@ import utils from '../utils.js'
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Loading track from SoundCloud: ${url}`)
+    console.log(`[NodeLink:sources]: Loading track from SoundCloud: ${url}`)
 
     const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
-    if (data.error) {
-      if (data.error.status == 400) 
-        return resolve({ loadType: 'empty', data: {} })
-
-      return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
-    }
+    if (JSON.stringify(data) == '{}')
+      return resolve({ loadType: 'empty', data: {} })
 
     switch (data.kind) {
       case 'track': {
@@ -44,7 +40,7 @@ async function loadFrom(url) {
       case 'playlist': {
         const tracks = []
 
-        data.tracks.forEach(async (track, index) => {
+        utils.nodelink_forEach(data.tracks, async (track, index) => {
           const infoObj = {
             identifier: track.id.toString(),
             isSeekable: true,
@@ -87,23 +83,19 @@ async function loadFrom(url) {
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Searching track on SoundCloud: ${query}`)
+    console.log(`[NodeLink:sources]: Searching track on SoundCloud: ${query}`)
 
     const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
       method: 'GET'
     })
-    
-    if (data.error) {
-      if (data.error.status == 400) 
-        return resolve({ loadType: 'empty', data: {} })
 
-      return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
-    }
+    if (data.total_results == 0)
+      return resolve({ loadType: 'empty', data: {} })
 
     const tracks = []
     let i = 0
 
-    data.collection.forEach(async (track, index) => {
+    utils.nodelink_forEach(data.collection, async (track, index) => {
       if (track.kind == 'track') {
         const infoObj = {
           identifier: track.id.toString(),
@@ -141,12 +133,12 @@ async function retrieveStream(identifier) {
     const data = await utils.nodelink_http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
       
     if (data.errors) {
-      console.log(`[NodeLink]: Failed to load track: ${data.errors[0].error_message}`)
+      console.log(`[NodeLink:sources]: Failed to load track: ${data.errors[0].error_message}`)
 
       return resolve({ status: 1, exception: { message: data.errors[0].error_message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
-    data.media.transcodings.forEach(async (transcoding) => {
+    utils.nodelink_forEach(data.media.transcodings, async (transcoding) => {
       if (transcoding.format.protocol == 'progressive') {
         const stream = await utils.nodelink_http1makeRequest(transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 

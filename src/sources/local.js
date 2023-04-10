@@ -4,7 +4,7 @@ import utils from '../utils.js'
 
 async function loadFrom(path) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Loading track from local: ${path}`)
+    console.log(`[NodeLink:sources]: Loading track from local: ${path}`)
 
     fs.open(path, (err) => {
       if (err)

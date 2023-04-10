@@ -19,12 +19,12 @@ async function loadFrom(query, track) {
         return resolve({ loadType: 'empty', data: {} })
     }
 
-    console.log(`[NodeLink]: Loading ${track[1]} from Deezer: ${query}`)
+    console.log(`[NodeLink:sources]: Loading ${track[1]} from Deezer: ${query}`)
 
     const data = await utils.nodelink_makeRequest(`https://api.deezer.com/${endpoint}`, { method: 'GET' })
 
     if (data.error) {
-      if (data.error.status == 400) 
+      if (data.error.code == 800) 
         return resolve({ loadType: 'empty', data: {} })
 
       return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
@@ -34,14 +34,14 @@ async function loadFrom(query, track) {
       case 'track': {
         const search = await searchWithDefault(`"${data.title} ${data.artist.name}"`)
 
-        if (search.loadType == 'error')
+        if (search.loadType != 'search')
           return resolve(search)
 
         const infoObj = {
-          identifier: search.tracks[0].info.identifier,
+          identifier: search.data[0].info.identifier,
           isSeekable: true,
           author: data.artist.name,
-          length: search.tracks[0].info.length,
+          length: search.data[0].info.length,
           isStream: false,
           position: 0,
           title: data.title,
@@ -69,14 +69,14 @@ async function loadFrom(query, track) {
         data.tracks.data.forEach(async (track, index) => {
           const search = await searchWithDefault(`"${track.title} ${track.artist.name}"`)
 
-          if (search.loadType == 'error')
+          if (search.loadType != 'search')
             return resolve(search)
 
           const infoObj = {
-            identifier: search.tracks[0].info.identifier,
+            identifier: search.data[0].info.identifier,
             isSeekable: true,
             author: track.artist.name,
-            length: search.tracks[0].info.length,
+            length: search.data[0].info.length,
             isStream: false,
             position: index,
             title: track.title,
@@ -92,18 +92,33 @@ async function loadFrom(query, track) {
             pluginInfo: {}
           })
 
-          if (index == data.tracks.data.length) 
-            resolve({
-              loadType: 'playlist',
-              data: {
-                info: {
-                  name: data.title,
-                  selectedTrack: 0
-                },
-                pluginInfo: {},
-                tracks
-              }
+          if (index == data.tracks.data.length) {
+            const new_tracks = []
+
+            data.tracks.data.forEach((track2, index2) => {
+              tracks.forEach((track3, index3) => {
+                if (track3.info.title == track.artist.name && track3.info.author == track.title) {
+                  track.info.position = index3
+                  new_tracks.push(track)
+                }
+
+                if ((index2 == data.tracks.data.length - 1) && (index3 == tracks.length - 1))
+                  resolve({
+                    loadType: 'playlist',
+                    data: {
+                      info: {
+                        name: data.title,
+                        selectedTrack: 0
+                      },
+                      pluginInfo: {},
+                      tracks: new_tracks
+                    }
+                  })
+              })
             })
+          }
+
+          index++
         })
 
         break

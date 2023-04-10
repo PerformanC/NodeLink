@@ -3,7 +3,7 @@ import utils from '../utils.js'
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Loading track from BandCamp: ${url}`)
+    console.log(`[NodeLink:sources]: Loading track from BandCamp: ${url}`)
 
     const data = await utils.nodelink_makeRequest(url, { method: 'GET' })
 
@@ -42,7 +42,7 @@ async function loadFrom(url) {
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink]: Searching track on BandCamp: ${query}`)
+    console.log(`[NodeLink:sources]: Searching track on BandCamp: ${query}`)
 
     const data = await utils.nodelink_makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
@@ -114,7 +114,7 @@ async function retrieveStream(uri) {
     const streamURL = data.match(/https?:\/\/t4\.bcbits\.com\/stream\/[a-zA-Z0-9]+\/mp3-128\/\d+\?p=\d+&amp;ts=\d+&amp;t=[a-zA-Z0-9]+&amp;token=\d+_[a-zA-Z0-9]+/)
 
     if (!streamURL) {
-      console.log(`[NodeLink]: Failed to load track: No stream URL found.`)
+      console.log(`[NodeLink:sources]: Failed to load track: No stream URL found.`)
 
       return resolve({ status: 1, exception: { severity: 'UNCOMMON', message: 'Failed to retrieve stream url from deezer.', cause: 'unknown' } })
     }
