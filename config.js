@@ -9,18 +9,17 @@ autoUpdate: [ autoUpdate, interval, [tar, zip] ]
 */
 
 export default {
-  version: '1.4.1',
+  version: '1.5.0',
   server: {
     port: 2333,
     password: 'youshallnotpass'
   },
   options: {
     opt: 2,
-    threshold: 5000,
-    playerUpdateInterval: 5000,
-    statsInterval: 5000,
-    autoUpdate: [ true, false, 'tar' ],
-    allowCache: true,
+    threshold: 10000,
+    playerUpdateInterval: false,
+    statsInterval: false,
+    autoUpdate: [ true, 360000, 'tar' ],
     maxResults: 20,
     maxPlaylistSize: 20
   },
@@ -39,9 +38,25 @@ export default {
       local: true,
       pandora: true,
       soundcloud: {
-        clientId: 'RMDIzNoU4QIzQsT3xq9J5TdxFFQlJvLY',
-        enabled: true
+        enabled: false,
+        clientId: 'YOUR_CLIENT_ID'
       }
+    }
+  },
+  filters: {
+    enabled: true,
+    threads: 4,
+    list: {
+      volume: true,
+      equalizer: true,
+      karaoke: true,
+      timescale: true,
+      tremolo: true,
+      vibrato: true,
+      rotation: true,
+      distortion: true,
+      channelMix: true,
+      lowPass: true
     }
   }
 }

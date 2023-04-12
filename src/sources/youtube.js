@@ -38,7 +38,7 @@ function startInnertube() {
     playerInfo.decipherEval = `const ${decipherLowLevel})}};${dFunctionHighLevel}decipher('NODELINK_DECIPHER_URL');`
 
     console.log('[NodeLink:sources]: Successfully processed information for next loadtracks and play.')
-  }, 120000)
+  }, 3600000)
 }
 
 function stopInnertube() {

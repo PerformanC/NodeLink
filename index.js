@@ -6,17 +6,6 @@ import connectionHandler from './src/connectionHandler.js'
 import config from './config.js'
 import utils from './src/utils.js'
 
-if (config.options.allowCache) {
-  utils.checkNCreateFiles('cache folder', './cache', false)
-  utils.checkNCreateFiles('bandcamp cache file', './cache/bandcamp.json', '{}')
-  utils.checkNCreateFiles('deezer cache file', './cache/deezer.json', '{}')
-  utils.checkNCreateFiles('pandora cache file', './cache/pandora.json', '{}')
-  utils.checkNCreateFiles('pandora cache file', './cache/pandora.json', '{}')
-  utils.checkNCreateFiles('soundcloud cache file', './cache/soundcloud.json', '{}')
-  utils.checkNCreateFiles('spotify cache file', './cache/spotify.json', '{}')
-  utils.checkNCreateFiles('youtube cache file', './cache/youtube.json', '{}')
-}
-
 if (config.options.autoUpdate[1]) setInterval(() => {
   utils.checkForUpdates()
 }, config.options.autoUpdate[1])

@@ -18,8 +18,8 @@ NodeLink is a fast and light-weight Lavalink based (v4) audio sending node.
 - [x] Version endpoint
 - [x] Track(s) decoding
 - [x] Resume system
+- [x] Filters (ALL / BETA)
 - [ ] Info endpoint
-- [ ] Filters
 - [ ] Router planner API
 
 ## Recommended Lavalink wrappers

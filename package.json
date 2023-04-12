@@ -2,7 +2,7 @@
   "type": "module",
   "dependencies": {
     "@discordjs/opus": "^0.9.0",
-    "@discordjs/voice": "^0.15.0",
+    "@discordjs/voice": "^0.16.0",
     "libsodium-wrappers": "^0.7.11",
     "ws": "^8.13.0"
   }

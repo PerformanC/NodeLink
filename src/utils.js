@@ -3,19 +3,17 @@ import http2 from 'http2'
 import { URL } from 'url'
 import zlib from 'zlib'
 import cp from 'child_process'
-import fs from 'fs'
 
 import config from '../config.js'
 
 function generateSessionId() {
   let result = ''
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  const charactersLength = characters.length
   
   let counter = 0
   while (counter < 16) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength))
-    counter += 1
+    result += characters.charAt(Math.floor(Math.random() * characters.length))
+    counter++
   }
   
   return result
@@ -354,50 +352,6 @@ async function checkForUpdates() {
   }
 }
 
-function checkNCreateFiles(name, path, content) {
-  fs.access('./cache', (err) => {
-    if (err) {
-      console.log(`[NodeLink:cache]: The ${name} not found. Creating...`)
-
-      fs.mkdir('./cache', (err) => {
-        if (err) {
-          console.log(`[NodeLink:cache]: Error creating the ${name}. Disabling cache...`)
-          config.options.allowCache = false
-        }
-
-        fs.writeFile(path, content, (err) => {
-          if (err) {
-            console.log(`[NodeLink:cache]: Error creating the ${name}. Disabling cache...`)
-            config.options.allowCache = false
-          }
-    
-          console.log(`[NodeLink:cache]: The ${name} has been created.`)
-        })
-      })
-    }
-
-    console.log(`[NodeLink:cache]: The ${name} has been found.`)
-  })
-}
-
-function safelyWriteFile(path, content) {
-  const tempPath = `cache/${generateSessionId()}.tmp`
-
-  fs.writeFile(tempPath, content, (err) => {
-    if (err) { 
-      console.log(`[NodeLink:cache]: Error writing the cache file. Disabling cache...`)
-      config.options.allowCache = false
-    }
-
-    fs.rename(tempPath, path, (err) => {
-      if (err) {
-        console.log(`[NodeLink:cache]: Error writing the cache file. Disabling cache...`)
-        config.options.allowCache = false
-      }
-    })
-  })
-}
-
 export default {
   generateSessionId,
   http1makeRequest,
@@ -406,7 +360,5 @@ export default {
   decodeTrack,
   forEach,
   sleep,
-  checkForUpdates,
-  checkNCreateFiles,
-  safelyWriteFile
+  checkForUpdates
 }

@@ -1,5 +1,7 @@
 import os from 'os'
+import https from 'https'
 import { URLSearchParams, parse } from 'url'
+import { Readable } from 'stream'
 
 import config from '../config.js'
 import constants from '../constants.js'
@@ -7,11 +9,54 @@ import utils from './utils.js'
 import sources from './sources.js'
 
 import * as djsVoice from '@discordjs/voice'
+import prism from 'prism-media'
 
 const adapters = new Map()
 const clients = new Map()
 
 let nodelinkPlayersCount = 0, nodelinkPlayingPlayersCount = 0
+
+class replayableStream extends Readable {
+  constructor() {
+    super()
+    this.data = []
+    this.i = 0
+  }
+
+  read() {
+    if (this.i < this.data.length) {
+      this.push(this.data[this.i])
+      this.i++
+    } else {
+      this.push(null)
+    }
+  }
+
+  _read() {
+    return this.read()
+  }
+
+  write(chunk) {
+    this.data.push(chunk)
+  }
+
+  _write(chunk) {
+    return this.write(chunk)
+  }
+
+  _destroy() {
+    this.data = []
+    this.i = 0
+  }
+
+  _reset() {
+    this.i = 0
+  }
+
+  end() {
+    this.data.push(null)
+  }
+} 
 
 function voiceAdapterCreator(userId, guildId) {
   return (methods) => {
@@ -35,7 +80,8 @@ class VoiceConnection {
     this.client = client
     this.cache = {
       voice: null,
-      track: null
+      track: null,
+      stream: [ null, null ]
     }
     this.stateInterval
   
@@ -71,6 +117,7 @@ class VoiceConnection {
       ping: -1
     }
     this.config.track = null
+    this.cache.stream = [ null, null ]
   }
   
   setup() {
@@ -85,8 +132,8 @@ class VoiceConnection {
           if (oldState.status == djsVoice.VoiceConnectionStatus.Disconnected) return;
   
           try {
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Signalling, config.options.threshold || -1)
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold || -1)
+            if (config.options.threshold) await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Signalling, config.options.threshold)
+            if (config.options.threshold) await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold)
           } catch (e) {
             this._stopTrack()
   
@@ -118,7 +165,7 @@ class VoiceConnection {
             this.connection.configureNetworking()
 
           try {
-            await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.options.threshold || -1)
+            if (config.options.threshold) await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Ready, config.options.threshold)
           } catch {
             this._stopTrack()
   
@@ -212,17 +259,38 @@ class VoiceConnection {
   
     this.client.players.delete(this.config.guildId)
   }
+
+  async getResource(decodedTrack, urlInfo) {
+    return new Promise(async (resolve) => {
+      if (config.filters.enabled) https.get(urlInfo.url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+          'range': 'bytes=0-'
+        }
+      }, (res) => {
+        this.cache.stream[0] = res
+      })
+      https.get(urlInfo.url, (res) => {
+        this.cache.stream[0] = res
+
+        if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(decodedTrack.sourceName))
+          resolve(new djsVoice.AudioResource([], [res, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.WebmDemuxer()], urlInfo.url, 5))
+        else
+          resolve(new djsVoice.AudioResource(res, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }))
+      })
+    })
+  }
   
   async play(track, noReplace) {
     if (noReplace && this.config.track) return;
 
-    const encodedTrack = utils.decodeTrack(track)
+    const decodedTrack = utils.decodeTrack(track)
 
     const oldTrack = this.config.track
 
-    this.config.track = { encoded: track, info: encodedTrack }
+    this.config.track = { encoded: track, info: decodedTrack }
   
-    const urlInfo = await sources.getTrackURL(encodedTrack)
+    const urlInfo = await sources.getTrackURL(decodedTrack)
 
     if (urlInfo.status) {
       this.config.track = null
@@ -231,7 +299,7 @@ class VoiceConnection {
         op: 'event',
         type: 'TrackExceptionEvent',
         guildId: this.config.guildId,
-        track: encodedTrack,
+        track: decodedTrack,
         exception: urlInfo.exception
       }))
   
@@ -248,16 +316,17 @@ class VoiceConnection {
       }))
     }
 
-    console.log(`[NodeLink:play]: Playing track from ${encodedTrack.sourceName}: ${encodedTrack.title}`)
+    console.log(`[NodeLink:play]: Playing track from ${decodedTrack.sourceName}: ${decodedTrack.title}`)
 
-    const resource = djsVoice.createAudioResource(urlInfo.url, { inputType: encodedTrack.sourceName == 'youtube' ? djsVoice.StreamType.WebmOpus : djsVoice.StreamType.Arbitrary, inlineVolume: true })
+    let resource = await this.getResource(decodedTrack, urlInfo)
+     
     resource.volume.setVolume(this.config.volume / 100)
 
     this.connection.subscribe(this.player)
     this.player.play(resource)
       
     try {
-      await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold || -1)
+      if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
     
       if (oldTrack) {
         this.client.ws.send(JSON.stringify({
@@ -276,7 +345,7 @@ class VoiceConnection {
         op: 'event',
         type: 'TrackStuckEvent',
         guildId: this.config.guildId,
-        track: encodedTrack,
+        track: decodedTrack,
         thresholdMs: config.options.threshold
       }))
     }
@@ -313,6 +382,133 @@ class VoiceConnection {
     this.config.paused = pause
   
     return this.config
+  }
+
+  filters(filters) {
+    if (this.player.state.status != djsVoice.AudioPlayerStatus.Playing || !config.filters.enabled) return this.config
+  
+    let commands = [
+      '-analyzeduration', '0',
+      '-loglevel', '0',
+      '-threads', config.filters.threads,
+      '-filter_threads', config.filters.threads,
+      '-filter_complex_threads', config.filters.threads,
+    ]
+
+    let filterCommand = []    
+    if (filters.volume) {
+      if (!config.filters.list.volume) return this.config
+
+      this.config.filters.volume = filters.volume
+
+      filterCommand.push(`volume=${filters.volume}`)
+    }
+
+		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length) {
+      if (!config.filters.list.equalizer) return this.config
+
+      this.config.filters.equalizer = filters.equalizer
+
+			const bandSettings = [ { band: 0, gain: 0.2 }, { band: 1, gain: 0.2 }, { band: 2, gain: 0.2 }, { band: 3, gain: 0.2 }, { band: 4, gain: 0.2 }, { band: 5, gain: 0.2 }, { band: 6, gain: 0.2 }, { band: 7, gain: 0.2 }, { band: 8, gain: 0.2 }, { band: 9, gain: 0.2 }, { band: 10, gain: 0.2 }, { band: 11, gain: 0.2 }, { band: 12, gain: 0.2 }, { band: 13, gain: 0.2 }, { band: 14, gain: 0.2 }]
+
+      filters.equalizer.forEach((eq) => {
+        const cur = bandSettings.find(i => i.band == eq.band)
+				if (cur) cur.gain = eq.gain
+      })
+
+      filterCommand.push(filters.equalizer.map((eq) => `equalizer=f=${eq.band}:width_type=h:width=1:g=${eq.gain}`).join(','))
+		}
+
+    if (filters.karaoke && filters.karaoke.level && filters.karaoke.monoLevel && filters.karaoke.filterBand && filters.karaoke.filterWidth) {
+      if (!config.filters.list.karaoke) return this.config
+
+      this.config.filters.karaoke = { level: filters.karaoke.level, monoLevel: filters.karaoke.monoLevel, filterBand: filters.karaoke.filterBand, filterWidth: filters.karaoke.filterWidth }
+
+      filterCommand.push(`stereotools=mlev=${filters.karaoke.monoLevel}:mwid=${filters.karaoke.filterWidth}:k=${filters.karaoke.level}:kc=${filters.karaoke.filterBand}`)
+    }
+    if (filters.timescale && filters.timescale.speed && filters.timescale.pitch && filters.timescale.rate) {
+      if (!config.filters.list.timescale) return this.config
+
+      this.config.filters.timescale = { speed: filters.timescale.speed, pitch: filters.timescale.pitch, rate: filters.timescale.rate }
+
+			const speeddif = 1.0 - filters.timescale.pitch
+			const finalspeed = filters.timescale.speed + speeddif
+			const ratedif = 1.0 - filters.timescale.rate
+
+			filterCommand.push(`asetrate=48000*${filters.timescale.pitch + ratedif},atempo=${finalspeed},aresample=48000`)
+		}
+
+    if (filters.tremolo && filters.tremolo.frequency && filters.tremolo.depth) {
+      if (!config.filters.list.tremolo) return this.config
+
+      this.config.filters.tremolo = { frequency: filters.tremolo.frequency, depth: filters.tremolo.depth }
+
+      filterCommand.push(`tremolo=f=${filters.tremolo.frequency}:d=${filters.tremolo.depth}`)
+    }
+
+    if (filters.vibrato && filters.vibrato.frequency && filters.vibrato.depth) {
+      if (!config.filters.list.vibrato) return this.config
+
+      this.config.filters.vibrato = { frequency: filters.vibrato.frequency, depth: filters.vibrato.depth }
+
+      filterCommand.push(`vibrato=f=${filters.vibrato.frequency}:d=${filters.vibrato.depth}`)
+    }
+
+    if (filters.rotation && filters.rotation.rotationHz) {
+      if (!config.filters.list.rotation) return this.config
+
+      this.config.filters.rotation = { rotationHz: filters.rotation.rotationHz }
+
+      filterCommand.push(`apulsator=hz=${filters.rotation.rotationHz}`)
+    }
+
+    if (filters.distortion && filters.distortion.sinOffset && filters.distortion.sinScale && filters.distortion.cosOffset && filters.distortion.cosScale && filters.distortion.tanOffset && filters.distortion.tanScale && filters.distortion.offset && filters.distortion.scale) {
+      if (!config.filters.list.distortion) return this.config
+
+      this.config.filters.distortion = { sinOffset: filters.distortion.sinOffset, sinScale: filters.distortion.sinScale, cosOffset: filters.distortion.cosOffset, cosScale: filters.distortion.cosScale, tanOffset: filters.distortion.tanOffset, tanScale: filters.distortion.tanScale, offset: filters.distortion.offset, scale: filters.distortion.scale }
+
+      filterCommand.push(`afftfilt=real='hypot(re,im)*sin(0.1*${filters.distortion.sinOffset}*PI*t)*${filters.distortion.sinScale}+hypot(re,im)*cos(0.1*${filters.distortion.cosOffset}*PI*t)*${filters.distortion.cosScale}+hypot(re,im)*tan(0.1*${filters.distortion.tanOffset}*PI*t)*${filters.distortion.tanScale}+${filters.distortion.offset}':imag='hypot(re,im)*sin(0.1*${filters.distortion.sinOffset}*PI*t)*${filters.distortion.sinScale}+hypot(re,im)*cos(0.1*${filters.distortion.cosOffset}*PI*t)*${filters.distortion.cosScale}+hypot(re,im)*tan(0.1*${filters.distortion.tanOffset}*PI*t)*${filters.distortion.tanScale}+${filters.distortion.offset}':win_size=512:overlap=0.75:scale=${filters.distortion.scale}`)
+    }
+
+    if (filters.channelMix && filters.channelMix.leftToLeft && filters.channelMix.leftToRight && filters.channelMix.rightToLeft && filters.channelMix.rightToRight) {
+      if (!config.filters.list.channelMix) return this.config
+
+      this.config.filters.channelMix = { leftToLeft: filters.channelMix.leftToLeft, leftToRight: filters.channelMix.leftToRight, rightToLeft: filters.channelMix.rightToLeft, rightToRight: filters.channelMix.rightToRight }
+
+      filterCommand.push(`pan=stereo|c0<c0*${filters.channelMix.leftToLeft}+c1*${filters.channelMix.rightToLeft}|c1<c0*${filters.channelMix.leftToRight}+c1*${filters.channelMix.rightToRight}`)
+    }
+
+    if (filters.lowPass && filters.lowPass.smoothing) {
+      if (!config.filters.list.lowPass) return this.config
+      this.config.filters.lowPass = { smoothing: filters.lowPass.smoothing }
+
+      filterCommand.push(`lowpass=f=${filters.lowPass.smoothing / 500}`)
+    }
+
+    if (filterCommand.length) {
+      commands.push('-f', 's16le', '-ar', '48000', '-ac', '2')
+      commands.push('-af', filterCommand.join(','))
+      commands.push('-ss', `${this.player.state.resource.playbackDuration}ms`)
+
+      const res = this.cache.stream[1] ? this.cache.stream[1] : this.cache.stream[0]
+      const resource = new djsVoice.AudioResource([], [res, new prism.FFmpeg({ args: commands }), new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], this.player.state.resource.metadata, 5) 
+
+      this.connection.subscribe(this.player)
+      this.player.play(resource)
+
+      let url = this.player.state.resource.metadata
+
+      https.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+          'range': `bytes=0-`
+        }
+      }, (res) => {
+        this.cache.stream[1] = res
+      })
+
+      return this.config
+    }
   }
 }
 
@@ -704,6 +900,17 @@ async function requestHandler(req, res) {
           if (!player) player = new VoiceConnection(guildId, client)
 
           player.pause(buffer.paused == true)
+
+          client.players.set(guildId, player)
+        }
+
+        // Filters
+        if (buffer.filters != undefined) {
+          console.log('[NodeLink:updatePlayer]: Received filters request.')
+
+          if (!player) player = new VoiceConnection(guildId, client)
+
+          player.filters(buffer.filters)
 
           client.players.set(guildId, player)
         }
