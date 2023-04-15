@@ -6,11 +6,11 @@ let csrfToken = null
 let authToken = null
 
 async function setToken() {
-  console.log('[NodeLink:sources]: Fetching Pandora page...')
+  utils.debugLog('pandora', 5, { message: 'Setting Pandora auth and CSRF token' })
 
   const csfr = await utils.makeRequest('https://www.pandora.com', { method: 'GET', retrieveCookies: true })
 
-  if (!csfr[1]) return console.log('[NodeLink:sources]: Failed to set CSRF token from Pandora')
+  if (!csfr[1]) return utils.debugLog('pandora', 5, { message: 'Failed to set CSRF token from Pandora' })
 
   csrfToken = { raw: csfr[1], parsed: /csrftoken=([a-f0-9]{16});/.exec(csfr[1])[1] }
 
@@ -24,23 +24,23 @@ async function setToken() {
     method: 'POST'
   })
 
-  if (token.errorCode == 0) return console.log('[NodeLink:sources]: Failed to set auth token from Pandora')
+  if (token.errorCode == 0) return utils.debugLog('pandora', 5, { message: 'Failed to set auth token from Pandora' })
 
   authToken = token.authToken
 
-  console.log('[NodeLink:sources]: Successfully set Pandora auth and CSRF token.')
+  utils.debugLog('pandora', 5, { message: 'Successfully set Pandora auth and CSRF token' })
 }
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink:sources]: Searching track on Pandora: ${query}`)
+    utils.debugLog('search', 4, { type: 1, sourceName: 'Pandora', query })
 
     const body = {
       query,
       types: ['TR'],
       listener: null,
       start: 0,
-      count: 20,
+      count: config.options.maxResults,
       annotate: true,
       searchTime: 0,
       annotationRecipe: 'CLASS_OF_2019'
@@ -92,6 +92,8 @@ async function search(query) {
       })
 
       if (index == data.results.length - 1) {
+        utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: tracks.length, query })
+
         const new_tracks = []
 
         Object.keys(data.annotations).forEach((key2, index2) => {
@@ -115,12 +117,12 @@ async function search(query) {
 
 async function loadFrom(query) {
   return new Promise(async (resolve) => {
+    utils.debugLog('loadtracks', 4, { type: 1, loadType: type[2], sourceName: 'Pandora', query })
+
     let type = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(query)
 
     if (!type)
       return resolve({ loadType: 'error', data: { message: 'Not a valid pandora url.', severity: 'COMMON', cause: 'Url error' } })
-    
-    console.log(`[NodeLink:sources]: Loading ${type[2]} from Pandora: ${query}`)
 
     switch (type[2]) {
       case 'artist': {
@@ -154,6 +156,8 @@ async function loadFrom(query) {
             isrc: null,
             sourceName: 'pandora'
           }
+
+          utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', track: infoObj, query })
   
           return resolve({
             loadType: 'track',
@@ -196,6 +200,8 @@ async function loadFrom(query) {
             })
       
             if (index == keys.length - 1) {
+              utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
+
               const new_tracks = []
       
               keys.forEach((key2, index2) => {
@@ -257,6 +263,8 @@ async function loadFrom(query) {
             })
       
             if (index == keys.length - 1) {
+              utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
+
               const new_tracks = []
       
               keys.forEach((key2, index2) => {
@@ -351,6 +359,8 @@ async function loadFrom(query) {
           })
     
           if (index == keys.length - 1) {
+            utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
+
             const new_tracks = []
     
             keys.forEach((key2, index2) => {

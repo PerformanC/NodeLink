@@ -78,7 +78,7 @@ async function search(query) {
       utils.sleep(200)
     }
 
-    console.log(`[NodeLink:sources]: Searching track on Spotify: ${query}`)
+    utils.debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
     https.get({
       hostname: 'api-partner.spotify.com',
@@ -114,8 +114,11 @@ async function search(query) {
       compression.on('end', () => {
         data = JSON.parse(data)
 
-        if (data.data.searchV2.tracksV2.totalCount == 0)
+        if (data.data.searchV2.tracksV2.totalCount == 0) {
+          utils.debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
           return resolve({ loadType: 'empty', data: {} })
+        }
           
         let tracks = []
         let i = 0
@@ -149,6 +152,8 @@ async function search(query) {
               pluginInfo: {}
             })
           }
+
+          utils.debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: tracks.length, query })
 
           if (index == data.data.searchV2.tracksV2.items.length - 1)
             resolve({
@@ -191,7 +196,7 @@ async function loadFrom(query, type) {
       }
     }
 
-    console.log(`[NodeLink:sources]: Loading ${type[1]} from Spotify: ${query}`)
+    utils.debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Spotify', query })
 
     let data = await utils.makeRequest(`https://api.spotify.com/v1${endpoint}`, {
       method: 'GET',
@@ -212,11 +217,17 @@ async function loadFrom(query, type) {
         })
       }
 
-      if (data.error.status == 400) 
+      if (data.error.status == 400) {
+        utils.debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
         return resolve({ loadType: 'empty', data: {} })
+      }
     
-      if (data.error)
+      if (data.error) {
+        utils.debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: data.error.message })
+
         return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
+      }
     }
 
     switch (type[1]) {
@@ -239,6 +250,8 @@ async function loadFrom(query, type) {
           isrc: null,
           sourceName: 'spotify'
         }
+
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track: infoObj, query })
 
         resolve({
           loadType: 'track',
@@ -270,6 +283,8 @@ async function loadFrom(query, type) {
           isrc: null,
           sourceName: 'spotify'
         }
+
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episode', sourceName: 'Spotify', track: infoObj, query })
 
         resolve({
           loadType: 'track',
@@ -316,6 +331,8 @@ async function loadFrom(query, type) {
           })
 
           if (index == data.tracks.items.length - 1) {
+            utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', tracksLen: tracks.length, query })
+
             const new_tracks = []
 
             data.tracks.items.forEach((track2, index2) => {

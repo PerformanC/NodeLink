@@ -1,7 +1,6 @@
 import os from 'os'
 import https from 'https'
 import { URLSearchParams, parse } from 'url'
-import { Readable } from 'stream'
 
 import config from '../config.js'
 import constants from '../constants.js'
@@ -15,48 +14,6 @@ const adapters = new Map()
 const clients = new Map()
 
 let nodelinkPlayersCount = 0, nodelinkPlayingPlayersCount = 0
-
-class replayableStream extends Readable {
-  constructor() {
-    super()
-    this.data = []
-    this.i = 0
-  }
-
-  read() {
-    if (this.i < this.data.length) {
-      this.push(this.data[this.i])
-      this.i++
-    } else {
-      this.push(null)
-    }
-  }
-
-  _read() {
-    return this.read()
-  }
-
-  write(chunk) {
-    this.data.push(chunk)
-  }
-
-  _write(chunk) {
-    return this.write(chunk)
-  }
-
-  _destroy() {
-    this.data = []
-    this.i = 0
-  }
-
-  _reset() {
-    this.i = 0
-  }
-
-  end() {
-    this.data.push(null)
-  }
-} 
 
 function voiceAdapterCreator(userId, guildId) {
   return (methods) => {
@@ -81,7 +38,8 @@ class VoiceConnection {
     this.cache = {
       voice: null,
       track: null,
-      stream: [ null, null ]
+      stream: [ null, null ],
+      audioData: []
     }
     this.stateInterval
   
@@ -184,7 +142,7 @@ class VoiceConnection {
     })
     
     this.player.on('stateChange', (oldState, newState) => {
-      if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {  
+      if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {
         this.client.ws.send(JSON.stringify({
           op: 'event',
           type: 'TrackEndEvent',
@@ -260,23 +218,24 @@ class VoiceConnection {
     this.client.players.delete(this.config.guildId)
   }
 
-  async getResource(decodedTrack, urlInfo) {
+  async getResource(sourceName, url) {
     return new Promise(async (resolve) => {
-      if (config.filters.enabled) https.get(urlInfo.url, {
+      https.get(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-          'range': 'bytes=0-'
+          'Range': 'bytes=0-'
         }
       }, (res) => {
-        this.cache.stream[0] = res
-      })
-      https.get(urlInfo.url, (res) => {
-        this.cache.stream[0] = res
+        if (res.statusCode != 206) {
+          res.destroy()
 
-        if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(decodedTrack.sourceName))
-          resolve(new djsVoice.AudioResource([], [res, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.WebmDemuxer()], urlInfo.url, 5))
-        else
-          resolve(new djsVoice.AudioResource(res, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }))
+          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
+        }
+        
+       if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(sourceName))
+          resolve({ status: 0, stream: new djsVoice.AudioResource([], [res, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.WebmDemuxer()], urlInfo.url, 5) })
+       else
+          resolve({ status: 0, stream: djsVoice.createAudioResource(res, { inputType: djsVoice.StreamType.WebmOpus, metadata: urlInfo.url, inlineVolume: true }) })
       })
     })
   }
@@ -316,19 +275,36 @@ class VoiceConnection {
       }))
     }
 
-    console.log(`[NodeLink:play]: Playing track from ${decodedTrack.sourceName}: ${decodedTrack.title}`)
+    utils.debugLog('trackStart', 2, { track: decodedTrack, guildId: this.config.guildId })
 
-    let resource = await this.getResource(decodedTrack, urlInfo)
-     
-    resource.volume.setVolume(this.config.volume / 100)
+    const resource = await this.getResource(decodedTrack.sourceName, urlInfo.url)
+
+    if (resource.status) {
+      this.config.track = null
+
+      utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.config.guildId, exception: resource.exception })
+  
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackExceptionEvent',
+        guildId: this.config.guildId,
+        track: decodedTrack,
+        exception: resource.exception
+      }))
+  
+      return this.config
+    }
+    resource.stream.volume.setVolume(this.config.volume / 100)
 
     this.connection.subscribe(this.player)
-    this.player.play(resource)
+    this.player.play(resource.stream)
       
     try {
       if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
     
       if (oldTrack) {
+        utils.debugLog('trackStart', 2, { track: decodedTrack, guildId: this.config.guildId })
+
         this.client.ws.send(JSON.stringify({
           op: 'event',
           type: 'TrackStartEvent',
@@ -337,9 +313,9 @@ class VoiceConnection {
         }))
       }
     } catch (e) {
-      console.log('[NodeLink:play]: Couldn\'t start playing track in time of threshold.')
-  
       this.config.track = null
+
+      utils.debugLog('trackStuck', 2, { track: decodedTrack, guildId: this.config.guildId })
   
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -348,6 +324,8 @@ class VoiceConnection {
         track: decodedTrack,
         thresholdMs: config.options.threshold
       }))
+
+      utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.config.guildId, exception: { message: 'Couldn\'t start playing track in time of threshold.', severity: 'COMMON', cause: 'unknown' } })
     }
   
     return this.config
@@ -388,8 +366,7 @@ class VoiceConnection {
     if (this.player.state.status != djsVoice.AudioPlayerStatus.Playing || !config.filters.enabled) return this.config
   
     let commands = [
-      '-analyzeduration', '0',
-      '-loglevel', '0',
+
       '-threads', config.filters.threads,
       '-filter_threads', config.filters.threads,
       '-filter_complex_threads', config.filters.threads,
@@ -487,24 +464,43 @@ class VoiceConnection {
 
     if (filterCommand.length) {
       commands.push('-f', 's16le', '-ar', '48000', '-ac', '2')
-      commands.push('-af', filterCommand.join(','))
       commands.push('-ss', `${this.player.state.resource.playbackDuration}ms`)
+      commands.push('-af', filterCommand.join(','))
 
-      const res = this.cache.stream[1] ? this.cache.stream[1] : this.cache.stream[0]
-      const resource = new djsVoice.AudioResource([], [res, new prism.FFmpeg({ args: commands }), new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], this.player.state.resource.metadata, 5) 
-
-      this.connection.subscribe(this.player)
-      this.player.play(resource)
-
-      let url = this.player.state.resource.metadata
-
-      https.get(url, {
+      console.log(`[NodeLink:filters]: Setting filter with the ffmpeg command: ${commands[commands.length - 1]}`)
+      
+      https.get(this.player.state.resource.metadata, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-          'range': `bytes=0-`
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
         }
       }, (res) => {
-        this.cache.stream[1] = res
+        if (res.statusCode != 200) {
+          this.config.track = null
+          this.config.filters = {}
+
+          res.destroy()
+
+          utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.config.guildId, exception: resource.exception })
+      
+          this.client.ws.send(JSON.stringify({
+            op: 'event',
+            type: 'TrackExceptionEvent',
+            guildId: this.config.guildId,
+            track: decodedTrack,
+            exception: {
+              message: 'Failed to get the stream from source.',
+              severity: 'UNCOMMON',
+              cause: 'unknown'
+            }
+          }))
+      
+          return this.config
+        }
+
+        const resource = new djsVoice.AudioResource([], [res, new prism.FFmpeg({ args: commands }), new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], this.player.state.resource.metadata, 5) 
+
+        this.connection.subscribe(this.player)
+        this.player.play(resource)
       })
 
       return this.config
@@ -539,7 +535,7 @@ function setupConnection(ws, req) {
   }, config.options.statsInterval)
 
   ws.on('close', (code, reason) => {
-    console.log(`[NodeLink:websocket]: Connection closed with websocket. (sessionId: ${sessionId}, code: ${code}, reason: ${reason == '' ? 'No reason provided' : reason})`)
+    utils.debugLog('disconnect', 3, { code, reason })
 
     const client = clients.get(sessionId)
 
@@ -563,10 +559,10 @@ function setupConnection(ws, req) {
   if (req.headers['session-id']) {
     sessionId = req.headers['session-id']
 
-    if (!clients.has(sessionId)) 
-      console.log(`[NodeLink:websocket]: Failed to resume connection with websocket: The sessionId does not exist (sessionId: ${sessionId}). Starting a new connection instead.`)
+    if (!clients.has(sessionId))
+      utils.debugLog('failedResume', 3, { headers: req.headers })
     else {
-      console.log(`[NodeLink:websocket]: Connection re-established with websocket. (sessionId: ${sessionId})`)
+      utils.debugLog('resume', 3, { headers: req.headers })
 
       const client = clients.get(sessionId)
 
@@ -584,7 +580,7 @@ function setupConnection(ws, req) {
 
   sessionId = utils.generateSessionId()
 
-  console.log(`[NodeLink:websocket]: Connection established with websocket. (sessionId: ${sessionId})`)
+  utils.debugLog('connect', 3, { headers: req.headers })
 
   clients.set(sessionId, { userId: req.headers['user-id'], ws, players: new Map() })
 
@@ -598,15 +594,20 @@ function setupConnection(ws, req) {
 async function requestHandler(req, res) {
   const parsedUrl = parse(req.url)
 
+  if (req.headers['authorization'] != config.server.password) {
+    res.writeHead(401, { 'Content-Type': 'text/plain' })
+    return res.end('Unauthorized')
+  }
+
   if (parsedUrl.pathname == '/v4/version') {
-    console.log('[NodeLink:version]: Received request.')
+    utils.debugLog('version', 1, { headers: req.headers })
 
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     res.end(constants.NodeLinkVersion)
   }
 
   if (parsedUrl.pathname == '/v4/decodetrack') {
-    console.log('[NodeLink:decodetrack]: Received request.')
+    utils.debugLog('decodetrack', 1, { headers: req.headers })
     
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
@@ -615,13 +616,11 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/decodetracks') {
-    console.log('[NodeLink:decodetracks]: Received request.')
-
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.debug.showReqBody) console.log(`[NodeLink:decodetracks]: Received request body: ${buffer}`)
+      utils.debugLog('decodetracks', 1, { headers: req.headers, body: buffer })
 
       buffer = JSON.parse(buffer)
 
@@ -635,12 +634,12 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/encodetrack') {
-    console.log('[NodeLink:encodetrack]: Received request. (NodeLink endpoint only)')
-
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
+      utils.debugLog('encodetrack', 1, { headers: req.headers, body: buffer })
+
       buffer = JSON.parse(buffer)
 
       if (!buffer.title || !buffer.author || !buffer.length || !buffer.identifier || !buffer.isSeekable || !buffer.isStream || !buffer.position) {
@@ -663,13 +662,11 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/encodetracks') {
-    console.log('[NodeLink:encodetracks]: Received request. (NodeLink endpoint only)')
-
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.debug.showReqBody) console.log(`[NodeLink:encodetracks]: Received request body: ${buffer}`)
+      utils.debugLog('encodetracks', 1, { headers: req.headers, body: buffer })
 
       buffer = JSON.parse(buffer)
 
@@ -698,7 +695,7 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/stats') {
-    console.log('[NodeLink:stats]: Received request.')
+    utils.debugLog('stats', 1, { headers: req.headers })
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
@@ -721,11 +718,9 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/loadtracks') {
-    console.log('[NodeLink:loadtracks]: Received request.')
+    utils.debugLog('loadtracks', 1, { params: parsedUrl.query, headers: req.headers })
 
     const identifier = new URLSearchParams(parsedUrl.query).get('identifier')
-
-    console.log(`[NodeLink:loadtracks]: Identifier: ${identifier}`)
 
     let search
 
@@ -781,7 +776,7 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      if (config.debug.showReqBody) console.log(`[NodeLink:updateSession]: Received request body: ${buffer}`)
+      utils.debugLog('sessions', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
 
       buffer = JSON.parse(buffer)
 
@@ -811,6 +806,8 @@ async function requestHandler(req, res) {
 
     if (req.method == 'GET') {
       if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players\/\d+$/.test(parsedUrl.pathname)) {
+        utils.debugLog('getPlayer', 1, { params: parsedUrl.query, headers: req.headers })
+
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
 
         let player = client.players.get(guildId)
@@ -824,6 +821,8 @@ async function requestHandler(req, res) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify(player.config))
       } else {
+        utils.debugLog('getPlayers', 1, { headers: req.headers })
+
         const players = []
 
         client.players.forEach((player) => players.push(player.config))
@@ -836,8 +835,6 @@ async function requestHandler(req, res) {
 
       req.on('data', (buf) => buffer += buf)
       req.on('end', () => {
-        if (config.debug.showReqBody) console.log(`[NodeLink:updatePlayer]: Received request body: ${buffer}`)
-
         buffer = JSON.parse(buffer)
 
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
@@ -845,7 +842,7 @@ async function requestHandler(req, res) {
 
         // Voice update
         if (buffer.voice != undefined) {
-          console.log('[NodeLink:updatePlayer]: Received voice state update.')
+          utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
 
           if (!player) player = new VoiceConnection(guildId, client)
 
@@ -863,7 +860,8 @@ async function requestHandler(req, res) {
 
         // Play
         if (buffer.encodedTrack !== undefined || buffer.encodedTrack === null) {
-          console.log(`[NodeLink:updatePlayer]: Received ${buffer.encodedTrack == null && player.config.track ? 'stop' : 'play'} request.`)
+          if (buffer.encodedTrack == null) utils.debugLog('stop', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          else utils.debugLog('play', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
 
           const noReplace = new URLSearchParams(parsedUrl.query).get('noReplace')
 
@@ -884,7 +882,7 @@ async function requestHandler(req, res) {
 
         // Volume
         if (buffer.volume != undefined) {
-          console.log('[NodeLink:updatePlayer]: Received volume request.')
+          utils.debugLog('volume', 1, { params: parsedUrl.query, params: parsedUrl.query, body: buffer })
 
           if (!player) player = new VoiceConnection(guildId, client)
 
@@ -895,7 +893,7 @@ async function requestHandler(req, res) {
 
         // Pause
         if (buffer.paused != undefined) {
-          console.log('[NodeLink:updatePlayer]: Received pause request.')
+          utils.debugLog('pause', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
 
           if (!player) player = new VoiceConnection(guildId, client)
 
@@ -906,7 +904,8 @@ async function requestHandler(req, res) {
 
         // Filters
         if (buffer.filters != undefined) {
-          console.log('[NodeLink:updatePlayer]: Received filters request.')
+          utils.debugLog('filters', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          console.log('[NodeLink:Warning]: You\'re using a beta feature. Please report any issues to the GitHub repository, we appreciate your support.')
 
           if (!player) player = new VoiceConnection(guildId, client)
 

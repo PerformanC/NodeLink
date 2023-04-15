@@ -1,7 +1,7 @@
 import utils from '../utils.js'
 
 async function loadFrom(uri) {
-  console.log(`[NodeLink:sources]: Loading track from HTTP: ${uri}`)
+  utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'http', query: uri })
 
   try {
     const data = await utils.http1makeRequest(uri, { method: 'GET', retrieveHeaders: true })

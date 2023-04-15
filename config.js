@@ -9,7 +9,7 @@ autoUpdate: [ autoUpdate, interval, [tar, zip] ]
 */
 
 export default {
-  version: '1.5.0',
+  version: '1.6.0',
   server: {
     port: 2333,
     password: 'youshallnotpass'
@@ -24,7 +24,38 @@ export default {
     maxPlaylistSize: 20
   },
   debug: {
-    showReqBody: true
+    pandoraInterval: true,
+    innertube: true,
+    websocket: {
+      connected: true,
+      disconnected: true,
+      resume: true,
+      failedResume: true
+    },
+    request: {
+      enabled: true,
+      showBody: true,
+      showHeaders: true,
+      showParams: true
+    },
+    track: {
+      start: true,
+      end: true,
+      exception: true,
+      stuck: true
+    },
+    sources: {
+      loadtrack: {
+        requested: true,
+        results: true,
+        exceptions: true
+      },
+      search: {
+        requested: true,
+        results: true,
+        exceptions: true
+      }
+    }
   },
   search: {
     defaultSearchSource: 'youtube',

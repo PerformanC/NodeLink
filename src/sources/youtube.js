@@ -1,5 +1,8 @@
 import utils from '../utils.js'
 
+import vm from 'vm'
+import { URLSearchParams } from 'url'
+
 let playerInfo = {}
 
 function setIntervalNow(func, interval) {
@@ -9,10 +12,10 @@ function setIntervalNow(func, interval) {
 
 function startInnertube() {
   playerInfo.innertubeInterval = setIntervalNow(async () => {
-    console.log('[NodeLink:sources]: Fetching YouTube embed page...')
+    utils.debugLog('innertube', 5, { message: 'Fetching innertube data...' })
   
     const data = await utils.makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      console.log(`[NodeLink:sources]: Failed to fetch innertube data: ${err.message}`)
+      utils.debugLog('innertube', 5, { message: `Failed to fetch innertube data: ${err.message}` })
     })
       
     const innertube = JSON.parse('{' + data.split('ytcfg.set({')[1].split('});')[0] + '}')
@@ -21,23 +24,31 @@ function startInnertube() {
     playerInfo.innertube.client.clientVersion = '2.20230316.00.00'
     playerInfo.innertube.client.originalUrl = 'https://www.youtube.com/'
 
-    console.log('[NodeLink:sources]: Sucessfully extracted InnerTube Context. Fetching player.js...')
+    utils.debugLog('innertube', 5, { message: 'Fetched innertube data, fetching player.js...' })
 
     const player = await utils.makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
-      console.log(`[NodeLink:sources]: Failed to fetch player js: ${err.message}`)
+      utils.debugLog('innertube', 5, { message: `Failed to fetch player js: ${err.message}` })
     })
 
-    console.log('[NodeLink:sources]: Fetch player.js from YouTube.')
+    utils.debugLog('innertube', 5, { message: 'Fetched player.js, parsing...' })
   
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/gm.exec(player)[0]
-  
-    let dFunctionHighLevel = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
-    dFunctionHighLevel = ('function decipher(a)' + player.split(`${dFunctionHighLevel}=function(a)`)[1].split(')};')[0] + ')};')
-    let decipherLowLevel = player.split('this.audioTracks};')[1].split(')};var ')[1].split(')}};')[0]
 
-    playerInfo.decipherEval = `const ${decipherLowLevel})}};${dFunctionHighLevel}decipher('NODELINK_DECIPHER_URL');`
+    playerInfo.functions = []
 
-    console.log('[NodeLink:sources]: Successfully processed information for next loadtracks and play.')
+    let functionName = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
+    const sigFunction = 'function decipherFunction(a)' + player.split(`${functionName}=function(a)`)[1].split(')};')[0]
+    const sigWrapper = player.split('this.audioTracks};')[1].split(')};var ')[1].split(')}};')[0]
+
+    playerInfo.functions.push(`const ${sigWrapper})}};${sigFunction})};decipherFunction(sig)`)
+
+    functionName = player.split('&&(b=a.get("n"))&&(b=')[1].split('(b)')[0]
+    if (functionName.includes('[')) functionName = player.split(`${functionName.split('[')[0]}=[`)[1].split(']')[0]
+
+    const ncodeFunction = player.split(`${functionName}=function`)[1].split('};')[0]
+    playerInfo.functions.push(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`)
+   
+    utils.debugLog('innertube', 5, { message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)
 }
 
@@ -50,17 +61,17 @@ function checkURLType(url, type) {
     const videoRegex = /^https?:\/\/music\.youtube\.com\/watch\?v=[\w-]+/
     const playlistRegex = /^https?:\/\/music\.youtube\.com\/playlist\?list=[\w-]+/
     
-    if (videoRegex.test(url)) return 2
-    else if (playlistRegex.test(url)) return 3
+    if (playlistRegex.test(url)) return 3
+    else if (videoRegex.test(url)) return 2
     else return -1
   } else {
     const videoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+/
-    const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/
+    const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/(?:watch\?v=[\w-]+&)?list=[\w-]+/
     const shortsRegex = /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/
   
-    if (videoRegex.test(url)) return 2
-    else if (playlistRegex.test(url)) return 3
+    if (playlistRegex.test(url)) return 3
     else if (shortsRegex.test(url)) return 4
+    else if (videoRegex.test(url)) return 2
     else return -1
   }
 }
@@ -76,7 +87,7 @@ async function search(query, type, search) {
 
     switch (search ? 1 : checkURLType(query, type)) {
       case 1: {
-        console.log(`[NodeLink:sources]: Searching track on YouTube: ${query}`)
+        utils.debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
         const search = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
           method: 'POST',
@@ -87,7 +98,7 @@ async function search(query, type, search) {
         })
 
         if (search.error) {
-          console.log(`[NodeLink:sources]: Failed to search for "${query}": ${search.error.message}`)
+          utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: search.error.message })
 
           return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'COMMON', cause: 'unknown' } })
         }
@@ -121,14 +132,15 @@ async function search(query, type, search) {
               info: infoObj
             })
           }
-          
+
           if (index == videos.length - 1) {
             if (tracks.length == 0) {
-              console.log(`[NodeLink:sources]: No matches found for "${query}".`)
-              console.log(videos)
+              utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: 'No matches found.' })
 
               return resolve({ loadType: 'empty', data: {} })
             }
+
+            utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
 
             return resolve({
               loadType: 'search',
@@ -140,7 +152,7 @@ async function search(query, type, search) {
         break
       }
       case 2: {
-        console.log(`[NodeLink:sources]: Loading track from YouTube: ${query}`)
+        utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
 
         const video = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           method: 'POST',
@@ -151,7 +163,7 @@ async function search(query, type, search) {
         })
 
         if (video.playabilityStatus.status == 'ERROR') {
-          console.log(`[NodeLink:sources]: Failed to load track: ${video.playabilityStatus.reason}`)
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', message: video.playabilityStatus.reason })
           
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
@@ -170,6 +182,8 @@ async function search(query, type, search) {
           sourceName: type
         }
 
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube', track: infoObj, query })
+
         return resolve({
           loadType: 'track',
           data: {
@@ -180,7 +194,7 @@ async function search(query, type, search) {
         })
       }
       case 3: {
-        console.log(`[NodeLink:sources]: Loading playlist from YouTube: ${query}`)
+        utils.debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
 
         const playlist = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false+`, {
           method: 'POST',
@@ -191,7 +205,7 @@ async function search(query, type, search) {
         })
 
         if (!playlist.contents.twoColumnWatchNextResults.playlist) {
-          console.log(`[NodeLink:sources]: Failed to load playlist.`)
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'error', sourceName: 'YouTube', message: 'Failed to load playlist.' })
         
           return resolve({
             loadType: 'error',
@@ -233,10 +247,12 @@ async function search(query, type, search) {
 
           if (index == playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.length - 1) {
             if (tracks.length == 0) {
-              console.log(`[NodeLink:sources]: No matches found for "${query}".`)
+              utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', message: 'No matches found.' })
 
               return resolve({ loadType: 'empty', data: {} })
             }
+
+            utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', tracksLen: tracks.length, query })
 
             return resolve({
               loadType: 'playlist',
@@ -255,7 +271,7 @@ async function search(query, type, search) {
         break
       }
       case 4: {
-        console.log(`[NodeLink:sources]: Loading track from YouTube Shorts: ${query}`)
+        utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
 
         const short = await utils.makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
@@ -266,7 +282,7 @@ async function search(query, type, search) {
         })
 
         if (short.playabilityStatus.status == 'ERROR') {
-          console.log(`[NodeLink:sources]: Failed to load track: ${short.playabilityStatus.reason}`)
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', message: short.playabilityStatus.reason })
 
           return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
@@ -285,6 +301,8 @@ async function search(query, type, search) {
           sourceName: 'youtube'
         }
 
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube Shorts', track: infoObj, query })
+
         return resolve({
           loadType: 'short',
           data: {
@@ -296,7 +314,7 @@ async function search(query, type, search) {
       }
 
       default: {
-        console.log(`[NodeLink:sources]: No matches found for "${query}".`)
+        utils.debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'YouTube', message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
@@ -327,24 +345,32 @@ async function retrieveStream(identifier, type) {
     })
 
     if (videos.playabilityStatus.status != 'OK') {
-      console.log('[NodeLink:sources]: The track is not playable, this is not a NodeLink issue.')
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', message: videos.playabilityStatus.reason })
 
-      return resolve({ status: 1, exception: { severity: 'COMMON', message: 'This video is marked as not playable.', cause: 'unknown' } })
+      return resolve({ status: 1, exception: { severity: 'COMMON', message: videos.playabilityStatus.reason, cause: 'unknown' } })
     }
 
-    const audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
+    let audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
     let url = audio.url
 
     if (audio.signatureCipher) {
-      url = audio.signatureCipher.split('&')
-    
-      const signature = eval(playerInfo.decipherEval.replace('NODELINK_DECIPHER_URL', decodeURIComponent(url[0].replace('s=', ''))))
+      const args = new URLSearchParams(audio.signatureCipher)
 
-      url = `${decodeURIComponent(url[2].replace('url=', ''))}&${url[1].replace('sp=', '')}=${signature}&sts=${playerInfo.signatureTimestamp}`
+      const components = new URL(decodeURIComponent(args.get('url')))
+      components.searchParams.set('sig',  new vm.Script(playerInfo.functions[0]).runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
 
-      console.log('[NodeLink:sources]: Started playing track protected by cipher signature')
+      const n = components.searchParams.get('n')
+      components.searchParams.set('n', new vm.Script(playerInfo.functions[1]).runInNewContext({ ncode: n }))
+
+      console.log(components.toString())
+      url = components.toString()
     } else {
-      console.log('[NodeLink:sources]: Started playing track with no cipher signature')
+      const components = new URL(url)
+
+      const n = components.searchParams.get('n')
+      components.searchParams.set('n', new vm.Script(playerInfo.functions[1]).runInNewContext({ ncode: n }))
+
+      url = components.toString()
     }
 
     resolve({ status: 0, url })

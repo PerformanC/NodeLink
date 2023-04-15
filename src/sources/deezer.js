@@ -19,7 +19,7 @@ async function loadFrom(query, track) {
         return resolve({ loadType: 'empty', data: {} })
     }
 
-    console.log(`[NodeLink:sources]: Loading ${track[1]} from Deezer: ${query}`)
+    utils.debugLog('loadtracks', 4, { type: 1, loadType: track[1], sourceName: 'Deezer', query })
 
     const data = await utils.makeRequest(`https://api.deezer.com/${endpoint}`, { method: 'GET' })
 
@@ -50,6 +50,8 @@ async function loadFrom(query, track) {
           isrc: null,
           sourceName: 'deezer'
         }
+
+        tils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Deezer', track: infoObj, query })
 
         resolve({
           loadType: 'track',
@@ -93,6 +95,8 @@ async function loadFrom(query, track) {
           })
 
           if (index == data.tracks.data.length) {
+            utils.debugLog('loadtracks', 4, { type: 2, loadType: track[1], sourceName: 'Deezer', track: infoObj, query })
+
             const new_tracks = []
 
             data.tracks.data.forEach((track2, index2) => {

@@ -3,7 +3,7 @@ import utils from '../utils.js'
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink:sources]: Loading track from BandCamp: ${url}`)
+    utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'BandCamp', query: url })
 
     const data = await utils.makeRequest(url, { method: 'GET' })
 
@@ -29,6 +29,8 @@ async function loadFrom(url) {
       sourceName: 'bandcamp'
     }
 
+    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track: infoObj, query })
+
     resolve({
       loadType: 'track',
       data: {
@@ -42,7 +44,7 @@ async function loadFrom(url) {
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink:sources]: Searching track on BandCamp: ${query}`)
+    utils.debugLog('search', 4, { type: 1, sourceName: 'BandCamp', query })
 
     const data = await utils.makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
@@ -100,6 +102,8 @@ async function search(query) {
       tracks[i].pluginInfo = {}
     }
 
+    utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+
     resolve({
       loadType: 'search',
       data: tracks
@@ -114,12 +118,12 @@ async function retrieveStream(uri) {
     const streamURL = data.match(/https?:\/\/t4\.bcbits\.com\/stream\/[a-zA-Z0-9]+\/mp3-128\/\d+\?p=\d+&amp;ts=\d+&amp;t=[a-zA-Z0-9]+&amp;token=\d+_[a-zA-Z0-9]+/)
 
     if (!streamURL) {
-      console.log(`[NodeLink:sources]: Failed to load track: No stream URL found.`)
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'BandCamp', message: 'No stream URL was found.' })
 
-      return resolve({ status: 1, exception: { severity: 'UNCOMMON', message: 'Failed to retrieve stream url from deezer.', cause: 'unknown' } })
+      return resolve({ status: 1, exception: { severity: 'UNCOMMON', message: 'Failed to get the stream from source.', cause: 'unknown' } })
     }
 
-    resolve({ status:0 , url: streamURL[0] })
+    resolve({ status: 0, url: streamURL[0] })
   })
 }
 

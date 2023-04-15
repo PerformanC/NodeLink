@@ -4,7 +4,7 @@ import utils from '../utils.js'
 
 async function loadFrom(path) {
   return new Promise(async (resolve) => {
-    console.log(`[NodeLink:sources]: Loading track from local: ${path}`)
+    utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'local', query })
 
     fs.open(path, (err) => {
       if (err)
@@ -23,6 +23,8 @@ async function loadFrom(path) {
         isrc: null,
         sourceName: 'local'
       }
+
+      utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'local', track: infoObj, query: path })
 
       resolve({
         loadType: 'track',

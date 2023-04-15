@@ -74,7 +74,6 @@ function http1makeRequest(url, options) {
 function makeRequest(url, options) {
   return new Promise(async (resolve, reject) => {
     let compression, data = '', parsedUrl = new URL(url)
-
     const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol })
 
     let reqOptions = {
@@ -331,7 +330,15 @@ async function sleep(ms) {
 async function checkForUpdates() {
   const version = `v${config.version}`
 
-  const data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
+  let data
+
+  try {
+    data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
+  } catch (e) {
+    console.log(`[NodeLink] Error while checking for updates: ${e}`)
+
+    return;
+  }
 
   if (data.message) {
     console.log(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
@@ -352,6 +359,140 @@ async function checkForUpdates() {
   }
 }
 
+function debugLog(name, type, options) {
+  switch (type) {
+    case 1: {
+      if (config.debug.request.enabled)
+        console.log(`[NodeLink:${name}]: Received a request from client.${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
+
+        break
+    }
+    case 2: {
+      switch (name) {
+        case 'trackStart': {
+          if (config.debug.track.start)
+            console.log(`[NodeLink:trackStart]: Started playing ${options.track.title} by ${options.track.author} on ${options.guildId}`)
+
+            break
+        }
+        case 'trackEnd': {
+          if (config.debug.track.end)
+            console.log(`[NodeLink:trackEnd]: Ended playing ${options.track.title} by ${options.track.author} on ${options.guildId}`)
+
+            break
+        }
+        case 'trackException': {
+          if (config.debug.track.exception)
+            console.log(`[NodeLink:trackException]: An exception occurred while playing ${options.track.title} by ${options.track.author} on ${options.guildId} (${options.exception.message})`)
+
+            break
+        }
+        case 'trackStuck': {
+          if (config.debug.track.stuck)
+            console.log(`[NodeLink:trackStuck]: ${config.options.threshold}ms have passed since the last progress update on ${options.guildId}`)
+
+            break
+        }
+      }
+
+      break
+    }
+    case 3: {
+      switch (name) {
+        case 'connect': {
+          if (!config.debug.websocket.connect) return;
+
+          if (options.headers['client-name'])
+            console.log(`[NodeLink:websocket]: "${req.headers['client-name']}" client connected to NodeLink.`)
+          else
+            console.log(`[NodeLink:websocket]: A client, which didn't specific its name, connected to NodeLink.`)
+
+            break
+        }
+        case 'disconnect': {
+          if (!config.debug.websocket.disconnect) return;
+
+          console.log(`[NodeLink:websocket]: A connection was closed with a client.\n Code: ${options.code}\n Reason: ${options.reason == '' ? 'No reason provided' : options.reason})`)
+        
+          break
+        }
+        case 'resume': {
+          if (!config.debug.websocket.resume) return;
+
+          if (options.headers['client-name'])
+            console.log(`[NodeLink:websocket]: "${req.headers['client-name']}" client resumed a connection to NodeLink.`)
+          else
+            console.log(`[NodeLink:websocket]: A client, which didn't specific its name, resumed a connection to NodeLink.`)
+
+          break
+        }
+
+        case 'failedResume': {
+          if (!config.debug.websocket.failedResume) return;
+
+          if (options.headers['client-name'])
+            console.log(`[NodeLink:websocket]: "${req.headers['client-name']}" client failed to resume a connection to NodeLink.`)
+          else
+            console.log(`[NodeLink:websocket]: A client, which didn't specific its name, failed to resume a connection to NodeLink.`)
+
+          break
+        }
+      }
+
+      break
+    }
+    case 4: {
+      switch (name) {
+        case 'loadtracks': {
+          if (options.type == 1 && config.debug.sources.loadtrack.request)
+            console.log(`[NodeLink:sources]: Loading ${options.loadType} from ${options.sourceName}: ${options.query}`)
+
+          if (options.type == 2 && config.debug.sources.loadtrack.results) {
+            if (options.tracksLen)
+              console.log(`[NodeLink:sources]: Loaded ${options.tracksLen} tracks from ${options.sourceName}: ${options.query}`)
+            else
+              console.log(`[NodeLink:sources]: Loaded ${options.track.title} by ${options.track.author} from ${options.sourceName}: ${options.query}`)
+          }
+
+          if (options.type == 3 && config.debug.sources.loadtrack.exceptions)
+            console.log(`[NodeLink:sources]: An exception occurred while loading ${options.loadType} from ${options.sourceName}: ${options.message}`)
+
+          break
+        }
+        case 'search': {
+          if (options.type == 1 && config.debug.sources.search.request)
+            console.log(`[NodeLink:sources]: Searching track on ${options.sourceName}: ${options.query}`)
+          
+          if (options.type == 2 && config.debug.sources.search.results)
+            console.log(`[NodeLink:sources]: Found ${options.tracksLen} tracks on ${options.sourceName}: ${options.query}`)
+
+          if (options.type == 3 && config.debug.sources.search.exceptions)
+            console.log(`[NodeLink:sources]: An exception occurred while searching on ${options.sourceName}: ${options.exception.message}`)
+
+          break
+        }
+        case 'retrieveStream': {
+          if (!config.debug.sources.retrieveStream) return;
+          if (options.type == 1)
+            console.log(`[NodeLink:sources]: Retrieving stream from ${options.sourceName}: ${options.query}`)
+
+          if (options.type == 2)
+            console.log(`[NodeLink:sources]: Error while retrieving stream from ${options.sourceName}: ${options.message}`)
+        }
+      }
+
+      break
+    }
+    case 5: {
+      if (name == 'innertube' && config.debug.innertube)
+        console.log(`[NodeLink:innertube]: ${options.message}`)
+
+      if (name == 'pandora' && config.debug.pandoraInterval)
+        console.log(`[NodeLink:pandora]: ${options.message}`)
+    }
+  }
+}
+
 export default {
   generateSessionId,
   http1makeRequest,
@@ -360,5 +501,6 @@ export default {
   decodeTrack,
   forEach,
   sleep,
-  checkForUpdates
+  checkForUpdates,
+  debugLog
 }
