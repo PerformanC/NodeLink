@@ -233,9 +233,9 @@ class VoiceConnection {
         }
         
        if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(sourceName))
-          resolve({ status: 0, stream: new djsVoice.AudioResource([], [res, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.WebmDemuxer()], urlInfo.url, 5) })
+          resolve({ status: 0, stream: new djsVoice.AudioResource([], [res, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.WebmDemuxer()], url, 5) })
        else
-          resolve({ status: 0, stream: djsVoice.createAudioResource(res, { inputType: djsVoice.StreamType.WebmOpus, metadata: urlInfo.url, inlineVolume: true }) })
+          resolve({ status: 0, stream: djsVoice.createAudioResource(res, { inputType: djsVoice.StreamType.WebmOpus, metadata: url, inlineVolume: true }) })
       })
     })
   }

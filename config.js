@@ -9,7 +9,7 @@ autoUpdate: [ autoUpdate, interval, [tar, zip] ]
 */
 
 export default {
-  version: '1.6.0',
+  version: '1.6.1',
   server: {
     port: 2333,
     password: 'youshallnotpass'
