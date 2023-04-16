@@ -1,8 +1,9 @@
 import https from 'https'
 import http2 from 'http2'
-import { URL } from 'url'
 import zlib from 'zlib'
 import cp from 'child_process'
+import fs from 'fs'
+import { URL } from 'url'
 
 import config from '../config.js'
 
@@ -86,6 +87,9 @@ function makeRequest(url, options) {
     if (options.headers) reqOptions = { ...reqOptions, ...options.headers }
 
     let req = client.request(reqOptions)
+
+    if (options.streamOnly)
+      return resolve(req)
 
     req.on('error', (error) => {
       console.log(`[NodeLink:makeRequest]: Failed sending HTTP request: ${error}`)
@@ -351,10 +355,31 @@ async function checkForUpdates() {
 
     if (config.options.autoUpdate[0]) {
       console.log(`[NodeLink] Updating NodeLink, downloading ${config.options.autoUpdate[2]}...`)
-      await makeRequest(config.options.autoUpdate[2] == 'zip' ? data.zipball_url : data.tarball_url, { method: 'GET '})
-      cp.exec(config.options.autoUpdate[2] == 'zip' ? 'unzip PerformanC-Nodelink*.zip' : 'tar -xvf PerformanC-Nodelink*.tar.gz')
-      cp.exec('rm -rf PerformanC-Nodelink*.zip PerformanC-Nodelink*.tar.gz')
-      console.log('[NodeLink] Nodelink has been updated, please restart NodeLink to apply the changes.')
+
+      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[2] == 'zip' || config.options.autoUpdate[2] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${data.name}`, { method: 'GET', streamOnly: true })
+
+      const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[2] == '7zip' ? 'zip' : 'tar.gz' }`)
+      res.pipe(file)
+
+      file.on('finish', () => {
+        file.close()
+
+        const args = []
+        if (config.options.autoUpdate[2] == 'zip') args.push([ 'PerformanC-Nodelink.zip' ])
+        else if (config.options.autoUpdate[2] == '7zip') args.push([ 'x', 'PerformanC-Nodelink.zip' ])
+        else args.push([ '-xvf', 'PerformanC-Nodelink.tar.gz' ])
+
+        cp.spawn(config.options.autoUpdate[2] == 'zip' ? 'unzip' : config.options.autoUpdate[2] == '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
+          const move = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ '"PerformanC-Nodelink*"', '".."'] : [ 'PerformanC-Nodelink*/*', '..', '-f' ], { shell: true })
+          
+          move.stdin.write('Y')
+          move.on('close', () => {
+            fs.rm('PerformanC-Nodelink.zip', { recursive: true, force: true }, () => {})
+
+            console.log('[NodeLink] Nodelink has been updated, please restart NodeLink to apply the changes.')
+          })
+        })
+      })
     }
   }
 }

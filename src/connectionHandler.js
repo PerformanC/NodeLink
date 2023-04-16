@@ -1,3 +1,5 @@
+import fs from 'fs'
+import cp from 'child_process'
 import os from 'os'
 import https from 'https'
 import { URLSearchParams, parse } from 'url'
@@ -38,8 +40,8 @@ class VoiceConnection {
     this.cache = {
       voice: null,
       track: null,
-      stream: [ null, null ],
-      audioData: []
+      startedAt: 0,
+      silence: false
     }
     this.stateInterval
   
@@ -74,8 +76,9 @@ class VoiceConnection {
       connected: false,
       ping: -1
     }
+
+    this.cache.startedAt = 0
     this.config.track = null
-    this.cache.stream = [ null, null ]
   }
   
   setup() {
@@ -155,11 +158,17 @@ class VoiceConnection {
       }
       if (newState.status == djsVoice.AudioPlayerStatus.Playing && oldState.status != djsVoice.AudioPlayerStatus.Paused && oldState.status != djsVoice.AudioPlayerStatus.AutoPaused) {
         nodelinkPlayingPlayersCount++
+
+        if (this.cache.silence) {
+          this.cache.silence = false
+
+          return;
+        }
           
         if (config.options.playerUpdateInterval) this.stateInterval = setInterval(() => {
           this.config.state = {
             time: Date.now(),
-            position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? this.player.state.resource.playbackDuration : 0,
+            position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - this.cache.startedAt : 0,
             connected: this.player.state.status == djsVoice.AudioPlayerStatus.Playing,
             ping: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? this.connection.ping.ws : -1
           }
@@ -302,16 +311,7 @@ class VoiceConnection {
     try {
       if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
     
-      if (oldTrack) {
-        utils.debugLog('trackStart', 2, { track: decodedTrack, guildId: this.config.guildId })
-
-        this.client.ws.send(JSON.stringify({
-          op: 'event',
-          type: 'TrackStartEvent',
-          guildId: this.config.guildId,
-          track: this.config.track
-        }))
-      }
+      this.cache.startedAt = Date.now()
     } catch (e) {
       this.config.track = null
 
@@ -463,18 +463,16 @@ class VoiceConnection {
     }
 
     if (filterCommand.length) {
-      commands.push('-f', 's16le', '-ar', '48000', '-ac', '2')
-      commands.push('-ss', `${this.player.state.resource.playbackDuration}ms`)
-      commands.push('-af', filterCommand.join(','))
-
       console.log(`[NodeLink:filters]: Setting filter with the ffmpeg command: ${commands[commands.length - 1]}`)
       
-      https.get(this.player.state.resource.metadata, {
+      const metadata = this.player.state.resource.metadata
+      https.get(metadata, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+          'Range': 'bytes=0-'
         }
       }, (res) => {
-        if (res.statusCode != 200) {
+        if (res.statusCode != 206) {
           this.config.track = null
           this.config.filters = {}
 
@@ -497,10 +495,35 @@ class VoiceConnection {
           return this.config
         }
 
-        const resource = new djsVoice.AudioResource([], [res, new prism.FFmpeg({ args: commands }), new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], this.player.state.resource.metadata, 5) 
+        const file = fs.createWriteStream(`./cache/${this.config.guildId}.webm`)
+        res.pipe(file)
 
-        this.connection.subscribe(this.player)
-        this.player.play(resource)
+        file.on('finish', () => {
+          const ffmpeg = new prism.FFmpeg({
+            args: [
+              '-loglevel', '0',
+              '-analyzeduration', '0',
+              '-y',
+              '-ss', `${new Date() - this.cache.startedAt}ms`,
+              '-i', `./cache/${this.config.guildId}.webm`,
+              '-f', 's16le',
+              '-ar', '48000',
+              '-ac', '2',
+              '-af', filterCommand.join(',')
+            ]
+          }).process
+
+          ffmpeg.on('close', () => {
+            fs.rm(`./cache/${this.config.guildId}.webm`, () => {})
+          })
+
+          const resource = new djsVoice.AudioResource([], [ffmpeg.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], metadata, 5) 
+         
+          this.cache.silence = true
+
+          this.connection.subscribe(this.player)
+          this.player.play(resource)
+        })
       })
 
       return this.config

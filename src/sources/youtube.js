@@ -362,7 +362,6 @@ async function retrieveStream(identifier, type) {
       const n = components.searchParams.get('n')
       components.searchParams.set('n', new vm.Script(playerInfo.functions[1]).runInNewContext({ ncode: n }))
 
-      console.log(components.toString())
       url = components.toString()
     } else {
       const components = new URL(url)
