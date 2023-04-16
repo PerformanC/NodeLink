@@ -1,5 +1,4 @@
 import fs from 'fs'
-import cp from 'child_process'
 import os from 'os'
 import https from 'https'
 import { URLSearchParams, parse } from 'url'
@@ -41,7 +40,8 @@ class VoiceConnection {
       voice: null,
       track: null,
       startedAt: 0,
-      silence: false
+      silence: false,
+      ffmpeg: null
     }
     this.stateInterval
   
@@ -238,6 +238,9 @@ class VoiceConnection {
         if (res.statusCode != 206) {
           res.destroy()
 
+          console.log(res.statusCode)
+          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
+
           resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
         }
         
@@ -366,13 +369,12 @@ class VoiceConnection {
     if (this.player.state.status != djsVoice.AudioPlayerStatus.Playing || !config.filters.enabled) return this.config
   
     let commands = [
-
       '-threads', config.filters.threads,
       '-filter_threads', config.filters.threads,
       '-filter_complex_threads', config.filters.threads,
     ]
 
-    let filterCommand = []    
+    let filterCommand = []
     if (filters.volume) {
       if (!config.filters.list.volume) return this.config
 
@@ -498,26 +500,30 @@ class VoiceConnection {
         const file = fs.createWriteStream(`./cache/${this.config.guildId}.webm`)
         res.pipe(file)
 
-        file.on('finish', () => {
-          const ffmpeg = new prism.FFmpeg({
+        file.on('finish', async () => {
+          if (this.cache.ffmpeg)
+            this.cache.ffmpeg.destroy()
+
+          this.cache.ffmpeg = new prism.FFmpeg({
             args: [
               '-loglevel', '0',
               '-analyzeduration', '0',
               '-y',
-              '-ss', `${new Date() - this.cache.startedAt}ms`,
+              '-ss', filters.seek ? filters.seek : `${new Date() - this.cache.startedAt}ms`,
+              ...(filters.endTime ? ['-t', filters.endTime] : []),
               '-i', `./cache/${this.config.guildId}.webm`,
               '-f', 's16le',
               '-ar', '48000',
               '-ac', '2',
               '-af', filterCommand.join(',')
             ]
-          }).process
+          })
 
-          ffmpeg.on('close', () => {
+          this.cache.ffmpeg.process.on('close', () => {
             fs.rm(`./cache/${this.config.guildId}.webm`, () => {})
           })
 
-          const resource = new djsVoice.AudioResource([], [ffmpeg.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], metadata, 5) 
+          const resource = new djsVoice.AudioResource([], [this.cache.ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], metadata, 5) 
          
           this.cache.silence = true
 
@@ -890,7 +896,7 @@ async function requestHandler(req, res) {
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          if (buffer.encodedTrack == null && player.config.track) player.stop()
+          if (buffer.encodedTrack == null) player.stop()
           else {
             if (!player.cache.voice && !player.config.voice.endpoint) player.cache.track = buffer.encodedTrack
             else {
@@ -925,14 +931,36 @@ async function requestHandler(req, res) {
           client.players.set(guildId, player)
         }
 
+        let filters = {}
+
         // Filters
         if (buffer.filters != undefined) {
           utils.debugLog('filters', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
           console.log('[NodeLink:Warning]: You\'re using a beta feature. Please report any issues to the GitHub repository, we appreciate your support.')
 
+          filters = buffer.filters
+        }
+        
+        // Seek
+        if (buffer.position != undefined) {
+          utils.debugLog('seek', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          console.log('[NodeLink:Warning]: You\'re using a beta feature. Please report any issues to the GitHub repository, we appreciate your support.')
+
+          filters.seek = buffer.position
+        }
+
+        // EndTime
+        if (buffer.endTime != undefined) {
+          utils.debugLog('endTime', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          console.log('[NodeLink:Warning]: You\'re using a beta feature. Please report any issues to the GitHub repository, we appreciate your support.')
+
+          filters.endTime = buffer.endTime
+        }
+
+        if (Object.keys(filters).length != 0) {
           if (!player) player = new VoiceConnection(guildId, client)
 
-          player.filters(buffer.filters)
+          player.filters(filters)
 
           client.players.set(guildId, player)
         }
