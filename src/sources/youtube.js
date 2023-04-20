@@ -1,3 +1,4 @@
+import config from '../../config.js'
 import utils from '../utils.js'
 
 import vm from 'vm'
@@ -38,9 +39,11 @@ function startInnertube() {
 
     let functionName = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
     const sigFunction = 'function decipherFunction(a)' + player.split(`${functionName}=function(a)`)[1].split(')};')[0]
-    const sigWrapper = player.split('this.audioTracks};')[1].split(')};var ')[1].split(')}};')[0]
+  
+    functionName = player.split('a=a.split("");')[1].split('.')[0]
+    const sigWrapper = player.split(`var ${functionName}={`)[1].split('};')[0]
 
-    playerInfo.functions.push(`const ${sigWrapper})}};${sigFunction})};decipherFunction(sig)`)
+    playerInfo.functions.push(`const ${functionName}={${sigWrapper}};${sigFunction})};decipherFunction(sig)`)
 
     functionName = player.split('&&(b=a.get("n"))&&(b=')[1].split('(b)')[0]
     if (functionName.includes('[')) functionName = player.split(`${functionName.split('[')[0]}=[`)[1].split(']')[0]
@@ -76,81 +79,85 @@ function checkURLType(url, type) {
   }
 }
 
-async function search(query, type, search) {
+async function search(query, type) {
   return new Promise(async (resolve) => {
-
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      utils.sleep(200)
+      await utils.sleep(200)
     }
 
-    switch (search ? 1 : checkURLType(query, type)) {
-      case 1: {
-        utils.debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
+    utils.debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
-        const search = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
-          method: 'POST',
-          body: {
-            context: playerInfo.innertube,
-            query,
-          }
-        })
-
-        if (search.error) {
-          utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: search.error.message })
-
-          return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'COMMON', cause: 'unknown' } })
-        }
-      
-        let tracks = []
-        let i = 0
-
-        let videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
-        if (videos[0].adSlotRenderer) videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].itemSectionRenderer.contents
-        
-        utils.forEach(videos, (item, index) => {
-          item = item.videoRenderer
-
-          if (item) {
-            const infoObj = {
-              identifier: item.videoId,
-              isSeekable: true,
-              author: item.ownerText.runs[0].text,
-              length: item.lengthText ? parseInt(item.lengthText.simpleText.split(':').map((v, i) => v * (60 ** (2 - i))).reduce((a, b) => a + b)) * 1000 : 0,
-              isStream: item.lengthText ? false : true,
-              position: i++,
-              title: item.title.runs[0].text,
-              uri: `https://www.youtube.com/watch?v=${item.videoId}`,
-              artworkUrl: `https://i.ytimg.com/vi/${item.videoId}/maxresdefault.jpg`,
-              isrc: null,
-              sourceName: type
-            }
-
-            tracks.push({
-              encoded: utils.encodeTrack(infoObj),
-              info: infoObj
-            })
-          }
-
-          if (index == videos.length - 1) {
-            if (tracks.length == 0) {
-              utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: 'No matches found.' })
-
-              return resolve({ loadType: 'empty', data: {} })
-            }
-
-            utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
-
-            return resolve({
-              loadType: 'search',
-              data: tracks
-            })
-          }
-        })
-
-        break
+    const search = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
+      method: 'POST',
+      body: {
+        context: playerInfo.innertube,
+        query,
+        params: 'EgIQAQ%3D%3D'
       }
+    })
+
+    if (search.error) {
+      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: search.error.message })
+
+      return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'COMMON', cause: 'unknown' } })
+    }
+
+    const tracks = []
+    let i = 0
+
+    let videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
+    if (videos[0].adSlotRenderer) videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].itemSectionRenderer.contents
+
+    videos.forEach((video) => {
+      video = video.videoRenderer
+
+      if (video) {
+        const track = {
+          identifier: video.videoId,
+          isSeekable: true,
+          author: video.ownerText.runs[0].text,
+          length: video.lengthText ? parseInt(video.lengthText.simpleText.split(':').map((v, i) => v * (60 ** (2 - i))).reduce((a, b) => a + b)) * 1000 : 0,
+          isStream: video.lengthText ? false : true,
+          position: i++,
+          title: video.title.runs[0].text,
+          uri: `https://www.youtube.com/watch?v=${video.videoId}`,
+          artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
+          isrc: null,
+          sourceName: type
+        }
+
+        tracks.push({
+          encoded: utils.encodeTrack(track),
+          info: track
+        })
+      }
+    })
+
+    if (tracks.length == 0) {
+      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: 'No matches found.' })
+
+      return resolve({ loadType: 'empty', data: {} })
+    }
+
+    tracks.slice(0, config.options.maxResults + 1)
+
+    utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
+
+    return resolve({ loadType: 'search', data: tracks })
+  })
+}
+
+async function loadFrom(query, type) {
+  return new Promise(async (resolve) => {
+    if (!playerInfo.innertube) while (1) {
+      if (playerInfo.innertube) break
+
+      await utils.sleep(200)
+    }
+
+    switch (checkURLType(query, type)) {
       case 2: {
         utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
 
@@ -168,7 +175,7 @@ async function search(query, type, search) {
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
 
-        const infoObj = {
+        const track = {
           identifier: video.videoDetails.videoId,
           isSeekable: true,
           author: video.videoDetails.author,
@@ -182,13 +189,13 @@ async function search(query, type, search) {
           sourceName: type
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube', track: infoObj, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube', track, query })
 
         return resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           }
         })
@@ -220,11 +227,11 @@ async function search(query, type, search) {
         let tracks = []
         let i = 0
 
-        utils.forEach(playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents, (item, index) => {
+        playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.forEach((item, index) => {
           item = item.playlistPanelVideoRenderer
 
           if (item) {
-            const infoObj = {
+            const track = {
               identifier: item.videoId,
               isSeekable: true,
               author: item.shortBylineText.runs[0].text,
@@ -239,36 +246,34 @@ async function search(query, type, search) {
             }
 
             tracks.push({
-              encoded: utils.encodeTrack(infoObj),
-              info: infoObj,
+              encoded: utils.encodeTrack(track),
+              info: track,
               pluginInfo: {}
-            })
-          }
-
-          if (index == playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.length - 1) {
-            if (tracks.length == 0) {
-              utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', message: 'No matches found.' })
-
-              return resolve({ loadType: 'empty', data: {} })
-            }
-
-            utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', tracksLen: tracks.length, query })
-
-            return resolve({
-              loadType: 'playlist',
-              data: {
-                info: {
-                  name: playlist.contents.twoColumnWatchNextResults.playlist.playlist.title,
-                  selectedTrack: 0
-                },
-                pluginInfo: {},
-                tracks
-              }
             })
           }
         })
 
-        break
+        if (tracks.length == 0) {
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', message: 'No matches found.' })
+
+          return resolve({ loadType: 'empty', data: {} })
+        }
+
+        tracks.splice(0, config.options.maxPlaylistSize + 1)
+
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', tracksLen: tracks.length, query })
+
+        return resolve({
+          loadType: 'playlist',
+          data: {
+            info: {
+              name: playlist.contents.twoColumnWatchNextResults.playlist.playlist.title,
+              selectedTrack: 0
+            },
+            pluginInfo: {},
+            tracks
+          }
+        })
       }
       case 4: {
         utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
@@ -287,7 +292,7 @@ async function search(query, type, search) {
           return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
         }
 
-        const infoObj = {
+        const track = {
           identifier: short.videoDetails.videoId,
           isSeekable: true,
           author: short.videoDetails.author,
@@ -301,13 +306,13 @@ async function search(query, type, search) {
           sourceName: 'youtube'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube Shorts', track: infoObj, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube Shorts', track, query })
 
         return resolve({
           loadType: 'short',
           data: {
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           }
         })
@@ -324,11 +329,10 @@ async function search(query, type, search) {
 
 async function retrieveStream(identifier, type) {
   return new Promise(async (resolve) => {
-
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      utils.sleep(200)
+      await utils.sleep(200)
     }
 
     const videos = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
@@ -347,7 +351,7 @@ async function retrieveStream(identifier, type) {
     if (videos.playabilityStatus.status != 'OK') {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', message: videos.playabilityStatus.reason })
 
-      return resolve({ status: 1, exception: { severity: 'COMMON', message: videos.playabilityStatus.reason, cause: 'unknown' } })
+      return resolve({ exception: { severity: 'COMMON', message: videos.playabilityStatus.reason, cause: 'unknown' } })
     }
 
     let audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
@@ -357,7 +361,7 @@ async function retrieveStream(identifier, type) {
       const args = new URLSearchParams(audio.signatureCipher)
 
       const components = new URL(decodeURIComponent(args.get('url')))
-      components.searchParams.set('sig',  new vm.Script(playerInfo.functions[0]).runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
+      components.searchParams.set('sig', new vm.Script(playerInfo.functions[0]).runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
 
       const n = components.searchParams.get('n')
       components.searchParams.set('n', new vm.Script(playerInfo.functions[1]).runInNewContext({ ncode: n }))
@@ -372,7 +376,50 @@ async function retrieveStream(identifier, type) {
       url = components.toString()
     }
 
-    resolve({ status: 0, url })
+    resolve({ url })
+  })
+}
+
+async function loadCaptions(decodedTrack) {
+  return new Promise(async (resolve) => {
+    if (!playerInfo.innertube) while (1) {
+      if (playerInfo.innertube) break
+
+      await utils.sleep(200)
+    }
+
+    const video = await utils.makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+      body: {
+        context: playerInfo.innertube,
+        videoId: decodedTrack.identifier,
+        playbackContext: {
+          contentPlaybackContext: {
+            signatureTimestamp: playerInfo.signatureTimestamp
+          }
+        }
+      },
+      method: 'POST'
+    })
+
+    if (videos.playabilityStatus.status != 'OK') {
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', message: videos.playabilityStatus.reason })
+
+      return resolve({ loadType: 'error', data: { severity: 'COMMON', message: videos.playabilityStatus.reason, cause: 'unknown' } })
+    }
+
+    const captions = video.captions.playerCaptionsTracklistRenderer.captionTracks.map((caption) => {
+      captions[caption.languageCode] = {
+        name: caption.name.simpleText,
+        url: `${caption.baseUrl} + &fmt=json3`,
+        rtl: caption.rtl || false,
+        translatable: caption.isTranslatable
+      }
+    })
+
+    resolve({
+      loadType: 'captions',
+      data: captions
+    })
   })
 }
 
@@ -380,5 +427,7 @@ export default {
   startInnertube,
   stopInnertube,
   search,
-  retrieveStream
+  loadFrom,
+  retrieveStream,
+  loadCaptions
 }

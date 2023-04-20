@@ -31,6 +31,14 @@ server.on('upgrade', (req, socket, head) => {
     v4.handleUpgrade(req, socket, head, (ws) => v4.emit('connection', ws, req))
 })
 
+v4.on('error', (err) => {
+  console.log('[NodeLink:websocket]: Error: ' + err)
+})
+
+server.on('error', (err) => {
+  console.log('[NodeLink:http]: Error: ' + err)
+})
+
 server.listen(config.server.port || 2333, () => {
   console.log(`[NodeLink:websocket]: Listening on port ${config.server.port || 2333}`)
 })

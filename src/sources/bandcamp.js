@@ -15,7 +15,7 @@ async function loadFrom(url) {
     const information = JSON.parse(matches[1])
     const identifier = url.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
 
-    const infoObj = {
+    const track = {
       identifier: `${identifier[1]}:${identifier[2]}`,
       isSeekable: true,
       author: information.byArtist.name,
@@ -29,13 +29,13 @@ async function loadFrom(url) {
       sourceName: 'bandcamp'
     }
 
-    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track: infoObj, query })
+    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query })
 
     resolve({
       loadType: 'track',
       data: {
-        encoded: utils.encodeTrack(infoObj),
-        info: infoObj,
+        encoded: utils.encodeTrack(track),
+        info: track,
         pluginInfo: {}
       }
     })
@@ -102,7 +102,7 @@ async function search(query) {
       tracks[i].pluginInfo = {}
     }
 
-    utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+    utils.debugLog('search', 4, { type: 2, sourceName: 'BandCamp', tracksLen: tracks.length, query })
 
     resolve({
       loadType: 'search',
@@ -120,10 +120,10 @@ async function retrieveStream(uri) {
     if (!streamURL) {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'BandCamp', message: 'No stream URL was found.' })
 
-      return resolve({ status: 1, exception: { severity: 'UNCOMMON', message: 'Failed to get the stream from source.', cause: 'unknown' } })
+      return resolve({ exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
     }
 
-    resolve({ status: 0, url: streamURL[0] })
+    resolve({ url: streamURL[0] })
   })
 }
 

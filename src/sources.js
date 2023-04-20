@@ -13,7 +13,7 @@ async function getTrackURL(track) {
     switch ([ 'deezer', 'pandora', 'spotify' ].includes(track.sourceName) ? config.search.defaultSearchSource : track.sourceName) {
       case 'local':
       case 'http': {
-        resolve({ status: 0, url: track.uri })
+        resolve({ url: track.uri })
         
         break
       }
@@ -34,7 +34,7 @@ async function getTrackURL(track) {
         break
       }
       default: {
-        resolve({ status: 1, exception: { severity: 'COMMON', message: 'Unknown source' } })
+        resolve({ exception: { severity: 'COMMON', message: 'Unknown source' } })
 
         break
       }
@@ -73,7 +73,9 @@ export default {
   },
   youtube: {
     search: youtube.search,
+    loadFrom: youtube.loadFrom,
     startInnertube: youtube.startInnertube,
-    stopInnertube: youtube.stopInnertube
+    stopInnertube: youtube.stopInnertube,
+    getCaptions: youtube.getCaptions
   }
 }

@@ -63,7 +63,8 @@ async function search(query) {
     const tracks = []
     let index = 0
 
-    Object.keys(data.annotations).forEach(async (key) => {
+    const annotationKeys = Object.keys(data.annotations)
+    annotationKeys.forEach(async (key) => {
       if (data.annotations[key].type != 'TR') return;
 
       const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
@@ -71,7 +72,7 @@ async function search(query) {
       if (search.loadType != 'search')
         return resolve(search)
 
-      const infoObj = {
+      const track = {
         identifier: search.data[0].info.identifier,
         isSeekable: true,
         author: data.annotations[key].artistName,
@@ -81,13 +82,13 @@ async function search(query) {
         title: data.annotations[key].name,
         uri: search.data[0].info.uri,
         artworkUrl: `https://content-images.p-cdn.com/${data.annotations[key].icon.artUrl}`,
-        isrc: null,
+        isrc: data.annotations[key].isrc,
         sourceName: 'pandora'
       }
 
       tracks.push({
-        encoded: utils.encodeTrack(infoObj),
-        info: infoObj,
+        encoded: utils.encodeTrack(track),
+        info: track,
         playlistInfo: {}
       })
 
@@ -95,13 +96,14 @@ async function search(query) {
         utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: tracks.length, query })
 
         const new_tracks = []
+        annotationKeys.forEach((key2, index2) => {
+          tracks.forEach((track2, index3) => {
+            if (track2.info.title == data.annotations[key2].name && track2.info.author == data.annotations[key2].artistName) {
+              track2.info.position = index2
+              new_tracks.push(track2)
+            }
 
-        Object.keys(data.annotations).forEach((key2, index2) => {
-          tracks.forEach((track, index3) => {
-            if (track.info.title == data.annotations[key2].name && track.info.author == data.annotations[key].artistName)
-              new_tracks.push(track)
-
-            if ((index2 == Object.keys(data.annotations).length - 1) && (index3 == tracks.length - 1))
+            if ((index2 == annotationKeys.length - 1) && (index3 == tracks.length - 1))
               resolve({
                 loadType: 'search',
                 data: new_tracks
@@ -136,34 +138,34 @@ async function loadFrom(query) {
         const body = JSON.parse(data.split('var storeData = ')[1].split('}}]};')[0] + '}}]}')
 
         if (/^https:\/\/www\.pandora\.com\/artist\/[^\/]+\/[^\/]+\/\w+\/[^\/]+$/.test(query)) {
-          const track = body['v4/catalog/getDetails'][0].annotations[Object.keys(body['v4/catalog/getDetails'][0].annotations)[0]]
+          const item = body['v4/catalog/getDetails'][0].annotations[Object.keys(body['v4/catalog/getDetails'][0].annotations)[0]]
   
-          const search = await searchWithDefault(`${track.name} ${track.artistName}`)
+          const search = await searchWithDefault(`${item.name} ${item.artistName}`)
   
           if (search.loadType != 'search')
             return resolve(search)
   
-          const infoObj = {
+          const track = {
             identifier: search.data[0].info.identifier,
             isSeekable: true,
-            author: track.artistName,
+            author: item.artistName,
             length: search.data[0].info.length,
             isStream: false,
             position: 0,
-            title: track.name,
+            title: item.name,
             uri: search.data[0].info.uri,
-            artworkUrl: `https://content-images.p-cdn.com/${track.icon.artUrl}`,
+            artworkUrl: `https://content-images.p-cdn.com/${item.icon.artUrl}`,
             isrc: null,
             sourceName: 'pandora'
           }
 
-          utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', track: infoObj, query })
+          utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', track, query })
   
           return resolve({
             loadType: 'track',
             data: {
-              encoded: utils.encodeTrack(infoObj),
-              info: infoObj,
+              encoded: utils.encodeTrack(track),
+              info: track,
               playlistInfo: {}
             }
           })
@@ -179,7 +181,7 @@ async function loadFrom(query) {
             if (search.loadType != 'search')
               return resolve(search)
       
-            const infoObj = {
+            const track = {
               identifier: search.data[0].info.identifier,
               isSeekable: true,
               author: body['v4/catalog/annotateObjects'][0][key].artistName,
@@ -194,26 +196,25 @@ async function loadFrom(query) {
             }
       
             tracks.push({
-              encoded: utils.encodeTrack(infoObj),
-              info: infoObj,
+              encoded: utils.encodeTrack(track),
+              info: track,
               playlistInfo: {}
             })
       
             if (index == keys.length - 1) {
-              utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
+              utils.debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', tracksLen: tracks.length, query })
 
               const new_tracks = []
-      
               keys.forEach((key2, index2) => {
-                tracks.forEach((track, index3) => {
-                  if (track.info.title == body['v4/catalog/annotateObjects'][0][key2].name && track.info.author == body['v4/catalog/annotateObjects'][0][key].artistName) {
-                    track.info.position = index3
-                    new_tracks.push(track)
+                tracks.forEach((track2, index3) => {
+                  if (track2.info.title == body['v4/catalog/annotateObjects'][0][key2].name && track2.info.author == body['v4/catalog/annotateObjects'][0][key2].artistName) {
+                    track2.info.position = index2
+                    new_tracks.push(track2)
                   }
       
                   if ((index2 == keys.length - 1) && (index3 == tracks.length - 1))
                     resolve({
-                      loadType: 'playlist',
+                      loadType: 'album',
                       data: {
                         info: {
                           name: data.name,
@@ -266,12 +267,11 @@ async function loadFrom(query) {
               utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
 
               const new_tracks = []
-      
               keys.forEach((key2, index2) => {
-                tracks.forEach((track, index3) => {
-                  if (track.info.title == annotations[key2].name && track.info.author == annotations[key].artistName) {
-                    track.info.position = index3
-                    new_tracks.push(track)
+                tracks.forEach((track2, index3) => {
+                  if (track2.info.title == annotations[key2].name && track2.info.author == annotations[key2].artistName) {
+                    track2.info.position = index2
+                    new_tracks.push(track2)
                   }
       
                   if ((index2 == keys.length - 1) && (index3 == tracks.length - 1))
@@ -362,12 +362,11 @@ async function loadFrom(query) {
             utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
 
             const new_tracks = []
-    
             keys.forEach((key2, index2) => {
-              tracks.forEach((track, index3) => {
-                if (track.info.title == data.annotations[key2].name && track.info.author == data.annotations[key].artistName) {
-                  track.info.position = index3
-                  new_tracks.push(track)
+              tracks.forEach((track2, index3) => {
+                if (track2.info.title == data.annotations[key2].name && track2.info.author == data.annotations[key2].artistName) {
+                  track2.info.position = index2
+                  new_tracks.push(track2)
                 }
     
                 if ((index2 == keys.length - 1) && (index3 == tracks.length - 1))

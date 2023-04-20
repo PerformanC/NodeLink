@@ -1,7 +1,6 @@
 /*
 Any of the settings below can be disabled by setting them to false.
 
-opt: 1 = Performance, 2 = Quality
 threshold: 5000 = 5 seconds
 playerUpdateInterval: 5000 = 5 seconds
 statsInterval: 5000 = 5 seconds
@@ -9,13 +8,12 @@ autoUpdate: [ autoUpdate, interval, [tar, zip] ]
 */
 
 export default {
-  version: '1.6.5',
+  version: '1.7.0',
   server: {
     port: 2333,
     password: 'youshallnotpass'
   },
   options: {
-    opt: 2,
     threshold: 10000,
     playerUpdateInterval: false,
     statsInterval: false,
@@ -27,13 +25,14 @@ export default {
     pandoraInterval: true,
     innertube: true,
     websocket: {
-      connected: true,
-      disconnected: true,
+      connect: true,
+      disconnect: true,
       resume: true,
       failedResume: true
     },
     request: {
       enabled: true,
+      errors: true,
       showBody: true,
       showHeaders: true,
       showParams: true
@@ -46,14 +45,14 @@ export default {
     },
     sources: {
       loadtrack: {
-        requested: true,
+        request: true,
         results: true,
-        exceptions: true
+        exception: true
       },
       search: {
-        requested: true,
+        request: true,
         results: true,
-        exceptions: true
+        exception: true
       }
     }
   },

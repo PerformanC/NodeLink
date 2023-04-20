@@ -1,27 +1,27 @@
 import utils from '../utils.js'
 import searchWithDefault from './default.js'
 
-async function loadFrom(query, track) {
+async function loadFrom(query, type) {
   return new Promise(async (resolve) => {
     let endpoint
 
-    switch (track[1]) {
-      case 'track': 
-        endpoint = `track/${track[2]}`
+    switch (type[1]) {
+      case 'track':
+        endpoint = `track/${type[2]}`
         break
-      case 'playlist': 
-        endpoint = `playlist/${track[2]}`
+      case 'playlist':
+        endpoint = `playlist/${type[2]}`
         break
-      case 'album': 
-        endpoint = `album/${track[2]}`
+      case 'album':
+        endpoint = `album/${type[2]}`
         break
       default:
         return resolve({ loadType: 'empty', data: {} })
     }
 
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: track[1], sourceName: 'Deezer', query })
+    utils.debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Deezer', query })
 
-    const data = await utils.makeRequest(`https://api.deezer.com/${endpoint}`, { method: 'GET' })
+    const data = await utils.makeRequest(`https://api.deezer.com/2.0/${endpoint}`, { method: 'GET' })
 
     if (data.error) {
       if (data.error.code == 800) 
@@ -30,14 +30,14 @@ async function loadFrom(query, track) {
       return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
-    switch (track[1]) {
+    switch (type[1]) {
       case 'track': {
         const search = await searchWithDefault(`"${data.title} ${data.artist.name}"`)
 
         if (search.loadType != 'search')
           return resolve(search)
 
-        const infoObj = {
+        const track = {
           identifier: search.data[0].info.identifier,
           isSeekable: true,
           author: data.artist.name,
@@ -47,17 +47,17 @@ async function loadFrom(query, track) {
           title: data.title,
           uri: data.link,
           artworkUrl: data.album.cover_xl,
-          isrc: null,
+          isrc: data.isrc,
           sourceName: 'deezer'
         }
 
-        tils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Deezer', track: infoObj, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Deezer', track, query })
 
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           }
         })
@@ -67,48 +67,48 @@ async function loadFrom(query, track) {
       case 'album':
       case 'playlist': {
         const tracks = []
+        let index = 0
 
-        data.tracks.data.forEach(async (track, index) => {
-          const search = await searchWithDefault(`"${track.title} ${track.artist.name}"`)
+        data.tracks.data.forEach(async (item) => {
+          const search = await searchWithDefault(`"${item.title} ${item.artist.name}"`)
 
           if (search.loadType != 'search')
             return resolve(search)
 
-          const infoObj = {
+          const track = {
             identifier: search.data[0].info.identifier,
             isSeekable: true,
-            author: track.artist.name,
+            author: item.artist.name,
             length: search.data[0].info.length,
             isStream: false,
             position: index,
-            title: track.title,
-            uri: track.link,
-            artworkUrl: track[1] == 'album' ? data.cover_xl : data.picture_xl,
+            title: item.title,
+            uri: item.link,
+            artworkUrl: type[1] == 'album' ? data.cover_xl : data.picture_xl,
             isrc: null,
             sourceName: 'deezer'
           }
 
           tracks.push({
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           })
 
-          if (index == data.tracks.data.length) {
-            utils.debugLog('loadtracks', 4, { type: 2, loadType: track[1], sourceName: 'Deezer', track: infoObj, query })
+          if (index == data.tracks.data.length - 1) {
+            utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Deezer', track, query })
 
             const new_tracks = []
-
-            data.tracks.data.forEach((track2, index2) => {
-              tracks.forEach((track3, index3) => {
-                if (track3.info.title == track.artist.name && track3.info.author == track.title) {
-                  track.info.position = index3
-                  new_tracks.push(track)
+            data.tracks.data.forEach((item2, index2) => {
+              tracks.forEach((track2, index3) => {
+                if (track2.info.title == item2.title && track2.info.author == item2.artist.name) {
+                  track2.info.position = index2
+                  new_tracks.push(track2)
                 }
 
                 if ((index2 == data.tracks.data.length - 1) && (index3 == tracks.length - 1))
                   resolve({
-                    loadType: 'playlist',
+                    loadType: type[1],
                     data: {
                       info: {
                         name: data.title,

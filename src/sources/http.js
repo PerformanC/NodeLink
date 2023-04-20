@@ -17,7 +17,7 @@ async function loadFrom(uri) {
       }
     }
 
-    const infoObj = {
+    const track = {
       identifier: 'unknown',
       isSeekable: false,
       author: 'unknown',
@@ -29,17 +29,21 @@ async function loadFrom(uri) {
       artworkUrl: null,
       isrc: null,
       sourceName: 'http'
-   }
+    }
+
+    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'http', track, query: uri })
 
     return {
       loadType: 'track',
       data: {
-        encoded: utils.encodeTrack(infoObj),
-        info: infoObj,
+        encoded: utils.encodeTrack(track),
+        info: track,
         pluginInfo: {}
        }
     }
   } catch {
+    utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'http', message: 'Not possible to connect to url.', })
+
     return {
       loadType: 'error',
       data: {

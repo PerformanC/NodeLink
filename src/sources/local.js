@@ -10,7 +10,7 @@ async function loadFrom(path) {
       if (err)
         return resolve({ loadType: 'error', exception: { message: 'File not found', severity: 'COMMON', cause: 'unknown' } })
     
-      const infoObj = {
+      const track = {
         identifier: 'unknown',
         isSeekable: false,
         author: 'unknown',
@@ -24,13 +24,13 @@ async function loadFrom(path) {
         sourceName: 'local'
       }
 
-      utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'local', track: infoObj, query: path })
+      utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'local', track, query: path })
 
       resolve({
         loadType: 'track',
         data: {
-          encoded: utils.encodeTrack(infoObj),
-          info: infoObj,
+          encoded: utils.encodeTrack(track),
+          info: track,
           pluginInfo: {}
         }
       })

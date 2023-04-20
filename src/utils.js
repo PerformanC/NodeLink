@@ -27,7 +27,7 @@ function http1makeRequest(url, options) {
     const req = https.request(url, {
       method: options.method,
       headers: {
-        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Encoding': 'br, gzip, deflate',
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
       }
     }, (res) => {
@@ -80,8 +80,8 @@ function makeRequest(url, options) {
     let reqOptions = {
       ':method': options.method,
       ':path': parsedUrl.pathname + parsedUrl.search,
-      'Accept-Encoding': 'gzip, deflate, br',
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+      'Accept-Encoding': 'br, gzip, deflate',
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
     }
     if (options.body && !options.disableBodyCompression) reqOptions['Content-Encoding'] = 'gzip'
     if (options.headers) reqOptions = { ...reqOptions, ...options.headers }
@@ -315,18 +315,6 @@ function decodeTrack(track) {
   }
 }
 
-async function forEach(obj, callback) {
-  // Performance
-  if (config.options.opt == 1) obj.forEach((value, index) => callback(value, index))
-
-  // Quality
-  if (config.options.opt == 2) {
-    for (let i = 0; i < obj.length; i++) {
-      await callback(obj[i], i)
-    }
-  }
-}
-
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -387,34 +375,38 @@ async function checkForUpdates() {
 function debugLog(name, type, options) {
   switch (type) {
     case 1: {
-      if (config.debug.request.enabled)
+      if (!config.debug.request.enabled) return;
+      
+      if (options.error)
+        console.warn(`[NodeLink:${name}]: Detected an error in a request: ${options.error}`)
+      else
         console.log(`[NodeLink:${name}]: Received a request from client.${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
 
-        break
+      break
     }
     case 2: {
       switch (name) {
         case 'trackStart': {
           if (config.debug.track.start)
-            console.log(`[NodeLink:trackStart]: Started playing ${options.track.title} by ${options.track.author} on ${options.guildId}`)
+            console.log(`[NodeLink:trackStart]: Started playing ${options.track.title} by ${options.track.author} on ${options.guildId}.`)
 
             break
         }
         case 'trackEnd': {
           if (config.debug.track.end)
-            console.log(`[NodeLink:trackEnd]: Ended playing ${options.track.title} by ${options.track.author} on ${options.guildId}`)
+            console.log(`[NodeLink:trackEnd]: Ended playing ${options.track.title} by ${options.track.author} on ${options.guildId}, reason: ${options.reason}.`)
 
             break
         }
         case 'trackException': {
           if (config.debug.track.exception)
-            console.log(`[NodeLink:trackException]: An exception occurred while playing ${options.track.title} by ${options.track.author} on ${options.guildId} (${options.exception.message})`)
+            console.warn(`[NodeLink:trackException]: An exception occurred while playing ${options.track.title} by ${options.track.author} on ${options.guildId}. (${options.exception.message})`)
 
             break
         }
         case 'trackStuck': {
           if (config.debug.track.stuck)
-            console.log(`[NodeLink:trackStuck]: ${config.options.threshold}ms have passed since the last progress update on ${options.guildId}`)
+            console.warn(`[NodeLink:trackStuck]: ${config.options.threshold}ms have passed since the last progress update on ${options.guildId}.`)
 
             break
         }
@@ -428,7 +420,7 @@ function debugLog(name, type, options) {
           if (!config.debug.websocket.connect) return;
 
           if (options.headers['client-name'])
-            console.log(`[NodeLink:websocket]: "${req.headers['client-name']}" client connected to NodeLink.`)
+            console.log(`[NodeLink:websocket]: "${options.headers['client-name']}" client connected to NodeLink.`)
           else
             console.log(`[NodeLink:websocket]: A client, which didn't specific its name, connected to NodeLink.`)
 
@@ -445,7 +437,7 @@ function debugLog(name, type, options) {
           if (!config.debug.websocket.resume) return;
 
           if (options.headers['client-name'])
-            console.log(`[NodeLink:websocket]: "${req.headers['client-name']}" client resumed a connection to NodeLink.`)
+            console.log(`[NodeLink:websocket]: "${options.headers['client-name']}" client resumed a connection to NodeLink.`)
           else
             console.log(`[NodeLink:websocket]: A client, which didn't specific its name, resumed a connection to NodeLink.`)
 
@@ -456,7 +448,7 @@ function debugLog(name, type, options) {
           if (!config.debug.websocket.failedResume) return;
 
           if (options.headers['client-name'])
-            console.log(`[NodeLink:websocket]: "${req.headers['client-name']}" client failed to resume a connection to NodeLink.`)
+            console.log(`[NodeLink:websocket]: "${options.headers['client-name']}" client failed to resume a connection to NodeLink.`)
           else
             console.log(`[NodeLink:websocket]: A client, which didn't specific its name, failed to resume a connection to NodeLink.`)
 
@@ -479,8 +471,8 @@ function debugLog(name, type, options) {
               console.log(`[NodeLink:sources]: Loaded ${options.track.title} by ${options.track.author} from ${options.sourceName}: ${options.query}`)
           }
 
-          if (options.type == 3 && config.debug.sources.loadtrack.exceptions)
-            console.log(`[NodeLink:sources]: An exception occurred while loading ${options.loadType} from ${options.sourceName}: ${options.message}`)
+          if (options.type == 3 && config.debug.sources.loadtrack.exception)
+            console.warn(`[NodeLink:sources]: An exception occurred while loading ${options.loadType} from ${options.sourceName}: ${options.message}`)
 
           break
         }
@@ -491,8 +483,8 @@ function debugLog(name, type, options) {
           if (options.type == 2 && config.debug.sources.search.results)
             console.log(`[NodeLink:sources]: Found ${options.tracksLen} tracks on ${options.sourceName}: ${options.query}`)
 
-          if (options.type == 3 && config.debug.sources.search.exceptions)
-            console.log(`[NodeLink:sources]: An exception occurred while searching on ${options.sourceName}: ${options.exception.message}`)
+          if (options.type == 3 && config.debug.sources.search.exception)
+            console.warn(`[NodeLink:sources]: An exception occurred while searching on ${options.sourceName}: ${options.exception.message}`)
 
           break
         }
@@ -502,7 +494,7 @@ function debugLog(name, type, options) {
             console.log(`[NodeLink:sources]: Retrieving stream from ${options.sourceName}: ${options.query}`)
 
           if (options.type == 2)
-            console.log(`[NodeLink:sources]: Error while retrieving stream from ${options.sourceName}: ${options.message}`)
+            console.warn(`[NodeLink:sources]: Error while retrieving stream from ${options.sourceName}: ${options.message}`)
         }
       }
 
@@ -518,14 +510,38 @@ function debugLog(name, type, options) {
   }
 }
 
+function send(req, res, data, status) {
+  if (req.headers['accept-encoding'] && req.headers['accept-encoding'].includes('br')) {
+    res.setHeader('Content-Encoding', 'br')
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
+    zlib.brotliCompress(JSON.stringify(data), (err, result) => {
+      if (err) throw err
+      res.end(result)
+    })
+    return true
+  } else {
+    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(data))
+  }
+}
+
+function sendNonNull(req, res, data, force) {
+  if (data == null && !force) return;
+
+  send(req, res, data, 200)
+
+  return true
+}
+
 export default {
   generateSessionId,
   http1makeRequest,
   makeRequest,
   encodeTrack,
   decodeTrack,
-  forEach,
   sleep,
   checkForUpdates,
-  debugLog
+  debugLog,
+  send,
+  sendNonNull
 }

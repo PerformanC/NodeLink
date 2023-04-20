@@ -12,7 +12,7 @@ async function loadFrom(url) {
 
     switch (data.kind) {
       case 'track': {
-        const infoObj = {
+        const track = {
           identifier: data.id.toString(),
           isSeekable: true,
           author: data.user.username,
@@ -22,65 +22,102 @@ async function loadFrom(url) {
           title: data.title,
           uri: data.permalink_url,
           artworkUrl: data.artwork_url,
-          isrc: null,
+          isrc: data.publisher_metadata.isrc,
           sourceName: 'soundcloud'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', tracks, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query })
 
-        resolve({
+        return resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             playlistInfo: {}
           }
         })
-
-        break
       }
       case 'playlist': {
         const tracks = []
 
-        utils.forEach(data.tracks, async (track, index) => {
-          const infoObj = {
-            identifier: track.id.toString(),
+        const notLoaded = []
+
+        data.tracks.forEach((item, index) => {
+          if (!item.title) {
+            notLoaded.push(item.id.toString())
+            return
+          }
+
+          const track = {
+            identifier: item.id.toString(),
             isSeekable: true,
-            author: track.user.username,
-            length: track.duration,
+            author: item.user.username,
+            length: item.duration,
             isStream: false,
             position: index,
-            title: track.title,
-            uri: track.permalink_url,
-            artworkUrl: track.artwork_url,
-            isrc: null,
+            title: item.title,
+            uri: item.permalink_url,
+            artworkUrl: item.artwork_url,
+            isrc: item.publisher_metadata ? item.publisher_metadata.isrc : null,
             sourceName: 'soundcloud'
           }
 
           tracks.push({
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             playlistInfo: {}
           })
-
-          if (index == data.tracks.length - 1) {
-            utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', tracks, query })
-
-            resolve({
-              loadType: 'playlist',
-              data: {
-                info: {
-                  name: data.title,
-                  selectedTrack: 0,
-                },
-                pluginInfo: {},
-                tracks,
-              }
-            })
-          }
         })
 
-        break
+        if (notLoaded.length) {
+          let stop = false
+
+          while (notLoaded.length && !stop) {
+            const notLoadedLimited = notLoaded.slice(0, 50)
+            const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+
+            data.forEach((item, index) => {
+              const track = {
+                identifier: item.id.toString(),
+                isSeekable: true,
+                author: item.user.username,
+                length: item.duration,
+                isStream: false,
+                position: index,
+                title: item.title,
+                uri: item.permalink_url,
+                artworkUrl: item.artwork_url,
+                isrc: item.publisher_metadata ? item.publisher_metadata.isrc : null,
+                sourceName: 'soundcloud'
+              }
+
+              tracks.push({
+                encoded: utils.encodeTrack(track),
+                info: track,
+                playlistInfo: {}
+              })
+            })
+
+            notLoaded.splice(0, 50)
+
+            if (notLoaded.length == 0)
+              stop = true
+          }
+        }
+
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', tracksLen: tracks.length, query: url })
+
+        return resolve({
+          loadType: 'playlist',
+          data: {
+            info: {
+              name: data.title,
+              selectedTrack: 0,
+            },
+            pluginInfo: {},
+            tracks,
+          }
+        })
       }
     }
   })
@@ -100,37 +137,35 @@ async function search(query) {
     const tracks = []
     let i = 0
 
-    utils.forEach(data.collection, async (track, index) => {
-      if (track.kind == 'track') {
-        const infoObj = {
-          identifier: track.id.toString(),
+    data.collection.forEach((item, index) => {
+      if (item.kind == 'track') {
+        const track = {
+          identifier: item.id.toString(),
           isSeekable: true,
-          author: track.user.username,
-          length: track.duration,
+          author: item.user.username,
+          length: item.duration,
           isStream: false,
           position: i++,
-          title: track.title,
-          uri: track.uri,
-          artworkUrl: track.artwork_url,
+          title: item.title,
+          uri: item.uri,
+          artworkUrl: item.artwork_url,
           isrc: null,
           sourceName: 'soundcloud'
         }
 
         tracks.push({
-          encoded: utils.encodeTrack(infoObj),
-          info: infoObj,
+          encoded: utils.encodeTrack(track),
+          info: track,
           pluginInfo: {}
         })
       }
+    })
+      
+    utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
 
-      if (index == data.collection.length - 1) {
-        utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
-
-        resolve({
-          loadType: 'search',
-          data: tracks
-        })
-      }
+    return resolve({
+      loadType: 'search',
+      data: tracks
     })
   })
 }
@@ -142,14 +177,14 @@ async function retrieveStream(identifier) {
     if (data.errors) {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', message: data.errors[0].error_message })
 
-      return resolve({ status: 1, exception: { message: data.errors[0].error_message, severity: 'UNKNOWN', cause: 'unknown' } })
+      return resolve({ exception: { message: data.errors[0].error_message, severity: 'UNKNOWN', cause: 'unknown' } })
     }
 
-    utils.forEach(data.media.transcodings, async (transcoding) => {
+    data.media.transcodings.forEach(async (transcoding) => {
       if (transcoding.format.protocol == 'progressive') {
         const stream = await utils.http1makeRequest(transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
-        resolve({ status: 0, url: stream.url })
+        resolve({ url: stream.url })
       }
     })
   })

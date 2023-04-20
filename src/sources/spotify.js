@@ -123,43 +123,55 @@ async function search(query) {
         let tracks = []
         let i = 0
 
-        utils.forEach(data.data.searchV2.tracksV2.items, async (track, index) => {
-          if (track) {
-            track = track.item.data
+        data.data.searchV2.tracksV2.items.forEach(async (items, index) => {
+          if (items) {
+            items = track.item.data
 
-            const search = await searchWithDefault(`${track.name} ${track.artists.items[0].profile.name}`)
+            const search = await searchWithDefault(`${items.name} ${items.artists.items[0].profile.name}`)
 
             if (search.loadType == 'empty')
               return resolve(search)
 
-            const infoObj = {
+            const track = {
               identifier: search.data[0].info.identifier,
               isSeekable: true,
-              author: track.artists.items.map((artist) => artist.profile.name).join(', '),
-              length: track.duration.totalMilliseconds,
+              author: items.artists.items.map((artist) => artist.profile.name).join(', '),
+              length: items.duration.totalMilliseconds,
               isStream: false,
               position: i++,
-              title: track.name,
-              uri: track.uri,
+              title: items.name,
+              uri: items.uri,
               artworkUrl: search.data[0].info.artworkUrl,
-              isrc: null,
+              isrc: items.external_ids.isrc,
               sourceName: 'spotify'
             }
 
             tracks.push({
-              encoded: utils.encodeTrack(infoObj),
-              info: infoObj,
+              encoded: utils.encodeTrack(track),
+              info: track,
               pluginInfo: {}
             })
           }
 
-          utils.debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: tracks.length, query })
+          if (index == data.data.searchV2.tracksV2.items.length - 1) {
+            utils.debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: tracks.length, query })
 
-          if (index == data.data.searchV2.tracksV2.items.length - 1)
-            resolve({
-              loadType: 'search',
-              data: tracks
+            const new_tracks = []
+            data.data.searchV2.tracksV2.items.forEach((items2, index2) => {
+              tracks.forEach((track2, index3) => {
+                if (track2.info.title == items2.item.data.name && track2.info.author == items2.item.data.artists.items.map((artist) => artist.profile.name).join(', ')) {
+                  track2.info.position = index2
+                  new_tracks.push(track2)
+                }
+
+                if ((index2 == data.data.searchV2.tracksV2.items.length - 1) && (index3 == tracks.length - 1))
+                  resolve({
+                    loadType: 'search',
+                    data: new_tracks
+                  })
+              })
             })
+          }
         })
       })
     })
@@ -237,7 +249,7 @@ async function loadFrom(query, type) {
         if (search.loadType != 'search')
           return resolve(search)
 
-        const infoObj = {
+        const track = {
           identifier: search.data[0].info.identifier,
           isSeekable: true,
           author: data.artists[0].name,
@@ -247,17 +259,17 @@ async function loadFrom(query, type) {
           title: data.name,
           uri: data.external_urls.spotify,
           artworkUrl: data.album.images[0].url,
-          isrc: null,
+          isrc: data.external_ids.isrc,
           sourceName: 'spotify'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track: infoObj, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
 
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           }
         })
@@ -270,7 +282,7 @@ async function loadFrom(query, type) {
         if (search.loadType != 'search')
           return resolve(search)
 
-        const infoObj = {
+        const track = {
           identifier: search.data[0].info.identifier,
           isSeekable: true,
           author: data.publisher,
@@ -280,17 +292,17 @@ async function loadFrom(query, type) {
           title: data.name,
           uri: data.external_urls.spotify,
           artworkUrl: data.images[0].url,
-          isrc: null,
+          isrc: data.external_ids.isrc,
           sourceName: 'spotify'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episode', sourceName: 'Spotify', track: infoObj, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episode', sourceName: 'Spotify', track, query })
 
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           }
         })
@@ -302,49 +314,48 @@ async function loadFrom(query, type) {
         const tracks = []
         let index = 0
 
-        data.tracks.items.forEach(async (track) => {
+        data.tracks.items.forEach(async (item) => {
           let search
-          if (type[1] == 'playlist') search = await searchWithDefault(`${track.track.name} ${track.track.artists[0].name}`)
-          else search = await searchWithDefault(`${track.name} ${track.artists[0].name}`)
+          if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
+          else search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
 
           if (search.loadType != 'search')
             return resolve(search)
 
-          const infoObj = {
+          const track = {
             identifier: search.data[0].info.identifier,
             isSeekable: true,
-            author: type[1] == 'playlist' ? track.track.artists[0].name : track.artists[0].name,
+            author: type[1] == 'playlist' ? item.track.artists[0].name : item.artists[0].name,
             length: search.data[0].info.length,
             isStream: false,
             position: index,
-            title: type[1] == 'playlist' ? track.track.name : track.name,
-            uri: type[1] == 'playlist' ? track.track.external_urls.spotify : track.external_urls.spotify,
+            title: type[1] == 'playlist' ? item.track.name : item.name,
+            uri: type[1] == 'playlist' ? item.track.external_urls.spotify : item.external_urls.spotify,
             artworkUrl: search.data[0].info.artworkUrl,
-            isrc: null,
+            isrc: type[1] == 'playlist' ? item.track.external_ids.isrc : item.external_ids.isrc,
             sourceName: 'spotify'
           }
 
           tracks.push({
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           })
 
           if (index == data.tracks.items.length - 1) {
-            utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', tracksLen: tracks.length, query })
+            utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Spotify', tracksLen: tracks.length, query })
 
             const new_tracks = []
-
-            data.tracks.items.forEach((track2, index2) => {
-              tracks.forEach((track3, index3) => {
-                if (track3.info.title == track2.track.name && track3.info.author == track2.track.artists[0].name) {
-                  track.info.position = index3
-                  new_tracks.push(track)
+            data.tracks.items.forEach((item2, index2) => {
+              tracks.forEach((track2, index3) => {
+                if (track2.info.title == (type[1] == 'playlist' ? item2.track.name : item2.name) && track2.info.author == (type[1] == 'playlist' ? item2.track.artists[0].name : item2.artists[0].name)) {
+                  track2.info.position = index2
+                  new_tracks.push(track2)
                 }
 
                 if ((index2 == data.tracks.items.length - 1) && (index3 == tracks.length - 1))
                   resolve({
-                    loadType: 'playlist',
+                    loadType: type[1],
                     data: {
                       info: {
                         name: data.name,
@@ -373,7 +384,7 @@ async function loadFrom(query, type) {
           if (search.loadType != 'search')
             return resolve(search)
 
-          const infoObj = {
+          const track = {
             identifier: search.data[0].info.identifier,
             isSeekable: true,
             author: episode.publisher,
@@ -383,29 +394,30 @@ async function loadFrom(query, type) {
             title: episode.name,
             uri: episode.external_urls.spotify,
             artworkUrl: episode.images[0].url,
-            isrc: null,
+            isrc: episode.external_ids.isrc,
             sourceName: 'spotify'
           }
 
           tracks.push({
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
+            encoded: utils.encodeTrack(track),
+            info: track,
             pluginInfo: {}
           })
 
           if (index == data.episodes.items.length - 1) {
-            const new_tracks = []
+            utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', tracksLen: tracks.length, query })
 
-            data.episodes.items.forEach((episode, index2) => {
+            const new_tracks = []
+            data.episodes.items.forEach((episode2, index2) => {
               tracks.forEach((track2, index3) => {
-                if (track2.info.title == episode.name && track2.info.author == episode.publisher) {
-                  track.info.position = index3
-                  new_tracks.push(track)
+                if (track2.info.title == episode2.name && track2.info.author == episode2.publisher) {
+                  track2.info.position = index2
+                  new_tracks.push(track2)
                 }
 
                 if ((index2 == data.episodes.items.length - 1) && (index3 == tracks.length - 1))
                   resolve({
-                    loadType: 'playlist',
+                    loadType: 'show',
                     data: {
                       info: {
                         name: data.name,
