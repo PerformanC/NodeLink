@@ -376,7 +376,7 @@ async function retrieveStream(identifier, type) {
       url = components.toString()
     }
 
-    resolve({ url })
+    resolve({ url, protocol: 'https' })
   })
 }
 

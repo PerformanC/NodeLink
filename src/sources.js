@@ -11,9 +11,15 @@ import youtube from './sources/youtube.js'
 async function getTrackURL(track) {
   return new Promise(async (resolve) => {
     switch ([ 'deezer', 'pandora', 'spotify' ].includes(track.sourceName) ? config.search.defaultSearchSource : track.sourceName) {
-      case 'local':
-      case 'http': {
-        resolve({ url: track.uri })
+      case 'local': {
+        resolve({ url: track.uri, protocol: 'file' })
+
+        break
+      }
+
+      case 'http':
+      case 'https': {
+        resolve({ url: track.uri, protocol: track.sourceName })
         
         break
       }

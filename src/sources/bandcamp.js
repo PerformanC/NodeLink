@@ -123,7 +123,7 @@ async function retrieveStream(uri) {
       return resolve({ exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
     }
 
-    resolve({ url: streamURL[0] })
+    resolve({ url: streamURL[0], protocol: 'https' })
   })
 }
 

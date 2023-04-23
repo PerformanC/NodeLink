@@ -1,5 +1,7 @@
 import fs from 'fs'
 import os from 'os'
+import https from 'https'
+import http from 'http'
 import { URLSearchParams, parse } from 'url'
 
 import config from '../config.js'
@@ -36,12 +38,10 @@ class VoiceConnection {
     this.player
     this.client = client
     this.cache = {
-      track: null,
       startedAt: 0,
       silence: false,
       ffmpeg: null,
-      action: null,
-      filters: [],
+      url: null,
     }
     this.stateInterval
   
@@ -76,7 +76,7 @@ class VoiceConnection {
     if (this.stateInterval) clearInterval(this.stateInterval)
 
     this.config.state = {
-      time: Date.now(),
+      time: null,
       position: 0,
       connected: false,
       ping: -1
@@ -121,23 +121,22 @@ class VoiceConnection {
     })
 
     this.player.on('stateChange', (oldState, newState) => {
-      if (this.cache.silence) return (this.cache.silence = false)
-
       if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {
+        if (this.cache.silence) return (this.cache.silence = false)
+
         this._stopTrack()
         this.config.track = null
+        this.cache.url = null
 
-        utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: this.cache.action || 'finished' })
+        utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: 'finished' })
 
         this.client.ws.send(JSON.stringify({
           op: 'event',
           type: 'TrackEndEvent',
           guildId: this.config.guildId,
           track: this.config.track,
-          reason: this.cache.action || 'finished'
+          reason: 'finished'
         }))
-
-        this.cache.action = null
       }
     })
 
@@ -212,35 +211,48 @@ class VoiceConnection {
     this.client.players.delete(this.config.guildId)
   }
 
-  async getResource(sourceName, url) {
+  async getResource(sourceName, url, protocol) {
     return new Promise(async (resolve) => {
-      https.get(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-          'Range': 'bytes=0-'
-        }
-      }, (res) => {
-        res.on('error', () => {})
+      if (protocol == 'file') {
+        const file = fs.createReadStream(url)
 
-        if (res.statusCode != 206) {
-          res.destroy()
-
+        file.on('error', () => {
           utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
 
           resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
-        }
+        })
 
-        if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(sourceName))
-          resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, metadata: url, inlineVolume: true }) })
-        else
-          resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.Arbitrary, metadata: url, inlineVolume: true }) })
-      })
+        this.cache.url = url
+        resolve({ stream: djsVoice.createAudioResource(file, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
+      } else {
+        (protocol == 'https' ? https : http).get(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+            'Range': 'bytes=0-'
+          }
+        }, (res) => {
+          res.on('error', () => {})
 
-      this.cache.http.on('error', () => {
-        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
+          if (res.statusCode != 206) {
+            res.destroy()
 
-        resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
-      })
+            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
+
+            resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
+          }
+
+          this.cache.url = url
+
+          if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(sourceName))
+            resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true }) })
+          else
+            resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
+        }).on('error', () => {
+          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
+
+          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
+        })
+      }
     })
   }
 
@@ -257,6 +269,7 @@ class VoiceConnection {
 
     if (urlInfo.exception) {
       this.config.track = null
+      this.cache.url = null
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -287,14 +300,15 @@ class VoiceConnection {
     if (Object.keys(this.config.filters).length > 0) {
       const filter = new Filters(this.config.filters, urlInfo.url, this.config.guildId, new Date())
 
-      this.config.filters = filter.configure()
+      this.config.filters = filter.configure(this.config.filters)
 
       if (oldTrack) this._stopTrack(true)
 
       filterEnabled = true
-      resource = await filter.createResource(this.cache.ffmpeg)
+      resource = await filter.createResource(this.config.guildId, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg)  
     } else {
-      resource = await this.getResource(decodedTrack.sourceName, urlInfo.url)
+      this.cache.url = urlInfo.url
+      resource = await this.getResource(decodedTrack.sourceName, urlInfo.url, urlInfo.protocol)
 
       if (oldTrack) this._stopTrack(true)
     }
@@ -302,6 +316,7 @@ class VoiceConnection {
     if (resource.exception) {
       this.config.track = null
       this.config.filters = null
+      this.cache.url = null
 
       utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.config.guildId, exception: resource.exception.message })
 
@@ -324,10 +339,10 @@ class VoiceConnection {
     try {
       if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
 
+      this.cache.startedAt = Date.now()
+
       utils.debugLog('trackStart', 2, { track: decodedTrack, guildId: this.config.guildId })
       this.trackStarted()
-
-      this.cache.startedAt = Date.now()
     } catch (e) {
       this.config.track = null
 
@@ -345,7 +360,17 @@ class VoiceConnection {
   }
 
   stop() {
-    this.cache.action = 'stopped'
+    utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: 'stopped' })
+
+    this.client.ws.send(JSON.stringify({
+      op: 'event',
+      type: 'TrackEndEvent',
+      guildId: this.config.guildId,
+      track: this.config.track,
+      reason: 'stopped'
+    }))
+
+    this.cache.silence = true
 
     this.player.stop(true)
 
@@ -375,16 +400,19 @@ class VoiceConnection {
   async filters(filters) {
     if (!this.player || this.player.state.status != djsVoice.AudioPlayerStatus.Playing || !config.filters.enabled) return this.config
 
-    const filter = new Filters(filters, this.player.state.resource.metadata, this.config.guildId, this.cache.startedAt)
+    const filter = new Filters()
 
-    this.config.filters = filter.configure()
+    this.config.filters = filter.configure(filters)
 
     if (!this.config.track) return this.config
 
-    const resource = await filter.createResource(this.cache.ffmpeg)
+    const protocol = this.config.track.info.sourceName == 'local' ? 'file' : (this.config.track.info.sourceName == 'http' ? 'http' : 'https')
+    const resource = await filter.createResource(this.config.guildId, protocol, this.cache.url, filters.endTime, this.cache.startedAt, this.cache.ffmpeg)
 
     if (resource.exception) {
+      this.config.track = null
       this.config.filters = null
+      this.cache.url = null
 
       this.client.ws.send(JSON.stringify({
         op: 'event',

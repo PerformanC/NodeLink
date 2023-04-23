@@ -184,7 +184,7 @@ async function retrieveStream(identifier) {
       if (transcoding.format.protocol == 'progressive') {
         const stream = await utils.http1makeRequest(transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
-        resolve({ url: stream.url })
+        resolve({ url: stream.url, protocol: 'https' })
       }
     })
   })
