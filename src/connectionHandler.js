@@ -333,7 +333,7 @@ class VoiceConnection {
   
     if (filterEnabled) this.cache.ffmpeg = resource.ffmpeg
 
-    this.connection.subscribe(this.player)
+    if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
     this.player.play(resource.stream)
 
     try {
@@ -428,7 +428,7 @@ class VoiceConnection {
     this.cache.ffmpeg = resource.ffmpeg
     this.cache.silence = true
 
-    this.connection.subscribe(this.player)
+    if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
     this.player.play(resource.stream)
 
     return this.config
@@ -721,7 +721,6 @@ async function requestHandler(req, res) {
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    console.log(/^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/(?:sets\/)?[a-zA-Z0-9-_]+$/.test(identifier))
     if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/(?:sets\/)?[a-zA-Z0-9-_]+$/.test(identifier)))
       search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', '')) : await sources.soundcloud.loadFrom(identifier)
 
@@ -753,7 +752,7 @@ async function requestHandler(req, res) {
       search = { loadType: 'empty', data: {} }
     }
 
-    sendNonNull(req, res, search, true)
+    utils.sendNonNull(req, res, search, true)
   }
 
   if (parsedUrl.pathname == '/v4/loadcaptions') {
@@ -959,21 +958,18 @@ async function requestHandler(req, res) {
 
         if (buffer.filters != undefined) {
           utils.debugLog('filters', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
-          console.warn('[NodeLink:warning]: This is considered a non production ready endpoint, use with caution.')
 
           filters = buffer.filters
         }
 
         if (buffer.position != undefined) {
           utils.debugLog('seek', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
-          console.warn('[NodeLink:warning]: This is considered a non production ready endpoint, use with caution.')
 
           filters.seek = buffer.position
         }
 
         if (buffer.endTime != undefined) {
           utils.debugLog('endTime', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
-          console.warn('[NodeLink:warning]: This is considered a non production ready endpoint, use with caution.')
 
           filters.endTime = buffer.endTime
         }

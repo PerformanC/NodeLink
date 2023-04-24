@@ -162,6 +162,7 @@ class Filters {
               args: [
                 '-loglevel', '0',
                 '-analyzeduration', '0',
+                '-hwaccel', 'auto',
                 '-threads', config.filters.threads,
                 '-filter_threads', config.filters.threads,
                 '-filter_complex_threads', config.filters.threads,
