@@ -6,9 +6,9 @@ import connectionHandler from './src/connectionHandler.js'
 import config from './config.js'
 import utils from './src/utils.js'
 
-if (config.options.autoUpdate[1]) setInterval(() => {
+if (config.options.autoUpdate[2]) setInterval(() => {
   utils.checkForUpdates()
-}, config.options.autoUpdate[1])
+}, config.options.autoUpdate[2])
 
 const server = createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer({ noServer: true })

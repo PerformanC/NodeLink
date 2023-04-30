@@ -4,7 +4,7 @@ Any of the settings below can be disabled by setting them to false.
 threshold: 5000 = 5 seconds
 playerUpdateInterval: 5000 = 5 seconds
 statsInterval: 5000 = 5 seconds
-autoUpdate: [ autoUpdate, interval, [tar, zip] ]
+autoUpdate: [ beta? autoUpdate?, interval, [tar, zip] ]
 */
 
 export default {
@@ -12,7 +12,7 @@ export default {
     major: '1',
     minor: '8',
     patch: '1',
-    preRelease: null
+    preRelease: 'beta'
   },
   server: {
     port: 2333,
@@ -22,7 +22,7 @@ export default {
     threshold: 10000,
     playerUpdateInterval: false,
     statsInterval: false,
-    autoUpdate: [ true, 360000, 'tar' ],
+    autoUpdate: [ true, true, 360000, 'tar' ],
     maxResults: 20,
     maxPlaylistSize: 20
   },
