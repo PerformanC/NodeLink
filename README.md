@@ -2,35 +2,31 @@
 
 ![alt text](images/Nodelink.png "NodeLink")
 
-NodeLink is a fast and lightweight Lavalink based audio-sending node.
+Performant and efficient audio-sending node using Node.js.
 
-## Features
+## Lavalink compatibility
 
-- Fast and light-weight
-- Easy to modify
-- Instant boot up
-
-## Lavalink features coverage
-
-- [x] Events (ALL)
-- [x] LoadTracks endpoint (Spotify: yes, YouTube: yes, SoundCloud: yes, Deezer: yes, Bandcamp: yes, Pandora: yes, Vimeo: no, Twitch: no, HTTP: yes, Local: yes)
+- [x] All events and filters
+- [x] All endpoints (Router planner API: no)
+- [x] LoadTracks endpoint (...: yes, Bandcamp: yes, Pandora: yes, Vimeo: no, Twitch: no, HTTP: yes, Local: yes)
 - [x] Track(s) encoding (NodeLink-only endpoint)
-- [x] Version endpoint
-- [x] Track(s) decoding
 - [x] Resume system
-- [x] Filters (ALL)
-- [ ] Info endpoint
-- [ ] Router planner API
 
-## Recommended Lavalink wrappers
+## NodeLink vs Lavalink
 
-You can use any Lavalink wrapper that supports the Lavalink v4 API, but we recommend using our own wrapper, [Coglink](https://github.com/PerformanC/Coglink), which is a wrapper of NodeLink/Lavalink for the Concord library.
+NodeLink is a Lavalink-compatible node, using [`@discordjs/voice`](https://npmjs.com/package/@discordjs/voice), [`ffmpeg`](https://ffmpeg.org/) to send audio to Discord, while Lavalink uses Java, [`Lavaplayer`](https://github.com/sedmelluq/lavaplayer), and [`Koe`](https://github.com/KyokoBot/koe) to send audio.
+
+NodeLink uses way less RAM than Lavalink, and this is a benefit for people who want to host a node on a machine with low RAM, but NodeLink is not as fast as Lavalink when the client doesn't completely support compression, and NodeLink isn't as stable as Lavalink.
+
+NodeLink comes with more features and configurations than Lavalink, for example, the getCaptions endpoint, which allows directly to get the captions of a youtube track, without having to get them from other APIs.
+
+Lavalink has a more stable filter system, but NodeLink has a way faster one (with a difference of 1-2s depending on the speed of the machine).
+
+NodeLink can be easily modified, and easily understood, while Lavalink is a bit more complicated to understand, and to modify due to the number of dependencies it uses. 
 
 ## Usage
 
-### Before continuing
-
-Before we continue, you need to have [Node.js](https://nodejs.org) installed on your machine, at least version 16.9.0 is required to run NodeLink.
+NodeLink is powered by [Node.js](https://nodejs.org), so you will need to have it installed on your system, with the minimum requirement of having version 16.9.0 installed.
 
 ### Installation
 
@@ -42,11 +38,11 @@ $ cd NodeLink
 $ npm install @discordjs/voice @discordjs/opus libsodium-wrappers ws
 ```
 
-And if you don't have `ffmpeg` installed on your environment:
+You can also replace [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus) with [`opusscript`](https://npmjs.com/package/opusscript) if you don't want to use @discordjs/opus. (We can also use [`node-opus`](https://npmjs.com/package/node-opus), but since it's deprecated, the usage is not recommended)
 
-```bash
-$ npm install ffmpeg-static
-```
+For the [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) dependency, you can also use its alternatives, like [`sodium-native`](https://npmjs.com/package/sodium-native).
+
+For filtering, you will need to install [`ffmpeg`](https://ffmpeg.org/) on your system, and you can install it using [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static) through npm.
 
 ### Running
 

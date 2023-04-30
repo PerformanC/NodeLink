@@ -101,7 +101,7 @@ async function search(query, type) {
     if (search.error) {
       utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: search.error.message })
 
-      return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'COMMON', cause: 'unknown' } })
+      return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'suspicious', cause: 'unknown' } })
     }
 
     const tracks = []
@@ -172,7 +172,7 @@ async function loadFrom(query, type) {
         if (video.playabilityStatus.status == 'ERROR') {
           utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', message: video.playabilityStatus.reason })
           
-          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
         }
 
         const track = {
@@ -214,14 +214,7 @@ async function loadFrom(query, type) {
         if (!playlist.contents.twoColumnWatchNextResults.playlist) {
           utils.debugLog('loadtracks', 4, { type: 3, loadType: 'error', sourceName: 'YouTube', message: 'Failed to load playlist.' })
         
-          return resolve({
-            loadType: 'error',
-            data: {
-              severity: 'COMMON',
-              message: 'Failed to load playlist.',
-              cause: 'unknown'
-            }
-          })
+          return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'suspicious', cause: 'unknown' } })
         }
       
         let tracks = []
@@ -289,7 +282,7 @@ async function loadFrom(query, type) {
         if (short.playabilityStatus.status == 'ERROR') {
           utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', message: short.playabilityStatus.reason })
 
-          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason, severity: 'COMMON', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
         }
 
         const track = {
@@ -351,7 +344,7 @@ async function retrieveStream(identifier, type) {
     if (videos.playabilityStatus.status != 'OK') {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', message: videos.playabilityStatus.reason })
 
-      return resolve({ exception: { severity: 'COMMON', message: videos.playabilityStatus.reason, cause: 'unknown' } })
+      return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
     }
 
     let audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
@@ -404,7 +397,7 @@ async function loadCaptions(decodedTrack) {
     if (videos.playabilityStatus.status != 'OK') {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', message: videos.playabilityStatus.reason })
 
-      return resolve({ loadType: 'error', data: { severity: 'COMMON', message: videos.playabilityStatus.reason, cause: 'unknown' } })
+      return resolve({ loadType: 'error', data: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
     }
 
     const captions = video.captions.playerCaptionsTracklistRenderer.captionTracks.map((caption) => {
