@@ -50,9 +50,6 @@ function http1makeRequest(url, options) {
           compression = zlib.createGunzip()
           break
         }
-        default: {
-          console.log('[NodeLink:makeRequest1]: No compression detected, skipping...')
-        }
       }
 
       if (compression) {
@@ -66,7 +63,7 @@ function http1makeRequest(url, options) {
     }).end()
 
     req.on('error', (error) => {
-      console.log(`[NodeLink:makeRequest1]: Failed sending HTTP request: ${error}`)
+      console.error(`[NodeLink:makeRequest1]: Failed sending HTTP request: ${error}`)
       reject()
     })
   })
@@ -92,7 +89,7 @@ function makeRequest(url, options) {
       return resolve(req)
 
     req.on('error', (error) => {
-      console.log(`[NodeLink:makeRequest]: Failed sending HTTP request: ${error}`)
+      console.error(`[NodeLink:makeRequest]: Failed sending HTTP request: ${error}`)
       reject()
     })
 
@@ -115,9 +112,6 @@ function makeRequest(url, options) {
         case 'gzip': {
           compression = zlib.createGunzip()
           break
-        }
-        default: {
-          console.log('[NodeLink:makeRequest]: No compression detected, skipping...')
         }
       }
 

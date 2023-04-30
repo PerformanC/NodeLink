@@ -50,12 +50,6 @@ class VoiceConnection {
       track: null,
       volume: 100,
       paused: false,
-      state: {
-        time: 0,
-        position: 0,
-        connected: false,
-        ping: 0
-      },
       filters: {},
       voice: {
         token: null,
@@ -153,7 +147,7 @@ class VoiceConnection {
         track: this.config.track,
         exception: {
           message: error.message,
-          severity: 'COMMON',
+          severity: 'fault',
           cause: 'unknown'
         }
       }))
@@ -164,17 +158,15 @@ class VoiceConnection {
     nodelinkPlayingPlayersCount++
           
     if (config.options.playerUpdateInterval) this.stateInterval = setInterval(() => {
-      this.config.state = {
-        time: Date.now(),
-        position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - this.cache.startedAt : 0,
-        connected: this.player.state.status == djsVoice.AudioPlayerStatus.Playing,
-        ping: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? this.connection.ping.ws : -1
-      }
-  
       this.client.ws.send(JSON.stringify({
         op: 'playerUpdate',
         guildId: this.config.guildId,
-        state: this.config.state
+        state: {
+          time: Date.now(),
+          position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - this.cache.startedAt : 0,
+          connected: this.player.state.status == djsVoice.AudioPlayerStatus.Playing,
+          ping: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? this.connection.ping.ws : -1
+        }
       }))
     }, config.options.playerUpdateInterval)
 
@@ -219,7 +211,7 @@ class VoiceConnection {
         file.on('error', () => {
           utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
 
-          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
+          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
         })
 
         this.cache.url = url
@@ -238,7 +230,7 @@ class VoiceConnection {
 
             utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
 
-            resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
+            resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
           }
 
           this.cache.url = url
@@ -250,7 +242,7 @@ class VoiceConnection {
         }).on('error', () => {
           utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
 
-          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'UNCOMMON', cause: 'unknown' } })
+          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
         })
       }
     })
@@ -530,7 +522,31 @@ async function requestHandler(req, res) {
     utils.debugLog('version', 1, { headers: req.headers })
 
     res.writeHead(200, { 'Content-Type': 'text/plain' })
-    res.end(config.version)
+    res.end(`${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`)
+  }
+
+  if (parsedUrl.pathname == '/v4/info') {
+    utils.debugLog('info', 1, { headers: req.headers })
+
+    utils.send(req, res, {
+      version: {
+        semver: `${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`,
+        ...config.version
+      },
+      buildTime: -1,
+      git: {
+        branch: 'main',
+        commit: 'unknown',
+        commitTime: -1
+      },
+      nodejs: process.version,
+      sourceManagers: Object.keys(config.search.sources).filter((source) => {
+        if (typeof config.search.sources[source] == 'boolean') return source
+        return source.enabled
+      }),
+      filters: Object.keys(config.filters.list).filter((filter) => filter),
+      plugins: []
+    }, 200)
   }
 
   if (parsedUrl.pathname == '/v4/decodetrack') {
@@ -543,7 +559,7 @@ async function requestHandler(req, res) {
     } catch (e) {
       utils.debugLog('decodetrack', 3, { headers: req.headers, error: e.message })
 
-      return utils.send(req, res, {
+      utils.send(req, res, {
         timestamp: Date.now(),
         status: 500,
         error: 'Internal Server Error',
@@ -841,14 +857,30 @@ async function requestHandler(req, res) {
 
           client.players.set(guildId, player)
         }
-        
+
+        player.config.state = {
+          time: new Date(),
+          position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+          connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+          ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
+        }
+
         utils.send(req, res, player.config, 200)
       } else {
         utils.debugLog('getPlayers', 1, { headers: req.headers })
 
         const players = []
 
-        client.players.forEach((player) => players.push(player.config))
+        client.players.forEach((player) => {
+          player.config.state = {
+            time: new Date(),
+            position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+            connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+            ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
+          }
+
+          players.push(player.config)
+        })
 
         utils.send(req, res, players, 200)
       }
@@ -980,6 +1012,13 @@ async function requestHandler(req, res) {
           player.filters(filters)
 
           client.players.set(guildId, player)
+        }
+
+        player.config.state = {
+          time: new Date(),
+          position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+          connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+          ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
         }
 
         utils.send(req, res, player.config, 200)

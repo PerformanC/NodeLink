@@ -238,7 +238,7 @@ async function loadFrom(query, type) {
       if (data.error) {
         utils.debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: data.error.message })
 
-        return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
+        return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'suspicious', cause: 'unknown' } })
       }
     }
 

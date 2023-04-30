@@ -124,17 +124,14 @@ async function loadFrom(query) {
     let type = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(query)
 
     if (!type)
-      return resolve({ loadType: 'error', data: { message: 'Not a valid pandora url.', severity: 'COMMON', cause: 'Url error' } })
+      return resolve({ loadType: 'error', data: { message: 'Not a valid pandora url.', severity: 'common', cause: 'Url error' } })
 
     switch (type[2]) {
       case 'artist': {
-        if (!csrfToken) return resolve({ loadType: 'error', data: { message: 'Pandora not avaible in current country.', severity: 'COMMON', cause: 'Pandora avaibility'} })
+        if (!csrfToken) return resolve({ loadType: 'error', data: { message: 'Pandora not avaible in current country.', severity: 'common', cause: 'Pandora avaibility'} })
 
         const data = await utils.makeRequest(query, { method: 'GET' })
 
-        if (!data)
-          return resolve({ loadType: 'error', data: { message: 'Pandora website not avaible on your region', severity: 'COMMON', cause: 'Pandora limitations' } })
-  
         const body = JSON.parse(data.split('var storeData = ')[1].split('}}]};')[0] + '}}]}')
 
         if (/^https:\/\/www\.pandora\.com\/artist\/[^\/]+\/[^\/]+\/\w+\/[^\/]+$/.test(query)) {
@@ -297,7 +294,7 @@ async function loadFrom(query) {
         break
       }
       case 'playlist': {
-        if (!csrfToken) return resolve({ loadType: 'error', data: { message: 'Pandora not avaible in current country.', severity: 'COMMON', cause: 'Pandora avaibility'} })
+        if (!csrfToken) return resolve({ loadType: 'error', data: { message: 'Pandora not avaible in current country.', severity: 'common', cause: 'Pandora avaibility'} })
         
         const playlistId = query.split('/playlist/')[1]
 

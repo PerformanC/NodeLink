@@ -8,7 +8,7 @@ async function loadFrom(path) {
 
     fs.open(path, (err) => {
       if (err)
-        return resolve({ loadType: 'error', exception: { message: 'File not found', severity: 'COMMON', cause: 'unknown' } })
+        return resolve({ loadType: 'error', exception: { message: 'File not found', severity: 'common', cause: 'unknown' } })
     
       const track = {
         identifier: 'unknown',

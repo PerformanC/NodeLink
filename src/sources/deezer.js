@@ -27,7 +27,7 @@ async function loadFrom(query, type) {
       if (data.error.code == 800) 
         return resolve({ loadType: 'empty', data: {} })
 
-      return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'UNKNOWN', cause: 'unknown' } })
+      return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'suspicious', cause: 'unknown' } })
     }
 
     switch (type[1]) {

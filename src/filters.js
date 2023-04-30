@@ -98,7 +98,7 @@ class Filters {
           return resolve({
             exception: {
               message: 'Failed to get the stream from source.',
-              severity: 'UNCOMMON',
+              severity: 'suspicious',
               cause: 'unknown'
             }
           })
@@ -144,7 +144,7 @@ class Filters {
             return resolve({
               exception: {
                 message: 'Failed to get the stream from source.',
-                severity: 'UNCOMMON',
+                severity: 'suspicious',
                 cause: 'unknown'
               }
             })

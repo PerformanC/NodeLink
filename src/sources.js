@@ -40,7 +40,7 @@ async function getTrackURL(track) {
         break
       }
       default: {
-        resolve({ exception: { severity: 'COMMON', message: 'Unknown source' } })
+        resolve({ exception: { message: 'Unknown source', severity: 'common', cause: 'Not supported sourceName.' } })
 
         break
       }
