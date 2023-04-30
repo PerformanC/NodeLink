@@ -316,42 +316,57 @@ async function sleep(ms) {
 async function checkForUpdates() {
   const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}}`
 
-  let data
+  console.log(`[NodeLink:utils] Checking for updates in ${config.options.autoUpdate[0] ? 'beta' : 'stable'} releases...`)
 
-  try {
-    data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
-  } catch (e) {
-    console.log(`[NodeLink] Error while checking for updates: ${e}`)
+  let data, selected
 
-    return;
+  if (config.options.autoUpdate[0]) {
+    try {
+      data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
+    } catch (e) {
+      console.error(`[NodeLink:utils] Error while checking for updates: ${e}`)
+
+      return;
+    }
+  } else {
+    try {
+      data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases`, { method: 'GET' })
+    } catch (e) {
+      console.error(`[NodeLink:utils] Error while checking for updates: ${e}`)
+
+      return;
+    }
   }
 
   if (data.message) {
-    console.log(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
+    console.erorr(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
 
     return;
   }
 
+  if (config.options.autoUpdate[0]) selected = data
+  else selected = data.find((e) => !e.prerelease)[0]
+
   if (data.name != version) {
-    console.log(`[NodeLink] A new version of NodeLink is available! (${data.name})`)
+    console.log(`[NodeLink] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${data.name})`)
 
-    if (config.options.autoUpdate[0]) {
-      console.log(`[NodeLink] Updating NodeLink, downloading ${config.options.autoUpdate[2]}...`)
+    if (config.options.autoUpdate[1]) {
+      console.log(`[NodeLink] Updating NodeLink, downloading ${config.options.autoUpdate[3]}...`)
 
-      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[2] == 'zip' || config.options.autoUpdate[2] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${data.name}`, { method: 'GET', streamOnly: true })
+      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${data.name}`, { method: 'GET', streamOnly: true })
 
-      const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[2] == '7zip' ? 'zip' : 'tar.gz' }`)
+      const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`)
       res.pipe(file)
 
       file.on('finish', () => {
         file.close()
 
         const args = []
-        if (config.options.autoUpdate[2] == 'zip') args.push([ 'PerformanC-Nodelink.zip' ])
-        else if (config.options.autoUpdate[2] == '7zip') args.push([ 'x', 'PerformanC-Nodelink.zip' ])
+        if (config.options.autoUpdate[3] == 'zip') args.push([ 'PerformanC-Nodelink.zip' ])
+        else if (config.options.autoUpdate[3] == '7zip') args.push([ 'x', 'PerformanC-Nodelink.zip' ])
         else args.push([ '-xvf', 'PerformanC-Nodelink.tar.gz' ])
 
-        cp.spawn(config.options.autoUpdate[2] == 'zip' ? 'unzip' : config.options.autoUpdate[2] == '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
+        cp.spawn(config.options.autoUpdate[3] == 'zip' ? 'unzip' : config.options.autoUpdate[3] == '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
           const move = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ '"PerformanC-Nodelink*"', '".."'] : [ 'PerformanC-Nodelink*/*', '..', '-f' ], { shell: true })
           
           move.stdin.write('Y')
@@ -444,7 +459,7 @@ function debugLog(name, type, options) {
           if (options.headers['client-name'])
             console.log(`[NodeLink:websocket]: "${options.headers['client-name']}" client failed to resume a connection to NodeLink.`)
           else
-            console.log(`[NodeLink:websocket]: A client, which didn't specific its name, failed to resume a connection to NodeLink.`)
+            console.log(`[NodeLink:websautoUpdateocket]: A client, which didn't specific its name, failed to resume a connection to NodeLink.`)
 
           break
         }
