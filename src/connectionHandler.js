@@ -119,7 +119,6 @@ class VoiceConnection {
         if (this.cache.silence) return (this.cache.silence = false)
 
         this._stopTrack()
-        this.config.track = null
         this.cache.url = null
 
         utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: 'finished' })
@@ -131,12 +130,13 @@ class VoiceConnection {
           track: this.config.track,
           reason: 'finished'
         }))
+
+        this.config.track = null
       }
     })
 
     this.player.on('error', (error) => {
       this._stopTrack()
-      this.config.track = null
 
       utils.debugLog('trackException', 2, { track: this.config.track.info, guildId: this.config.guildId, exception: error.message })
 
@@ -151,6 +151,8 @@ class VoiceConnection {
           cause: 'unknown'
         }
       }))
+
+      this.config.track = null
     })
   }
 
