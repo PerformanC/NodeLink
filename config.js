@@ -22,7 +22,7 @@ export default {
     threshold: 10000,
     playerUpdateInterval: false,
     statsInterval: false,
-    autoUpdate: [ false, true, 360000, 'tar' ],
+    autoUpdate: [ false, true, 3600000, 'tar' ],
     maxResults: 20,
     maxPlaylistSize: 20
   },

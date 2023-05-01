@@ -83,7 +83,7 @@ function makeRequest(url, options) {
     if (options.body && !options.disableBodyCompression) reqOptions['Content-Encoding'] = 'gzip'
     if (options.headers) reqOptions = { ...reqOptions, ...options.headers }
 
-    const req = client.request(reqOptions)
+    let req = client.request(reqOptions)
 
     if (options.streamOnly)
       return resolve(req)
@@ -322,7 +322,7 @@ async function checkForUpdates() {
 
   if (config.options.autoUpdate[0]) {
     try {
-      data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
+      data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases`, { method: 'GET' })
     } catch (e) {
       console.error(`[NodeLink:utils] Error while checking for updates: ${e}`)
 
@@ -330,7 +330,7 @@ async function checkForUpdates() {
     }
   } else {
     try {
-      data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases`, { method: 'GET' })
+      data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
     } catch (e) {
       console.error(`[NodeLink:utils] Error while checking for updates: ${e}`)
 
@@ -339,21 +339,22 @@ async function checkForUpdates() {
   }
 
   if (data.message) {
-    console.erorr(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
+    console.error(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
 
     return;
   }
 
-  if (config.options.autoUpdate[0]) selected = data
-  else selected = data.find((e) => !e.prerelease)[0]
+  if (config.options.autoUpdate[0]) data.find((e) => !e.prerelease)[0]
+  else selected = data
 
   if (data.name != version) {
-    console.log(`[NodeLink] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${data.name})`)
+    console.log(version, data.name, data)
+    console.log(`[NodeLink] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${selected.name})`)
 
     if (config.options.autoUpdate[1]) {
       console.log(`[NodeLink] Updating NodeLink, downloading ${config.options.autoUpdate[3]}...`)
 
-      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${data.name}`, { method: 'GET', streamOnly: true })
+      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamOnly: true })
 
       const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`)
       res.pipe(file)

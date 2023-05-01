@@ -41,7 +41,7 @@ class VoiceConnection {
       startedAt: 0,
       silence: false,
       ffmpeg: null,
-      url: null,
+      url: null
     }
     this.stateInterval
   
@@ -137,6 +137,8 @@ class VoiceConnection {
 
     this.player.on('error', (error) => {
       this._stopTrack()
+
+      console.log(this.config.track)
 
       utils.debugLog('trackException', 2, { track: this.config.track.info, guildId: this.config.guildId, exception: error.message })
 
@@ -318,7 +320,7 @@ class VoiceConnection {
         op: 'event',
         type: 'TrackExceptionEvent',
         guildId: this.config.guildId,
-        track: this.config.track.info,
+        track: decodedTrack,
         exception: resource.exception
       }))
 
@@ -364,7 +366,11 @@ class VoiceConnection {
       reason: 'stopped'
     }))
 
+    this.config.track = null
+    this.config.filters = []
+    this.cache.startedAt = 0
     this.cache.silence = true
+    this.cache.url = null
 
     this.player.stop(true)
 
@@ -405,7 +411,7 @@ class VoiceConnection {
 
     if (resource.exception) {
       this.config.track = null
-      this.config.filters = null
+      this.config.filters = []
       this.cache.url = null
 
       this.client.ws.send(JSON.stringify({
@@ -420,7 +426,6 @@ class VoiceConnection {
     }
 
     this.cache.ffmpeg = resource.ffmpeg
-    this.cache.silence = true
 
     if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
     this.player.play(resource.stream)
@@ -876,8 +881,8 @@ async function requestHandler(req, res) {
         client.players.forEach((player) => {
           player.config.state = {
             time: new Date(),
-            position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-            connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+            position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+            connected: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
             ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
           }
 
@@ -1018,8 +1023,8 @@ async function requestHandler(req, res) {
 
         player.config.state = {
           time: new Date(),
-          position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-          connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+          position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+          connected: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
           ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
         }
 

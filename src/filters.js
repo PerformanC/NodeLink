@@ -3,6 +3,7 @@ import http from 'http'
 import fs from 'fs'
 
 import config from '../config.js'
+import utils from './utils.js'
 
 import * as djsVoice from '@discordjs/voice'
 import prism from 'prism-media'
