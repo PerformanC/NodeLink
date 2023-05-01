@@ -121,7 +121,7 @@ async function loadFrom(query) {
   return new Promise(async (resolve) => {
     utils.debugLog('loadtracks', 4, { type: 1, loadType: type[2], sourceName: 'Pandora', query })
 
-    let type = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(query)
+    const type = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(query)
 
     if (!type)
       return resolve({ loadType: 'error', data: { message: 'Not a valid pandora url.', severity: 'common', cause: 'Url error' } })

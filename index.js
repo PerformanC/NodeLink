@@ -25,7 +25,7 @@ v4.on('connection', (ws, req) => {
 })
 
 server.on('upgrade', (req, socket, head) => {
-  let { pathname } = parse(req.url)
+  const { pathname } = parse(req.url)
 
   if (pathname == '/v4/websocket')
     v4.handleUpgrade(req, socket, head, (ws) => v4.emit('connection', ws, req))

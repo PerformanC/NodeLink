@@ -120,7 +120,7 @@ async function search(query) {
           return resolve({ loadType: 'empty', data: {} })
         }
           
-        let tracks = []
+        const tracks = []
         let i = 0
 
         data.data.searchV2.tracksV2.items.forEach(async (items, index) => {

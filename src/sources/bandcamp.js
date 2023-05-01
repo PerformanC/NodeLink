@@ -7,7 +7,7 @@ async function loadFrom(url) {
 
     const data = await utils.makeRequest(url, { method: 'GET' })
 
-    let matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
+    const matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
     if (!matches.length)
       return resolve({ loadType: 'empty', data: {} })

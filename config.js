@@ -10,9 +10,9 @@ autoUpdate: [ beta? autoUpdate?, interval, [tar, zip] ]
 export default {
   version: {
     major: '1',
-    minor: '8',
+    minor: '9',
     patch: '1',
-    preRelease: 'beta'
+    preRelease: null
   },
   server: {
     port: 2333,
@@ -22,7 +22,7 @@ export default {
     threshold: 10000,
     playerUpdateInterval: false,
     statsInterval: false,
-    autoUpdate: [ true, true, 360000, 'tar' ],
+    autoUpdate: [ false, true, 360000, 'tar' ],
     maxResults: 20,
     maxPlaylistSize: 20
   },

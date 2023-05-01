@@ -43,13 +43,13 @@ function startInnertube() {
     functionName = player.split('a=a.split("");')[1].split('.')[0]
     const sigWrapper = player.split(`var ${functionName}={`)[1].split('};')[0]
 
-    playerInfo.functions.push(`const ${functionName}={${sigWrapper}};${sigFunction})};decipherFunction(sig)`)
+    playerInfo.functions.push(vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction})};decipherFunction(sig)`))
 
     functionName = player.split('&&(b=a.get("n"))&&(b=')[1].split('(b)')[0]
     if (functionName.includes('[')) functionName = player.split(`${functionName.split('[')[0]}=[`)[1].split(']')[0]
 
     const ncodeFunction = player.split(`${functionName}=function`)[1].split('};')[0]
-    playerInfo.functions.push(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`)
+    playerInfo.functions.push(vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
    
     utils.debugLog('innertube', 5, { message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)
@@ -217,7 +217,7 @@ async function loadFrom(query, type) {
           return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'suspicious', cause: 'unknown' } })
         }
       
-        let tracks = []
+        const tracks = []
         let i = 0
 
         playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.forEach((item, index) => {
@@ -347,24 +347,24 @@ async function retrieveStream(identifier, type) {
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
     }
 
-    let audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
+    const audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
     let url = audio.url
 
     if (audio.signatureCipher) {
       const args = new URLSearchParams(audio.signatureCipher)
 
       const components = new URL(decodeURIComponent(args.get('url')))
-      components.searchParams.set('sig', new vm.Script(playerInfo.functions[0]).runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
+      components.searchParams.set('sig', playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
 
       const n = components.searchParams.get('n')
-      components.searchParams.set('n', new vm.Script(playerInfo.functions[1]).runInNewContext({ ncode: n }))
+      components.searchParams.set('n', playerInfo.functions[1].runInNewContext({ ncode: n }))
 
       url = components.toString()
     } else {
       const components = new URL(url)
 
       const n = components.searchParams.get('n')
-      components.searchParams.set('n', new vm.Script(playerInfo.functions[1]).runInNewContext({ ncode: n }))
+      components.searchParams.set('n', playerInfo.functions[1].runInNewContext({ ncode: n }))
 
       url = components.toString()
     }

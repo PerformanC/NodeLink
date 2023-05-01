@@ -126,9 +126,7 @@ class Filters {
 
         return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
       } else {
-        let agent = https
-        if (protocol == 'http') agent = http
-        agent.get(url, {
+        (protocol == 'http' ? http : https).get(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
             'Range': 'bytes=0-'

@@ -74,7 +74,7 @@ function makeRequest(url, options) {
     let compression, data = '', parsedUrl = new URL(url)
     const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol })
 
-    let reqOptions = {
+    const reqOptions = {
       ':method': options.method,
       ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'br, gzip, deflate',
@@ -83,7 +83,7 @@ function makeRequest(url, options) {
     if (options.body && !options.disableBodyCompression) reqOptions['Content-Encoding'] = 'gzip'
     if (options.headers) reqOptions = { ...reqOptions, ...options.headers }
 
-    let req = client.request(reqOptions)
+    const req = client.request(reqOptions)
 
     if (options.streamOnly)
       return resolve(req)
