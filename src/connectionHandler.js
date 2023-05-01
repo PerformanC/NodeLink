@@ -138,6 +138,8 @@ class VoiceConnection {
     this.player.on('error', (error) => {
       this._stopTrack()
 
+      console.log(this.config.track)
+
       utils.debugLog('trackException', 2, { track: this.config.track.info, guildId: this.config.guildId, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
@@ -876,8 +878,8 @@ async function requestHandler(req, res) {
         client.players.forEach((player) => {
           player.config.state = {
             time: new Date(),
-            position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-            connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+            position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+            connected: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
             ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
           }
 
@@ -1018,8 +1020,8 @@ async function requestHandler(req, res) {
 
         player.config.state = {
           time: new Date(),
-          position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-          connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+          position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+          connected: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
           ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
         }
 

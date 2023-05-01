@@ -43,13 +43,13 @@ function startInnertube() {
     functionName = player.split('a=a.split("");')[1].split('.')[0]
     const sigWrapper = player.split(`var ${functionName}={`)[1].split('};')[0]
 
-    playerInfo.functions.push(vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction})};decipherFunction(sig)`))
+    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction})};decipherFunction(sig)`))
 
     functionName = player.split('&&(b=a.get("n"))&&(b=')[1].split('(b)')[0]
     if (functionName.includes('[')) functionName = player.split(`${functionName.split('[')[0]}=[`)[1].split(']')[0]
 
     const ncodeFunction = player.split(`${functionName}=function`)[1].split('};')[0]
-    playerInfo.functions.push(vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
+    playerInfo.functions.push(new vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
    
     utils.debugLog('innertube', 5, { message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)
