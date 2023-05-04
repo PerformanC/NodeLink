@@ -562,7 +562,7 @@ async function requestHandler(req, res) {
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
     try {
-      utils.send(res, res, utils.decodeTrack(encodedTrack), 200)
+      utils.send(req, res, utils.decodeTrack(encodedTrack), 200)
     } catch (e) {
       utils.debugLog('decodetrack', 3, { headers: req.headers, error: e.message })
 
@@ -628,7 +628,7 @@ async function requestHandler(req, res) {
       }
 
       try {
-        utils.send(res, res, utils.encodeTrack(buffer), 200)
+        utils.send(req, res, utils.encodeTrack(buffer), 200)
       } catch (e) {
         utils.debugLog('encodetrack', 3, { headers: req.headers, body: buffer, error: e.message })
 
@@ -685,14 +685,14 @@ async function requestHandler(req, res) {
         }
       })
 
-      utils.send(res, res, tracks, 200)
+      utils.send(req, res, tracks, 200)
     })
   }
 
   if (parsedUrl.pathname == '/v4/stats') {
     utils.debugLog('stats', 1, { headers: req.headers })
 
-    utils.send(res, res, {
+    utils.send(req, res, {
       players: nodelinkPlayersCount,
       playingPlayers: nodelinkPlayingPlayersCount,
       uptime: Math.floor(process.uptime() * 1000),
