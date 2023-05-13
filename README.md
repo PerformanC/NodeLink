@@ -14,7 +14,7 @@ Performant and efficient audio-sending node using Node.js.
 
 ## NodeLink vs Lavalink
 
-NodeLink is a Lavalink-compatible node, using [`@discordjs/voice`](https://npmjs.com/package/@discordjs/voice), [`ffmpeg`](https://ffmpeg.org/) to send audio to Discord, while Lavalink uses [P Java`](https://www.java.com), [`Lavaplayer`](https://github.com/sedmelluq/lavaplayer), and [`Koe`](https://github.com/KyokoBot/koe) to send audio.
+NodeLink is a Lavalink-compatible node, using [`@discordjs/voice`](https://npmjs.com/package/@discordjs/voice), [`ffmpeg`](https://ffmpeg.org/) to send audio to Discord, while Lavalink uses [`P Java`](https://www.java.com), [`Lavaplayer`](https://github.com/sedmelluq/lavaplayer), and [`Koe`](https://github.com/KyokoBot/koe) to send audio.
 
 NodeLink uses way less RAM than Lavalink, and this is a benefit for people who want to host a node on a machine with low RAM, but NodeLink is not as fast as Lavalink when the client doesn't completely support compression, and NodeLink isn't as stable as Lavalink.
 
