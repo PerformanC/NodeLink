@@ -1,438 +1,12 @@
-import fs from 'fs'
-import os from 'os'
-import https from 'https'
-import http from 'http'
-import { URLSearchParams, parse } from 'url'
+import os from 'node:os'
+import { URLSearchParams, parse } from 'node:url'
 
-import config from '../config.js'
-import constants from '../constants.js'
 import utils from './utils.js'
+import config from '../config.js'
 import sources from './sources.js'
-import Filters from './filters.js'
+import VoiceConnection from './voiceHandler.js'
 
 import * as djsVoice from '@discordjs/voice'
-
-const adapters = new Map()
-const clients = new Map()
-
-let nodelinkPlayersCount = 0, nodelinkPlayingPlayersCount = 0
-
-function voiceAdapterCreator(userId, guildId) {
-  return (methods) => {
-    adapters.set(`${userId}/${guildId}`, methods)
-
-    return {
-      sendPayload(data) {
-        return !!data
-      },
-      destroy() {
-        return adapters.delete(`${userId}/${guildId}`)
-      }
-    }
-  }
-}
- 
-class VoiceConnection {
-  constructor(guildId, client) {
-    this.connection
-    this.player
-    this.client = client
-    this.cache = {
-      startedAt: 0,
-      silence: false,
-      ffmpeg: null,
-      url: null
-    }
-    this.stateInterval
-  
-    this.config = {
-      guildId,
-      track: null,
-      volume: 100,
-      paused: false,
-      filters: {},
-      voice: {
-        token: null,
-        endpoint: null,
-        sessionId: null
-      }
-    }
-
-    this.connection = null
-    this.player = null
-  }
-
-  _stopTrack() {
-    nodelinkPlayingPlayersCount--
-
-    fs.rm(`./cache/${this.config.guildId}.webm`, { force: true }, () => {})
-
-    if (this.stateInterval) clearInterval(this.stateInterval)
-
-    this.config.state = {
-      time: null,
-      position: 0,
-      connected: false,
-      ping: -1
-    }
-
-    this.cache.startedAt = 0
-  }
-  
-  setup() {
-    nodelinkPlayersCount++
-
-    this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: voiceAdapterCreator(this.client.userId, this.config.guildId) })
-    this.player = djsVoice.createAudioPlayer()
-
-    this.connection.on('stateChange', async (oldState, newState) => {
-      switch (newState.status) {
-        case djsVoice.VoiceConnectionStatus.Disconnected: {
-          if (oldState.status == djsVoice.VoiceConnectionStatus.Disconnected) return;
-
-          try {
-            if (config.options.threshold) await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold)
-          } catch (e) {
-            utils.debugLog('websocketClosed', 2, { track: this.config.track.info, guildId: this.config.guildId, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
-
-            this._stopTrack()
-            this.config.track = null
-
-            if (newState.reason == djsVoice.VoiceConnectionDisconnectReason.WebSocketClose) {
-              this.client.ws.send(JSON.stringify({
-                op: 'event',
-                type: 'WebSocketClosedEvent',
-                guildId: this.config.guildId,
-                code: newState.closeCode,
-                reason: constants.VoiceWSCloseCodes[newState.closeCode],
-                byRemote: true
-              }))
-            }
-          }
-          break;
-        }
-      }
-    })
-
-    this.player.on('stateChange', (oldState, newState) => {
-      if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {
-        if (this.cache.silence) return (this.cache.silence = false)
-
-        this._stopTrack()
-        this.cache.url = null
-
-        utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: 'finished' })
-
-        this.client.ws.send(JSON.stringify({
-          op: 'event',
-          type: 'TrackEndEvent',
-          guildId: this.config.guildId,
-          track: this.config.track,
-          reason: 'finished'
-        }))
-
-        this.config.track = null
-      }
-    })
-
-    this.player.on('error', (error) => {
-      this._stopTrack()
-
-      console.log(this.config.track)
-
-      utils.debugLog('trackException', 2, { track: this.config.track.info, guildId: this.config.guildId, exception: error.message })
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackExceptionEvent',
-        guildId: this.config.guildId,
-        track: this.config.track,
-        exception: {
-          message: error.message,
-          severity: 'fault',
-          cause: 'unknown'
-        }
-      }))
-
-      this.config.track = null
-    })
-  }
-
-  trackStarted() {
-    nodelinkPlayingPlayersCount++
-          
-    if (config.options.playerUpdateInterval) this.stateInterval = setInterval(() => {
-      this.client.ws.send(JSON.stringify({
-        op: 'playerUpdate',
-        guildId: this.config.guildId,
-        state: {
-          time: Date.now(),
-          position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - this.cache.startedAt : 0,
-          connected: this.player.state.status == djsVoice.AudioPlayerStatus.Playing,
-          ping: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? this.connection.ping.ws : -1
-        }
-      }))
-    }, config.options.playerUpdateInterval)
-
-    this.client.ws.send(JSON.stringify({
-      op: 'event',
-      type: 'TrackStartEvent',
-      guildId: this.config.guildId,
-      track: this.config.track
-    }))
-  }
-
-  updateVoice(buffer) {
-    this.config.voice = buffer
-
-    const adapter = adapters.get(`${this.client.userId}/${this.config.guildId}`)
-
-    if (!adapter) return;
-
-    adapter.onVoiceStateUpdate({ channel_id: "", guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId, deaf: false, self_deaf: false, mute: false, self_mute: false, self_video: false, suppress: false, request_to_speak_timestamp: null })
-    adapter.onVoiceServerUpdate({ token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
-  }
-
-  destroy() {
-    if (this.player) this.player.stop(true)
-
-    if (this.cache.ffmpeg)
-      this.cache.ffmpeg.destroy()
-
-    this._stopTrack()
-    this.config.track = null
-
-    if (this.connection) this.connection.destroy()
-
-    this.client.players.delete(this.config.guildId)
-  }
-
-  async getResource(sourceName, url, protocol) {
-    return new Promise(async (resolve) => {
-      if (protocol == 'file') {
-        const file = fs.createReadStream(url)
-
-        file.on('error', () => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
-
-          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
-        })
-
-        this.cache.url = url
-        resolve({ stream: djsVoice.createAudioResource(file, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
-      } else {
-        (protocol == 'https' ? https : http).get(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-            'Range': 'bytes=0-'
-          }
-        }, (res) => {
-          res.on('error', () => {})
-
-          if (res.statusCode != 206) {
-            res.destroy()
-
-            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
-
-            resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
-          }
-
-          this.cache.url = url
-
-          if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(sourceName))
-            resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true }) })
-          else
-            resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
-        }).on('error', () => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
-
-          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
-        })
-      }
-    })
-  }
-
-  async play(track, noReplace) {
-    if (noReplace && this.config.track) return this.config
-
-    const decodedTrack = utils.decodeTrack(track)
-
-    const oldTrack = this.config.track
-
-    this.config.track = { encoded: track, info: decodedTrack }
-
-    const urlInfo = await sources.getTrackURL(decodedTrack)
-
-    if (urlInfo.exception) {
-      this.config.track = null
-      this.cache.url = null
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackExceptionEvent',
-        guildId: this.config.guildId,
-        track: decodedTrack,
-        exception: urlInfo.exception
-      }))
-
-      return this.config
-    }
-
-    if (oldTrack) {
-      utils.debugLog('trackEnd', 2, { track: decodedTrack, guildId: this.config.guildId, reason: 'replaced' })
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackEndEvent',
-        guildId: this.config.guildId,
-        track: oldTrack,
-        reason: 'replaced'
-      }))
-    }
-
-    let resource = null
-    let filterEnabled = false
-
-    if (Object.keys(this.config.filters).length > 0) {
-      const filter = new Filters(this.config.filters, urlInfo.url, this.config.guildId, new Date())
-
-      this.config.filters = filter.configure(this.config.filters)
-
-      if (oldTrack) this._stopTrack(true)
-
-      filterEnabled = true
-      resource = await filter.createResource(this.config.guildId, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg)  
-    } else {
-      this.cache.url = urlInfo.url
-      resource = await this.getResource(decodedTrack.sourceName, urlInfo.url, urlInfo.protocol)
-
-      if (oldTrack) this._stopTrack(true)
-    }
-  
-    if (resource.exception) {
-      this.config.track = null
-      this.config.filters = null
-      this.cache.url = null
-
-      utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.config.guildId, exception: resource.exception.message })
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackExceptionEvent',
-        guildId: this.config.guildId,
-        track: decodedTrack,
-        exception: resource.exception
-      }))
-
-      return this.config
-    }
-  
-    if (filterEnabled) this.cache.ffmpeg = resource.ffmpeg
-
-    if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
-    this.player.play(resource.stream)
-
-    try {
-      if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
-
-      this.cache.startedAt = Date.now()
-
-      utils.debugLog('trackStart', 2, { track: decodedTrack, guildId: this.config.guildId })
-      this.trackStarted()
-    } catch (e) {
-      this.config.track = null
-
-      utils.debugLog('trackStuck', 2, { track: decodedTrack, guildId: this.config.guildId })
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackStuckEvent',
-        guildId: this.config.guildId,
-        track: decodedTrack,
-        thresholdMs: config.options.threshold
-      }))
-    }
-
-    return this.config
-  }
-
-  stop() {
-    utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: 'stopped' })
-
-    this.client.ws.send(JSON.stringify({
-      op: 'event',
-      type: 'TrackEndEvent',
-      guildId: this.config.guildId,
-      track: this.config.track,
-      reason: 'stopped'
-    }))
-
-    this.config.track = null
-    this.config.filters = []
-    this.cache.startedAt = 0
-    this.cache.silence = true
-    this.cache.url = null
-
-    this.player.stop(true)
-
-    if (this.cache.ffmpeg)
-      this.cache.ffmpeg.destroy()
-
-    this._stopTrack()
-  }
-
-  volume(volume) {
-    this.player.state.resource.volume.setVolume(volume / 100)
-
-    this.config.volume = volume / 100
-
-    return this.config
-  }
-
-  pause(pause) {
-    if (pause) this.player.pause()
-    else this.player.unpause()
-
-    this.config.paused = pause
-
-    return this.config
-  }
-
-  async filters(filters) {
-    if (!this.player || this.player.state.status != djsVoice.AudioPlayerStatus.Playing || !config.filters.enabled) return this.config
-
-    const filter = new Filters()
-
-    this.config.filters = filter.configure(filters)
-
-    if (!this.config.track) return this.config
-
-    const protocol = this.config.track.info.sourceName == 'local' ? 'file' : (this.config.track.info.sourceName == 'http' ? 'http' : 'https')
-    const resource = await filter.createResource(this.config.guildId, protocol, this.cache.url, filters.endTime, this.cache.startedAt, this.cache.ffmpeg)
-
-    if (resource.exception) {
-      this.config.track = null
-      this.config.filters = []
-      this.cache.url = null
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackExceptionEvent',
-        guildId: this.config.guildId,
-        track: this.config.track.info,
-        exception: resource.exception
-      }))
-
-      return this.config
-    }
-
-    this.cache.ffmpeg = resource.ffmpeg
-
-    if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
-    this.player.play(resource.stream)
-
-    return this.config
-  }
-}
 
 function setupConnection(ws, req) {
   let sessionId
@@ -526,6 +100,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/version') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+
     utils.debugLog('version', 1, { headers: req.headers })
 
     res.writeHead(200, { 'Content-Type': 'text/plain' })
@@ -533,6 +109,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/info') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+
     utils.debugLog('info', 1, { headers: req.headers })
 
     utils.send(req, res, {
@@ -557,7 +135,9 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/decodetrack') {
-    utils.debugLog('decodetrack', 1, { headers: req.headers })
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+
+    utils.debugLog('decodetrack', 1, { params: parsedUrl.query, headers: req.headers })
     
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
@@ -577,6 +157,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/decodetracks') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'POST')) return;
+
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
@@ -606,6 +188,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/encodetrack') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
@@ -645,6 +229,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/encodetracks') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'POST')) return;
+
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
@@ -690,6 +276,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/stats') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+
     utils.debugLog('stats', 1, { headers: req.headers })
 
     utils.send(req, res, {
@@ -712,6 +300,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/loadtracks') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+
     utils.debugLog('loadtracks', 1, { params: parsedUrl.query, headers: req.headers })
 
     const identifier = new URLSearchParams(parsedUrl.query).get('identifier')
@@ -779,6 +369,8 @@ async function requestHandler(req, res) {
   }
 
   if (parsedUrl.pathname == '/v4/loadcaptions') {
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+
     utils.debugLog('loadcaptions', 1, { params: parsedUrl.query, headers: req.headers })
 
     const identifier = new URLSearchParams(parsedUrl.query).get('encodedTrack')
@@ -819,7 +411,9 @@ async function requestHandler(req, res) {
     utils.send(req, res, captions, 200)
   }
 
-  if (/^\/v4\/sessions\/\{[a-zA-Z0-9_-]+\}$/.test(parsedUrl.pathname) && req.method == 'PATCH') {
+  if (/^\/v4\/sessions\/\{[a-zA-Z0-9_-]+\}$/.test(parsedUrl.pathname)) {
+    if (utils.verifyMethod(parsedUrl, req, res, 'PATCH')) return;
+
     const sessionId = /^\/v4\/sessions\/\{([a-zA-Z0-9_-]+)\}$/.exec(parsedUrl.pathname)[1]
 
     let buffer = ''
@@ -835,8 +429,45 @@ async function requestHandler(req, res) {
       utils.send(req, res, { resuming: buffer.resuming, timeout: buffer.timeout }, 200)
     })
   }
+  
+  if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players$(?!\/)/.test(parsedUrl.pathname)) {
+    if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
+  
+    utils.debugLog('getPlayers', 1, { headers: req.headers })
+
+    const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players$/.exec(parsedUrl.pathname)[1])
+
+    const players = []
+
+    client.players.forEach((player) => {
+      player.config.state = {
+        time: new Date(),
+        position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
+        connected: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready : false,
+        ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
+      }
+
+      players.push(player.config)
+    })
+
+    utils.send(req, res, players, 200)
+
+    return;
+  }
 
   if (/^\/v4\/sessions\/\w+\/players\/\w+./.test(parsedUrl.pathname)) {
+    if (req.method != 'PATCH' && req.method != 'GET') {
+      utils.send(req, res, {
+        timestamp: Date.now(),
+        status: 405,
+        error: 'Method Not Allowed',
+        message: `Request method must be either PATCH or GET`,
+        path: parsedUrl.pathname
+      }, 405)
+      
+      return;
+    }
+
     const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
 
     if (!client) {
@@ -850,56 +481,39 @@ async function requestHandler(req, res) {
         path: parsedUrl.pathname
       }, 404)
     }
+    
+    let buffer = ''
 
-    if (req.method == 'GET') {
-      if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players\/\d+$/.test(parsedUrl.pathname)) {
+    req.on('data', (buf) => buffer += buf)
+    req.on('end', () => {
+      buffer = JSON.parse(buffer)
+
+      const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
+      let player = client.players.get(guildId)
+
+      if (req.method == 'GET') {    
         utils.debugLog('getPlayer', 1, { params: parsedUrl.query, headers: req.headers })
-
+    
+        const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
-
+    
         let player = client.players.get(guildId)
-
+    
         if (!player) {
           player = new VoiceConnection(guildId, client.userId, client.sessionId, client.timeout)
-
+    
           client.players.set(guildId, player)
         }
-
+    
         player.config.state = {
           time: new Date(),
           position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-          connected: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+          connected: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready : false,
           ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
         }
-
+    
         utils.send(req, res, player.config, 200)
       } else {
-        utils.debugLog('getPlayers', 1, { headers: req.headers })
-
-        const players = []
-
-        client.players.forEach((player) => {
-          player.config.state = {
-            time: new Date(),
-            position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-            connected: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
-            ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
-          }
-
-          players.push(player.config)
-        })
-
-        utils.send(req, res, players, 200)
-      }
-    } else if (req.method == 'PATCH') {  
-      let buffer = ''
-
-      req.on('data', (buf) => buffer += buf)
-      req.on('end', () => {
-        buffer = JSON.parse(buffer)
-
-        const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
-        let player = client.players.get(guildId)
 
         if (buffer.voice != undefined) {
           utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
@@ -1024,13 +638,13 @@ async function requestHandler(req, res) {
         player.config.state = {
           time: new Date(),
           position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-          connected: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing : false,
+          connected: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready : false,
           ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
         }
 
         utils.send(req, res, player.config, 200)
-      })
-    }
+      }
+    })
   }
 }
 

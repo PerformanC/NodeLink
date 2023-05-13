@@ -1,8 +1,8 @@
 import config from '../../config.js'
 import utils from '../utils.js'
 
-import vm from 'vm'
-import { URLSearchParams } from 'url'
+import vm from 'node:vm'
+import { URLSearchParams } from 'node:url'
 
 let playerInfo = {}
 

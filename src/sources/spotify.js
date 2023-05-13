@@ -1,5 +1,5 @@
-import https from 'https'
-import zlib from 'zlib'
+import https from 'node:https'
+import zlib from 'node:zlib'
 
 import utils from '../utils.js'
 import searchWithDefault from './default.js'

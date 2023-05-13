@@ -1,9 +1,9 @@
-import https from 'https'
-import http2 from 'http2'
-import zlib from 'zlib'
-import cp from 'child_process'
-import fs from 'fs'
-import { URL } from 'url'
+import https from 'node:https'
+import http2 from 'node:http2'
+import zlib from 'node:zlib'
+import cp from 'node:child_process'
+import fs from 'node:fs'
+import { URL } from 'node:url'
 
 import config from '../config.js'
 
@@ -348,7 +348,6 @@ async function checkForUpdates() {
   else selected = data
 
   if (data.name != version) {
-    console.log(version, data.name, data)
     console.log(`[NodeLink] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${selected.name})`)
 
     if (config.options.autoUpdate[1]) {
@@ -520,8 +519,24 @@ function debugLog(name, type, options) {
   }
 }
 
+function verifyMethod(parsedUrl, req, res, expected) {
+  if (req.method != expected) {
+    send(req, res, {
+      timestamp: Date.now(),
+      status: 405,
+      error: 'Method Not Allowed',
+      message: `Request method must be ${expected}`,
+      path: parsedUrl.pathname
+    }, 405)
+
+    return 1
+  }
+
+  return 0
+}
+
 function send(req, res, data, status) {
-  if (req.headers['accept-encoding'] && req.headers['accept-encoding'].includes('br')) {
+  if (req.headers && req.headers['accept-encoding'] && req.headers['accept-encoding'].includes('br')) {
     res.setHeader('Content-Encoding', 'br')
     res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
     zlib.brotliCompress(JSON.stringify(data), (err, result) => {
@@ -552,6 +567,7 @@ export default {
   sleep,
   checkForUpdates,
   debugLog,
+  verifyMethod,
   send,
   sendNonNull
 }
