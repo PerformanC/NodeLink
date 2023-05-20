@@ -3,15 +3,15 @@ import fs from 'node:fs'
 import https from 'node:https'
 import http from 'node:http'
 
-import utils from './utils.js'
-import config from '../config.js'
-import constants from '../constants.js'
-import sources from './sources.js'
-import Filters from './filters.js'
+import utils from '../utils.js'
+import config from '../../config.js'
+import constants from '../../constants.js'
+import sources from '../sources.js'
+import Filters from '../filters.js'
 
 import * as djsVoice from '@discordjs/voice'
 
-global.adapters = new Map()
+const adapters = new Map()
 global.clients = new Map()
 
 global.nodelinkPlayersCount = 0
@@ -158,6 +158,7 @@ class VoiceConnection {
       }))
 
       this.config.track = null
+      this.cache.silence = true
     })
   }
 
@@ -240,16 +241,18 @@ class VoiceConnection {
             resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
           }
 
+          res.destroy()
+
           this.cache.url = url
 
-          if ([ 'youtube', 'ytmusic', 'deezer', 'pandora', 'spotify' ].includes(sourceName))
+          if ([ 'youtube', 'ytmusic' ].includes(sourceName) || ([ 'deezer', 'pandora', 'spotify' ].includes(sourceName) && config.search.defaultSearchSource == 'youtube'))
             resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true }) })
           else
             resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
-        }).on('error', () => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
+        }).on('error', (error) => {
+          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: error.message })
 
-          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
+          resolve({ status: 1, exception: { message: error.message, severity: 'suspicious', cause: 'unknown' } })
         })
       }
     })
@@ -297,14 +300,14 @@ class VoiceConnection {
     let filterEnabled = false
 
     if (Object.keys(this.config.filters).length > 0) {
-      const filter = new Filters(this.config.filters, urlInfo.url, this.config.guildId, new Date())
+      const filter = new Filters()
 
       this.config.filters = filter.configure(this.config.filters)
 
       if (oldTrack) this._stopTrack(true)
 
       filterEnabled = true
-      resource = await filter.createResource(this.config.guildId, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg)  
+      resource = await filter.createResource(this.config.guildId, decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg)  
     } else {
       this.cache.url = urlInfo.url
       resource = await this.getResource(decodedTrack.sourceName, urlInfo.url, urlInfo.protocol)
@@ -314,7 +317,7 @@ class VoiceConnection {
   
     if (resource.exception) {
       this.config.track = null
-      this.config.filters = null
+      this.config.filters = []
       this.cache.url = null
 
       utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.config.guildId, exception: resource.exception.message })
@@ -425,7 +428,8 @@ class VoiceConnection {
     if (!this.config.track) return this.config
 
     const protocol = this.config.track.info.sourceName == 'local' ? 'file' : (this.config.track.info.sourceName == 'http' ? 'http' : 'https')
-    const resource = await filter.createResource(this.config.guildId, protocol, this.cache.url, filters.endTime, this._getRealTime(), this.cache.ffmpeg)
+    const url = sources.filtersPrepare(this.cache.url, this.config.track.info.sourceName)
+    const resource = await filter.createResource(this.config.guildId, this.config.track.info, protocol, url, filters.endTime, this.cache, this.cache.ffmpeg)
 
     if (resource.exception) {
       this.config.track = null

@@ -356,21 +356,20 @@ async function retrieveStream(identifier, type) {
       const components = new URL(decodeURIComponent(args.get('url')))
       components.searchParams.set('sig', playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
 
-      const n = components.searchParams.get('n')
-      components.searchParams.set('n', playerInfo.functions[1].runInNewContext({ ncode: n }))
-
-      url = components.toString()
-    } else {
-      const components = new URL(url)
-
-      const n = components.searchParams.get('n')
-      components.searchParams.set('n', playerInfo.functions[1].runInNewContext({ ncode: n }))
-
       url = components.toString()
     }
 
     resolve({ url, protocol: 'https' })
   })
+}
+
+function addNCode(url) {
+  const components = new URL(url)
+
+  const n = components.searchParams.get('n')
+  components.searchParams.set('n', playerInfo.functions[1].runInNewContext({ ncode: n }))
+
+  return components.toString()
 }
 
 async function loadCaptions(decodedTrack) {
@@ -422,5 +421,6 @@ export default {
   search,
   loadFrom,
   retrieveStream,
+  addNCode,
   loadCaptions
 }

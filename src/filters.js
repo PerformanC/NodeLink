@@ -88,17 +88,19 @@ class Filters {
     return result
   }
 
-  createResource(guildId, protocol, url, endTime, seek, oldFFmpeg) {
+  createResource(guildId, decodedTrack, protocol, url, endTime, cache, oldFFmpeg) {
     return new Promise((resolve) => {
+      if (oldFFmpeg) oldFFmpeg.destroy()
+
       if (protocol == 'file') {
-        const file = fs.createReadStream(url)
+        const file = fs.createReadStream(url.url)
 
         file.on('error', (err) => {
-          utils.debugLog('trackException', 2, { track: url, guildId: guildId, exception: err })
+          utils.debugLog('trackException', 2, { track: url.url, guildId: guildId, exception: err.message })
 
           return resolve({
             exception: {
-              message: 'Failed to get the stream from source.',
+              message: err.message,
               severity: 'suspicious',
               cause: 'unknown'
             }
@@ -116,7 +118,7 @@ class Filters {
             '-filter_complex_threads', config.filters.threads,
             '-y',
             '-i', url,
-            ...(seek ? ['-ss', `${new Date() - seek}ms`] : []),
+            ...(getTime ? ['-ss', `${new Date() - getTime}ms`] : []),
             ...(endTime ? ['-t', `${endTime}ms`] : []),
             '-af', this.command.join(','),              
             '-f', 's16le',
@@ -127,7 +129,7 @@ class Filters {
 
         return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
       } else {
-        (protocol == 'http' ? http : https).get(url, {
+        (protocol == 'https' ? https : http).get(url, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
             'Range': 'bytes=0-'
@@ -138,15 +140,9 @@ class Filters {
           if (res.statusCode != 206) {
             res.destroy()
 
-            utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.guildId, exception: resource.exception })
+            utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.guildId, exception: res.statusMessage })
 
-            return resolve({
-              exception: {
-                message: 'Failed to get the stream from source.',
-                severity: 'suspicious',
-                cause: 'unknown'
-              }
-            })
+            return resolve({ exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
           }
 
           const file = fs.createWriteStream(`./cache/${guildId}.webm`)
@@ -154,8 +150,6 @@ class Filters {
 
           file.on('finish', async () => {
             file.close()
-
-            if (oldFFmpeg) oldFFmpeg.destroy()
 
             const ffmpeg = new prism.FFmpeg({
               args: [
@@ -167,7 +161,7 @@ class Filters {
                 '-filter_complex_threads', config.filters.threads,
                 '-y',
                 '-i', `./cache/${guildId}.webm`,
-                ...(seek ? ['-ss', `${new Date() - seek}ms`] : []),
+                ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
                 ...(endTime ? ['-t', endTime] : []),
                 '-af', this.command.join(','),              
                 '-f', 's16le',

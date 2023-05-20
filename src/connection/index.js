@@ -2,9 +2,9 @@ import { WebSocketServer } from 'ws'
 import { createServer } from 'http'
 import { parse } from 'url'
 
-import connectionHandler from './src/connectionHandler.js'
-import config from './config.js'
-import utils from './src/utils.js'
+import connectionHandler from './handler.js'
+import config from '../../config.js'
+import utils from '../utils.js'
 
 if (config.options.autoUpdate[2]) setInterval(() => {
   utils.checkForUpdates()
@@ -32,11 +32,11 @@ server.on('upgrade', (req, socket, head) => {
 })
 
 v4.on('error', (err) => {
-  console.log('[NodeLink:websocket]: Error: ' + err)
+  console.error('[NodeLink:websocket]: Error: ' + err)
 })
 
 server.on('error', (err) => {
-  console.log('[NodeLink:http]: Error: ' + err)
+  console.error('[NodeLink:http]: Error: ' + err)
 })
 
 server.listen(config.server.port || 2333, () => {

@@ -4,7 +4,7 @@ import utils from '../utils.js'
 
 async function loadFrom(path) {
   return new Promise(async (resolve) => {
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'local', query })
+    utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'local', query: path })
 
     fs.open(path, (err) => {
       if (err)

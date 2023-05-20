@@ -48,8 +48,16 @@ async function getTrackURL(track) {
   })
 }
 
+function filtersPrepare(url, sourceName) {
+  if ([ 'youtube', 'ytmusic' ].includes(sourceName) || ([ 'deezer', 'pandora', 'spotify' ].includes(sourceName) && config.search.defaultSearchSource == 'youtube'))
+    return youtube.addNCode(url)
+
+  return url
+}
+
 export default {
   getTrackURL,
+  filtersPrepare,
   bandcamp: {
     loadFrom: bandcamp.loadFrom,
     search: bandcamp.search

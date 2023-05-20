@@ -1,9 +1,9 @@
 import os from 'node:os'
 import { URLSearchParams, parse } from 'node:url'
 
-import utils from './utils.js'
-import config from '../config.js'
-import sources from './sources.js'
+import utils from '../utils.js'
+import config from '../../config.js'
+import sources from '../sources.js'
 import VoiceConnection from './voiceHandler.js'
 
 import * as djsVoice from '@discordjs/voice'
@@ -142,7 +142,7 @@ async function requestHandler(req, res) {
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
     try {
-      utils.send(req, res, utils.decodeTrack(encodedTrack), 200)
+      utils.send(req, res, { encoded: encodedTrack, info: utils.decodeTrack(encodedTrack) }, 200)
     } catch (e) {
       utils.debugLog('decodetrack', 3, { headers: req.headers, error: e.message })
 
@@ -170,7 +170,7 @@ async function requestHandler(req, res) {
       const tracks = []
 
       try {
-        buffer.forEach((encodedTrack) => tracks.push(utils.decodeTrack(encodedTrack)))
+        buffer.forEach((encodedTrack) => tracks.push({ encoded: encodedTrack, info: utils.decodeTrack(encodedTrack) }))
       } catch (e) {
         utils.debugLog('decodetracks', 3, { headers: req.headers, body: buffer, error: e.message })
 

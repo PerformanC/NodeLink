@@ -22,11 +22,11 @@ async function loadFrom(url) {
           title: data.title,
           uri: data.permalink_url,
           artworkUrl: data.artwork_url,
-          isrc: data.publisher_metadata.isrc,
+          isrc: data.publisher_metadata ? data.publisher_metadata.isrc : null,
           sourceName: 'soundcloud'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query: url })
 
         return resolve({
           loadType: 'track',

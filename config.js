@@ -11,7 +11,7 @@ export default {
   version: {
     major: '1',
     minor: '9',
-    patch: '4',
+    patch: '6',
     preRelease: null
   },
   server: {
@@ -19,7 +19,7 @@ export default {
     password: 'youshallnotpass'
   },
   options: {
-    threshold: 10000,
+    threshold: false,
     playerUpdateInterval: false,
     statsInterval: false,
     autoUpdate: [ false, true, 3600000, 'tar' ],
@@ -71,10 +71,10 @@ export default {
       bandcamp: true,
       http: true,
       local: true,
-      pandora: true,
+      pandora: false,
       soundcloud: {
-        enabled: false,
-        clientId: 'YOUR_CLIENT_ID'
+        enabled: true,
+        clientId: 'TihN0nuDfhghD9GVPbTtrSEa558lYo4V'
       }
     }
   },

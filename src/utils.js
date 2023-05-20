@@ -29,8 +29,11 @@ function http1makeRequest(url, options) {
       headers: {
         'Accept-Encoding': 'br, gzip, deflate',
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
-      }
+      },
+      rejectUnauthorized: false
     }, (res) => {
+      if (res.statusCode == 401) throw new Error(`[NodeLink:makeRequest1]: Received 401 in url: ${url}.`)
+
       if (options.retrieveHeaders) {
         req.destroy()
 
@@ -63,7 +66,7 @@ function http1makeRequest(url, options) {
     }).end()
 
     req.on('error', (error) => {
-      console.error(`[NodeLink:makeRequest1]: Failed sending HTTP request: ${error}`)
+      console.error(`[NodeLink:makeRequest1]: Failed sending HTTP request to ${url}: ${error}`)
       reject()
     })
   })
@@ -72,7 +75,7 @@ function http1makeRequest(url, options) {
 function makeRequest(url, options) {
   return new Promise(async (resolve, reject) => {
     let compression, data = '', parsedUrl = new URL(url)
-    const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol })
+    const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol, rejectUnauthorized: false })
 
     const reqOptions = {
       ':method': options.method,
@@ -89,7 +92,7 @@ function makeRequest(url, options) {
       return resolve(req)
 
     req.on('error', (error) => {
-      console.error(`[NodeLink:makeRequest]: Failed sending HTTP request: ${error}`)
+      console.error(`[NodeLink:makeRequest]: Failed sending HTTP request to ${url}: ${error}`)
       reject()
     })
 
@@ -409,7 +412,7 @@ function debugLog(name, type, options) {
         }
         case 'trackException': {
           if (config.debug.track.exception)
-            console.warn(`[NodeLink:trackException]: An exception occurred while playing ${options.track.title} by ${options.track.author} on ${options.guildId}. (${options.exception.message})`)
+            console.warn(`[NodeLink:trackException]: An exception occurred while playing ${options.track.title} by ${options.track.author} on ${options.guildId}. (${options.exception})`)
 
             break
         }
