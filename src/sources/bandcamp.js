@@ -55,7 +55,7 @@ async function search(query) {
     let i = 0
     
     for (const match of names) {
-      if (i >= config.options.maxResults) break
+      if (i >= config.options.maxResultsLength) break
 
       tracks.push({
         encoded: null,

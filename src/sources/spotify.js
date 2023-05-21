@@ -1,8 +1,9 @@
-import https from 'node:https'
-import zlib from 'node:zlib'
-
+import config from '../../config.js'
 import utils from '../utils.js'
 import searchWithDefault from './default.js'
+
+import https from 'node:https'
+import zlib from 'node:zlib'
 
 let playerInfo = {}
 
@@ -154,8 +155,6 @@ async function search(query) {
           }
 
           if (index == data.data.searchV2.tracksV2.items.length - 1) {
-            utils.debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: tracks.length, query })
-
             const new_tracks = []
             data.data.searchV2.tracksV2.items.forEach((items2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -163,6 +162,10 @@ async function search(query) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
+
+                if (new_tracks.length > config.options.maxResultsLength) new_tracks.length = config.options.maxResultsLength
+
+                utils.debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: new_tracks.length, query })
 
                 if ((index2 == data.data.searchV2.tracksV2.items.length - 1) && (index3 == tracks.length - 1))
                   resolve({
@@ -343,8 +346,6 @@ async function loadFrom(query, type) {
           })
 
           if (index == data.tracks.items.length - 1) {
-            utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Spotify', tracksLen: tracks.length, query })
-
             const new_tracks = []
             data.tracks.items.forEach((item2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -352,6 +353,10 @@ async function loadFrom(query, type) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
+
+                if (new_tracks.length > config.options.maxAlbumPlaylistLength) new_tracks.length = config.options.maxAlbumPlaylistLength
+
+                utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Spotify', tracksLen: new_tracks.length, query })
 
                 if ((index2 == data.tracks.items.length - 1) && (index3 == tracks.length - 1))
                   resolve({

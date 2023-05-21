@@ -1,7 +1,7 @@
 import utils from '../utils.js'
 
 async function loadFrom(uri) {
-  const type = url.startsWith('http://') ? 'http' : 'https'
+  const type = uri.startsWith('http://') ? 'http' : 'https'
   utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: type, query: uri })
 
   try {

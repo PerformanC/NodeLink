@@ -233,12 +233,12 @@ class VoiceConnection {
         }, (res) => {
           res.on('error', () => {})
 
-          if (res.statusCode != 206) {
+          if (res.statusCode != 206 && res.statusCode != 302) {
             res.destroy()
 
-            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
+            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: `Failed to get the stream from source (206/302 != ${res.statusCode}).` })
 
-            resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
+            resolve({ status: 1, exception: { message: 'Failed to get the stream from source (206/302 != ${res.statusCode}).', severity: 'suspicious', cause: 'unknown' } })
           }
 
           res.destroy()

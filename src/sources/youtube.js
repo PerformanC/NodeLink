@@ -141,7 +141,7 @@ async function search(query, type) {
       return resolve({ loadType: 'empty', data: {} })
     }
 
-    tracks.slice(0, config.options.maxResults + 1)
+    if (tracks.length > config.options.maxResultsLength) tracks.length = config.options.maxResults
 
     utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
 
@@ -165,14 +165,14 @@ async function loadFrom(query, type) {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
-            videoId: /(?:\?v=)(\w+)/.exec(query)[1],
+            videoId: /v=([^&]+)/.exec(query)[1],
           }
         })
 
-        if (video.playabilityStatus.status == 'ERROR') {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', message: video.playabilityStatus.reason })
+        if (video.playabilityStatus.status != 'OK') {
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
           
-          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
         }
 
         const track = {
@@ -252,7 +252,7 @@ async function loadFrom(query, type) {
           return resolve({ loadType: 'empty', data: {} })
         }
 
-        tracks.splice(0, config.options.maxPlaylistSize + 1)
+        if (tracks.length > config.options.maxAlbumPlaylistLength) tracks.length = config.options.maxAlbumPlaylistLength
 
         utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', tracksLen: tracks.length, query })
 
@@ -279,10 +279,10 @@ async function loadFrom(query, type) {
           }
         })
 
-        if (short.playabilityStatus.status == 'ERROR') {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', message: short.playabilityStatus.reason })
+        if (short.playabilityStatus.status != 'OK') {
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
 
-          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
         }
 
         const track = {

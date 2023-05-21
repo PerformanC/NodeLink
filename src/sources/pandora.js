@@ -40,7 +40,7 @@ async function search(query) {
       types: ['TR'],
       listener: null,
       start: 0,
-      count: config.options.maxResults,
+      count: config.options.maxResultsLength,
       annotate: true,
       searchTime: 0,
       annotationRecipe: 'CLASS_OF_2019'
@@ -93,8 +93,6 @@ async function search(query) {
       })
 
       if (index == data.results.length - 1) {
-        utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: tracks.length, query })
-
         const new_tracks = []
         annotationKeys.forEach((key2, index2) => {
           tracks.forEach((track2, index3) => {
@@ -102,6 +100,10 @@ async function search(query) {
               track2.info.position = index2
               new_tracks.push(track2)
             }
+            
+            if (new_tracks.length > config.options.maxResultsLength) new_tracks.length = config.options.maxResultsLength
+
+            utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
 
             if ((index2 == annotationKeys.length - 1) && (index3 == tracks.length - 1))
               resolve({
@@ -303,8 +305,8 @@ async function loadFrom(query) {
             pandoraId: playlistId,
             playlistVersion: 0,
             offset: 0,
-            limit: config.options.maxPlaylistSize,
-            annotationLimit: config.options.maxPlaylistSize,
+            limit: config.options.maxAlbumPlaylistLength,
+            annotationLimit: config.options.maxAlbumPlaylistLength,
             allowedTypes: ['TR', 'AM'],
             bypassPrivacyRules: true
           }
@@ -356,8 +358,6 @@ async function loadFrom(query) {
           })
     
           if (index == keys.length - 1) {
-            utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
-
             const new_tracks = []
             keys.forEach((key2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -365,6 +365,8 @@ async function loadFrom(query) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
+
+                utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
     
                 if ((index2 == keys.length - 1) && (index3 == tracks.length - 1))
                   resolve({

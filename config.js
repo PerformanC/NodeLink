@@ -11,7 +11,7 @@ export default {
   version: {
     major: '1',
     minor: '9',
-    patch: '6',
+    patch: '7',
     preRelease: null
   },
   server: {
@@ -23,8 +23,8 @@ export default {
     playerUpdateInterval: false,
     statsInterval: false,
     autoUpdate: [ false, true, 3600000, 'tar' ],
-    maxResults: 20,
-    maxPlaylistSize: 20
+    maxResultsLength: 20,
+    maxAlbumPlaylistLength: 20
   },
   debug: {
     pandoraInterval: true,
@@ -74,7 +74,7 @@ export default {
       pandora: false,
       soundcloud: {
         enabled: true,
-        clientId: 'TihN0nuDfhghD9GVPbTtrSEa558lYo4V'
+        clientId: 'YOUR_SOUNDCLOUD_CLIENT_ID'
       }
     }
   },

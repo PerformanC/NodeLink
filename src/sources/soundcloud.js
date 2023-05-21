@@ -105,6 +105,8 @@ async function loadFrom(url) {
           }
         }
 
+        if (tracks.length > config.options.maxAlbumPlaylistLength) tracks.length = config.options.maxAlbumPlaylistLength
+
         utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', tracksLen: tracks.length, query: url })
 
         return resolve({
@@ -160,6 +162,8 @@ async function search(query) {
         })
       }
     })
+
+    if (tracks.length > config.options.maxResultsLength) tracks.length = config.options.maxResultsLength
       
     utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
 
