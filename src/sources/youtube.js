@@ -13,28 +13,27 @@ function setIntervalNow(func, interval) {
 
 function startInnertube() {
   playerInfo.innertubeInterval = setIntervalNow(async () => {
-    utils.debugLog('innertube', 5, { message: 'Fetching innertube data...' })
-  
+    utils.debugLog('innertube', 5, { type: 1, message: 'Fetching innertube data...' })
+ 
     const data = await utils.makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      utils.debugLog('innertube', 5, { message: `Failed to fetch innertube data: ${err.message}` })
+      utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch innertube data: ${err.message}` })
     })
-      
+
     const innertube = JSON.parse('{' + data.split('ytcfg.set({')[1].split('});')[0] + '}')
     playerInfo.innertube = innertube.INNERTUBE_CONTEXT
     playerInfo.innertube.client.clientName = 'WEB',
     playerInfo.innertube.client.clientVersion = '2.20230316.00.00'
     playerInfo.innertube.client.originalUrl = 'https://www.youtube.com/'
 
-    utils.debugLog('innertube', 5, { message: 'Fetched innertube data, fetching player.js...' })
+    utils.debugLog('innertube', 5, { type: 1, message: 'Fetched innertube data, fetching player.js...' })
 
     const player = await utils.makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
-      utils.debugLog('innertube', 5, { message: `Failed to fetch player js: ${err.message}` })
+      utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch player js: ${err.message}` })
     })
 
-    utils.debugLog('innertube', 5, { message: 'Fetched player.js, parsing...' })
+    utils.debugLog('innertube', 5, { type: 1, message: 'Fetched player.js, parsing...' })
   
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/gm.exec(player)[0]
-
     playerInfo.functions = []
 
     let functionName = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
@@ -50,8 +49,8 @@ function startInnertube() {
 
     const ncodeFunction = player.split(`${functionName}=function`)[1].split('};')[0]
     playerInfo.functions.push(new vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
-   
-    utils.debugLog('innertube', 5, { message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
+
+    utils.debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)
 }
 
@@ -99,7 +98,7 @@ async function search(query, type) {
     })
 
     if (search.error) {
-      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: search.error.message })
+      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
 
       return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'suspicious', cause: 'unknown' } })
     }
@@ -136,7 +135,7 @@ async function search(query, type) {
     })
 
     if (tracks.length == 0) {
-      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', message: 'No matches found.' })
+      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
 
       return resolve({ loadType: 'empty', data: {} })
     }
@@ -170,7 +169,7 @@ async function loadFrom(query, type) {
         })
 
         if (video.playabilityStatus.status != 'OK') {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
           
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
         }
@@ -212,7 +211,7 @@ async function loadFrom(query, type) {
         })
 
         if (!playlist.contents.twoColumnWatchNextResults.playlist) {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'error', sourceName: 'YouTube', message: 'Failed to load playlist.' })
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'Failed to load playlist.' })
         
           return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'suspicious', cause: 'unknown' } })
         }
@@ -247,7 +246,7 @@ async function loadFrom(query, type) {
         })
 
         if (tracks.length == 0) {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', message: 'No matches found.' })
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
         }
@@ -280,7 +279,7 @@ async function loadFrom(query, type) {
         })
 
         if (short.playabilityStatus.status != 'OK') {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
 
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
         }
@@ -312,7 +311,7 @@ async function loadFrom(query, type) {
       }
 
       default: {
-        utils.debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'YouTube', message: 'No matches found.' })
+        utils.debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'YouTube', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
@@ -354,7 +353,7 @@ async function retrieveStream(identifier, type) {
       const args = new URLSearchParams(audio.signatureCipher)
 
       const components = new URL(decodeURIComponent(args.get('url')))
-      components.searchParams.set('sig', playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
+      components.searchParams.set(args.get('sp'), playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
 
       url = components.toString()
     }

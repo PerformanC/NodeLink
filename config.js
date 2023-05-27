@@ -11,7 +11,7 @@ export default {
   version: {
     major: '1',
     minor: '9',
-    patch: '7',
+    patch: '8',
     preRelease: null
   },
   server: {
@@ -27,8 +27,14 @@ export default {
     maxAlbumPlaylistLength: 20
   },
   debug: {
-    pandoraInterval: true,
-    innertube: true,
+    pandora: {
+      success: true,
+      error: true
+    },
+    innertube: {
+      success: true,
+      error: true
+    },
     websocket: {
       connect: true,
       disconnect: true,

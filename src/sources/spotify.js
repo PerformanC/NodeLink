@@ -51,7 +51,7 @@ async function setSpotifyToken() {
   })
   
   req.on('error', (error) => {
-    console.error(error)
+    console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to clienttoken.spotify.com: ${error}`)
   })
   
   req.write(JSON.stringify({

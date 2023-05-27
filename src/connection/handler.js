@@ -360,7 +360,7 @@ async function requestHandler(req, res) {
       search = await sources.local.loadFrom(identifier.replace('local:', ''))
 
     if (!search) {
-      console.log('[NodeLink:loadtracks]: No possible search source found.')
+      utils.debugLog('loadtracks', 4, { type: 3, loadType: 'error', sourceName: 'unknown', message: 'No possible search source found.' })
 
       search = { loadType: 'empty', data: {} }
     }
@@ -397,7 +397,7 @@ async function requestHandler(req, res) {
       case 'ytmusic':
       case 'youtube': {
         if (!config.search.sources.youtube) {
-          console.log('[NodeLink:loadcaptions]: No possible search source found.')
+          console.log('[\u001b[31mloadCaptions\u001b[37m]: No possible search source found.')
 
           captions = { loadType: 'empty', data: {} }
         }
@@ -519,13 +519,19 @@ async function requestHandler(req, res) {
           utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
 
           if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
-            utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'Missing voice data.' })
+            let missing = []
+            if (!buffer.voice.endpoint) missing.push('endpoint')
+            if (!buffer.voice.token) missing.push('token')
+            if (!buffer.voice.sessionId) missing.push('sessionId')
+            missing = missing.join(', ')
+
+            utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: `Missing members on body: ${missing}.` })
 
             return utils.send(req, res, {
               timestamp: new Date(),
               status: 400,
               trace: null,
-              message: 'Missing voice data.',
+              message: `Missing members on body: ${missing}.`,
               path: parsedUrl.pathname
             }, 400)
           }

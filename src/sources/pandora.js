@@ -6,11 +6,11 @@ let csrfToken = null
 let authToken = null
 
 async function setToken() {
-  utils.debugLog('pandora', 5, { message: 'Setting Pandora auth and CSRF token.' })
+  utils.debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
 
   const csfr = await utils.makeRequest('https://www.pandora.com', { method: 'GET', retrieveCookies: true })
 
-  if (!csfr[1]) return utils.debugLog('pandora', 5, { message: 'Failed to set CSRF token from Pandora.' })
+  if (!csfr[1]) return utils.debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
 
   csrfToken = { raw: csfr[1], parsed: /csrftoken=([a-f0-9]{16});/.exec(csfr[1])[1] }
 
@@ -24,11 +24,11 @@ async function setToken() {
     method: 'POST'
   })
 
-  if (token.errorCode == 0) return utils.debugLog('pandora', 5, { message: 'Failed to set auth token from Pandora.' })
+  if (token.errorCode == 0) return utils.debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
 
   authToken = token.authToken
 
-  utils.debugLog('pandora', 5, { message: 'Successfully set Pandora auth and CSRF token.' })
+  utils.debugLog('pandora', 5, { type: 1, message: 'Successfully set Pandora auth and CSRF token.' })
 }
 
 async function search(query) {

@@ -32,7 +32,7 @@ function http1makeRequest(url, options) {
       },
       rejectUnauthorized: false
     }, (res) => {
-      if (res.statusCode == 401) throw new Error(`[NodeLink:makeRequest1]: Received 401 in url: ${url}.`)
+      if (res.statusCode == 401) throw new Error(`[\u001b[31mmakeRequest1\u001b[37m]: Received 401 in url: ${url}.`)
 
       if (options.retrieveHeaders) {
         req.destroy()
@@ -66,7 +66,7 @@ function http1makeRequest(url, options) {
     }).end()
 
     req.on('error', (error) => {
-      console.error(`[NodeLink:makeRequest1]: Failed sending HTTP request to ${url}: ${error}`)
+      console.error(`[\u001b[31mmakeRequest1\u001b[37m]: Failed sending HTTP request to ${url}: ${error}`)
       reject()
     })
   })
@@ -92,7 +92,7 @@ function makeRequest(url, options) {
       return resolve(req)
 
     req.on('error', (error) => {
-      console.error(`[NodeLink:makeRequest]: Failed sending HTTP request to ${url}: ${error}`)
+      console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: ${error}`)
       reject()
     })
 
@@ -136,7 +136,7 @@ function makeRequest(url, options) {
       if (options.disableBodyCompression)
         req.write(JSON.stringify(options.body), () => req.end())
       else zlib.gzip(JSON.stringify(options.body), (error, data) => {
-        if (error) throw new Error(`[NodeLink:makeRequest]: Failed gziping body: ${error}`)
+        if (error) throw new Error(`[makeRequest]: Failed gziping body: ${error}`)
         req.write(data, () => req.end())
       })
     }
@@ -319,7 +319,7 @@ async function sleep(ms) {
 async function checkForUpdates() {
   const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}}`
 
-  console.log(`[NodeLink:utils] Checking for updates in ${config.options.autoUpdate[0] ? 'beta' : 'stable'} releases...`)
+  console.log(`[\u001b[32mupdater\u001b[37m] Checking for updates in ${config.options.autoUpdate[0] ? 'beta' : 'stable'} releases...`)
 
   let data, selected
 
@@ -327,7 +327,7 @@ async function checkForUpdates() {
     try {
       data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases`, { method: 'GET' })
     } catch (e) {
-      console.error(`[NodeLink:utils] Error while checking for updates: ${e}`)
+      console.error(`[\u001b[31mupdater\u001b[37m] HTTP error: ${e}`)
 
       return;
     }
@@ -335,14 +335,14 @@ async function checkForUpdates() {
     try {
       data = await makeRequest(`https://api.github.com/repos/PerformanC/NodeLink/releases/latest`, { method: 'GET' })
     } catch (e) {
-      console.error(`[NodeLink:utils] Error while checking for updates: ${e}`)
+      console.error(`[\u001b[31mupdater\u001b[37m] HTTP error: ${e}`)
 
       return;
     }
   }
 
   if (data.message) {
-    console.error(`[NodeLink] Error while checking for updates: ${data.message} (documentation: ${data.documentation_url})`)
+    console.error(`[\u001b[31mupdater\u001b[37m] GitHub error: ${data.message} (documentation: ${data.documentation_url})`)
 
     return;
   }
@@ -351,10 +351,10 @@ async function checkForUpdates() {
   else selected = data
 
   if (data.name != version) {
-    console.log(`[NodeLink] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${selected.name})`)
+    console.log(`[\u001b[33mupdater\u001b[37m] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${selected.name})`)
 
     if (config.options.autoUpdate[1]) {
-      console.log(`[NodeLink] Updating NodeLink, downloading ${config.options.autoUpdate[3]}...`)
+      console.log(`[\u001b[32mupdater\u001b[37m] Updating NodeLink, downloading ${config.options.autoUpdate[3]}...`)
 
       const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamOnly: true })
 
@@ -376,7 +376,7 @@ async function checkForUpdates() {
           move.on('close', () => {
             fs.rm('PerformanC-Nodelink.zip', { recursive: true, force: true }, () => {})
 
-            console.log('[NodeLink] Nodelink has been updated, please restart NodeLink to apply the changes.')
+            console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
           })
         })
       })
@@ -390,9 +390,9 @@ function debugLog(name, type, options) {
       if (!config.debug.request.enabled) return;
       
       if (options.error)
-        console.warn(`[NodeLink:${name}]: Detected an error in a request: ${options.error}`)
+        console.warn(`[\u001b${name}\u001b[37m]: Detected an error in a request: [\u001b[31m${options.error}[\u001b[37m`)
       else
-        console.log(`[NodeLink:${name}]: Received a request from client.${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
+        console.log(`[\u001b[32m${name}\u001b[37m]: Received a request from client.${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
 
       break
     }
@@ -400,25 +400,25 @@ function debugLog(name, type, options) {
       switch (name) {
         case 'trackStart': {
           if (config.debug.track.start)
-            console.log(`[NodeLink:trackStart]: Started playing ${options.track.title} by ${options.track.author} on ${options.guildId}.`)
+            console.log(`[\u001b[32mtrackStart\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m.`)
 
             break
         }
         case 'trackEnd': {
           if (config.debug.track.end)
-            console.log(`[NodeLink:trackEnd]: Ended playing ${options.track.title} by ${options.track.author} on ${options.guildId}, reason: ${options.reason}.`)
+            console.log(`[\u001b[32mtrackEnd\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m because was \u001b[94m${options.reason}\u001b[37m.`)
 
             break
         }
         case 'trackException': {
           if (config.debug.track.exception)
-            console.warn(`[NodeLink:trackException]: An exception occurred while playing ${options.track.title} by ${options.track.author} on ${options.guildId}. (${options.exception})`)
+            console.warn(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: [\u001b[31m${options.exception}[\u001b[37m`)
 
             break
         }
         case 'trackStuck': {
           if (config.debug.track.stuck)
-            console.warn(`[NodeLink:trackStuck]: ${config.options.threshold}ms have passed since the last progress update on ${options.guildId}.`)
+            console.warn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: [\u001b[33m${config.options.threshold}ms have passed.[\u001b[37m`)
 
             break
         }
@@ -431,27 +431,21 @@ function debugLog(name, type, options) {
         case 'connect': {
           if (!config.debug.websocket.connect) return;
 
-          if (options.headers['client-name'])
-            console.log(`[NodeLink:websocket]: "${options.headers['client-name']}" client connected to NodeLink.`)
-          else
-            console.log(`[NodeLink:websocket]: A client, which didn't specific its name, connected to NodeLink.`)
+          console.log(`[\u001b[32mwebsocket\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m client connected to NodeLink.`)
 
-            break
+          break
         }
         case 'disconnect': {
           if (!config.debug.websocket.disconnect) return;
 
-          console.log(`[NodeLink:websocket]: A connection was closed with a client.\n Code: ${options.code}\n Reason: ${options.reason == '' ? 'No reason provided' : options.reason})`)
+          console.log(`[\u001b[33mwebsocket\u001b[37m]: A connection was closed with a client.\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason == '' ? 'No reason provided' : options.reason}\u001b[37m`)
         
           break
         }
         case 'resume': {
           if (!config.debug.websocket.resume) return;
 
-          if (options.headers['client-name'])
-            console.log(`[NodeLink:websocket]: "${options.headers['client-name']}" client resumed a connection to NodeLink.`)
-          else
-            console.log(`[NodeLink:websocket]: A client, which didn't specific its name, resumed a connection to NodeLink.`)
+          console.log(`[\u001b[32mwebsocket\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m client resumed a connection to NodeLink.`)
 
           break
         }
@@ -459,10 +453,7 @@ function debugLog(name, type, options) {
         case 'failedResume': {
           if (!config.debug.websocket.failedResume) return;
 
-          if (options.headers['client-name'])
-            console.log(`[NodeLink:websocket]: "${options.headers['client-name']}" client failed to resume a connection to NodeLink.`)
-          else
-            console.log(`[NodeLink:websautoUpdateocket]: A client, which didn't specific its name, failed to resume a connection to NodeLink.`)
+          console.log(`[\u001b[31mfailedResume[\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}"\u001b[37m failed to resume.`)
 
           break
         }
@@ -474,50 +465,66 @@ function debugLog(name, type, options) {
       switch (name) {
         case 'loadtracks': {
           if (options.type == 1 && config.debug.sources.loadtrack.request)
-            console.log(`[NodeLink:sources]: Loading ${options.loadType} from ${options.sourceName}: ${options.query}`)
+            console.log(`[\u001b[32mloadTracks\u001b[37m]: Loading \u001b[94m${options.loadType}\u001b[37m from ${options.sourceName}: ${options.query}`)
 
           if (options.type == 2 && config.debug.sources.loadtrack.results) {
             if (options.tracksLen)
-              console.log(`[NodeLink:sources]: Loaded ${options.tracksLen} tracks from ${options.sourceName}: ${options.query}`)
+              console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.tracksLen}\u001b[37m tracks from \u001b[94m${options.sourceName}\u001b[37m: ${options.query}`)
             else
-              console.log(`[NodeLink:sources]: Loaded ${options.track.title} by ${options.track.author} from ${options.sourceName}: ${options.query}`)
+              console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: ${options.query}`)
           }
 
           if (options.type == 3 && config.debug.sources.loadtrack.exception)
-            console.warn(`[NodeLink:sources]: An exception occurred while loading ${options.loadType} from ${options.sourceName}: ${options.message}`)
+            console.warn(`[\u001b[31mloadTracks\u001b[37m]: Exception loading \u001b[94m${options.loadType}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
         case 'search': {
           if (options.type == 1 && config.debug.sources.search.request)
-            console.log(`[NodeLink:sources]: Searching track on ${options.sourceName}: ${options.query}`)
+            console.log(`[\u001b[32msearch\u001b[37m]: Searching for \u001b[94m${options.query}\u001b[37m on \u001b[94m${options.sourceName}\u001b[37m`)
           
           if (options.type == 2 && config.debug.sources.search.results)
-            console.log(`[NodeLink:sources]: Found ${options.tracksLen} tracks on ${options.sourceName}: ${options.query}`)
+            console.log(`[\u001b[32msearch\u001b[37m]: Found \u001b[94m${options.tracksLen}\u001b[37m tracks on \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
           if (options.type == 3 && config.debug.sources.search.exception)
-            console.warn(`[NodeLink:sources]: An exception occurred while searching on ${options.sourceName}: ${options.exception.message}`)
+            console.warn(`[\u001b[31msearch\u001b[37m]: Exception from ${options.sourceName} for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.exception.message}\u001b[37m`)
 
           break
         }
         case 'retrieveStream': {
           if (!config.debug.sources.retrieveStream) return;
           if (options.type == 1)
-            console.log(`[NodeLink:sources]: Retrieving stream from ${options.sourceName}: ${options.query}`)
+            console.log(`[\u001b[32mretrieveStream\u001b[37m]: Retrieved from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
           if (options.type == 2)
-            console.warn(`[NodeLink:sources]: Error while retrieving stream from ${options.sourceName}: ${options.message}`)
+            console.warn(`[\u001b[31mretrieveStream\u001b[37m]: Exception from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m: ${options.message}`)
         }
       }
 
       break
     }
     case 5: {
-      if (name == 'innertube' && config.debug.innertube)
-        console.log(`[NodeLink:innertube]: ${options.message}`)
+      switch (name) {
+        case 'innertube': {
+          if (options.type == 1 && config.debug.innertube.success)
+            console.log(`[\u001b[32minnertube\u001b[37m]: ${options.message}`)
 
-      if (name == 'pandora' && config.debug.pandoraInterval)
-        console.log(`[NodeLink:pandora]: ${options.message}`)
+          if (options.type == 2 && config.debug.innertube.error)
+            console.warn(`[\u001b[31minnertube\u001b[37m]: ${options.message}`)
+
+          break
+        }
+
+        case 'pandora': {
+          if (options.type == 1 && config.debug.pandora.success)
+            console.log(`[\u001b[32mpandora\u001b[37m]: ${options.message}`)
+
+          if (options.type == 2 && config.debug.pandora.error)
+            console.warn(`[\u001b[31mpandora\u001b[37m]: ${options.message}`)
+
+          break
+        }
+      }
     }
   }
 }

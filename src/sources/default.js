@@ -16,7 +16,7 @@ async function searchWithDefault(query) {
       return bandcamp.search(query)
     }
     default: {
-      console.warn('[NodeLink:sources]: Default search source: unknown, falling back to YouTube...')
+      console.warn('[\u001b[33msources\u001b[37m]: Default search source: unknown, falling back to YouTube...')
       return youtube.search(query, 1)
     }
   }

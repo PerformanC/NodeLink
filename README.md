@@ -26,7 +26,7 @@ Both have different goals and depending on your needs, you should use one or ano
 
 ## Usage
 
-NodeLink is powered by [Node.js](https://nodejs.org), so you will need to have it installed on your system, with the minimum requirement of having version 16.6.0 installed.
+NodeLink is powered by [Node.js](https://nodejs.org), so you will need to have it installed on your system, with the minimum requirement of having version 15 (latest) installed.
 
 ### Installation
 

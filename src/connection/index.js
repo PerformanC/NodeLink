@@ -15,7 +15,7 @@ const v4 = new WebSocketServer({ noServer: true })
 
 v4.on('connection', (ws, req) => {
   if (req.headers.authorization != config.server.password) {
-    console.log('[NodeLink:websocket]: Invalid password. Closing connection...')
+    console.log('[\u001b[31mwebsocket\u001b[39m]: Invalid password. Closing connection...')
 
     return ws.close(4001, 'Invalid password')
   }
@@ -32,13 +32,13 @@ server.on('upgrade', (req, socket, head) => {
 })
 
 v4.on('error', (err) => {
-  console.error('[NodeLink:websocket]: Error: ' + err)
+  console.error(`[\u001b[31mwebsocket\u001b[37m]: Error: \u001b[31m${err.message}\u001b[37m`)
 })
 
 server.on('error', (err) => {
-  console.error('[NodeLink:http]: Error: ' + err)
+  console.error(`[\u001b[31mhttp\u001b[37m]: Error: \u001b[31m${err.message}\u001b[37m`)
 })
 
 server.listen(config.server.port || 2333, () => {
-  console.log(`[NodeLink:websocket]: Listening on port ${config.server.port || 2333}`)
+  console.log(`[\u001b[32mwebsocket\u001b[37m]: Listening on port \u001b[94m${config.server.port || 2333}\u001b[37m.`)
 })

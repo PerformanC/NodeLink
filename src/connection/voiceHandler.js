@@ -98,7 +98,7 @@ class VoiceConnection {
           try {
             if (config.options.threshold) await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold)
           } catch (e) {
-            utils.debugLog('websocketClosed', 2, { track: this.config.track.info, guildId: this.config.guildId, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
+            utils.debugLog('websocketClosed', 2, { track: this.config.track.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
             this._stopTrack()
             this.config.track = null
@@ -126,7 +126,7 @@ class VoiceConnection {
         this._stopTrack()
         this.cache.url = null
 
-        utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: 'finished' })
+        utils.debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'finished' })
 
         this.client.ws.send(JSON.stringify({
           op: 'event',
@@ -143,7 +143,7 @@ class VoiceConnection {
     this.player.on('error', (error) => {
       this._stopTrack()
 
-      utils.debugLog('trackException', 2, { track: this.config.track.info, guildId: this.config.guildId, exception: error.message })
+      utils.debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -198,15 +198,17 @@ class VoiceConnection {
   }
 
   destroy() {
+    this.config.track = null
+    this.config.filters = []
+    this.cache.startedAt = 0
+    if (this.player) this.cache.silence = true
+    this.cache.url = null
+
     if (this.player) this.player.stop(true)
 
-    if (this.cache.ffmpeg)
-      this.cache.ffmpeg.destroy()
+    if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
 
     this._stopTrack()
-    this.config.track = null
-
-    if (this.connection) this.connection.destroy()
 
     this.client.players.delete(this.config.guildId)
   }
@@ -265,8 +267,6 @@ class VoiceConnection {
 
     const oldTrack = this.config.track
 
-    this.config.track = { encoded: track, info: decodedTrack }
-
     const urlInfo = await sources.getTrackURL(decodedTrack)
 
     if (urlInfo.exception) {
@@ -285,7 +285,7 @@ class VoiceConnection {
     }
 
     if (oldTrack) {
-      utils.debugLog('trackEnd', 2, { track: decodedTrack, guildId: this.config.guildId, reason: 'replaced' })
+      utils.debugLog('trackEnd', 2, { track: decodedTrack, reason: 'replaced' })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -294,6 +294,8 @@ class VoiceConnection {
         track: oldTrack,
         reason: 'replaced'
       }))
+
+      this.cache.silence = true
     }
 
     let resource = null
@@ -320,7 +322,7 @@ class VoiceConnection {
       this.config.filters = []
       this.cache.url = null
 
-      utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.config.guildId, exception: resource.exception.message })
+      utils.debugLog('trackException', 2, { track: decodedTrack, exception: resource.exception.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -349,12 +351,14 @@ class VoiceConnection {
 
       this.cache.startedAt = Date.now()
 
-      utils.debugLog('trackStart', 2, { track: decodedTrack, guildId: this.config.guildId })
+      utils.debugLog('trackStart', 2, { track: decodedTrack, })
       this.trackStarted()
+
+      this.config.track = { encoded: track, info: decodedTrack }
     } catch (e) {
       this.config.track = null
 
-      utils.debugLog('trackStuck', 2, { track: decodedTrack, guildId: this.config.guildId })
+      utils.debugLog('trackStuck', 2, { track: decodedTrack })
       this.client.ws.send(JSON.stringify({
         op: 'event',
         type: 'TrackStuckEvent',
@@ -368,7 +372,7 @@ class VoiceConnection {
   }
 
   stop() {
-    utils.debugLog('trackEnd', 2, { track: this.config.track.info, guildId: this.config.guildId, reason: 'stopped' })
+    utils.debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'stopped' })
 
     this.client.ws.send(JSON.stringify({
       op: 'event',
@@ -381,13 +385,12 @@ class VoiceConnection {
     this.config.track = null
     this.config.filters = []
     this.cache.startedAt = 0
-    this.cache.silence = true
+    if (this.player) this.cache.silence = true
     this.cache.url = null
 
-    this.player.stop(true)
+    if (this.player) this.player.stop(true)
 
-    if (this.cache.ffmpeg)
-      this.cache.ffmpeg.destroy()
+    if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
 
     this._stopTrack()
   }

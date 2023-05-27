@@ -43,7 +43,7 @@ async function loadFrom(uri) {
        }
     }
   } catch {
-    utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: type, message: 'Not possible to connect to url.', })
+    utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: type, query: uri, message: 'Not possible to connect to url.', })
 
     return {
       loadType: 'error',
