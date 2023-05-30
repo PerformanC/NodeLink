@@ -350,11 +350,10 @@ class VoiceConnection {
       if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
 
       this.cache.startedAt = Date.now()
+      this.config.track = { encoded: track, info: decodedTrack }
 
       utils.debugLog('trackStart', 2, { track: decodedTrack, })
       this.trackStarted()
-
-      this.config.track = { encoded: track, info: decodedTrack }
     } catch (e) {
       this.config.track = null
 

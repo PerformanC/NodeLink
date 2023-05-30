@@ -32,11 +32,11 @@ server.on('upgrade', (req, socket, head) => {
 })
 
 v4.on('error', (err) => {
-  console.error(`[\u001b[31mwebsocket\u001b[37m]: Error: \u001b[31m${err.message}\u001b[37m`)
+  console.error(`[\u001b[31mwebsocket\u001b[37m]: Error: \u001b[31m${err}\u001b[37m`)
 })
 
 server.on('error', (err) => {
-  console.error(`[\u001b[31mhttp\u001b[37m]: Error: \u001b[31m${err.message}\u001b[37m`)
+  console.error(`[\u001b[31mhttp\u001b[37m]: Error: \u001b[31m${err}\u001b[37m`)
 })
 
 server.listen(config.server.port || 2333, () => {

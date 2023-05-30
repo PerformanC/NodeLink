@@ -11,7 +11,7 @@ export default {
   version: {
     major: '1',
     minor: '9',
-    patch: '8',
+    patch: '9',
     preRelease: null
   },
   server: {
@@ -55,6 +55,7 @@ export default {
       stuck: true
     },
     sources: {
+      retrieveStream: true,
       loadtrack: {
         request: true,
         results: true,

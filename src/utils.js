@@ -66,7 +66,7 @@ function http1makeRequest(url, options) {
     }).end()
 
     req.on('error', (error) => {
-      console.error(`[\u001b[31mmakeRequest1\u001b[37m]: Failed sending HTTP request to ${url}: ${error}`)
+      console.error(`[\u001b[31mmakeRequest1\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
       reject()
     })
   })
@@ -92,7 +92,7 @@ function makeRequest(url, options) {
       return resolve(req)
 
     req.on('error', (error) => {
-      console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: ${error}`)
+      console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
       reject()
     })
 
@@ -493,6 +493,7 @@ function debugLog(name, type, options) {
         }
         case 'retrieveStream': {
           if (!config.debug.sources.retrieveStream) return;
+
           if (options.type == 1)
             console.log(`[\u001b[32mretrieveStream\u001b[37m]: Retrieved from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
