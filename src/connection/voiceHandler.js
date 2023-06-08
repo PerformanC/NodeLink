@@ -219,9 +219,9 @@ class VoiceConnection {
         const file = fs.createReadStream(url)
 
         file.on('error', () => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to get the stream from source.' })
+          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
 
-          resolve({ status: 1, exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
+          resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'suspicious', cause: 'unknown' } })
         })
 
         this.cache.url = url
@@ -238,9 +238,9 @@ class VoiceConnection {
           if (res.statusCode != 206 && res.statusCode != 302) {
             res.destroy()
 
-            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: `Failed to get the stream from source (206/302 != ${res.statusCode}).` })
+            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)` })
 
-            resolve({ status: 1, exception: { message: 'Failed to get the stream from source (206/302 != ${res.statusCode}).', severity: 'suspicious', cause: 'unknown' } })
+            resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
           }
 
           res.destroy()

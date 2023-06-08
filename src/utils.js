@@ -412,7 +412,7 @@ function debugLog(name, type, options) {
         }
         case 'trackException': {
           if (config.debug.track.exception)
-            console.warn(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: [\u001b[31m${options.exception}[\u001b[37m`)
+            console.warn(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
 
             break
         }
@@ -498,7 +498,7 @@ function debugLog(name, type, options) {
             console.log(`[\u001b[32mretrieveStream\u001b[37m]: Retrieved from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
           if (options.type == 2)
-            console.warn(`[\u001b[31mretrieveStream\u001b[37m]: Exception from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m: ${options.message}`)
+            console.warn(`[\u001b[31mretrieveStream\u001b[37m]: Exception from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
         }
       }
 
