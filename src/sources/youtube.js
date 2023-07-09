@@ -4,7 +4,12 @@ import utils from '../utils.js'
 import vm from 'node:vm'
 import { URLSearchParams } from 'node:url'
 
-let playerInfo = {}
+let playerInfo = {
+  innertube: null,
+  innertubeInterval: null,
+  signatureTimestamp: null,
+  functions: []
+}
 
 function setIntervalNow(func, interval) {
   func()
@@ -34,7 +39,6 @@ function startInnertube() {
     utils.debugLog('innertube', 5, { type: 1, message: 'Fetched player.js, parsing...' })
   
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/gm.exec(player)[0]
-    playerInfo.functions = []
 
     let functionName = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
     const sigFunction = 'function decipherFunction(a)' + player.split(`${functionName}=function(a)`)[1].split(')};')[0]
