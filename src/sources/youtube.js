@@ -32,6 +32,7 @@ function startInnertube() {
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Fetched innertube data, fetching player.js...' })
 
+    console.log(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`)
     const player = await utils.makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
       utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch player js: ${err.message}` })
     })
@@ -51,7 +52,7 @@ function startInnertube() {
     functionName = player.split('&&(b=a.get("n"))&&(b=')[1].split('(b)')[0]
     if (functionName.includes('[')) functionName = player.split(`${functionName.split('[')[0]}=[`)[1].split(']')[0]
 
-    const ncodeFunction = player.split(`${functionName}=function`)[1].split('};')[0]
+    const ncodeFunction = player.split(`${functionName}=function`)[1].split(')};')[0] + ')'
     playerInfo.functions.push(new vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
