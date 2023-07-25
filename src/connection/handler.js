@@ -538,8 +538,11 @@ async function requestHandler(req, res) {
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          if (player.config.track && (player.player._state != 'buffering'|| player.player._state != 'playing'))
-            player.play(player.config.track.encoded, false)
+          if (player.cache.track) {
+            player.play(player.cache.track.encoded, false)
+
+            player.cache.track = null
+          }
 
           player.updateVoice(buffer.voice)
 
@@ -560,7 +563,7 @@ async function requestHandler(req, res) {
 
             if (!player.config.voice.endpoint) {
               try {
-                player.config.track = { encoded: buffer.encodedTrack, info: utils.decodeTrack(buffer.encodedTrack) }
+                player.cache.track = { encoded: buffer.encodedTrack, info: utils.decodeTrack(buffer.encodedTrack) }
               } catch {
                 utils.debugLog('play', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'The provided track is invalid.' })
 

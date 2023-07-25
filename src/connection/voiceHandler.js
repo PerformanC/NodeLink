@@ -42,7 +42,8 @@ class VoiceConnection {
       silence: false,
       ffmpeg: null,
       url: null,
-      pauseTime: [ 0, 0 ]
+      pauseTime: [ 0, 0 ],
+      track: null,
     }
     this.stateInterval
   
@@ -173,7 +174,7 @@ class VoiceConnection {
           time: Date.now(),
           position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? this._getRealTime() : 0,
           connected: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready,
-          ping: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? this.connection.ping.ws : -1
+          ping: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? this.connection.ping.ws || -1 : -1
         }
       }))
     }, config.options.playerUpdateInterval)
@@ -213,13 +214,13 @@ class VoiceConnection {
     this.client.players.delete(this.config.guildId)
   }
 
-  async getResource(sourceName, url, protocol) {
+  async getResource(title, sourceName, url, protocol) {
     return new Promise(async (resolve) => {
       if (protocol == 'file') {
         const file = fs.createReadStream(url)
 
         file.on('error', () => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
+          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
 
           resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'suspicious', cause: 'unknown' } })
         })
@@ -235,12 +236,14 @@ class VoiceConnection {
         }, (res) => {
           res.on('error', () => {})
 
-          if (res.statusCode != 206 && res.statusCode != 302) {
+          if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
             res.destroy()
 
-            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)` })
+            console.log(url, res.statusCode)
 
-            resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
+            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)` })
+
+            resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
           }
 
           res.destroy()
@@ -312,7 +315,7 @@ class VoiceConnection {
       resource = await filter.createResource(this.config.guildId, decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg)  
     } else {
       this.cache.url = urlInfo.url
-      resource = await this.getResource(decodedTrack.sourceName, urlInfo.url, urlInfo.protocol)
+      resource = await this.getResource(decodedTrack.title, decodedTrack.sourceName, urlInfo.url, urlInfo.protocol)
 
       if (oldTrack) this._stopTrack(true)
     }

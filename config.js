@@ -11,7 +11,7 @@ export default {
   version: {
     major: '1',
     minor: '9',
-    patch: '12',
+    patch: '13',
     preRelease: null
   },
   server: {
