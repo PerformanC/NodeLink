@@ -317,7 +317,7 @@ async function sleep(ms) {
 }
 
 async function checkForUpdates() {
-  const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}}`
+  const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`
 
   console.log(`[\u001b[32mupdater\u001b[37m] Checking for updates in ${config.options.autoUpdate[0] ? 'beta' : 'stable'} releases...`)
 
@@ -390,7 +390,7 @@ function debugLog(name, type, options) {
       if (!config.debug.request.enabled) return;
       
       if (options.error)
-        console.warn(`[\u001b${name}\u001b[37m]: Detected an error in a request: [\u001b[31m${options.error}[\u001b[37m`)
+        console.warn(`[\u001b[32m${name}\u001b[37m]: Detected an error in a request: \u001b[31m${options.error}\u001b[37m`)
       else
         console.log(`[\u001b[32m${name}\u001b[37m]: Received a request from client.${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
 
