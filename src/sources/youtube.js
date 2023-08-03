@@ -27,12 +27,11 @@ function startInnertube() {
     const innertube = JSON.parse('{' + data.split('ytcfg.set({')[1].split('});')[0] + '}')
     playerInfo.innertube = innertube.INNERTUBE_CONTEXT
     playerInfo.innertube.client.clientName = 'WEB',
-    playerInfo.innertube.client.clientVersion = '2.20230316.00.00'
+    playerInfo.innertube.client.clientVersion = '2.20230316'
     playerInfo.innertube.client.originalUrl = 'https://www.youtube.com/'
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Fetched innertube data, fetching player.js...' })
 
-    console.log(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`)
     const player = await utils.makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
       utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch player js: ${err.message}` })
     })
@@ -207,7 +206,7 @@ async function loadFrom(query, type) {
       case 3: {
         utils.debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
 
-        const playlist = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false+`, {
+        const playlist = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -351,7 +350,7 @@ async function retrieveStream(identifier, type) {
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
     }
 
-    const audio = videos.streamingData.adaptiveFormats[videos.streamingData.adaptiveFormats.length - 1]
+    const audio = videos.streamingData.adaptiveFormats.find((format) => format.mimeType == 'audio/webm; codecs="opus"')
     let url = audio.url
 
     if (audio.signatureCipher) {
@@ -392,7 +391,8 @@ async function loadCaptions(decodedTrack) {
           contentPlaybackContext: {
             signatureTimestamp: playerInfo.signatureTimestamp
           }
-        }
+        },
+        params: 'CgIQBg'
       },
       method: 'POST'
     })
