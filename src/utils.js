@@ -347,10 +347,10 @@ async function checkForUpdates() {
     return;
   }
 
-  if (config.options.autoUpdate[0]) data.find((e) => !e.prerelease)[0]
+  if (config.options.autoUpdate[0]) selected = data.find((e) => !e.prerelease)[0]
   else selected = data
 
-  if (data.name != version) {
+  if (selected.name != version) {
     console.log(`[\u001b[33mupdater\u001b[37m] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${selected.name})`)
 
     if (config.options.autoUpdate[1]) {
@@ -363,24 +363,38 @@ async function checkForUpdates() {
 
       file.on('finish', () => {
         file.close()
-
         const args = []
-        if (config.options.autoUpdate[3] == 'zip') args.push([ 'PerformanC-Nodelink.zip' ])
-        else if (config.options.autoUpdate[3] == '7zip') args.push([ 'x', 'PerformanC-Nodelink.zip' ])
-        else args.push([ '-xvf', 'PerformanC-Nodelink.tar.gz' ])
+        if (config.options.autoUpdate[3] == 'zip') args.push('PerformanC-Nodelink.zip')
+        else if (config.options.autoUpdate[3] == '7zip') args.push('x', 'PerformanC-Nodelink.zip')
+        else args.push('-xvf', 'PerformanC-Nodelink.tar.gz')
 
         cp.spawn(config.options.autoUpdate[3] == 'zip' ? 'unzip' : config.options.autoUpdate[3] == '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
-          const move = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ '"PerformanC-Nodelink*"', '".."'] : [ 'PerformanC-Nodelink*/*', '..', '-f' ], { shell: true })
-          
-          move.stdin.write('Y')
-          move.on('close', () => {
-            fs.rm('PerformanC-Nodelink.zip', { recursive: true, force: true }, () => {})
+          fs.readdirSync('.').forEach((file) => {
+            if (file.startsWith('PerformanC-NodeLink-')) {
+              const moveFiles = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}"/*`, '"."', '-f' ] : [ `${file}/*`, '.', '-f' ], { shell: true })
+              moveFiles.stdin.write('Y')
 
-            console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
+              moveFiles.on('close', () => {
+                fs.readdirSync(file).forEach((subfile) => {
+                  fs.readdirSync(`${file}/${subfile}`).forEach((subsubfile) => {
+                    const moveDirs = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}/${subfile}/${subsubfile}"`, `"./${subfile}/"`, '-f' ] : [ `${file}/${subfile}/${subsubfile}`, `"./${subfile}/"`, '-f' ], { shell: true })
+
+                    moveDirs.stdin.write('Y')
+                  })
+                })
+
+                fs.rm(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`, { force: true }, () => {})
+                fs.rm(file, { recursive: true, force: true }, () => {})
+
+                console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
+              })
+            }
           })
         })
       })
     }
+  } else {
+    console.log(`[\u001b[32mupdater\u001b[37m] NodeLink is up to date! (${version})`)
   }
 }
 
