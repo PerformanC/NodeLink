@@ -7,12 +7,14 @@ import { URL } from 'node:url'
 
 import config from '../config.js'
 
-function generateSessionId() {
+let updated = false
+
+function randomLetters(size) {
   let result = ''
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   
   let counter = 0
-  while (counter < 16) {
+  while (counter < size) {
     result += characters.charAt(Math.floor(Math.random() * characters.length))
     counter++
   }
@@ -317,6 +319,8 @@ async function sleep(ms) {
 }
 
 async function checkForUpdates() {
+  if (updated) return;
+
   const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`
 
   console.log(`[\u001b[32mupdater\u001b[37m] Checking for updates in ${config.options.autoUpdate[0] ? 'beta' : 'stable'} releases...`)
@@ -385,6 +389,8 @@ async function checkForUpdates() {
 
                 fs.rm(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`, { force: true }, () => {})
                 fs.rm(file, { recursive: true, force: true }, () => {})
+
+                updated = true
 
                 console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
               })
@@ -584,7 +590,7 @@ function sendNonNull(req, res, data, force) {
 }
 
 export default {
-  generateSessionId,
+  randomLetters,
   http1makeRequest,
   makeRequest,
   encodeTrack,

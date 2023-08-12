@@ -239,8 +239,6 @@ class VoiceConnection {
           if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
             res.destroy()
 
-            console.log(url, res.statusCode)
-
             utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)` })
 
             resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
