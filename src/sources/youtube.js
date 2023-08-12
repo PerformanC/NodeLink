@@ -349,12 +349,48 @@ async function retrieveStream(identifier, type) {
     })
 
     if (videos.playabilityStatus.status != 'OK') {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', message: videos.playabilityStatus.reason })
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: identifier, message: videos.playabilityStatus.reason })
 
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
     }
 
-    const audio = videos.streamingData.adaptiveFormats.find((format) => format.mimeType == 'audio/webm; codecs="opus"')
+    const formats = []
+
+    for (const format of videos.streamingData.adaptiveFormats) {
+      if (format.signatureCipher) {
+        const args = new URLSearchParams(format.signatureCipher)
+
+        const components = new URL(decodeURIComponent(args.get('url')))
+        components.searchParams.set(args.get('sp'), playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
+
+        format.url = components.toString()
+      }
+
+      formats.push(format)
+    }
+
+    for (const format of videos.streamingData.formats) {
+      if (format.signatureCipher) {
+        const args = new URLSearchParams(format.signatureCipher)
+
+        const components = new URL(decodeURIComponent(args.get('url')))
+        components.searchParams.set(args.get('sp'), playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
+
+        format.url = components.toString()
+      }
+
+      formats.push(format)
+    }
+
+    let itag = null
+    switch (config.audio.quality) {
+      case 'high': itag = 251; break
+      case 'medium': itag = 250; break
+      case 'low': itag = 249; break
+      default: itag = 251; break
+    }
+
+    const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag == itag)
     let url = audio.url
 
     if (audio.signatureCipher) {
@@ -401,7 +437,7 @@ async function loadCaptions(decodedTrack) {
     })
 
     if (videos.playabilityStatus.status != 'OK') {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', message: videos.playabilityStatus.reason })
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: decodedTrack.title, message: videos.playabilityStatus.reason })
 
       return resolve({ loadType: 'error', data: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
     }

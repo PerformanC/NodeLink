@@ -10,8 +10,8 @@ autoUpdate: [ beta? autoUpdate?, interval, [tar, zip] ]
 export default {
   version: {
     major: '1',
-    minor: '9',
-    patch: '17',
+    minor: '10',
+    patch: '18',
     preRelease: null
   },
   server: {
@@ -100,5 +100,8 @@ export default {
       channelMix: true,
       lowPass: true
     }
+  },
+  audio: {
+    quality: 'high'
   }
 }

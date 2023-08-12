@@ -373,28 +373,38 @@ async function checkForUpdates() {
         else args.push('-xvf', 'PerformanC-Nodelink.tar.gz')
 
         cp.spawn(config.options.autoUpdate[3] == 'zip' ? 'unzip' : config.options.autoUpdate[3] == '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
-          fs.readdirSync('.').forEach((file) => {
-            if (file.startsWith('PerformanC-NodeLink-')) {
-              const moveFiles = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}"/*`, '"."', '-f' ] : [ `${file}/*`, '.', '-f' ], { shell: true })
-              moveFiles.stdin.write('Y')
+          fs.readdir('.', (err, files) => {
+            if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to read current directory: ${err}`)
 
-              moveFiles.on('close', () => {
-                fs.readdirSync(file).forEach((subfile) => {
-                  fs.readdirSync(`${file}/${subfile}`).forEach((subsubfile) => {
-                    const moveDirs = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}/${subfile}/${subsubfile}"`, `"./${subfile}/"`, '-f' ] : [ `${file}/${subfile}/${subsubfile}`, `"./${subfile}/"`, '-f' ], { shell: true })
+            files.forEach((file) => {
+              if (file.startsWith('PerformanC-NodeLink-')) {
+                const moveFiles = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}"/*`, '"."', '-f' ] : [ `${file}/*`, '.', '-f' ], { shell: true })
+                moveFiles.stdin.write('Y')
 
-                    moveDirs.stdin.write('Y')
+                moveFiles.on('close', () => {
+                  fs.readdir(file, (err, subfiles) => {
+                    if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to read ${file} directory: ${err}`)
+
+                    subfiles.forEach((subfile) => {
+                      fs.rm(`./${subfile}`, { recursive: true, force: true }, (err) => {
+                        if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to remove ${subfile}: ${err}`)
+
+                        const moveDirs = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}/${subfile}`, `"."`, '-f' ] : [ `${file}/${subfile}`, `.`, '-f' ], { shell: true })
+
+                        moveDirs.stdin.write('Y')
+                      })
+                    })
                   })
+
+                  fs.rm(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`, { force: true }, () => {})
+                  fs.rm(file, { recursive: true, force: true }, () => {})
+
+                  updated = true
+
+                  console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
                 })
-
-                fs.rm(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`, { force: true }, () => {})
-                fs.rm(file, { recursive: true, force: true }, () => {})
-
-                updated = true
-
-                console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
-              })
-            }
+              }
+            })
           })
         })
       })
