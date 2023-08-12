@@ -78,7 +78,7 @@ function setupConnection(ws, req) {
     }
   }
 
-  sessionId = utils.generateSessionId()
+  sessionId = utils.randomLetters(16)
 
   utils.debugLog('connect', 3, { headers: req.headers })
 

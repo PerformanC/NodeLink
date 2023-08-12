@@ -331,7 +331,7 @@ async function retrieveStream(identifier, type) {
       await utils.sleep(200)
     }
 
-    const videos = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const videos = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${utils.randomLetters(12)}&id=${identifier}`, {
       body: {
         context: playerInfo.innertube,
         videoId: identifier,
@@ -339,7 +339,11 @@ async function retrieveStream(identifier, type) {
           contentPlaybackContext: {
             signatureTimestamp: playerInfo.signatureTimestamp
           }
-        }
+        },
+        cpn: utils.randomLetters(16),
+        contentCheckOk: true,
+        racyCheckOk: true,
+        params: 'CgIQBg'
       },
       method: 'POST'
     })
@@ -391,8 +395,7 @@ async function loadCaptions(decodedTrack) {
           contentPlaybackContext: {
             signatureTimestamp: playerInfo.signatureTimestamp
           }
-        },
-        params: 'CgIQBg'
+        }
       },
       method: 'POST'
     })
