@@ -72,7 +72,7 @@ function checkURLType(url, type) {
     else return -1
   } else {
     const videoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+/
-    const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/(?:watch\?v=[\w-]+&)?list=[\w-]+/
+    const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/
     const shortsRegex = /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/
   
     if (playlistRegex.test(url)) return 3
