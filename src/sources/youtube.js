@@ -8,7 +8,8 @@ let playerInfo = {
   innertube: null,
   innertubeInterval: null,
   signatureTimestamp: null,
-  functions: []
+  functions: [],
+  cache: {}
 }
 
 function setIntervalNow(func, interval) {
@@ -17,6 +18,11 @@ function setIntervalNow(func, interval) {
 }
 
 function startInnertube() {
+  playerInfo.cache = {
+    cpn: utils.randomLetters(16),
+    t: utils.randomLetters(12)
+  }
+
   playerInfo.innertubeInterval = setIntervalNow(async () => {
     utils.debugLog('innertube', 5, { type: 1, message: 'Fetching innertube data...' })
  
@@ -26,9 +32,14 @@ function startInnertube() {
 
     const innertube = JSON.parse('{' + data.split('ytcfg.set({')[1].split('});')[0] + '}')
     playerInfo.innertube = innertube.INNERTUBE_CONTEXT
-    playerInfo.innertube.client.clientName = 'WEB',
-    playerInfo.innertube.client.clientVersion = '2.20230316'
+    playerInfo.innertube.client.clientName = 'ANDROID',
+    playerInfo.innertube.client.clientVersion = '17.29.34'
     playerInfo.innertube.client.originalUrl = 'https://www.youtube.com/'
+    playerInfo.innertube.client.androidSdkVersion = '33'
+    playerInfo.innertube.client.screenDensityFloat = 1
+    playerInfo.innertube.client.screenWidthPoints = 1080
+    playerInfo.innertube.client.screenPixelDensity = 1
+    playerInfo.innertube.client.screenWidthPoints = 1920
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Fetched innertube data, fetching player.js...' })
 
@@ -41,18 +52,21 @@ function startInnertube() {
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/gm.exec(player)[0]
 
     let functionName = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
-    const sigFunction = 'function decipherFunction(a)' + player.split(`${functionName}=function(a)`)[1].split(')};')[0]
+    const decipherFunctionName = functionName
+
+    const sigFunction = `function ${decipherFunctionName}(a)${player.split(`${functionName}=function(a)`)[1].split(')};')[0]}`
   
     functionName = player.split('a=a.split("");')[1].split('.')[0]
     const sigWrapper = player.split(`var ${functionName}={`)[1].split('};')[0]
 
-    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction})};decipherFunction(sig)`))
-
+    playerInfo.functions.push(new vm.Script(`var ${functionName}={${sigWrapper}};${sigFunction})};${decipherFunctionName}(sig);`))
+    
     functionName = player.split('&&(b=a.get("n"))&&(b=')[1].split('(b)')[0]
     if (functionName.includes('[')) functionName = player.split(`${functionName.split('[')[0]}=[`)[1].split(']')[0]
 
     const ncodeFunction = player.split(`${functionName}=function`)[1].split(')};')[0] + ')'
     playerInfo.functions.push(new vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
+//    playerInfo.functions.push(new vm.Script(`const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`))
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)
@@ -110,18 +124,15 @@ async function search(query, type) {
     const tracks = []
     let i = 0
 
-    let videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0].itemSectionRenderer.contents
-    if (videos[0].adSlotRenderer) videos = search.contents.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[1].itemSectionRenderer.contents
-
-    videos.forEach((video) => {
-      video = video.videoRenderer
+    search.contents.sectionListRenderer.contents[0].itemSectionRenderer.contents.forEach((video) => {
+      video = video.compactVideoRenderer
 
       if (video) {
         const track = {
           identifier: video.videoId,
           isSeekable: true,
-          author: video.ownerText.runs[0].text,
-          length: video.lengthText ? parseInt(video.lengthText.simpleText.split(':').map((v, i) => v * (60 ** (2 - i))).reduce((a, b) => a + b)) * 1000 : 0,
+          author: video.longBylineText.runs[0].text,
+          length: video.lengthText ? parseInt(video.lengthText.runs[0].text.split(':').map((v, i) => v * (60 ** (2 - i))).reduce((a, b) => a + b)) * 1000 : 0,
           isStream: video.lengthText ? false : true,
           position: i++,
           title: video.title.runs[0].text,
@@ -163,13 +174,24 @@ async function loadFrom(query, type) {
     switch (checkURLType(query, type)) {
       case 2: {
         utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
+        
+        const identifier = /v=([^&]+)/.exec(query)[1]
 
         const video = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-          method: 'POST',
           body: {
             context: playerInfo.innertube,
-            videoId: /v=([^&]+)/.exec(query)[1],
-          }
+            videoId: identifier,
+            playbackContext: {
+              contentPlaybackContext: {
+                signatureTimestamp: playerInfo.signatureTimestamp
+              },
+            },
+            cpn: playerInfo.cache.cpn,
+            contentCheckOk: true,
+            racyCheckOk: true,
+            params: 'CgIQBg'
+          },
+          method: 'POST'
         })
 
         if (video.playabilityStatus.status != 'OK') {
@@ -210,7 +232,11 @@ async function loadFrom(query, type) {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
-            playlistId: /(?<=list=)[\w-]+/.exec(query)[0]
+            playlistId: /(?<=list=)[\w-]+/.exec(query)[0],
+            cpn: playerInfo.cache.cpn,
+            contentCheckOk: true,
+            racyCheckOk: true,
+            params: 'CgIQBg'
           }
         })
 
@@ -278,14 +304,18 @@ async function loadFrom(query, type) {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
-            videoId: /shorts\/([a-zA-Z0-9_-]+)/.exec(query)[1]
+            videoId: /shorts\/([a-zA-Z0-9_-]+)/.exec(query)[1],
+            cpn: playerInfo.cache.cpn,
+            contentCheckOk: true,
+            racyCheckOk: true,
+            params: 'CgIQBg'
           }
         })
 
         if (short.playabilityStatus.status != 'OK') {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
+          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.playabilityStatus.reason || short.playabilityStatus.messages[0] })
 
-          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason || short.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
         }
 
         const track = {
@@ -340,7 +370,7 @@ async function retrieveStream(identifier, type) {
             signatureTimestamp: playerInfo.signatureTimestamp
           }
         },
-        cpn: utils.randomLetters(16),
+        cpn: playerInfo.cache.cpn,
         contentCheckOk: true,
         racyCheckOk: true,
         params: 'CgIQBg'
@@ -352,34 +382,6 @@ async function retrieveStream(identifier, type) {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: identifier, message: videos.playabilityStatus.reason })
 
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
-    }
-
-    const formats = []
-
-    for (const format of videos.streamingData.adaptiveFormats) {
-      if (format.signatureCipher) {
-        const args = new URLSearchParams(format.signatureCipher)
-
-        const components = new URL(decodeURIComponent(args.get('url')))
-        components.searchParams.set(args.get('sp'), playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
-
-        format.url = components.toString()
-      }
-
-      formats.push(format)
-    }
-
-    for (const format of videos.streamingData.formats) {
-      if (format.signatureCipher) {
-        const args = new URLSearchParams(format.signatureCipher)
-
-        const components = new URL(decodeURIComponent(args.get('url')))
-        components.searchParams.set(args.get('sp'), playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
-
-        format.url = components.toString()
-      }
-
-      formats.push(format)
     }
 
     let itag = null
@@ -406,15 +408,6 @@ async function retrieveStream(identifier, type) {
   })
 }
 
-function addNCode(url) {
-  const components = new URL(url)
-
-  const n = components.searchParams.get('n')
-  components.searchParams.set('n', playerInfo.functions[1].runInNewContext({ ncode: n }))
-
-  return components.toString()
-}
-
 async function loadCaptions(decodedTrack) {
   return new Promise(async (resolve) => {
     if (!playerInfo.innertube) while (1) {
@@ -431,21 +424,25 @@ async function loadCaptions(decodedTrack) {
           contentPlaybackContext: {
             signatureTimestamp: playerInfo.signatureTimestamp
           }
-        }
+        },
+        cpn: playerInfo.cache.cpn,
+        contentCheckOk: true,
+        racyCheckOk: true,
+        params: 'CgIQBg'
       },
       method: 'POST'
     })
 
-    if (videos.playabilityStatus.status != 'OK') {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: decodedTrack.title, message: videos.playabilityStatus.reason })
+    if (video.playabilityStatus.status != 'OK') {
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: decodedTrack.title, message: video.playabilityStatus.reason })
 
-      return resolve({ loadType: 'error', data: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
+      return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
     }
 
     const captions = video.captions.playerCaptionsTracklistRenderer.captionTracks.map((caption) => {
-      captions[caption.languageCode] = {
+      return {
         name: caption.name.simpleText,
-        url: `${caption.baseUrl} + &fmt=json3`,
+        url: caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'),
         rtl: caption.rtl || false,
         translatable: caption.isTranslatable
       }
@@ -464,6 +461,5 @@ export default {
   search,
   loadFrom,
   retrieveStream,
-  addNCode,
   loadCaptions
 }

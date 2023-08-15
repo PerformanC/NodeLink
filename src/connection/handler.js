@@ -146,7 +146,7 @@ async function requestHandler(req, res) {
     } catch (e) {
       utils.debugLog('decodetrack', 3, { headers: req.headers, error: e.message })
 
-      utils.send(req, res, {
+      return utils.send(req, res, {
         timestamp: Date.now(),
         status: 500,
         error: 'Internal Server Error',
@@ -216,7 +216,7 @@ async function requestHandler(req, res) {
       } catch (e) {
         utils.debugLog('encodetrack', 3, { headers: req.headers, body: buffer, error: e.message })
 
-        utils.send(req, res, {
+        return utils.send(req, res, {
           timestamp: Date.now(),
           status: 500,
           error: 'Internal Server Error',
@@ -379,9 +379,9 @@ async function requestHandler(req, res) {
     try {
       decodedTrack = utils.decodeTrack(identifier)
     } catch (e) {
-      utils.debugLog('loadcaptions', 2, { params: parsedUrl.query, headers: req.headers, error: e.message })
+      utils.debugLog('loadcaptions', 4, { params: parsedUrl.query, headers: req.headers, error: e.message })
 
-      utils.send(req, res, {
+      return utils.send(req, res, {
         timestamp: Date.now(),
         status: 500,
         error: 'Internal Server Error',

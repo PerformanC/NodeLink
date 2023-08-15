@@ -137,12 +137,12 @@ class Filters {
         }, (res) => {
           res.on('error', () => {})
 
-          if (res.statusCode != 206) {
+          if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
             res.destroy()
 
-            utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.guildId, exception: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)` })
+            utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.guildId, exception: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
 
-            return resolve({ exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
+            return resolve({ exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
           }
 
           const file = fs.createWriteStream(`./cache/${guildId}.webm`)

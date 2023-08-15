@@ -79,7 +79,7 @@ function makeRequest(url, options) {
     let compression, data = '', parsedUrl = new URL(url)
     const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol, rejectUnauthorized: false })
 
-    const reqOptions = {
+    let reqOptions = {
       ':method': options.method,
       ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'br, gzip, deflate',
@@ -517,7 +517,7 @@ function debugLog(name, type, options) {
             console.log(`[\u001b[32msearch\u001b[37m]: Found \u001b[94m${options.tracksLen}\u001b[37m tracks on \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
           if (options.type == 3 && config.debug.sources.search.exception)
-            console.warn(`[\u001b[31msearch\u001b[37m]: Exception from ${options.sourceName} for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.exception.message}\u001b[37m`)
+            console.warn(`[\u001b[31msearch\u001b[37m]: Exception from ${options.sourceName} for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
@@ -529,6 +529,20 @@ function debugLog(name, type, options) {
 
           if (options.type == 2)
             console.warn(`[\u001b[31mretrieveStream\u001b[37m]: Exception from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
+
+          break
+        }
+        case 'loadcaptions': {
+          if (options.type == 1 && config.debug.sources.loadcaptions.request)
+            console.log(`[\u001b[32mloadCaptions\u001b[37m]: Loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m`)
+
+          if (options.type == 2 && config.debug.sources.loadcaptions.results)
+            console.log(`[\u001b[32mloadCaptions\u001b[37m]: Loaded captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m`)
+
+          if (options.type == 3 && config.debug.sources.loadcaptions.exception)
+            console.warn(`[\u001b[31mloadCaptions\u001b[37m]: Exception loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
+
+          break
         }
       }
 

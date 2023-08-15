@@ -239,7 +239,7 @@ class VoiceConnection {
           if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
             res.destroy()
 
-            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: `Failed to retrieve stream from source. (${res.statusCode} != 206 or 302)` })
+            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
 
             resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
           }
@@ -431,8 +431,7 @@ class VoiceConnection {
     if (!this.config.track) return this.config
 
     const protocol = this.config.track.info.sourceName == 'local' ? 'file' : (this.config.track.info.sourceName == 'http' ? 'http' : 'https')
-    const url = sources.filtersPrepare(this.cache.url, this.config.track.info.sourceName)
-    const resource = await filter.createResource(this.config.guildId, this.config.track.info, protocol, url, filters.endTime, this.cache, this.cache.ffmpeg)
+    const resource = await filter.createResource(this.config.guildId, this.config.track.info, protocol, this.cache.url, filters.endTime, this.cache, this.cache.ffmpeg)
 
     if (resource.exception) {
       this.config.track = null

@@ -317,6 +317,8 @@ async function loadFrom(query, type) {
         const tracks = []
         let index = 0
 
+        data.tracks.items.pop()
+
         data.tracks.items.forEach(async (item) => {
           let search
           if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
@@ -356,7 +358,7 @@ async function loadFrom(query, type) {
 
                 if (new_tracks.length > config.options.maxAlbumPlaylistLength) new_tracks.length = config.options.maxAlbumPlaylistLength
 
-                utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Spotify', tracksLen: new_tracks.length, query })
+                utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], track: { title: data.name, author: data.owner.display_name }, sourceName: 'Spotify', tracksLen: new_tracks.length, query })
 
                 if ((index2 == data.tracks.items.length - 1) && (index3 == tracks.length - 1))
                   resolve({
