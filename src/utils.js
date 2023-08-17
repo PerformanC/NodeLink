@@ -267,50 +267,54 @@ class DecodeClass {
 }
 
 function decodeTrack(track) {
-  const buf = new DecodeClass(Buffer.from(track, 'base64'))
+  try {
+    const buf = new DecodeClass(Buffer.from(track, 'base64'))
 
-  const version = ((buf.read('int') & 0xC0000000) >> 30 & 1) !== 0 ? buf.read('byte') : 1
+    const version = ((buf.read('int') & 0xC0000000) >> 30 & 1) !== 0 ? buf.read('byte') : 1
 
-  switch (version) {
-    case 1: {
-      return {
-        title: buf.read('utf'),
-        author: buf.read('utf'),
-        length: Number(buf.read('long')),
-        identifier: buf.read('utf'),
-        isStream: buf.read('byte') == 1,
-        uri: null,
-        source: buf.read('utf'),
-        position: Number(buf.read('long'))
+    switch (version) {
+      case 1: {
+        return {
+          title: buf.read('utf'),
+          author: buf.read('utf'),
+          length: Number(buf.read('long')),
+          identifier: buf.read('utf'),
+          isStream: buf.read('byte') == 1,
+          uri: null,
+          source: buf.read('utf'),
+          position: Number(buf.read('long'))
+        }
+      }
+      case 2: {
+        return {
+          title: buf.read('utf'),
+          author: buf.read('utf'),
+          length: Number(buf.read('long')),
+          identifier: buf.read('utf'),
+          isStream: buf.read('byte') == 1,
+          uri: buf.read('byte') == 1 ? buf.read('utf') : null,
+          source: buf.read('utf'),
+          position: Number(buf.read('long'))
+        }
+      }
+      case 3: {
+        return {
+          title: buf.read('utf'),
+          author: buf.read('utf'),
+          length: Number(buf.read('long')),
+          identifier: buf.read('utf'),
+          isSeekable: true,
+          isStream: buf.read('byte') == 1,
+          uri: buf.read('byte') == 1 ? buf.read('utf') : null,
+          artworkUrl: buf.read('byte') == 1 ? buf.read('utf') : null,
+          isrc: buf.read('byte') == 1 ? buf.read('utf') : null,
+          sourceName: buf.read('utf'),
+          position: Number(buf.read('long'))
+        }
       }
     }
-    case 2: {
-      return {
-        title: buf.read('utf'),
-        author: buf.read('utf'),
-        length: Number(buf.read('long')),
-        identifier: buf.read('utf'),
-        isStream: buf.read('byte') == 1,
-        uri: buf.read('byte') == 1 ? buf.read('utf') : null,
-        source: buf.read('utf'),
-        position: Number(buf.read('long'))
-      }
-    }
-    case 3: {
-      return {
-        title: buf.read('utf'),
-        author: buf.read('utf'),
-        length: Number(buf.read('long')),
-        identifier: buf.read('utf'),
-        isSeekable: true,
-        isStream: buf.read('byte') == 1,
-        uri: buf.read('byte') == 1 ? buf.read('utf') : null,
-        artworkUrl: buf.read('byte') == 1 ? buf.read('utf') : null,
-        isrc: buf.read('byte') == 1 ? buf.read('utf') : null,
-        sourceName: buf.read('utf'),
-        position: Number(buf.read('long'))
-      }
-    }
+  } catch (e) {
+    return null
   }
 }
 

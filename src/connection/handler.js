@@ -141,19 +141,31 @@ async function requestHandler(req, res) {
     
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
-    try {
-      utils.send(req, res, { encoded: encodedTrack, info: utils.decodeTrack(encodedTrack) }, 200)
-    } catch (e) {
+    if (!encodedTrack) return utils.send(req, res, {
+      timestamp: Date.now(),
+      status: 400,
+      error: 'Bad Request',
+      trace: null,
+      message: 'Missing encodedTrack query parameter',
+      path: '/v4/decodetrack'
+    }, 400)
+
+    const decodedTrack = utils.decodeTrack(encodedTrack)
+
+    if (!decodedTrack) {
       utils.debugLog('decodetrack', 3, { headers: req.headers, error: e.message })
 
       return utils.send(req, res, {
         timestamp: Date.now(),
-        status: 500,
-        error: 'Internal Server Error',
-        trace: e.stack,
-        message: e.message
-      }, 500)
+        status: 400,
+        error: 'Bad request',
+        trace: null,
+        message: 'The provided track is invalid.',
+        path: parsedUrl.pathname
+      }, 400)
     }
+
+    utils.send(req, res, { encoded: encodedTrack, info: decodedTrack }, 200)
   }
 
   if (parsedUrl.pathname == '/v4/decodetracks') {
@@ -169,19 +181,22 @@ async function requestHandler(req, res) {
 
       const tracks = []
 
-      try {
-        buffer.forEach((encodedTrack) => tracks.push({ encoded: encodedTrack, info: utils.decodeTrack(encodedTrack) }))
-      } catch (e) {
+      const decodedTrack = utils.decodeTrack(buffer)
+
+      if (!decodedTrack) {
         utils.debugLog('decodetracks', 3, { headers: req.headers, body: buffer, error: e.message })
 
         return utils.send(req, res, {
           timestamp: Date.now(),
-          status: 500,
-          error: 'Internal Server Error',
-          trace: e.stack,
-          message: e.message
-        }, 500)
+          status: 400,
+          error: 'Bad request',
+          trace: null,
+          message: 'The provided track is invalid.',
+          path: parsedUrl.pathname
+        }, 400)
       }
+
+      buffer.forEach((encodedTrack) => tracks.push({ encoded: encodedTrack, info: decodedTrack }))
 
       utils.send(req, res, tracks, 200)
     })
@@ -373,22 +388,30 @@ async function requestHandler(req, res) {
 
     utils.debugLog('loadcaptions', 1, { params: parsedUrl.query, headers: req.headers })
 
-    const identifier = new URLSearchParams(parsedUrl.query).get('encodedTrack')
+    const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
-    let decodedTrack = null
-    try {
-      decodedTrack = utils.decodeTrack(identifier)
-    } catch (e) {
+    if (!identifier) return utils.send(req, res, {
+      timestamp: Date.now(),
+      status: 400,
+      error: 'Bad Request',
+      trace: null,
+      message: 'Missing encodedTrack query parameter',
+      path: '/v4/loadcaptions'
+    }, 400)
+
+    const decodedTrack = utils.decodeTrack(encodedTrack)
+
+    if (!decodedTrack) {
       utils.debugLog('loadcaptions', 4, { params: parsedUrl.query, headers: req.headers, error: e.message })
 
       return utils.send(req, res, {
         timestamp: Date.now(),
-        status: 500,
-        error: 'Internal Server Error',
-        trace: e.stack,
-        message: e.message,
-        path: '/v4/loadcaptions'
-      }, 500)
+        status: 400,
+        error: 'Bad request',
+        trace: null,
+        message: 'The provided track is invalid.',
+        path: parsedUrl.pathname
+      }, 400)
     }
 
     let captions = null
@@ -485,7 +508,7 @@ async function requestHandler(req, res) {
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
-    req.on('end', () => {
+    req.on('end', async () => {
       buffer = JSON.parse(buffer)
 
       const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
@@ -514,7 +537,6 @@ async function requestHandler(req, res) {
     
         utils.send(req, res, player.config, 200)
       } else {
-
         if (buffer.voice != undefined) {
           utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
 
@@ -539,7 +561,21 @@ async function requestHandler(req, res) {
           if (!player) player = new VoiceConnection(guildId, client)
 
           if (player.cache.track) {
-            player.play(player.cache.track.encoded, false)
+            const decodedTrack = utils.decodeTrack(track)
+
+            if (!decodedTrack) {
+              utils.debugLog('play', 2, { track: track, exception: { message: 'Failed to decode track.', severity: 'common', cause: 'Invalid track' } })
+        
+              return utils.send(req, res, {
+                timestamp: new Date(),
+                status: 400,
+                trace: null,
+                message: 'The provided track is invalid.',
+                path: parsedUrl.pathname
+              }, 400)
+            }
+
+            player.play(player.cache.track.encoded, decodedTrack, false)
 
             player.cache.track = null
           }
@@ -562,11 +598,31 @@ async function requestHandler(req, res) {
             if (!player.connection) player.setup()
 
             if (!player.config.voice.endpoint) {
-              try {
-                player.cache.track = { encoded: buffer.encodedTrack, info: utils.decodeTrack(buffer.encodedTrack) }
-              } catch {
+              const decodedTrack = utils.decodeTrack(buffer.encodedTrack)
+
+              if (!decodedTrack) {
                 utils.debugLog('play', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'The provided track is invalid.' })
 
+                return utils.send(req, res, {
+                  timestamp: Date.now(),
+                  status: 400,
+                  error: 'Bad request',
+                  trace: null,
+                  message: 'The provided track is invalid.',
+                  path: parsedUrl.pathname
+                }, 400)
+              }
+
+              player.cache.track = { encoded: buffer.encodedTrack, info: decodedTrack }
+            }
+            else {
+              if (player.connection._state != 'connecting' || player.connection._state != 'ready') player.updateVoice(player.config.voice)
+              
+              const decodedTrack = utils.decodeTrack(buffer.encodedTrack)
+
+              if (!decodedTrack) {
+                utils.debugLog('play', 2, { track: buffer.encodedTrack, exception: { message: 'Failed to decode track.', severity: 'common', cause: 'Invalid track' } })
+          
                 return utils.send(req, res, {
                   timestamp: new Date(),
                   status: 400,
@@ -575,11 +631,8 @@ async function requestHandler(req, res) {
                   path: parsedUrl.pathname
                 }, 400)
               }
-            }
-            else {
-              if (player.connection._state != 'connecting' || player.connection._state != 'ready') player.updateVoice(player.config.voice)
-              
-              player.play(buffer.encodedTrack, noReplace == true)
+  
+              player.play(buffer.encodeTrack, decodedTrack, noReplace == true)
             }
           }
 

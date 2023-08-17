@@ -120,7 +120,7 @@ async function retrieveStream(uri) {
     if (!streamURL) {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'BandCamp', message: 'No stream URL was found.' })
 
-      return resolve({ exception: { message: 'Failed to get the stream from source.', severity: 'suspicious', cause: 'unknown' } })
+      return resolve({ exception: { message: 'Failed to get the stream from source.', severity: 'fault', cause: 'Unknown' } })
     }
 
     resolve({ url: streamURL[0], protocol: 'https' })

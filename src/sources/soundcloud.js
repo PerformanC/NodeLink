@@ -181,7 +181,7 @@ async function retrieveStream(identifier) {
     if (data.errors) {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', message: data.errors[0].error_message })
 
-      return resolve({ exception: { message: data.errors[0].error_message, severity: 'suspicious', cause: 'unknown' } })
+      return resolve({ exception: { message: data.errors[0].error_message, severity: 'fault', cause: 'Unknown' } })
     }
 
     data.media.transcodings.forEach(async (transcoding) => {

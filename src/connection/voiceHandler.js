@@ -82,7 +82,7 @@ class VoiceConnection {
   }
 
   _getRealTime() {
-    return (new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
+    return //(new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
   }
   
   setup() {
@@ -222,7 +222,7 @@ class VoiceConnection {
         file.on('error', () => {
           utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
 
-          resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'suspicious', cause: 'unknown' } })
+          resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'common', cause: 'No permission to access file or doesn\'t exist' } })
         })
 
         this.cache.url = url
@@ -241,7 +241,7 @@ class VoiceConnection {
 
             utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
 
-            resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
+            resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
           }
 
           res.destroy()
@@ -255,16 +255,14 @@ class VoiceConnection {
         }).on('error', (error) => {
           utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: error.message })
 
-          resolve({ status: 1, exception: { message: error.message, severity: 'suspicious', cause: 'unknown' } })
+          resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
         })
       }
     })
   }
 
-  async play(track, noReplace) {
+  async play(track, decodedTrack, noReplace) {
     if (noReplace && this.config.track) return this.config
-
-    const decodedTrack = utils.decodeTrack(track)
 
     const oldTrack = this.config.track
 

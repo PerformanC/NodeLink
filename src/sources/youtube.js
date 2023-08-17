@@ -66,7 +66,6 @@ function startInnertube() {
 
     const ncodeFunction = player.split(`${functionName}=function`)[1].split(')};')[0] + ')'
     playerInfo.functions.push(new vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
-//    playerInfo.functions.push(new vm.Script(`const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`))
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)
@@ -118,7 +117,7 @@ async function search(query, type) {
     if (search.error) {
       utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
 
-      return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'suspicious', cause: 'unknown' } })
+      return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'fault', cause: 'Unknown' } })
     }
 
     const tracks = []
@@ -197,7 +196,7 @@ async function loadFrom(query, type) {
         if (video.playabilityStatus.status != 'OK') {
           utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
           
-          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
         }
 
         const track = {
@@ -243,13 +242,13 @@ async function loadFrom(query, type) {
         if (!playlist.contents.twoColumnWatchNextResults.playlist) {
           utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'Failed to load playlist.' })
         
-          return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'suspicious', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'common', cause: 'Unknown' } })
         }
       
         const tracks = []
         let i = 0
 
-        playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.forEach((item, index) => {
+        playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.forEach((item) => {
           item = item.playlistPanelVideoRenderer
 
           if (item) {
@@ -315,7 +314,7 @@ async function loadFrom(query, type) {
         if (short.playabilityStatus.status != 'OK') {
           utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.playabilityStatus.reason || short.playabilityStatus.messages[0] })
 
-          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason || short.playabilityStatus.messages[0], severity: 'suspicious', cause: 'unknown' } })
+          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason || short.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
         }
 
         const track = {
@@ -381,7 +380,7 @@ async function retrieveStream(identifier, type) {
     if (videos.playabilityStatus.status != 'OK') {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: identifier, message: videos.playabilityStatus.reason })
 
-      return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
+      return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
 
     let itag = null
@@ -436,7 +435,7 @@ async function loadCaptions(decodedTrack) {
     if (video.playabilityStatus.status != 'OK') {
       utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: decodedTrack.title, message: video.playabilityStatus.reason })
 
-      return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'suspicious', cause: 'unknown' } })
+      return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
 
     const captions = video.captions.playerCaptionsTracklistRenderer.captionTracks.map((caption) => {

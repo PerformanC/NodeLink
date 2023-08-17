@@ -100,9 +100,9 @@ class Filters {
 
           return resolve({
             exception: {
-              message: err.message,
-              severity: 'suspicious',
-              cause: 'unknown'
+              message: 'Failed to retrieve stream from source. (File not found or not accessible)',
+              severity: 'common',
+              cause: 'No permission to access file or doesn\'t exist'
             }
           })
         })
@@ -142,7 +142,7 @@ class Filters {
 
             utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.guildId, exception: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
 
-            return resolve({ exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'unknown' } })
+            return resolve({ exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
           }
 
           const file = fs.createWriteStream(`./cache/${guildId}.webm`)

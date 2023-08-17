@@ -12,8 +12,8 @@ async function loadFrom(uri) {
         loadType: 'error',
         data: {
           message: 'Url is not a playable stream.',
-          severity: 'suspicious',
-          cause: 'Url error'
+          severity: 'common',
+          cause: 'Invalid URL'
         }
       }
     }
@@ -50,7 +50,7 @@ async function loadFrom(uri) {
       data: {
         message: 'Not possible to connect to url.',
         severity: 'fault',
-        cause: 'unknown'
+        cause: 'Unknown'
       }
     }
   }

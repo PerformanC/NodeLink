@@ -8,7 +8,14 @@ async function loadFrom(path) {
 
     fs.open(path, (err) => {
       if (err)
-        return resolve({ loadType: 'error', exception: { message: 'File not found', severity: 'common', cause: 'unknown' } })
+        return resolve({
+          loadType: 'error',
+          exception: {
+            message: 'Failed to retrieve stream from source. (File not found or not accessible)',
+            severity: 'common',
+            cause: 'No permission to access file or doesn\'t exist'
+          }
+        })
     
       const track = {
         identifier: 'unknown',
