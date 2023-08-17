@@ -30,42 +30,49 @@ function startInnertube() {
       utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch innertube data: ${err.message}` })
     })
 
-    const innertube = JSON.parse('{' + data.split('ytcfg.set({')[1].split('});')[0] + '}')
-    playerInfo.innertube = innertube.INNERTUBE_CONTEXT
-    playerInfo.innertube.client.clientName = 'ANDROID',
-    playerInfo.innertube.client.clientVersion = '17.29.34'
-    playerInfo.innertube.client.originalUrl = 'https://www.youtube.com/'
-    playerInfo.innertube.client.androidSdkVersion = '33'
-    playerInfo.innertube.client.screenDensityFloat = 1
-    playerInfo.innertube.client.screenWidthPoints = 1080
-    playerInfo.innertube.client.screenPixelDensity = 1
-    playerInfo.innertube.client.screenWidthPoints = 1920
+    playerInfo.innertube = {
+      client: {
+        hl: 'en',
+        gl: 'US',
+        userAgent: 'Mozilla/5.0 (Android 13; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0,gzip(gfe)',
+        clientName: 'ANDROID',
+        clientVersion: '17.29.34',
+        osName: 'Android',
+        osVersion: '13',
+        originalUrl: 'https://www.youtube.com/',
+        platform: 'MOBILE',
+        clientFormFactor: 'UNKNOWN_FORM_FACTOR',
+        androidSdkVersion: '33'
+      }
+    }
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Fetched innertube data, fetching player.js...' })
 
-    const player = await utils.makeRequest(`https://www.youtube.com${innertube.WEB_PLAYER_CONTEXT_CONFIGS.WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER.jsUrl}`, { method: 'GET' }).catch((err) => {
+    const player = await utils.makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
       utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch player js: ${err.message}` })
     })
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Fetched player.js, parsing...' })
-  
-    playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/gm.exec(player)[0]
 
-    let functionName = player.split('a.set("alr","yes");c&&(c=')[1].split('(decodeURIC')[0]
+    playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
+
+    let functionName = player.match(/a\.set\("alr","yes"\);c&&\(c=(\w+)\(decodeURIComponent\((.*?)\)\)/)[1]
     const decipherFunctionName = functionName
 
-    const sigFunction = `function ${decipherFunctionName}(a)${player.split(`${functionName}=function(a)`)[1].split(')};')[0]}`
-  
-    functionName = player.split('a=a.split("");')[1].split('.')[0]
-    const sigWrapper = player.split(`var ${functionName}={`)[1].split('};')[0]
+    const sigFunction = `function ${decipherFunctionName}(a)${player.match(new RegExp(`${functionName}=function\\(a\\)(.*?)\\)\\};`))[1]}`
 
-    playerInfo.functions.push(new vm.Script(`var ${functionName}={${sigWrapper}};${sigFunction})};${decipherFunctionName}(sig);`))
+    functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
+    const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
+
+    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction})};${decipherFunctionName}(sig);`))
+
+    functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
+
+    if (functionName && functionName.includes('['))
+      functionName = player.match(new RegExp(`${functionName.match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
     
-    functionName = player.split('&&(b=a.get("n"))&&(b=')[1].split('(b)')[0]
-    if (functionName.includes('[')) functionName = player.split(`${functionName.split('[')[0]}=[`)[1].split(']')[0]
-
-    const ncodeFunction = player.split(`${functionName}=function`)[1].split(')};')[0] + ')'
-    playerInfo.functions.push(new vm.Script(`const decipherNcode = function${ncodeFunction}};decipherNcode(ncode)`))
+    const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
+    playerInfo.functions.push(new vm.Script(`const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`))
 
     utils.debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)

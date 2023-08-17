@@ -561,10 +561,10 @@ async function requestHandler(req, res) {
           if (!player) player = new VoiceConnection(guildId, client)
 
           if (player.cache.track) {
-            const decodedTrack = utils.decodeTrack(track)
+            const decodedTrack = utils.decodeTrack(player.cache.track)
 
             if (!decodedTrack) {
-              utils.debugLog('play', 2, { track: track, exception: { message: 'Failed to decode track.', severity: 'common', cause: 'Invalid track' } })
+              utils.debugLog('play', 2, { track: player.cache.track, exception: { message: 'Failed to decode track.', severity: 'common', cause: 'Invalid track' } })
         
               return utils.send(req, res, {
                 timestamp: new Date(),

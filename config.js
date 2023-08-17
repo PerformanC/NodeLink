@@ -10,7 +10,7 @@ autoUpdate: [ beta? autoUpdate?, interval, [tar, zip] ]
 export default {
   version: {
     major: '1',
-    minor: '10',
+    minor: '11',
     patch: '20',
     preRelease: null
   },
