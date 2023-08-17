@@ -123,7 +123,7 @@ async function search(query, type) {
     const tracks = []
     let i = 0
 
-    search.contents.sectionListRenderer.contents[0].itemSectionRenderer.contents.forEach((video) => {
+    search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents.forEach((video) => {
       video = video.compactVideoRenderer
 
       if (video) {

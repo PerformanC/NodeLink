@@ -82,7 +82,7 @@ class VoiceConnection {
   }
 
   _getRealTime() {
-    return //(new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
+    return (new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
   }
   
   setup() {
