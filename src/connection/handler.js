@@ -153,7 +153,7 @@ async function requestHandler(req, res) {
     const decodedTrack = utils.decodeTrack(encodedTrack)
 
     if (!decodedTrack) {
-      utils.debugLog('decodetrack', 3, { headers: req.headers, error: e.message })
+      utils.debugLog('decodetrack', 3, { headers: req.headers, error: 'Failed to decode track.' })
 
       return utils.send(req, res, {
         timestamp: Date.now(),
@@ -184,7 +184,7 @@ async function requestHandler(req, res) {
       const decodedTrack = utils.decodeTrack(buffer)
 
       if (!decodedTrack) {
-        utils.debugLog('decodetracks', 3, { headers: req.headers, body: buffer, error: e.message })
+        utils.debugLog('decodetracks', 3, { headers: req.headers, body: buffer, error: 'Failed to decode track.' })
 
         return utils.send(req, res, {
           timestamp: Date.now(),
@@ -402,7 +402,7 @@ async function requestHandler(req, res) {
     const decodedTrack = utils.decodeTrack(encodedTrack)
 
     if (!decodedTrack) {
-      utils.debugLog('loadcaptions', 4, { params: parsedUrl.query, headers: req.headers, error: e.message })
+      utils.debugLog('loadcaptions', 4, { params: parsedUrl.query, headers: req.headers, error: 'Failed to decode track.' })
 
       return utils.send(req, res, {
         timestamp: Date.now(),
@@ -601,7 +601,7 @@ async function requestHandler(req, res) {
               const decodedTrack = utils.decodeTrack(buffer.encodedTrack)
 
               if (!decodedTrack) {
-                utils.debugLog('play', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'The provided track is invalid.' })
+                utils.debugLog('play', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'Failed to decode track.' })
 
                 return utils.send(req, res, {
                   timestamp: Date.now(),
