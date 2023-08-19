@@ -1,17 +1,17 @@
-import { WebSocketServer } from 'ws'
 import { createServer } from 'http'
 import { parse } from 'url'
 
 import connectionHandler from './handler.js'
 import config from '../../config.js'
 import utils from '../utils.js'
+import { WebSocketServer } from '../ws.js'
 
 if (config.options.autoUpdate[2]) setInterval(() => {
   utils.checkForUpdates()
 }, config.options.autoUpdate[2])
 
 const server = createServer(connectionHandler.requestHandler)
-const v4 = new WebSocketServer({ noServer: true })
+const v4 = new WebSocketServer()
 
 v4.on('connection', (ws, req) => {
   if (req.headers.authorization != config.server.password) {
