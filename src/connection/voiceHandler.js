@@ -305,10 +305,10 @@ class VoiceConnection {
 
       this.config.filters = filter.configure(this.config.filters)
 
-      if (oldTrack) this._stopTrack(true)
-
       filterEnabled = true
       resource = await filter.createResource(this.config.guildId, decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg)  
+
+      if (oldTrack) this._stopTrack(true)
     } else {
       this.cache.url = urlInfo.url
       resource = await this.getResource(decodedTrack.title, decodedTrack.sourceName, urlInfo.url, urlInfo.protocol)

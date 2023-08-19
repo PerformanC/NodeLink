@@ -116,11 +116,10 @@ class Filters {
             '-threads', config.filters.threads,
             '-filter_threads', config.filters.threads,
             '-filter_complex_threads', config.filters.threads,
-            '-y',
+            ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
             '-i', url,
-            ...(getTime ? ['-ss', `${new Date() - getTime}ms`] : []),
+            '-af', this.command.join(','),
             ...(endTime ? ['-t', `${endTime}ms`] : []),
-            '-af', this.command.join(','),              
             '-f', 's16le',
             '-ar', '48000',
             '-ac', '2'
@@ -145,33 +144,31 @@ class Filters {
             return resolve({ exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
           }
 
-          const file = fs.createWriteStream(`./cache/${guildId}.webm`)
-          res.pipe(file)
+          res.destroy()
 
-          file.on('finish', async () => {
-            file.close()
+          const ffmpeg = new prism.FFmpeg({
+            args: [
+              '-loglevel', '0',
+              '-analyzeduration', '0',
+              '-hwaccel', 'auto',
+              '-threads', config.filters.threads,
+              '-filter_threads', config.filters.threads,
+              '-filter_complex_threads', config.filters.threads,
+              ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
+              '-i', url,
+              '-af', this.command.join(','),
+              ...(endTime ? ['-t', `${endTime}ms`] : []),
+              '-f', 's16le',
+              '-ar', '48000',
+              '-ac', '2'
+            ]
+          })
 
-            const ffmpeg = new prism.FFmpeg({
-              args: [
-                '-loglevel', '0',
-                '-analyzeduration', '0',
-                '-hwaccel', 'auto',
-                '-threads', config.filters.threads,
-                '-filter_threads', config.filters.threads,
-                '-filter_complex_threads', config.filters.threads,
-                '-y',
-                '-i', `./cache/${guildId}.webm`,
-                ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
-                ...(endTime ? ['-t', endTime] : []),
-                '-af', this.command.join(','),              
-                '-f', 's16le',
-                '-ar', '48000',
-                '-ac', '2'
-              ]
-            })
-
+          ffmpeg.process.stdout.once('data', () => {
             return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
           })
+
+          ffmpeg.on('error', (err) => console.error(err))
         })
       }
     })
