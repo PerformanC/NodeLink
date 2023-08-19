@@ -31,18 +31,22 @@ function startInnertube() {
     })
 
     playerInfo.innertube = {
+      thirdParty: {
+        embedUrl: 'https://google.com'
+      },
       client: {
-        hl: 'en',
-        gl: 'US',
-        userAgent: 'Mozilla/5.0 (Android 13; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0,gzip(gfe)',
+        // hl: 'en',
+        // gl: 'US',
+        // userAgent: 'Mozilla/5.0 (Android 13; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0,gzip(gfe)',
         clientName: 'ANDROID',
         clientVersion: '17.29.34',
-        osName: 'Android',
-        osVersion: '13',
-        originalUrl: 'https://www.youtube.com/',
-        platform: 'MOBILE',
-        clientFormFactor: 'UNKNOWN_FORM_FACTOR',
-        androidSdkVersion: '33'
+        androidSdkVersion: '33',
+        // osName: 'Android',
+        // osVersion: '13',
+        // originalUrl: 'https://www.youtube.com/',
+        // platform: 'MOBILE',
+        // clientFormFactor: 'UNKNOWN_FORM_FACTOR',
+        clientScreen: 'EMBED'
       }
     }
 
@@ -130,7 +134,9 @@ async function search(query, type) {
     const tracks = []
     let i = 0
 
-    search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents.forEach((video) => {
+    const videos = search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+
+    videos.forEach((video, index) => {
       video = video.compactVideoRenderer
 
       if (video) {
@@ -153,19 +159,19 @@ async function search(query, type) {
           info: track
         })
       }
-    })
 
-    if (tracks.length == 0) {
-      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
-
-      return resolve({ loadType: 'empty', data: {} })
-    }
+      if (index == videos.length - 1 || i == config.options.maxResultsLength - 1) {
+        if (tracks.length == 0) {
+          utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
     
-    if (tracks.length > config.options.maxResultsLength) tracks.length = config.options.maxResultsLength
-
-    utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
-
-    return resolve({ loadType: 'search', data: tracks })
+          return resolve({ loadType: 'empty', data: {} })
+        }
+    
+        utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
+    
+        return resolve({ loadType: 'search', data: tracks })
+      }
+    })
   })
 }
 
@@ -367,7 +373,7 @@ async function retrieveStream(identifier, type) {
       await utils.sleep(200)
     }
 
-    const videos = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${utils.randomLetters(12)}&id=${identifier}`, {
+    const videos = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
         videoId: identifier,
@@ -380,6 +386,9 @@ async function retrieveStream(identifier, type) {
         contentCheckOk: true,
         racyCheckOk: true,
         params: 'CgIQBg'
+      },
+      headers: {
+        'User-Agent': 'com.google.android.youtube/17.29.34 (Linux; U; Android 13) gzip'
       },
       method: 'POST'
     })
@@ -398,19 +407,15 @@ async function retrieveStream(identifier, type) {
       default: itag = 251; break
     }
 
-    //console.log(videos.streamingData)
-
     const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag == itag)
-    let url = audio.url
 
-    if (audio.signatureCipher) {
-      const args = new URLSearchParams(audio.signatureCipher)
+    const args = new URLSearchParams(audio.url || audio.signatureCipher || audio.cipher)
+    let url = decodeURIComponent(audio.url || args.get('url'))
 
-      const components = new URL(decodeURIComponent(args.get('url')))
-      components.searchParams.set(args.get('sp'), playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) }))
+    url += '&ratebypass=yes&range=0-'
 
-      url = components.toString()
-    }
+    if (audio.signatureCipher || audio.cipher)
+      url += `&${args.get('sp')}=${playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) })}`
 
     resolve({ url, protocol: 'https' })
   })
@@ -442,7 +447,7 @@ async function loadCaptions(decodedTrack) {
     })
 
     if (video.playabilityStatus.status != 'OK') {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: decodedTrack.title, message: video.playabilityStatus.reason })
+      utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', query: decodedTrack.title, message: video.playabilityStatus.reason })
 
       return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }

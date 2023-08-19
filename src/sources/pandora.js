@@ -92,7 +92,7 @@ async function search(query) {
         playlistInfo: {}
       })
 
-      if (index == data.results.length - 1) {
+      if (index == data.results.length - 1 || index == config.options.maxResultsLength - 1) {
         const new_tracks = []
         annotationKeys.forEach((key2, index2) => {
           tracks.forEach((track2, index3) => {
@@ -100,8 +100,6 @@ async function search(query) {
               track2.info.position = index2
               new_tracks.push(track2)
             }
-            
-            if (new_tracks.length > config.options.maxResultsLength) new_tracks.length = config.options.maxResultsLength
 
             utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
 
@@ -200,7 +198,7 @@ async function loadFrom(query) {
               playlistInfo: {}
             })
       
-            if (index == keys.length - 1) {
+            if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
               utils.debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', tracksLen: tracks.length, query })
 
               const new_tracks = []
@@ -262,7 +260,7 @@ async function loadFrom(query) {
               playlistInfo: {}
             })
       
-            if (index == keys.length - 1) {
+            if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
               utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
 
               const new_tracks = []
@@ -357,7 +355,7 @@ async function loadFrom(query) {
             playlistInfo: {}
           })
     
-          if (index == keys.length - 1) {
+          if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
             const new_tracks = []
             keys.forEach((key2, index2) => {
               tracks.forEach((track2, index3) => {

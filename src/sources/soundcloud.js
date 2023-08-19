@@ -43,6 +43,8 @@ async function loadFrom(url) {
         const notLoaded = []
 
         data.tracks.forEach((item, index) => {
+          if (tracks.length > config.options.maxAlbumPlaylistLength) return
+
           if (!item.title) {
             notLoaded.push(item.id.toString())
             return
@@ -58,7 +60,7 @@ async function loadFrom(url) {
             title: item.title,
             uri: item.permalink_url,
             artworkUrl: item.artwork_url,
-            isrc: item.publisher_metadata ? item.publisher_metadata.isrc : null,
+            isrc: item.publisher_metadata?.isrc,
             sourceName: 'soundcloud'
           }
 
@@ -73,6 +75,8 @@ async function loadFrom(url) {
           let stop = false
 
           while (notLoaded.length && !stop) {
+            if (tracks.length > config.options.maxAlbumPlaylistLength) return
+
             const notLoadedLimited = notLoaded.slice(0, 50)
             const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
@@ -104,8 +108,6 @@ async function loadFrom(url) {
               stop = true
           }
         }
-
-        if (tracks.length > config.options.maxAlbumPlaylistLength) tracks.length = config.options.maxAlbumPlaylistLength
 
         utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', tracksLen: tracks.length, query: url })
 
@@ -161,15 +163,15 @@ async function search(query) {
           pluginInfo: {}
         })
       }
-    })
 
-    if (tracks.length > config.options.maxResultsLength) tracks.length = config.options.maxResultsLength
-      
-    utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+      if (index == data.collection.length - 1 || tracks.length == config.options.maxResultsLength - 1) {
+        utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
 
-    return resolve({
-      loadType: 'search',
-      data: tracks
+        return resolve({
+          loadType: 'search',
+          data: tracks
+        })
+      }
     })
   })
 }

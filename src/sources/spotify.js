@@ -154,7 +154,7 @@ async function search(query) {
             })
           }
 
-          if (index == data.data.searchV2.tracksV2.items.length - 1) {
+          if (index == data.data.searchV2.tracksV2.items.length - 1 || index == config.options.maxResultsLength - 1) {
             const new_tracks = []
             data.data.searchV2.tracksV2.items.forEach((items2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -162,8 +162,6 @@ async function search(query) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
-
-                if (new_tracks.length > config.options.maxResultsLength) new_tracks.length = config.options.maxResultsLength
 
                 utils.debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: new_tracks.length, query })
 
@@ -347,7 +345,7 @@ async function loadFrom(query, type) {
             pluginInfo: {}
           })
 
-          if (index == data.tracks.items.length - 1) {
+          if (index == data.tracks.items.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
             const new_tracks = []
             data.tracks.items.forEach((item2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -355,8 +353,6 @@ async function loadFrom(query, type) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
-
-                if (new_tracks.length > config.options.maxAlbumPlaylistLength) new_tracks.length = config.options.maxAlbumPlaylistLength
 
                 utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], track: { title: data.name, author: data.owner.display_name }, sourceName: 'Spotify', tracksLen: new_tracks.length, query })
 
@@ -411,7 +407,7 @@ async function loadFrom(query, type) {
             pluginInfo: {}
           })
 
-          if (index == data.episodes.items.length - 1) {
+          if (index == data.episodes.items.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
             utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', tracksLen: tracks.length, query })
 
             const new_tracks = []

@@ -96,7 +96,7 @@ async function loadFrom(query, type) {
             pluginInfo: {}
           })
 
-          if (index == data.tracks.data.length - 1) {
+          if (index == data.tracks.data.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
             const new_tracks = []
             data.tracks.data.forEach((item2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -104,8 +104,6 @@ async function loadFrom(query, type) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
-
-                if (new_tracks.length > config.options.maxAlbumPlaylistLength) new_tracks.length = config.options.maxAlbumPlaylistLength
 
                 utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Deezer', track, query })
 
