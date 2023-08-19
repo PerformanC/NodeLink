@@ -160,8 +160,8 @@ async function search(query, type) {
 
       return resolve({ loadType: 'empty', data: {} })
     }
-
-    if (tracks.length > config.options.maxResultsLength) tracks.length = config.options.maxResults
+    
+    if (tracks.length > config.options.maxResultsLength) tracks.length = config.options.maxResultsLength
 
     utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
 
@@ -397,6 +397,8 @@ async function retrieveStream(identifier, type) {
       case 'low': itag = 249; break
       default: itag = 251; break
     }
+
+    //console.log(videos.streamingData)
 
     const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag == itag)
     let url = audio.url
