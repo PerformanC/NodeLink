@@ -390,7 +390,7 @@ async function requestHandler(req, res) {
 
     const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
 
-    if (!identifier) return utils.send(req, res, {
+    if (!encodedTrack) return utils.send(req, res, {
       timestamp: Date.now(),
       status: 400,
       error: 'Bad Request',
@@ -414,6 +414,8 @@ async function requestHandler(req, res) {
       }, 400)
     }
 
+    const language = new URLSearchParams(parsedUrl.query).get('language')
+
     let captions = null
 
     switch (decodedTrack.sourceName) {
@@ -423,9 +425,34 @@ async function requestHandler(req, res) {
           console.log('[\u001b[31mloadCaptions\u001b[37m]: No possible search source found.')
 
           captions = { loadType: 'empty', data: {} }
+
+          break
         }
 
-        captions = await sources.youtube.loadCaptions(decodedTrack)
+        captions = await sources.youtube.loadCaptions(decodedTrack, language)
+
+        break
+      }
+      case 'spotify': {
+        if (!config.search.sources.spotify || !config.search.sources.youtube) {
+          console.log('[\u001b[31mloadCaptions\u001b[37m]: No possible search source found.')
+
+          captions = { loadType: 'empty', data: {} }
+
+          break
+        }
+
+        const search = await sources.youtube.search(`${decodedTrack.info.title} - ${decodedTrack.info.author}`, 'youtube')
+
+        if (search.loadType == 'LOAD_FAILED') {
+          console.log('[\u001b[31mloadCaptions\u001b[37m]: Failed to load captions.')
+
+          captions = { loadType: 'failed', data: {} }
+
+          break
+        }
+
+        captions = await sources.youtube.loadCaptions(search.data.tracks[0], language)
 
         break
       }

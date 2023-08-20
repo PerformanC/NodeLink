@@ -452,7 +452,7 @@ function debugLog(name, type, options) {
         }
         case 'trackStuck': {
           if (config.debug.track.stuck)
-            console.warn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: [\u001b[33m${config.options.threshold}ms have passed.[\u001b[37m`)
+            console.warn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: [\u001b[33m${config.options.threshold}ms have passed.]\u001b[37m`)
 
             break
         }
