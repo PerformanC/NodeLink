@@ -19,13 +19,15 @@ class WebsocketConnection extends EventEmitter {
     socket.write(headers.join('\r\n') + '\r\n\r\n')
 
     socket.on('data', (data) => {
-      console.log(data)
-
       this.emit('message', data)
     })
 
     socket.on('close', () => {
-      this.emit('close')
+      this.emit('close', 1000, 'Connection closed')
+    })
+
+    socket.on('end', () => {
+      this.emit('close', 1000, 'Connection ended')
     })
 
     socket.on('error', (err) => {
@@ -34,6 +36,8 @@ class WebsocketConnection extends EventEmitter {
   }
 
   send(data) {
+    if (this.socket.destroyed || !this.socket.writable) return false
+
     const payload = Buffer.from(data, 'utf-8')
     const payloadLength = payload.length
 
@@ -60,13 +64,52 @@ class WebsocketConnection extends EventEmitter {
       header.writeBigUInt64BE(BigInt(payloadLength), 2)
     }
 
-    this.socket.write(Buffer.concat([header, payload]))
+    if (!this.socket.write(Buffer.concat([header, payload]))) {
+      this.socket.end()
+
+      return false
+    }
+
+    return true
+  }
+
+  sendFrame(data, options) {
+    let payloadStartIndex = 2
+    let payloadLength = options.len
+
+    if (options.len >= 65536) {
+      payloadStartIndex += 8
+      payloadLength = 127
+    } else if (options.len > 125) {
+      payloadStartIndex += 2
+      payloadLength = 126
+    }
+
+    const target = Buffer.allocUnsafe(payloadStartIndex)
+
+    target[0] = options.fin ? options.opcode | 0x80 : options.opcode
+    target[1] = payloadLength
+
+    if (payloadLength == 126) {
+      target.writeUInt16BE(options.len, 2)
+    } else if (payloadLength == 127) {
+      target[2] = target[3] = 0
+      target.writeUIntBE(options.len, 4, 6)
+    }
+
+    if (!this.socket.write(Buffer.concat([target, data]))) {
+      this.socket.end()
+
+      return false
+    }
 
     return true
   }
 
   close() {
-    this.socket.end()
+    if (socket.destroyed || !socket.writable) return false
+
+    this.sendFrame(Buffer.alloc(0), { len: 0, fin: true, opcode: 0x08 })
 
     return true
   }
