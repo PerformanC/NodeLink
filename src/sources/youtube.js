@@ -468,7 +468,7 @@ async function loadCaptions(decodedTrack, language) {
       })
 
       resolve({
-        loadType: 'captions',
+        loadType: 'caption',
         data: {
           name: caption.languageCode,
           url: caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'),
