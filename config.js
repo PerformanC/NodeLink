@@ -65,6 +65,11 @@ export default {
         request: true,
         results: true,
         exception: true
+      },
+      loadcaptions: {
+        request: true,
+        results: true,
+        exception: true
       }
     }
   },
