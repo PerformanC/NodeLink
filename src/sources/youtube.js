@@ -55,15 +55,15 @@ function startInnertube() {
 
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
 
-    let functionName = player.match(/a\.set\("alr","yes"\);c&&\(c=(\w+)\(decodeURIComponent\((.*?)\)\)/)[1]
+    let functionName = player.match(/a.set\("alr","yes"\);c&&\(c=(.*?)\(/)[1]
     const decipherFunctionName = functionName
 
-    const sigFunction = `function ${decipherFunctionName}(a)${player.match(new RegExp(`${functionName}=function\\(a\\)(.*?)\\)\\};`))[1]}`
+    const sigFunction = player.match(new RegExp(`${functionName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}=function\\(a\\){(.*)\\)};`, 'g'))[0]
 
     functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
     const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
 
-    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction})};${decipherFunctionName}(sig);`))
+    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction}${decipherFunctionName}(sig);`))
 
     functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
 
