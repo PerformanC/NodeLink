@@ -315,8 +315,7 @@ async function loadFrom(query, type) {
         const tracks = []
         let index = 0
 
-        data.tracks.items.pop()
-
+        data.tracks.items = data.tracks.items.filter((item) => item.track != null)
         data.tracks.items.forEach(async (item) => {
           let search
           if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)

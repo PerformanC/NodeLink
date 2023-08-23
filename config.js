@@ -10,8 +10,8 @@ autoUpdate: [ beta? autoUpdate?, interval, [tar, zip] ]
 export default {
   version: {
     major: '1',
-    minor: '11',
-    patch: '21',
+    minor: '12',
+    patch: '23',
     preRelease: null
   },
   server: {
@@ -62,6 +62,11 @@ export default {
         exception: true
       },
       search: {
+        request: true,
+        results: true,
+        exception: true
+      },
+      loadcaptions: {
         request: true,
         results: true,
         exception: true

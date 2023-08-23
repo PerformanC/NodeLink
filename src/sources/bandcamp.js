@@ -29,7 +29,7 @@ async function loadFrom(url) {
       sourceName: 'bandcamp'
     }
 
-    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query })
+    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query: url })
 
     resolve({
       loadType: 'track',

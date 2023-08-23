@@ -35,18 +35,13 @@ function startInnertube() {
         embedUrl: 'https://google.com'
       },
       client: {
-        // hl: 'en',
-        // gl: 'US',
-        // userAgent: 'Mozilla/5.0 (Android 13; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0,gzip(gfe)',
         clientName: 'ANDROID',
         clientVersion: '17.29.34',
         androidSdkVersion: '33',
-        // osName: 'Android',
-        // osVersion: '13',
-        // originalUrl: 'https://www.youtube.com/',
-        // platform: 'MOBILE',
-        // clientFormFactor: 'UNKNOWN_FORM_FACTOR',
-        clientScreen: 'EMBED'
+        screenDensityFloat: 1,
+        screenHeightPoints: 1080,
+        screenPixelDensity: 1,
+        screenWidthPoints: 1920
       }
     }
 
@@ -60,15 +55,15 @@ function startInnertube() {
 
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
 
-    let functionName = player.match(/a\.set\("alr","yes"\);c&&\(c=(\w+)\(decodeURIComponent\((.*?)\)\)/)[1]
+    let functionName = player.match(/a.set\("alr","yes"\);c&&\(c=(.*?)\(/)[1]
     const decipherFunctionName = functionName
 
-    const sigFunction = `function ${decipherFunctionName}(a)${player.match(new RegExp(`${functionName}=function\\(a\\)(.*?)\\)\\};`))[1]}`
+    const sigFunction = player.match(new RegExp(`${functionName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}=function\\(a\\){(.*)\\)};`, 'g'))[0]
 
     functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
     const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
 
-    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction})};${decipherFunctionName}(sig);`))
+    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction}${decipherFunctionName}(sig);`))
 
     functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
 
@@ -417,11 +412,14 @@ async function retrieveStream(identifier, type) {
     if (audio.signatureCipher || audio.cipher)
       url += `&${args.get('sp')}=${playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) })}`
 
+    if (args.get('n'))
+      url += `&${args.get('n')}=${playerInfo.functions[1].runInNewContext({ ncode: decodeURIComponent(args.get('n')) })}`
+
     resolve({ url, protocol: 'https' })
   })
 }
 
-async function loadCaptions(decodedTrack) {
+async function loadCaptions(decodedTrack, language) {
   return new Promise(async (resolve) => {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
@@ -447,24 +445,73 @@ async function loadCaptions(decodedTrack) {
     })
 
     if (video.playabilityStatus.status != 'OK') {
-      utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', query: decodedTrack.title, message: video.playabilityStatus.reason })
+      utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
 
       return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
 
-    const captions = video.captions.playerCaptionsTracklistRenderer.captionTracks.map((caption) => {
-      return {
-        name: caption.name.simpleText,
-        url: caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'),
-        rtl: caption.rtl || false,
-        translatable: caption.isTranslatable
-      }
-    })
+    if (language) {
+      const caption = video.captions.playerCaptionsTracklistRenderer.captionTracks.find((caption) => {
+        return caption.languageCode == language
+      })
 
-    resolve({
-      loadType: 'captions',
-      data: captions
-    })
+      if (!caption) {
+        utils.debugLog('loadcaptions', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
+
+        return resolve({ loadType: 'empty', data: {} })
+      }
+
+      const captionsData = await utils.makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+        utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+
+        return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
+      })
+
+      resolve({
+        loadType: 'caption',
+        data: {
+          name: caption.languageCode,
+          url: caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'),
+          data: captionsData,
+          rtl: caption.rtl || false,
+          translatable: caption.isTranslatable
+        }
+      })
+    } else {
+      const captions = []
+      let i = 0
+
+      if (!video.captions)
+        return resolve({ loadType: 'empty', data: {} })
+
+      video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
+        const captionData = await utils.makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+          utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+
+          return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
+        })
+
+        captions.push({
+          name: caption.languageCode,
+          url: caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'),
+          data: captionData,
+          rtl: caption.rtl || false,
+          translatable: caption.isTranslatable
+        })
+
+        if (i == video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
+          if (captions.length == 0) {
+            utils.debugLog('loadcaptions', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
+
+            return resolve({ loadType: 'empty', data: {} })
+          }
+
+          utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author } })
+
+          return resolve({ loadType: 'captions', data: captions })
+        }
+      })
+    }
   })
 }
 

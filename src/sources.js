@@ -29,7 +29,7 @@ async function getTrackURL(track) {
         break
       }
       case 'bandcamp': {
-        resolve(bandcamp.retrieveStream(track.identifier))
+        resolve(bandcamp.retrieveStream(track.uri))
 
         break
       }

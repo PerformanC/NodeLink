@@ -2,6 +2,7 @@ import fs from 'node:fs'
 
 import https from 'node:https'
 import http from 'node:http'
+import { PassThrough } from 'node:stream'
 
 import utils from '../utils.js'
 import config from '../../config.js'
@@ -44,6 +45,7 @@ class VoiceConnection {
       url: null,
       pauseTime: [ 0, 0 ],
       track: null,
+      
     }
     this.stateInterval
   
@@ -244,16 +246,24 @@ class VoiceConnection {
             resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
           }
 
-          res.destroy()
-
           this.cache.url = url
 
+          const stream = new PassThrough()
+
+          res.on('data', (chunk) => {
+            stream.write(chunk)
+          })
+
+          res.on('end', () => {
+            stream.end()
+          })
+
           if ([ 'youtube', 'ytmusic' ].includes(sourceName) || ([ 'deezer', 'pandora', 'spotify' ].includes(sourceName) && config.search.defaultSearchSource == 'youtube'))
-            resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true }) })
+            resolve({ stream: djsVoice.createAudioResource(stream, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true }) })
           else
-            resolve({ stream: djsVoice.createAudioResource(url, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
+            resolve({ stream: djsVoice.createAudioResource(stream, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
         }).on('error', (error) => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, message: error.message })
+          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: error.message })
 
           resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
         })
@@ -370,6 +380,8 @@ class VoiceConnection {
   }
 
   stop() {
+    if (!this.config.track) return this.config
+
     utils.debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'stopped' })
 
     this.client.ws.send(JSON.stringify({
