@@ -39,6 +39,8 @@ function setupConnection(ws, req) {
 
     const client = clients.get(sessionId)
 
+    if (!client) return;
+
     if (client.timeoutFunction) {
       client.timeoutFunction = setTimeout(() => {
         if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
@@ -597,7 +599,7 @@ async function requestHandler(req, res) {
                 timestamp: new Date(),
                 status: 400,
                 trace: null,
-                message: 'The provided track is invalid.',
+                message: 'The cached track is invalid.',
                 path: parsedUrl.pathname
               }, 400)
             }

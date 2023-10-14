@@ -1,6 +1,36 @@
 import EventEmitter from 'node:events'
 import crypto from 'node:crypto'
 
+function parseFrameHeader(data) {
+  let startIndex = 2
+
+  const opcode = data[0] & 0b00001111
+
+  if (opcode == 0x0) startIndex += 2
+
+  const isMasked = !!(data[1] & 0b10000000)
+  let length = data[1] & 0b01111111
+
+  if (length == 126) {
+    startIndex += 2
+    length = data.readUInt16BE(2)
+  } else if (length == 127) {
+    startIndex += 8
+    length = data.readBigUInt64BE(2)
+  }
+
+  if (isMasked) {
+    data.slice(startIndex, startIndex + 4)
+    startIndex += 4
+  }
+
+  return {
+    opcode,
+    isMasked,
+    buffer: data.slice(startIndex, startIndex + length)
+  }
+}
+
 class WebsocketConnection extends EventEmitter {
   constructor(req, socket, head) {
     super()
@@ -19,17 +49,26 @@ class WebsocketConnection extends EventEmitter {
 
     socket.write(headers.join('\r\n') + '\r\n\r\n')
 
-    socket.on('close', () => {
-      this.emit('close', 1006, 'Connection closed')
+    socket.on('data', (data) => {
+      const { opcode, buffer } = parseFrameHeader(data)
+      
+      if (opcode == 0x08) {
+        if (buffer.length == 0) {
+          this.emit('close', undefined, '')
+        } else {
+          const code = buffer.readUInt16BE(0)
+          const reason = buffer.slice(2).toString('utf-8')
+
+          this.emit('close', code, reason)
+        }
+
+        return socket.end()
+      }
     })
 
-    socket.on('end', () => {
-      this.emit('close', 1006, 'Connection ended')
-    })
+    socket.on('error', (err) => this.emit('error', err))
 
-    socket.on('error', (err) => {
-      this.emit('error', err)
-    })
+    socket.on('end', () => this.emit('close', 1006, ''))
   }
 
   send(data) {
