@@ -45,7 +45,7 @@ class VoiceConnection {
       url: null,
       pauseTime: [ 0, 0 ],
       track: null,
-      
+      volume: 100
     }
     this.stateInterval
   
@@ -349,6 +349,11 @@ class VoiceConnection {
     if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
     this.player.play(resource.stream)
 
+    if (this.cache.volume != 100) {
+      this.player.state.resource.volume.setVolume(this.cache.volume)
+      this.config.volume = 100
+    }
+
     if (this.config.paused) {
       this.cache.pauseTime[1] = Date.now()
 
@@ -406,6 +411,12 @@ class VoiceConnection {
   }
 
   volume(volume) {
+    if (!this.player.state.resource) {
+      this.cache.volume = volume / 100
+
+      return this.config
+    }
+
     this.player.state.resource.volume.setVolume(volume / 100)
 
     this.config.volume = volume / 100
