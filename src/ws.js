@@ -51,10 +51,10 @@ class WebsocketConnection extends EventEmitter {
 
     socket.on('data', (data) => {
       const { opcode, buffer } = parseFrameHeader(data)
-      
+
       if (opcode == 0x08) {
         if (buffer.length == 0) {
-          this.emit('close', undefined, '')
+          this.emit('close', 1006, '')
         } else {
           const code = buffer.readUInt16BE(0)
           const reason = buffer.slice(2).toString('utf-8')
@@ -72,41 +72,9 @@ class WebsocketConnection extends EventEmitter {
   }
 
   send(data) {
-    if (this.socket.destroyed || !this.socket.writable) return false
-
     const payload = Buffer.from(data, 'utf-8')
-    const payloadLength = payload.length
 
-    let headerLength = 2
-
-    if (payloadLength <= 125) {
-      // No additional bytes required in header
-    } else if (payloadLength <= 0xFFFF) {
-      headerLength += 2
-    } else {
-      headerLength += 8
-    }
-
-    const header = Buffer.alloc(headerLength)
-    header[0] = 0x01 | 0x80
-
-    if (payloadLength <= 125) {
-      header[1] = payloadLength
-    } else if (payloadLength <= 0xFFFF) {
-      header[1] = 126
-      header.writeUInt16BE(payloadLength, 2)
-    } else {
-      header[1] = 127
-      header.writeBigUInt64BE(BigInt(payloadLength), 2)
-    }
-
-    if (!this.socket.write(Buffer.concat([header, payload]))) {
-      this.socket.end()
-
-      return false
-    }
-
-    return true
+    return this.sendFrame(payload, { len: payload.length, fin: true, opcode: 0x01 })
   }
 
   sendFrame(data, options) {
@@ -132,19 +100,17 @@ class WebsocketConnection extends EventEmitter {
       header.writeUIntBE(options.len, 4, 6)
     }
 
-    if (!this.socket.write(Buffer.concat([header, data]))) {
-      this.socket.end()
-
-      return false
-    }
+    this.socket.write(Buffer.concat([header, data]))
 
     return true
   }
 
-  close() {
-    if (this.socket.destroyed || !this.socket.writable) return false
+  close(code, reason) {
+    const data = Buffer.allocUnsafe(2 + Buffer.byteLength(reason || 'normal close'))
+    data.writeUInt16BE(code || 1000)
+    data.write(reason || 'normal close', 2)
 
-    this.sendFrame(Buffer.alloc(0), { len: 0, fin: true, opcode: 0x08 })
+    this.sendFrame(data, { len: data.length, fin: true, opcode: 0x08 })
 
     return true
   }
@@ -157,6 +123,8 @@ class WebSocketServer extends EventEmitter {
 
   handleUpgrade(req, socket, head, callback) {
     const connection = new WebsocketConnection(req, socket, head)
+
+    if (!socket.readable || !socket.writable) return socket.destroy()
 
     callback(connection)
   }

@@ -34,6 +34,30 @@ function setupConnection(ws, req) {
     }))
   }, config.options.statsInterval)
 
+  ws.on('error', (err) => {
+    utils.debugLog('disconnect', 3, { code: 1006, reason: `Error: ${err.message}` })
+
+    if (clients.has(sessionId)) {
+      const client = clients.get(sessionId)
+
+      if (client.timeoutFunction) {
+        client.timeoutFunction = setTimeout(() => {
+          if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
+            sources.youtube.stopInnertube()
+
+          client.players.forEach((player) => player.destroy())
+          clients.delete(sessionId)
+        })
+      } else {
+        if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
+          sources.youtube.stopInnertube()
+
+        clients.get(sessionId).players.forEach((player) => player.destroy())
+        clients.delete(sessionId)
+      }
+    }
+  })
+
   ws.on('close', (code, reason) => {
     utils.debugLog('disconnect', 3, { code, reason })
 
@@ -53,7 +77,7 @@ function setupConnection(ws, req) {
       if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
         sources.youtube.stopInnertube()
 
-      clients.get(sessionId).players.forEach((player) => player.destroy())
+      client.players.forEach((player) => player.destroy())
       clients.delete(sessionId)
     }
   })

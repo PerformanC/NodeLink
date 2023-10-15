@@ -10,6 +10,8 @@ import constants from '../../constants.js'
 import sources from '../sources.js'
 import Filters from '../filters.js'
 
+import inputHandler from './inputHandler.js'
+
 import * as djsVoice from '@discordjs/voice'
 
 const adapters = new Map()
@@ -92,6 +94,8 @@ class VoiceConnection {
 
     this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: voiceAdapterCreator(this.client.userId, this.config.guildId) })
     this.player = djsVoice.createAudioPlayer()
+
+    this.connection.receiver.speaking.on('start', (userId) => inputHandler.handleStartSpeaking(this.connection.receiver, userId, this.config.guildId))
 
     this.connection.on('stateChange', async (oldState, newState) => {
       switch (newState.status) {
@@ -208,6 +212,7 @@ class VoiceConnection {
     this.cache.url = null
 
     if (this.player) this.player.stop(true)
+    if (this.connection) this.connection.destroy()
 
     if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
 
