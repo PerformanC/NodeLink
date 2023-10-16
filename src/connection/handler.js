@@ -1,5 +1,5 @@
 import os from 'node:os'
-import { URLSearchParams, parse } from 'node:url'
+import { URLSearchParams, URL } from 'node:url'
 
 import utils from '../utils.js'
 import config from '../../config.js'
@@ -118,7 +118,7 @@ function setupConnection(ws, req) {
 }
 
 async function requestHandler(req, res) {
-  const parsedUrl = parse(req.url)
+  const parsedUrl = new URL(req.url)
 
   if (!req.headers || req.headers['authorization'] != config.server.password) {
     res.writeHead(401, { 'Content-Type': 'text/plain' })
