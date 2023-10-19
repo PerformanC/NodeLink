@@ -31,31 +31,21 @@ function setupConnection(ws, req) {
         lavalinkLoad: 0
       },
       frameStats: null
-    }))
+    }), 200)
   }, config.options.statsInterval)
 
   ws.on('error', (err) => {
     utils.debugLog('disconnect', 3, { code: 1006, reason: `Error: ${err.message}` })
 
-    if (clients.has(sessionId)) {
-      const client = clients.get(sessionId)
+    const client = clients.get(sessionId)
 
-      if (client.timeoutFunction) {
-        client.timeoutFunction = setTimeout(() => {
-          if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
-            sources.youtube.stopInnertube()
+    if (!client) return;
 
-          client.players.forEach((player) => player.destroy())
-          clients.delete(sessionId)
-        })
-      } else {
-        if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
-          sources.youtube.stopInnertube()
+    if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
+      sources.youtube.stopInnertube()
 
-        clients.get(sessionId).players.forEach((player) => player.destroy())
-        clients.delete(sessionId)
-      }
-    }
+    client.players.forEach((player) => player.destroy())
+    clients.delete(sessionId)
   })
 
   ws.on('close', (code, reason) => {
@@ -65,34 +55,22 @@ function setupConnection(ws, req) {
 
     if (!client) return;
 
-    if (client.timeoutFunction) {
-      client.timeoutFunction = setTimeout(() => {
-        if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
-          sources.youtube.stopInnertube()
+    if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
+      sources.youtube.stopInnertube()
 
-        client.players.forEach((player) => player.destroy())
-        clients.delete(sessionId)
-      })
-    } else {
-      if (clients.size == 1 && config.search.sources.youtube || config.search.sources.youtubeMusic)
-        sources.youtube.stopInnertube()
-
-      client.players.forEach((player) => player.destroy())
-      clients.delete(sessionId)
-    }
+    client.players.forEach((player) => player.destroy())
+    clients.delete(sessionId)
   })
 
   if (req.headers['session-id']) {
     sessionId = req.headers['session-id']
 
-    if (!clients.has(sessionId))
+    const client = clients.get(sessionId)
+
+    if (!client)
       utils.debugLog('failedResume', 3, { headers: req.headers })
     else {
       utils.debugLog('resume', 3, { headers: req.headers })
-
-      const client = clients.get(sessionId)
-
-      clearTimeout(client.timeoutFunction)
 
       clients.set(sessionId, { ...client, timeout: null })
 
@@ -118,10 +96,11 @@ function setupConnection(ws, req) {
 }
 
 async function requestHandler(req, res) {
-  const parsedUrl = new URL(req.url)
+  const parsedUrl = new URL(req.url, `http://${req.headers.host}`)
 
   if (!req.headers || req.headers['authorization'] != config.server.password) {
     res.writeHead(401, { 'Content-Type': 'text/plain' })
+
     return res.end('Unauthorized')
   }
 
@@ -155,7 +134,7 @@ async function requestHandler(req, res) {
         if (typeof config.search.sources[source] == 'boolean') return source
         return source.enabled
       }),
-      filters: Object.keys(config.filters.list).filter((filter) => filter),
+      filters: Object.keys(config.filters.list).filter((filter) => config.filters.list[filter]),
       plugins: []
     }, 200)
   }
@@ -252,20 +231,22 @@ async function requestHandler(req, res) {
         }, 400)
       }
 
-      try {
-        utils.send(req, res, utils.encodeTrack(buffer), 200)
-      } catch (e) {
+      const encodedTrack = utils.encodeTrack(buffer)
+
+      if (!encodedTrack) {
         utils.debugLog('encodetrack', 3, { headers: req.headers, body: buffer, error: e.message })
 
         return utils.send(req, res, {
           timestamp: Date.now(),
-          status: 500,
-          error: 'Internal Server Error',
-          trace: e.stack,
-          message: e.message,
+          status: 400,
+          error: 'Bad Request',
+          trace: null,
+          message: 'Invalid track object',
           path: '/v4/encodetrack'
-        }, 500)
+        }, 400)
       }
+
+      utils.send(req, res, encodedTrack, 200)
     })
   }
 
@@ -296,20 +277,22 @@ async function requestHandler(req, res) {
           }, 400)
         }
 
-        try {
-          tracks.push(utils.encodeTrack(track))
-        } catch (e) {
+        const encodedTrack = utils.encodeTrack(track)
+
+        if (!encodedTrack) {
           utils.debugLog('encodetracks', 1, { headers: req.headers, body: buffer, error: e.message })
 
           return utils.send(req, res, {
             timestamp: Date.now(),
-            status: 500,
-            error: 'Internal Server Error',
-            trace: e.stack,
-            message: e.message,
+            status: 400,
+            error: 'Bad Request',
+            trace: null,
+            message: 'Invalid track object',
             path: '/v4/encodetracks'
-          }, 500)
+          }, 400)
         }
+
+        tracks.push(encodedTrack)
       })
 
       utils.send(req, res, tracks, 200)
@@ -345,9 +328,9 @@ async function requestHandler(req, res) {
 
     utils.debugLog('loadtracks', 1, { params: parsedUrl.query, headers: req.headers })
 
-    const identifier = new URLSearchParams(parsedUrl.query).get('identifier')
+    const identifier = parsedUrl.searchParams.get('identifier')
 
-    let search
+    let search = null
 
     const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
     if (config.search.sources.youtube && (ytSearch || /^(https?:\/\/)?(www\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier)))
@@ -570,8 +553,19 @@ async function requestHandler(req, res) {
       if (req.method == 'GET') {    
         utils.debugLog('getPlayer', 1, { params: parsedUrl.query, headers: req.headers })
     
-        const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
+
+        if (!guildId) {
+          utils.debugLog('getPlayer', 1, { params: parsedUrl.query, headers: req.headers, error: 'Missing guildId parameter.' })
+
+          return utils.send(req, res, {
+            timestamp: new Date(),
+            status: 400,
+            trace: null,
+            message: 'Missing guildId parameter.',
+            path: parsedUrl.pathname
+          }, 400)
+        }
     
         let player = client.players.get(guildId)
     
@@ -594,19 +588,13 @@ async function requestHandler(req, res) {
           utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
 
           if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
-            let missing = []
-            if (!buffer.voice.endpoint) missing.push('endpoint')
-            if (!buffer.voice.token) missing.push('token')
-            if (!buffer.voice.sessionId) missing.push('sessionId')
-            missing = missing.join(', ')
-
-            utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: `Missing members on body: ${missing}.` })
+            utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: `Invalid voice object.` })
 
             return utils.send(req, res, {
               timestamp: new Date(),
               status: 400,
               trace: null,
-              message: `Missing members on body: ${missing}.`,
+              message: `Invalid voice object.`,
               path: parsedUrl.pathname
             }, 400)
           }

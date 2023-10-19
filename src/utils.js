@@ -195,35 +195,39 @@ class EncodeClass {
   }
 
   result() {
-    return this.buffer.slice(0, this.position)
+    return this.buffer.subarray(0, this.position)
   }
 }
 
 function encodeTrack(obj) {
-  const buf = new EncodeClass()
+  try {
+    const buf = new EncodeClass()
 
-  buf.write('byte', 3)
-  buf.write('utf', obj.title)
-  buf.write('utf', obj.author)
-  buf.write('long', BigInt(obj.length))
-  buf.write('utf', obj.identifier)
-  buf.write('byte', obj.isStream ? 1 : 0)
-  buf.write('byte', obj.uri ? 1 : 0)
-  if (obj.uri) buf.write('utf', obj.uri)
-  buf.write('byte', obj.artworkUrl ? 1 : 0)
-  if (obj.artworkUrl) buf.write('utf', obj.artworkUrl)
-  buf.write('byte', obj.isrc ? 1 : 0)
-  if (obj.isrc) buf.write('utf', obj.isrc)
-  buf.write('utf', obj.sourceName)
-  buf.write('long', BigInt(obj.position))
+    buf.write('byte', 3)
+    buf.write('utf', obj.title)
+    buf.write('utf', obj.author)
+    buf.write('long', BigInt(obj.length))
+    buf.write('utf', obj.identifier)
+    buf.write('byte', obj.isStream ? 1 : 0)
+    buf.write('byte', obj.uri ? 1 : 0)
+    if (obj.uri) buf.write('utf', obj.uri)
+    buf.write('byte', obj.artworkUrl ? 1 : 0)
+    if (obj.artworkUrl) buf.write('utf', obj.artworkUrl)
+    buf.write('byte', obj.isrc ? 1 : 0)
+    if (obj.isrc) buf.write('utf', obj.isrc)
+    buf.write('utf', obj.sourceName)
+    buf.write('long', BigInt(obj.position))
 
-  const buffer = buf.result()
-  const result = Buffer.alloc(buffer.length + 4)
+    const buffer = buf.result()
+    const result = Buffer.alloc(buffer.length + 4)
 
-  result.writeInt32BE(buffer.length | (1 << 30))
-  buffer.copy(result, 4)
+    result.writeInt32BE(buffer.length | (1 << 30))
+    buffer.copy(result, 4)
 
-  return result.toString('base64')
+    return result.toString('base64')
+  } catch {
+    return null
+  }
 }
 
 class DecodeClass {
@@ -313,7 +317,7 @@ function decodeTrack(track) {
         }
       }
     }
-  } catch (e) {
+  } catch {
     return null
   }
 }
