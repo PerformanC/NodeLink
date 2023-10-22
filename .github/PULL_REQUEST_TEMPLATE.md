@@ -1,17 +1,17 @@
 ## Changes
 
-*Write here what you changed* (REQUIRED)
+Write here about the changes you've made
 
 ## Why 
 
-*Write here why you changed it* (REQUIRED)
+Write here why you think this should be merged
 
 ## Checkmarks
 
-- [ ] The modified endpoints and no bugs were found.
+- [ ] The modified endpoints have been tested.
 - [ ] Used the same indentation as the rest of the project.
 - [ ] Still compatible with LavaLink clients.
 
 ## Additional information
 
-*Write here any additional information you may want to add* (OPTIONAL)
+If you have any additional information, write it here
