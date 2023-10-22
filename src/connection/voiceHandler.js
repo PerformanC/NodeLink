@@ -208,10 +208,13 @@ class VoiceConnection {
     this.config.track = null
     this.config.filters = []
     this.cache.startedAt = 0
-    if (this.player) this.cache.silence = true
+    if (this.player) {
+      this.cache.silence = true
+
+      this.player.stop(true)
+    }
     this.cache.url = null
 
-    if (this.player) this.player.stop(true)
     if (this.connection) this.connection.destroy()
 
     if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
@@ -233,6 +236,7 @@ class VoiceConnection {
         })
 
         this.cache.url = url
+
         resolve({ stream: djsVoice.createAudioResource(file, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
       } else {
         (protocol == 'https' ? https : http).get(url, {
@@ -255,12 +259,14 @@ class VoiceConnection {
 
           const stream = new PassThrough()
 
-          res.on('data', (chunk) => {
-            stream.write(chunk)
-          })
+          res.on('data', (chunk) => stream.write(chunk))
 
-          res.on('end', () => {
-            stream.end()
+          res.on('end', () => stream.end())
+
+          res.on('error', (error) => {
+            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: error.message })
+
+            resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
           })
 
           if ([ 'youtube', 'ytmusic' ].includes(sourceName) || ([ 'deezer', 'pandora', 'spotify' ].includes(sourceName) && config.search.defaultSearchSource == 'youtube'))
@@ -405,10 +411,12 @@ class VoiceConnection {
     this.config.track = null
     this.config.filters = []
     this.cache.startedAt = 0
-    if (this.player) this.cache.silence = true
-    this.cache.url = null
+    if (this.player) {
+      this.cache.silence = true
 
-    if (this.player) this.player.stop(true)
+      this.player.stop(true)
+    }
+    this.cache.url = null
 
     if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
 

@@ -654,7 +654,7 @@ async function requestHandler(req, res) {
                 }, 400)
               }
 
-              player.cache.track = { encoded: buffer.encodedTrack, info: decodedTrack }
+              player.cache.track = buffer.encodedTrack
             }
             else {
               if (player.connection._state != 'connecting' || player.connection._state != 'ready') player.updateVoice(player.config.voice)
