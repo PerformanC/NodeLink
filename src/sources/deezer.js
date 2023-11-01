@@ -69,6 +69,7 @@ async function loadFrom(query, type) {
       case 'playlist': {
         const tracks = []
         let index = 0
+        let shouldStop = false
 
         data.tracks.data.forEach(async (item) => {
           const search = await searchWithDefault(`"${item.title} ${item.artist.name}"`)
@@ -100,14 +101,18 @@ async function loadFrom(query, type) {
             const new_tracks = []
             data.tracks.data.forEach((item2, index2) => {
               tracks.forEach((track2, index3) => {
+                if (shouldStop) return;
+
                 if (track2.info.title == item2.title && track2.info.author == item2.artist.name) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
 
-                utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Deezer', track, query })
+                if ((index2 == data.tracks.data.length - 1) && (index3 == tracks.length - 1)) {
+                  shouldStop = true
 
-                if ((index2 == data.tracks.data.length - 1) && (index3 == tracks.length - 1))
+                  utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Deezer', playlistName: data.title })
+
                   resolve({
                     loadType: type[1],
                     data: {
@@ -119,6 +124,7 @@ async function loadFrom(query, type) {
                       tracks: new_tracks
                     }
                   })
+                }
               })
             })
           }

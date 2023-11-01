@@ -334,43 +334,43 @@ async function requestHandler(req, res) {
 
     const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
     if (config.search.sources.youtube && (ytSearch || /^(https?:\/\/)?(www\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier)))
-      search = ytSearch ? await sources.youtube.search(identifier.replace('ytsearch:', ''), 'youtube') : await sources.youtube.loadFrom(identifier, 'youtube')
+      search = ytSearch ? await sources.youtube.search(identifier.replace('ytsearch:', ''), 'youtube', true) : await sources.youtube.loadFrom(identifier, 'youtube')
 
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const ytMusicSearch = config.search.sources.youtubeMusic ? identifier.startsWith('ytmsearch:') : null
     if (config.search.sources.youtubeMusic && (ytMusicSearch || /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier)))
-      search = ytMusicSearch ? await sources.youtube.search(identifier.replace('ytmsearch:', ''), 'ytmusic') : await sources.youtube.loadFrom(identifier, 'ytmusic')
+      search = ytMusicSearch ? await sources.youtube.search(identifier.replace('ytmsearch:', ''), 'ytmusic', true) : await sources.youtube.loadFrom(identifier, 'ytmusic')
  
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const spSearch = config.search.sources.spotify ? identifier.startsWith('spsearch:') : null
     const spRegex = config.search.sources.youtube && config.search.sources.spotify && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
-    if (config.search.sources.youtube && config.search.sources.spotify && (spSearch || spRegex))
+    if (config.search.sources[config.search.defaultSearchSource] && config.search.sources.spotify && (spSearch || spRegex))
        search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
 
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const dzRegex = config.search.sources.youtube && config.search.sources.deezer ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)$/.exec(identifier) : null
-    if (config.search.sources.youtube && config.search.sources.deezer && dzRegex)
+    if (config.search.sources[config.search.defaultSearchSource] && config.search.sources.deezer && dzRegex)
       search = await sources.deezer.loadFrom(identifier, dzRegex)
 
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
     if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/(?:sets\/)?[a-zA-Z0-9-_]+$/.test(identifier)))
-      search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', '')) : await sources.soundcloud.loadFrom(identifier)
+      search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', ''), true) : await sources.soundcloud.loadFrom(identifier)
 
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const bcSearch = config.search.sources.bandcamp ? identifier.startsWith('bcsearch:') : null
     if (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(identifier)))
-      search = bcSearch ? await sources.bandcamp.search(identifier.replace('bcsearch:', '')) : await sources.bandcamp.loadFrom(identifier)
+      search = bcSearch ? await sources.bandcamp.search(identifier.replace('bcsearch:', ''), true) : await sources.bandcamp.loadFrom(identifier)
 
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const pdSearch = config.search.sources.pandora ? identifier.startsWith('pdsearch:') : null
-    if (config.search.sources.pandora && (pdSearch || /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.test(identifier)))
+    if (config.search.sources[config.search.defaultSearchSource] && config.search.sources.pandora && (pdSearch || /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.test(identifier)))
       search = pdSearch ? await sources.pandora.search(identifier.replace('pdsearch:', '')) : await sources.pandora.loadFrom(identifier)
 
     if (utils.sendNonNull(req, res, search) == true) return;
@@ -655,8 +655,7 @@ async function requestHandler(req, res) {
               }
 
               player.cache.track = buffer.encodedTrack
-            }
-            else {
+            } else {
               if (player.connection._state != 'connecting' || player.connection._state != 'ready') player.updateVoice(player.config.voice)
               
               const decodedTrack = utils.decodeTrack(buffer.encodedTrack)

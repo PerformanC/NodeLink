@@ -7,17 +7,17 @@ async function searchWithDefault(query) {
   switch (config.search.defaultSearchSource) {
     case 'ytmusic':
     case 'youtube': {
-      return youtube.search(query, config.search.defaultSearchSource)
+      return youtube.search(query, config.search.defaultSearchSource, false)
     }
     case 'soundcloud': {
-      return soundcloud.search(query)
+      return soundcloud.search(query, false)
     }
     case 'bandcamp': {
-      return bandcamp.search(query)
+      return bandcamp.search(query, false)
     }
     default: {
       console.warn('[\u001b[33msources\u001b[37m]: Default search source: unknown, falling back to YouTube...')
-      return youtube.search(query, 1)
+      return youtube.search(query, 1, false)
     }
   }
 }

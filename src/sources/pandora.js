@@ -62,6 +62,7 @@ async function search(query) {
 
     const tracks = []
     let index = 0
+    let shouldStop = false
 
     const annotationKeys = Object.keys(data.annotations)
     annotationKeys.forEach(async (key) => {
@@ -96,18 +97,23 @@ async function search(query) {
         const new_tracks = []
         annotationKeys.forEach((key2, index2) => {
           tracks.forEach((track2, index3) => {
+            if (shouldStop) return;
+
             if (track2.info.title == data.annotations[key2].name && track2.info.author == data.annotations[key2].artistName) {
               track2.info.position = index2
               new_tracks.push(track2)
             }
 
-            utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
+            if ((index2 == annotationKeys.length - 1) && (index3 == tracks.length - 1)) {
+              utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
 
-            if ((index2 == annotationKeys.length - 1) && (index3 == tracks.length - 1))
+              shouldStop = true
+
               resolve({
                 loadType: 'search',
                 data: new_tracks
               })
+            }
           })
         })
       }
@@ -169,6 +175,7 @@ async function loadFrom(query) {
         } else if (/^https:\/\/www\.pandora\.com\/artist\/[^\/]+\/[^\/]+\/\w+$/.test(query)) {
           const tracks = []
           let index = 0
+          let shouldStop = false
 
           const keys = Object.keys(body['v4/catalog/annotateObjects'][0]).filter((key) => key.indexOf('TR:') != -1)
 
@@ -204,12 +211,18 @@ async function loadFrom(query) {
               const new_tracks = []
               keys.forEach((key2, index2) => {
                 tracks.forEach((track2, index3) => {
+                  if (shouldStop) return;
+
                   if (track2.info.title == body['v4/catalog/annotateObjects'][0][key2].name && track2.info.author == body['v4/catalog/annotateObjects'][0][key2].artistName) {
                     track2.info.position = index2
                     new_tracks.push(track2)
                   }
       
-                  if ((index2 == keys.length - 1) && (index3 == tracks.length - 1))
+                  if ((index2 == keys.length - 1) && (index3 == tracks.length - 1)) {
+                    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', playlistName: data.name })
+
+                    shouldStop = true
+
                     resolve({
                       loadType: 'album',
                       data: {
@@ -221,6 +234,7 @@ async function loadFrom(query) {
                         tracks: new_tracks,
                       }
                     })
+                  }
                 })
               })
             }
@@ -230,6 +244,7 @@ async function loadFrom(query) {
         } else {
           const tracks = []
           let index = 0
+          let shouldStop = false
 
           const annotations = body['v4/catalog/getDetails'][0].annotations
           const keys = body['v4/catalog/getDetails'][0].artistDetails.topTracks
@@ -261,17 +276,21 @@ async function loadFrom(query) {
             })
       
             if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
-              utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
-
               const new_tracks = []
               keys.forEach((key2, index2) => {
                 tracks.forEach((track2, index3) => {
+                  if (shouldStop) return;
+
                   if (track2.info.title == annotations[key2].name && track2.info.author == annotations[key2].artistName) {
                     track2.info.position = index2
                     new_tracks.push(track2)
                   }
       
-                  if ((index2 == keys.length - 1) && (index3 == tracks.length - 1))
+                  if ((index2 == keys.length - 1) && (index3 == tracks.length - 1)) {
+                    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
+
+                    shouldStop = true
+
                     resolve({
                       loadType: 'playlist',
                       data: {
@@ -283,6 +302,7 @@ async function loadFrom(query) {
                         tracks: new_tracks,
                       }
                     })
+                  }
                 })
               })
             }
@@ -326,6 +346,7 @@ async function loadFrom(query) {
     
         const tracks = []
         let index = 0
+        let shouldStop = false
 
         const keys = Object.keys(data.annotations).filter((key) => key.indexOf('TR:') != -1)
 
@@ -359,14 +380,18 @@ async function loadFrom(query) {
             const new_tracks = []
             keys.forEach((key2, index2) => {
               tracks.forEach((track2, index3) => {
+                if (shouldStop) return;
+
                 if (track2.info.title == data.annotations[key2].name && track2.info.author == data.annotations[key2].artistName) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
-
-                utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', tracksLen: tracks.length, query })
     
-                if ((index2 == keys.length - 1) && (index3 == tracks.length - 1))
+                if ((index2 == keys.length - 1) && (index3 == tracks.length - 1)) {
+                  utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
+
+                  shouldStop = true
+
                   resolve({
                     loadType: 'playlist',
                     data: {
@@ -378,6 +403,7 @@ async function loadFrom(query) {
                       tracks: new_tracks,
                     }
                   })
+                }
               })
             })
           }

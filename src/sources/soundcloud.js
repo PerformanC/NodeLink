@@ -109,7 +109,7 @@ async function loadFrom(url) {
           }
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', tracksLen: tracks.length, query: url })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: data.title })
 
         return resolve({
           loadType: 'playlist',
@@ -127,9 +127,9 @@ async function loadFrom(url) {
   })
 }
 
-async function search(query) {
+async function search(query, shouldLog) {
   return new Promise(async (resolve) => {
-    utils.debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
+    if (shouldLog) utils.debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
 
     const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
       method: 'GET'
@@ -140,6 +140,7 @@ async function search(query) {
 
     const tracks = []
     let i = 0
+    let shouldStop = false
 
     data.collection.forEach((item, index) => {
       if (item.kind == 'track') {
@@ -165,9 +166,13 @@ async function search(query) {
       }
 
       if (index == data.collection.length - 1 || tracks.length == config.options.maxResultsLength - 1) {
-        utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+        if (shouldStop) return;
 
-        return resolve({
+        if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+
+        shouldStop = true
+
+        resolve({
           loadType: 'search',
           data: tracks
         })

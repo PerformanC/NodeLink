@@ -506,8 +506,8 @@ function debugLog(name, type, options) {
             console.log(`[\u001b[32mloadTracks\u001b[37m]: Loading \u001b[94m${options.loadType}\u001b[37m from ${options.sourceName}: ${options.query}`)
 
           if (options.type == 2 && config.debug.sources.loadtrack.results) {
-            if (options.tracksLen)
-              console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.tracksLen}\u001b[37m tracks from \u001b[94m${options.sourceName}\u001b[37m: ${options.query}`)
+            if (options.loadType != 'search')
+              console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.playlistName}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m.`)
             else
               console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: ${options.query}`)
           }

@@ -126,7 +126,7 @@ async function search(query) {
 
         data.data.searchV2.tracksV2.items.forEach(async (items, index) => {
           if (items) {
-            items = track.item.data
+            items = items.item.data
 
             const search = await searchWithDefault(`${items.name} ${items.artists.items[0].profile.name}`)
 
@@ -314,9 +314,13 @@ async function loadFrom(query, type) {
       case 'album': {
         const tracks = []
         let index = 0
+        let shouldStop = false
 
-        data.tracks.items = data.tracks.items.filter((item) => item.track != null)
         data.tracks.items.forEach(async (item) => {
+          if (item.track == null) {
+            data.tracks.items = data.tracks.items.splice(index, 1)
+          }
+  
           let search
           if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
           else search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
@@ -348,14 +352,18 @@ async function loadFrom(query, type) {
             const new_tracks = []
             data.tracks.items.forEach((item2, index2) => {
               tracks.forEach((track2, index3) => {
+                if (shouldStop) return;
+
                 if (track2.info.title == (type[1] == 'playlist' ? item2.track.name : item2.name) && track2.info.author == (type[1] == 'playlist' ? item2.track.artists[0].name : item2.artists[0].name)) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
 
-                utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], track: { title: data.name, author: data.owner.display_name }, sourceName: 'Spotify', tracksLen: new_tracks.length, query })
+                if ((index2 == data.tracks.items.length - 1) && (index3 == tracks.length - 1)) {
+                  shouldStop = true
 
-                if ((index2 == data.tracks.items.length - 1) && (index3 == tracks.length - 1))
+                  utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
+
                   resolve({
                     loadType: type[1],
                     data: {
@@ -367,6 +375,7 @@ async function loadFrom(query, type) {
                       tracks: new_tracks
                     }
                   })
+                }
               })
             })
           }
@@ -379,6 +388,7 @@ async function loadFrom(query, type) {
       case 'show': {
         const tracks = []
         let index = 0
+        let shouldStop = false
 
         data.episodes.items.forEach(async (episode) => {
           const search = await searchWithDefault(`${episode.name} ${episode.publisher}`)
@@ -407,17 +417,21 @@ async function loadFrom(query, type) {
           })
 
           if (index == data.episodes.items.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
-            utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', tracksLen: tracks.length, query })
-
             const new_tracks = []
             data.episodes.items.forEach((episode2, index2) => {
               tracks.forEach((track2, index3) => {
+                if (shouldStop) return;
+
                 if (track2.info.title == episode2.name && track2.info.author == episode2.publisher) {
                   track2.info.position = index2
                   new_tracks.push(track2)
                 }
 
-                if ((index2 == data.episodes.items.length - 1) && (index3 == tracks.length - 1))
+                if ((index2 == data.episodes.items.length - 1) && (index3 == tracks.length - 1)) {
+                  shouldStop = true
+
+                  utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
+
                   resolve({
                     loadType: 'show',
                     data: {
@@ -429,6 +443,7 @@ async function loadFrom(query, type) {
                       tracks: new_tracks
                     }
                   })
+                }
               })
             })
           }

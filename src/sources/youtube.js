@@ -101,7 +101,7 @@ function checkURLType(url, type) {
   }
 }
 
-async function search(query, type) {
+async function search(query, type, shouldLog) {
   return new Promise(async (resolve) => {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
@@ -109,7 +109,7 @@ async function search(query, type) {
       await utils.sleep(200)
     }
 
-    utils.debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
+    if (shouldLog) utils.debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
     const search = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
       method: 'POST',
@@ -155,14 +155,14 @@ async function search(query, type) {
         })
       }
 
-      if (index == videos.length - 1 || i == config.options.maxResultsLength - 1) {
+      if (index == videos.length - 1 || tracks.length == config.options.maxResultsLength - 1) {
         if (tracks.length == 0) {
           utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
     
           return resolve({ loadType: 'empty', data: {} })
         }
     
-        utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
+        if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
     
         return resolve({ loadType: 'search', data: tracks })
       }

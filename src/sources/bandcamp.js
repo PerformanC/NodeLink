@@ -42,9 +42,9 @@ async function loadFrom(url) {
   })
 }
 
-async function search(query) {
+async function search(query, shouldLog) {
   return new Promise(async (resolve) => {
-    utils.debugLog('search', 4, { type: 1, sourceName: 'BandCamp', query })
+    if (shouldLog) utils.debugLog('search', 4, { type: 1, sourceName: 'BandCamp', query })
 
     const data = await utils.makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
@@ -54,8 +54,8 @@ async function search(query) {
     const tracks = []
     let i = 0
     
-    for (const match of names) {
-      if (i >= config.options.maxResultsLength) break
+    names.forEach((match) => {
+      if (i >= config.options.maxResultsLength) return;
 
       tracks.push({
         encoded: null,
@@ -73,7 +73,7 @@ async function search(query) {
           sourceName: 'bandcamp'
         }
       })
-    }
+    })
 
     if (!tracks.length)
       return resolve({ loadType: 'empty', data: {} })
@@ -102,7 +102,7 @@ async function search(query) {
       tracks[i].pluginInfo = {}
     }
 
-    utils.debugLog('search', 4, { type: 2, sourceName: 'BandCamp', tracksLen: tracks.length, query })
+    if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'BandCamp', tracksLen: tracks.length, query })
 
     resolve({
       loadType: 'search',
