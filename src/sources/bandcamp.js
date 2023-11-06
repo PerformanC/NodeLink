@@ -12,22 +12,24 @@ async function loadFrom(url) {
     if (!matches.length)
       return resolve({ loadType: 'empty', data: {} })
 
-    const information = JSON.parse(matches[1])
-    const identifier = url.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
+    const trackInfo = JSON.parse(matches[1])
+    const identifier = url.match(/^https?:\/\/([^/]+)\/track\/([^/?]+)/)
 
     const track = {
       identifier: `${identifier[1]}:${identifier[2]}`,
       isSeekable: true,
-      author: information.byArtist.name,
-      length: (information.duration.split('P')[1].split('H')[0] * 3600000) + (information.duration.split('H')[1].split('M')[0] * 60000) + (information.duration.split('M')[1].split('S')[0] * 1000),
+      author: trackInfo.byArtist.name,
+      length: (trackInfo.duration.split('P')[1].split('H')[0] * 3600000) + (trackInfo.duration.split('H')[1].split('M')[0] * 60000) + (trackInfo.duration.split('M')[1].split('S')[0] * 1000),
       isStream: false,
       position: 0,
-      title: information.name,
-      uri: url,
-      artworkUrl: information.image,
+      title: trackInfo.name,
+      uri: trackInfo['@id'],
+      artworkUrl: trackInfo.image,
       isrc: null,
       sourceName: 'bandcamp'
     }
+
+    console.log(trackInfo)
 
     utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query: url })
 
@@ -48,13 +50,14 @@ async function search(query, shouldLog) {
 
     const data = await utils.makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
-    const regex = /<div class="heading">\s+<a.*?>(.*?)<\/a>/gs
-    const names = data.matchAll(regex)
+    const names = data.match(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
+
+    if (!names)
+      return resolve({ loadType: 'empty', data: {} })
 
     const tracks = []
-    let i = 0
     
-    names.forEach((match) => {
+    names.forEach((name, i) => {
       if (i >= config.options.maxResultsLength) return;
 
       tracks.push({
@@ -66,7 +69,7 @@ async function search(query, shouldLog) {
           length: -1,
           isStream: false,
           position: i++,
-          title: match[1].trim(),
+          title: name[1].trim(),
           uri: null,
           artworkUrl: null,
           isrc: null,
@@ -78,29 +81,35 @@ async function search(query, shouldLog) {
     if (!tracks.length)
       return resolve({ loadType: 'empty', data: {} })
 
-    const authors = data.match(/<div class="subhead">\s+by\s+(.*?)\s+<\/div>/gs)
+    const authors = data.match(/<div class="subhead">\s+(?:from\s+)?[\s\S]*?by (.*?)\s+<\/div>/gs)
 
-    for (i = 0; i <= tracks.length - 1; i++) {
-      tracks[i].info.author = authors[i].split('by')[1].split('</div>')[0].trim()
-    }
+    authors.forEach((author, i) => {
+      if (i >= config.options.maxResultsLength) return;
 
-    const artworkUrls = data.match(/<div class="art">\s*<img src="(.+?)"/g)
+      tracks[i].info.author = author.split('by')[1].split('</div>')[0].trim()
+    })
 
-    for (i = 0; i <= tracks.length - 1; i++) {
-      tracks[i].info.artworkUrl = artworkUrls[i].split('"')[3].split('"')[0]
-    }
+    const artworkUrls = data.match(/<div class="art">\s*<img src="(.+?)"/gs)
+
+    artworkUrls.forEach((artworkUrl, i) => {
+      if (i >= config.options.maxResultsLength) return;
+
+      tracks[i].info.artworkUrl = artworkUrl.split('"')[3].split('"')[0]
+    })
 
     const urls = data.match(/<div class="itemurl">\s+<a.*?>(.*?)<\/a>/gs)
 
-    for (i = 0; i <= tracks.length - 1; i++) {
-      tracks[i].info.uri = urls[i].split('"')[3].split('?from=')[0]
+    urls.forEach((url, i) => {
+      if (i >= config.options.maxResultsLength) return;
+
+      tracks[i].info.uri = url.split('">')[2].split('</a>')[0]
       
-      const identifier = tracks[i].info.uri.match(/^https?:\/\/([^.]+)\.bandcamp\.com\/track\/([^/?]+)/)
+      const identifier = tracks[i].info.uri.match(/^https?:\/\/([^/]+)\/track\/([^/?]+)/)
       tracks[i].info.identifier = `${identifier[1]}:${identifier[2]}`
 
       tracks[i].encoded = utils.encodeTrack(tracks[i].info)
       tracks[i].pluginInfo = {}
-    }
+    })
 
     if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'BandCamp', tracksLen: tracks.length, query })
 
@@ -111,14 +120,14 @@ async function search(query, shouldLog) {
   })
 }
 
-async function retrieveStream(uri) {
+async function retrieveStream(uri, title, author) {
   return new Promise(async (resolve) => {
     const data = await utils.makeRequest(uri, { method: 'GET' })
 
     const streamURL = data.match(/https?:\/\/t4\.bcbits\.com\/stream\/[a-zA-Z0-9]+\/mp3-128\/\d+\?p=\d+&amp;ts=\d+&amp;t=[a-zA-Z0-9]+&amp;token=\d+_[a-zA-Z0-9]+/)
 
     if (!streamURL) {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'BandCamp', message: 'No stream URL was found.' })
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'BandCamp', query: title, message: 'No stream URL was found.' })
 
       return resolve({ exception: { message: 'Failed to get the stream from source.', severity: 'fault', cause: 'Unknown' } })
     }

@@ -1,3 +1,5 @@
+import { PassThrough } from 'node:stream'
+
 import config from '../../config.js'
 import utils from '../utils.js'
 
@@ -43,11 +45,11 @@ async function loadFrom(url) {
         const notLoaded = []
 
         data.tracks.forEach((item, index) => {
-          if (tracks.length > config.options.maxAlbumPlaylistLength) return
+          if (tracks.length > config.options.maxAlbumPlaylistLength) return;
 
           if (!item.title) {
             notLoaded.push(item.id.toString())
-            return
+            return;
           }
 
           const track = {
@@ -75,7 +77,7 @@ async function loadFrom(url) {
           let stop = false
 
           while (notLoaded.length && !stop) {
-            if (tracks.length > config.options.maxAlbumPlaylistLength) return
+            if (tracks.length > config.options.maxAlbumPlaylistLength) return;
 
             const notLoadedLimited = notLoaded.slice(0, 50)
             const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
@@ -139,70 +141,104 @@ async function search(query, shouldLog) {
       return resolve({ loadType: 'empty', data: {} })
 
     const tracks = []
-    let i = 0
-    let shouldStop = false
+    let index = 0
 
-    data.collection.forEach((item, index) => {
-      if (item.kind == 'track') {
-        const track = {
-          identifier: item.id.toString(),
-          isSeekable: true,
-          author: item.user.username,
-          length: item.duration,
-          isStream: false,
-          position: i++,
-          title: item.title,
-          uri: item.uri,
-          artworkUrl: item.artwork_url,
-          isrc: null,
-          sourceName: 'soundcloud'
-        }
+    data.collection.forEach((item, i) => {
+      if (tracks.length > config.options.maxSearchResults) return
+      if (item.kind != 'track') return;
 
-        tracks.push({
-          encoded: utils.encodeTrack(track),
-          info: track,
-          pluginInfo: {}
-        })
+      const track = {
+        identifier: item.id.toString(),
+        isSeekable: true,
+        author: item.user.username,
+        length: item.duration,
+        isStream: false,
+        position: index++,
+        title: item.title,
+        uri: item.uri,
+        artworkUrl: item.artwork_url,
+        isrc: null,
+        sourceName: 'soundcloud'
       }
 
-      if (index == data.collection.length - 1 || tracks.length == config.options.maxResultsLength - 1) {
-        if (shouldStop) return;
+      tracks.push({
+        encoded: utils.encodeTrack(track),
+        info: track,
+        pluginInfo: {}
+      })
+    })
 
-        if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+    if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
 
-        shouldStop = true
-
-        resolve({
-          loadType: 'search',
-          data: tracks
-        })
-      }
+    resolve({
+      loadType: 'search',
+      data: tracks
     })
   })
 }
 
-async function retrieveStream(identifier) {
+async function retrieveStream(identifier, title) {
   return new Promise(async (resolve) => {
     const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
       
     if (data.errors) {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', message: data.errors[0].error_message })
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: data.errors[0].error_message })
 
       return resolve({ exception: { message: data.errors[0].error_message, severity: 'fault', cause: 'Unknown' } })
     }
 
-    data.media.transcodings.forEach(async (transcoding) => {
-      if (transcoding.format.protocol == 'progressive') {
-        const stream = await utils.http1makeRequest(transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+    // let oggOpus = null
+    // data.media.transcodings.forEach(async (transcoding) => {
+    //   if (transcoding.format.mime_type == 'audio/ogg; codecs="opus"') {
+    //     opus = transcoding
+    //   }
+    // })
+    const transcoding = data.media.transcodings[0]
 
-        resolve({ url: stream.url, protocol: 'https' })
-      }
+    // if (!oggOpus) {
+      resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: 'https', type: 'opus' })
+    // }
+  })
+}
+
+async function loadHls(url) {
+  const streamHlsRedirect = await utils.http1makeRequest(url, { method: 'GET' })
+  const streamHls = await utils.http1makeRequest(streamHlsRedirect.url, { method: 'GET' })
+  const streams = []
+  
+  streamHls.split('\n').forEach((line) => {
+    if (!line.startsWith('https://')) return;
+
+    streams.push(line)
+  })
+
+  const stream = new PassThrough()
+  let i = 0
+
+  function next() {
+    utils.http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
+      res.on('data', (chunk) => stream.write(chunk))
+      res.on('end', () => {
+        i++
+        if (i < streams.length) next()
+      })
+    })
+  }
+
+  utils.http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
+    res.on('data', (chunk) => stream.write(chunk))
+    res.on('end', () => {
+      i++
+      if (i < streams.length) next()
     })
   })
+
+  return stream
 }
 
 export default {
   loadFrom,
   search,
-  retrieveStream
+  retrieveStream,
+  loadHls
 }

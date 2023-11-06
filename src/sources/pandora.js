@@ -8,7 +8,7 @@ let authToken = null
 async function setToken() {
   utils.debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
 
-  const csfr = await utils.makeRequest('https://www.pandora.com', { method: 'GET', retrieveCookies: true })
+  const csfr = await utils.makeRequest('https://www.pandora.com', { method: 'GET', cookiesOnly: true })
 
   if (!csfr[1]) return utils.debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
 
@@ -61,37 +61,39 @@ async function search(query) {
       return resolve({ loadType: 'empty', data: {} })
 
     const tracks = []
-    let index = 0
     let shouldStop = false
 
     const annotationKeys = Object.keys(data.annotations)
-    annotationKeys.forEach(async (key) => {
-      if (data.annotations[key].type != 'TR') return;
 
-      const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
+    if (annotationKeys.length > config.options.maxResultsLength)
+      annotationKeys = annotationKeys.slice(0, config.options.maxResultsLength)
 
-      if (search.loadType != 'search')
-        return resolve(search)
+    annotationKeys.forEach(async (key, index) => {
+      if (data.annotations[key].type == 'TR') {
+        const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
 
-      const track = {
-        identifier: search.data[0].info.identifier,
-        isSeekable: true,
-        author: data.annotations[key].artistName,
-        length: search.data[0].info.length,
-        isStream: false,
-        position: index,
-        title: data.annotations[key].name,
-        uri: search.data[0].info.uri,
-        artworkUrl: `https://content-images.p-cdn.com/${data.annotations[key].icon.artUrl}`,
-        isrc: data.annotations[key].isrc,
-        sourceName: 'pandora'
+        if (search.loadType == 'search') {
+          const track = {
+            identifier: search.data[0].info.identifier,
+            isSeekable: true,
+            author: data.annotations[key].artistName,
+            length: search.data[0].info.length,
+            isStream: false,
+            position: index,
+            title: data.annotations[key].name,
+            uri: search.data[0].info.uri,
+            artworkUrl: `https://content-images.p-cdn.com/${data.annotations[key].icon.artUrl}`,
+            isrc: data.annotations[key].isrc,
+            sourceName: 'pandora'
+          }
+
+          tracks.push({
+            encoded: utils.encodeTrack(track),
+            info: track,
+            playlistInfo: {}
+          })
+        }
       }
-
-      tracks.push({
-        encoded: utils.encodeTrack(track),
-        info: track,
-        playlistInfo: {}
-      })
 
       if (index == data.results.length - 1 || index == config.options.maxResultsLength - 1) {
         const new_tracks = []
@@ -117,8 +119,6 @@ async function search(query) {
           })
         })
       }
-
-      index++
     })
   })
 }
@@ -174,36 +174,37 @@ async function loadFrom(query) {
           })
         } else if (/^https:\/\/www\.pandora\.com\/artist\/[^\/]+\/[^\/]+\/\w+$/.test(query)) {
           const tracks = []
-          let index = 0
           let shouldStop = false
 
           const keys = Object.keys(body['v4/catalog/annotateObjects'][0]).filter((key) => key.indexOf('TR:') != -1)
 
-          keys.forEach(async (key) => {
+          if (keys.length > config.options.maxAlbumPlaylistLength)
+            keys = keys.slice(0, config.options.maxAlbumPlaylistLength)
+
+          keys.forEach(async (key, index) => {
             const search = await searchWithDefault(`${body['v4/catalog/annotateObjects'][0][key].name} ${body['v4/catalog/annotateObjects'][0][key].artistName}`)
       
-            if (search.loadType != 'search')
-              return resolve(search)
-      
-            const track = {
-              identifier: search.data[0].info.identifier,
-              isSeekable: true,
-              author: body['v4/catalog/annotateObjects'][0][key].artistName,
-              length: search.data[0].info.length,
-              isStream: false,
-              position: 0,
-              title: body['v4/catalog/annotateObjects'][0][key].name,
-              uri: search.data[0].info.uri,
-              artworkUrl: `https://content-images.p-cdn.com/${body['v4/catalog/annotateObjects'][0][key].icon.artUrl}`,
-              isrc: body['v4/catalog/annotateObjects'][0][key].isrc,
-              sourceName: 'pandora'
+            if (search.loadType == 'search') {
+              const track = {
+                identifier: search.data[0].info.identifier,
+                isSeekable: true,
+                author: body['v4/catalog/annotateObjects'][0][key].artistName,
+                length: search.data[0].info.length,
+                isStream: false,
+                position: 0,
+                title: body['v4/catalog/annotateObjects'][0][key].name,
+                uri: search.data[0].info.uri,
+                artworkUrl: `https://content-images.p-cdn.com/${body['v4/catalog/annotateObjects'][0][key].icon.artUrl}`,
+                isrc: body['v4/catalog/annotateObjects'][0][key].isrc,
+                sourceName: 'pandora'
+              }
+        
+              tracks.push({
+                encoded: utils.encodeTrack(track),
+                info: track,
+                playlistInfo: {}
+              })
             }
-      
-            tracks.push({
-              encoded: utils.encodeTrack(track),
-              info: track,
-              playlistInfo: {}
-            })
       
             if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
               utils.debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', tracksLen: tracks.length, query })
@@ -238,44 +239,43 @@ async function loadFrom(query) {
                 })
               })
             }
-      
-            index++
           })
         } else {
           const tracks = []
-          let index = 0
           let shouldStop = false
 
           const annotations = body['v4/catalog/getDetails'][0].annotations
           const keys = body['v4/catalog/getDetails'][0].artistDetails.topTracks
 
-          keys.forEach(async (key) => {
+          if (keys.length > config.options.maxAlbumPlaylistLength)
+            keys = keys.slice(0, config.options.maxAlbumPlaylistLength)
+
+          keys.forEach(async (key, index) => {
             const search = await searchWithDefault(`${annotations[key].name} ${annotations[key].artistName}`)
       
-            if (search.loadType != 'search')
-              return resolve(search)
-      
-            const infoObj = {
-              identifier: search.data[0].info.identifier,
-              isSeekable: true,
-              author: annotations[key].artistName,
-              length: search.data[0].info.length,
-              isStream: false,
-              position: 0,
-              title: annotations[key].name,
-              uri: search.data[0].info.uri,
-              artworkUrl: `https://content-images.p-cdn.com/${annotations[key].icon.artUrl}`,
-              isrc: annotations[key].isrc,
-              sourceName: 'pandora'
+            if (search.loadType == 'search') {
+              const infoObj = {
+                identifier: search.data[0].info.identifier,
+                isSeekable: true,
+                author: annotations[key].artistName,
+                length: search.data[0].info.length,
+                isStream: false,
+                position: 0,
+                title: annotations[key].name,
+                uri: search.data[0].info.uri,
+                artworkUrl: `https://content-images.p-cdn.com/${annotations[key].icon.artUrl}`,
+                isrc: annotations[key].isrc,
+                sourceName: 'pandora'
+              }
+        
+              tracks.push({
+                encoded: utils.encodeTrack(infoObj),
+                info: infoObj,
+                playlistInfo: {}
+              })
             }
       
-            tracks.push({
-              encoded: utils.encodeTrack(infoObj),
-              info: infoObj,
-              playlistInfo: {}
-            })
-      
-            if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
+            if (index == keys.length - 1) {
               const new_tracks = []
               keys.forEach((key2, index2) => {
                 tracks.forEach((track2, index3) => {
@@ -306,8 +306,6 @@ async function loadFrom(query) {
                 })
               })
             }
-      
-            index++
           })
         }
 
@@ -345,38 +343,39 @@ async function loadFrom(query) {
         })
     
         const tracks = []
-        let index = 0
         let shouldStop = false
 
         const keys = Object.keys(data.annotations).filter((key) => key.indexOf('TR:') != -1)
 
-        keys.forEach(async (key) => {
+        if (keys.length > config.options.maxAlbumPlaylistLength)
+          keys = keys.slice(0, config.options.maxAlbumPlaylistLength)
+
+        keys.forEach(async (key, index) => {
           const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
     
-          if (search.loadType != 'search')
-            return resolve(search)
-    
-          const infoObj = {
-            identifier: search.data[0].info.identifier,
-            isSeekable: data.annotations[key].visible,
-            author: data.annotations[key].artistName,
-            length: search.data[0].info.length,
-            isStream: false,
-            position: 0,
-            title: data.annotations[key].name,
-            uri: search.data[0].info.uri,
-            artworkUrl: `https://content-images.p-cdn.com/${data.annotations[key].icon.artUrl}`,
-            isrc: data.annotations[key].isrc,
-            sourceName: 'pandora'
+          if (search.loadType == 'search') {
+            const infoObj = {
+              identifier: search.data[0].info.identifier,
+              isSeekable: data.annotations[key].visible,
+              author: data.annotations[key].artistName,
+              length: search.data[0].info.length,
+              isStream: false,
+              position: 0,
+              title: data.annotations[key].name,
+              uri: search.data[0].info.uri,
+              artworkUrl: `https://content-images.p-cdn.com/${data.annotations[key].icon.artUrl}`,
+              isrc: data.annotations[key].isrc,
+              sourceName: 'pandora'
+            }
+      
+            tracks.push({
+              encoded: utils.encodeTrack(infoObj),
+              info: infoObj,
+              playlistInfo: {}
+            })
           }
     
-          tracks.push({
-            encoded: utils.encodeTrack(infoObj),
-            info: infoObj,
-            playlistInfo: {}
-          })
-    
-          if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
+          if (index == keys.length - 1) {
             const new_tracks = []
             keys.forEach((key2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -407,8 +406,6 @@ async function loadFrom(query) {
               })
             })
           }
-    
-          index++
         })
       }
 

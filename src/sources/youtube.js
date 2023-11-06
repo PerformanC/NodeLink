@@ -247,7 +247,8 @@ async function loadFrom(query, type) {
           }
         })
 
-        if (!playlist.contents.twoColumnWatchNextResults.playlist) {
+        console.log(playlist.contents.singleColumnWatchNextResults.playlist)
+        if (!playlist.contents.singleColumnWatchNextResults.playlist) {
           utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'Failed to load playlist.' })
         
           return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'common', cause: 'Unknown' } })
@@ -256,20 +257,25 @@ async function loadFrom(query, type) {
         const tracks = []
         let i = 0
 
-        playlist.contents.twoColumnWatchNextResults.playlist.playlist.contents.forEach((item) => {
-          item = item.playlistPanelVideoRenderer
+        let playlistContent = playlist.contents.singleColumnWatchNextResults.playlist.playlist.contents
 
-          if (item) {
+        if (playlistContent.length > config.options.maxAlbumPlaylistLength)
+          playlistContent = playlistContent.slice(0, config.options.maxAlbumPlaylistLength)
+
+        playlistContent.forEach((video) => {
+          video = video.playlistPanelVideoRenderer
+
+          if (video) {
             const track = {
-              identifier: item.videoId,
+              identifier: video.videoId,
               isSeekable: true,
-              author: item.shortBylineText.runs[0].text,
-              length: item.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
+              author: video.shortBylineText.runs[0].text,
+              length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
               isStream: false,
               position: i++,
-              title: item.title.simpleText,
-              uri: `https://www.youtube.com/watch?v=${item.videoId}`,
-              artworkUrl: `https://i.ytimg.com/vi/${item.videoId}/maxresdefault.jpg`,
+              title: video.title.runs[0].text,
+              uri: `https://www.youtube.com/watch?v=${video.videoId}`,
+              artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
               isrc: null,
               sourceName: 'youtube'
             }
@@ -288,15 +294,13 @@ async function loadFrom(query, type) {
           return resolve({ loadType: 'empty', data: {} })
         }
 
-        if (tracks.length > config.options.maxAlbumPlaylistLength) tracks.length = config.options.maxAlbumPlaylistLength
-
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', tracksLen: tracks.length, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title, tracksLen: tracks.length, query })
 
         return resolve({
           loadType: 'playlist',
           data: {
             info: {
-              name: playlist.contents.twoColumnWatchNextResults.playlist.playlist.title,
+              name: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title,
               selectedTrack: 0
             },
             pluginInfo: {},
@@ -360,7 +364,7 @@ async function loadFrom(query, type) {
   })
 }
 
-async function retrieveStream(identifier, type) {
+async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
@@ -389,7 +393,7 @@ async function retrieveStream(identifier, type) {
     })
 
     if (videos.playabilityStatus.status != 'OK') {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: identifier, message: videos.playabilityStatus.reason })
+      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: title, message: videos.playabilityStatus.reason })
 
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }

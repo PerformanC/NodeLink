@@ -122,7 +122,9 @@ async function search(query) {
         }
           
         const tracks = []
-        let i = 0
+
+        if (data.data.searchV2.tracksV2.items.length > config.options.maxResultsLength)
+          data.data.searchV2.tracksV2.items = data.data.searchV2.tracksV2.items.splice(0, config.options.maxResultsLength) 
 
         data.data.searchV2.tracksV2.items.forEach(async (items, index) => {
           if (items) {
@@ -130,31 +132,30 @@ async function search(query) {
 
             const search = await searchWithDefault(`${items.name} ${items.artists.items[0].profile.name}`)
 
-            if (search.loadType == 'empty')
-              return resolve(search)
+            if (search.loadType == 'search') {
+              const track = {
+                identifier: search.data[0].info.identifier,
+                isSeekable: true,
+                author: items.artists.items.map((artist) => artist.profile.name).join(', '),
+                length: items.duration.totalMilliseconds,
+                isStream: false,
+                position: 0,
+                title: items.name,
+                uri: items.uri,
+                artworkUrl: search.data[0].info.artworkUrl,
+                isrc: items.external_ids.isrc,
+                sourceName: 'spotify'
+              }
 
-            const track = {
-              identifier: search.data[0].info.identifier,
-              isSeekable: true,
-              author: items.artists.items.map((artist) => artist.profile.name).join(', '),
-              length: items.duration.totalMilliseconds,
-              isStream: false,
-              position: i++,
-              title: items.name,
-              uri: items.uri,
-              artworkUrl: search.data[0].info.artworkUrl,
-              isrc: items.external_ids.isrc,
-              sourceName: 'spotify'
+              tracks.push({
+                encoded: utils.encodeTrack(track),
+                info: track,
+                pluginInfo: {}
+              })
             }
-
-            tracks.push({
-              encoded: utils.encodeTrack(track),
-              info: track,
-              pluginInfo: {}
-            })
           }
 
-          if (index == data.data.searchV2.tracksV2.items.length - 1 || index == config.options.maxResultsLength - 1) {
+          if (index == data.data.searchV2.tracksV2.items.length - 1) {
             const new_tracks = []
             data.data.searchV2.tracksV2.items.forEach((items2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -297,7 +298,7 @@ async function loadFrom(query, type) {
           sourceName: 'spotify'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episode', sourceName: 'Spotify', track, query })
+        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
 
         resolve({
           loadType: 'track',
@@ -313,42 +314,41 @@ async function loadFrom(query, type) {
       case 'playlist':
       case 'album': {
         const tracks = []
-        let index = 0
         let shouldStop = false
 
-        data.tracks.items.forEach(async (item) => {
-          if (item.track == null) {
-            data.tracks.items = data.tracks.items.splice(index, 1)
+        if (data.tracks.items.length > config.options.maxAlbumPlaylistLength)
+          data.tracks.items = data.tracks.items.splice(0, config.options.maxAlbumPlaylistLength)
+
+        data.tracks.items.forEach(async (item, index) => {
+          if (type[1] == 'playlist' ? item.track : item) {
+            let search
+            if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
+            else search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
+
+            if (search.loadType == 'search') {
+              const track = {
+                identifier: search.data[0].info.identifier,
+                isSeekable: true,
+                author: type[1] == 'playlist' ? item.track.artists[0].name : item.artists[0].name,
+                length: search.data[0].info.length,
+                isStream: false,
+                position: 0,
+                title: type[1] == 'playlist' ? item.track.name : item.name,
+                uri: type[1] == 'playlist' ? item.track.external_urls.spotify : item.external_urls.spotify,
+                artworkUrl: search.data[0].info.artworkUrl,
+                isrc: type[1] == 'playlist' ? item.track.external_ids.isrc : item.external_ids.isrc,
+                sourceName: 'spotify'
+              }
+
+              tracks.push({
+                encoded: utils.encodeTrack(track),
+                info: track,
+                pluginInfo: {}
+              })
+            }
           }
-  
-          let search
-          if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
-          else search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
 
-          if (search.loadType != 'search')
-            return resolve(search)
-
-          const track = {
-            identifier: search.data[0].info.identifier,
-            isSeekable: true,
-            author: type[1] == 'playlist' ? item.track.artists[0].name : item.artists[0].name,
-            length: search.data[0].info.length,
-            isStream: false,
-            position: index,
-            title: type[1] == 'playlist' ? item.track.name : item.name,
-            uri: type[1] == 'playlist' ? item.track.external_urls.spotify : item.external_urls.spotify,
-            artworkUrl: search.data[0].info.artworkUrl,
-            isrc: type[1] == 'playlist' ? item.track.external_ids.isrc : item.external_ids.isrc,
-            sourceName: 'spotify'
-          }
-
-          tracks.push({
-            encoded: utils.encodeTrack(track),
-            info: track,
-            pluginInfo: {}
-          })
-
-          if (index == data.tracks.items.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
+          if (index == data.tracks.items.length - 1) {
             const new_tracks = []
             data.tracks.items.forEach((item2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -379,44 +379,43 @@ async function loadFrom(query, type) {
               })
             })
           }
-
-          index++
         })
 
         break
       }
       case 'show': {
         const tracks = []
-        let index = 0
         let shouldStop = false
 
-        data.episodes.items.forEach(async (episode) => {
+        if (data.episodes.items.length > config.options.maxAlbumPlaylistLength)
+          data.episodes.items = data.episodes.items.splice(0, config.options.maxAlbumPlaylistLength)
+
+        data.episodes.items.forEach(async (episode, index) => {
           const search = await searchWithDefault(`${episode.name} ${episode.publisher}`)
 
-          if (search.loadType != 'search')
-            return resolve(search)
+          if (search.loadType == 'search') {
+            const track = {
+              identifier: search.data[0].info.identifier,
+              isSeekable: true,
+              author: episode.publisher,
+              length: search.data[0].info.length,
+              isStream: false,
+              position: 0,
+              title: episode.name,
+              uri: episode.external_urls.spotify,
+              artworkUrl: episode.images[0].url,
+              isrc: episode.external_ids.isrc,
+              sourceName: 'spotify'
+            }
 
-          const track = {
-            identifier: search.data[0].info.identifier,
-            isSeekable: true,
-            author: episode.publisher,
-            length: search.data[0].info.length,
-            isStream: false,
-            position: 0,
-            title: episode.name,
-            uri: episode.external_urls.spotify,
-            artworkUrl: episode.images[0].url,
-            isrc: episode.external_ids.isrc,
-            sourceName: 'spotify'
+            tracks.push({
+              encoded: utils.encodeTrack(track),
+              info: track,
+              pluginInfo: {}
+            })
           }
 
-          tracks.push({
-            encoded: utils.encodeTrack(track),
-            info: track,
-            pluginInfo: {}
-          })
-
-          if (index == data.episodes.items.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
+          if (index == data.episodes.items.length - 1) {
             const new_tracks = []
             data.episodes.items.forEach((episode2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -447,8 +446,6 @@ async function loadFrom(query, type) {
               })
             })
           }
-
-          index++
         })
 
         break

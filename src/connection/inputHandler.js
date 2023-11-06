@@ -32,6 +32,7 @@ function setupConnection(ws, req) {
 }
 
 function handleStartSpeaking(receiver, userId, guildId) {
+  return;
   const opusStream = receiver.subscribe(userId, {
     end: {
       behavior: djsVoice.EndBehaviorType.AfterSilence,

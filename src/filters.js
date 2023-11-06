@@ -88,89 +88,43 @@ class Filters {
     return result
   }
 
-  createResource(guildId, decodedTrack, protocol, url, endTime, cache, oldFFmpeg) {
+  getResource(guildId, decodedTrack, protocol, url, endTime, cache, oldFFmpeg, additionalData) {
     return new Promise((resolve) => {
       if (oldFFmpeg) oldFFmpeg.destroy()
 
-      if (protocol == 'file') {
-        const file = fs.createReadStream(url.url)
+      // Deezer is not properly working
 
-        file.on('error', (err) => {
-          utils.debugLog('trackException', 2, { track: url.url, guildId: guildId, exception: err.message })
+      // const trackData = await sources.getTrackStream(decodedTrack, url, protocol, additionalData)
 
-          return resolve({
-            exception: {
-              message: 'Failed to retrieve stream from source. (File not found or not accessible)',
-              severity: 'common',
-              cause: 'No permission to access file or doesn\'t exist'
-            }
-          })
-        })
+      // if (trackData.exception) {
+      //   utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: trackData.exception.message })
 
-        if (oldFFmpeg) oldFFmpeg.destroy()
+      //   resolve({ status: 1, exception: { message: trackData.exception.message, severity: 'fault', cause: 'Unknown' } })
+      // }
 
-        const ffmpeg = new prism.FFmpeg({
-          args: [
-            '-loglevel', '0',
-            '-analyzeduration', '0',
-            '-threads', config.filters.threads,
-            '-filter_threads', config.filters.threads,
-            '-filter_complex_threads', config.filters.threads,
-            ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
-            '-i', url,
-            '-af', this.command.join(','),
-            ...(endTime ? ['-t', `${endTime}ms`] : []),
-            '-f', 's16le',
-            '-ar', '48000',
-            '-ac', '2'
-          ]
-        })
+      const ffmpeg = new prism.FFmpeg({
+        args: [
+          '-loglevel', '0',
+          '-analyzeduration', '0',
+          '-hwaccel', 'auto',
+          '-threads', config.filters.threads,
+          '-filter_threads', config.filters.threads,
+          '-filter_complex_threads', config.filters.threads,
+          ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
+          '-i', `"${url}"`,
+          '-af', this.command.join(','),
+          ...(endTime ? ['-t', `${endTime}ms`] : []),
+          '-f', 's16le',
+          '-ar', '48000',
+          '-ac', '2'
+        ]
+      })
 
-        return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
-      } else {
-        (protocol == 'https' ? https : http).get(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-            'Range': 'bytes=0-'
-          }
-        }, (res) => {
-          res.on('error', () => {})
+      ffmpeg._stdout.once('data', () => {
+        return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg._stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
+      })
 
-          if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
-            res.destroy()
-
-            utils.debugLog('trackException', 2, { track: decodedTrack, guildId: this.guildId, exception: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
-
-            return resolve({ exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
-          }
-
-          res.destroy()
-
-          const ffmpeg = new prism.FFmpeg({
-            args: [
-              '-loglevel', '0',
-              '-analyzeduration', '0',
-              '-hwaccel', 'auto',
-              '-threads', config.filters.threads,
-              '-filter_threads', config.filters.threads,
-              '-filter_complex_threads', config.filters.threads,
-              ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
-              '-i', url,
-              '-af', this.command.join(','),
-              ...(endTime ? ['-t', `${endTime}ms`] : []),
-              '-f', 's16le',
-              '-ar', '48000',
-              '-ac', '2'
-            ]
-          })
-
-          ffmpeg.process.stdout.once('data', () => {
-            return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
-          })
-
-          ffmpeg.on('error', (err) => console.error(err))
-        })
-      }
+      ffmpeg.on('error', (err) => console.error(err))
     })
   }
 }

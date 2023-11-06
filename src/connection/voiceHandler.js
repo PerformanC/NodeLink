@@ -1,9 +1,3 @@
-import fs from 'node:fs'
-
-import https from 'node:https'
-import http from 'node:http'
-import { PassThrough } from 'node:stream'
-
 import utils from '../utils.js'
 import config from '../../config.js'
 import constants from '../../constants.js'
@@ -71,8 +65,6 @@ class VoiceConnection {
   _stopTrack() {
     nodelinkPlayingPlayersCount--
 
-    fs.rm(`./cache/${this.config.guildId}.webm`, { force: true }, () => {})
-
     if (this.stateInterval) clearInterval(this.stateInterval)
 
     this.config.state = {
@@ -88,13 +80,11 @@ class VoiceConnection {
   _getRealTime() {
     return (new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
   }
-  
+
   setup() {
     nodelinkPlayersCount++
 
     this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: voiceAdapterCreator(this.client.userId, this.config.guildId) })
-    this.player = djsVoice.createAudioPlayer()
-
     this.connection.receiver.speaking.on('start', (userId) => inputHandler.handleStartSpeaking(this.connection.receiver, userId, this.config.guildId))
 
     this.connection.on('stateChange', async (oldState, newState) => {
@@ -125,7 +115,9 @@ class VoiceConnection {
         }
       }
     })
-
+  }
+  
+  setupEvents() {
     this.player.on('stateChange', (oldState, newState) => {
       if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {
         if (this.cache.silence) return (this.cache.silence = false)
@@ -224,61 +216,19 @@ class VoiceConnection {
     this.client.players.delete(this.config.guildId)
   }
 
-  async getResource(title, sourceName, url, protocol) {
+  async getResource(decodedTrack, url, protocol, additionalData) {
     return new Promise(async (resolve) => {
-      if (protocol == 'file') {
-        const file = fs.createReadStream(url)
+      const trackData = await sources.getTrackStream(decodedTrack, url, protocol, additionalData)
 
-        file.on('error', () => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
+      if (trackData.exception) {
+        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: trackData.exception.message })
 
-          resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'common', cause: 'No permission to access file or doesn\'t exist' } })
-        })
-
-        this.cache.url = url
-
-        resolve({ stream: djsVoice.createAudioResource(file, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
-      } else {
-        (protocol == 'https' ? https : http).get(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-            'Range': 'bytes=0-'
-          }
-        }, (res) => {
-          res.on('error', () => {})
-
-          if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
-            res.destroy()
-
-            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
-
-            resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
-          }
-
-          this.cache.url = url
-
-          const stream = new PassThrough()
-
-          res.on('data', (chunk) => stream.write(chunk))
-
-          res.on('end', () => stream.end())
-
-          res.on('error', (error) => {
-            utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: error.message })
-
-            resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
-          })
-
-          if ([ 'youtube', 'ytmusic' ].includes(sourceName) || ([ 'deezer', 'pandora', 'spotify' ].includes(sourceName) && config.search.defaultSearchSource == 'youtube'))
-            resolve({ stream: djsVoice.createAudioResource(stream, { inputType: djsVoice.StreamType.WebmOpus, inlineVolume: true }) })
-          else
-            resolve({ stream: djsVoice.createAudioResource(stream, { inputType: djsVoice.StreamType.Arbitrary, inlineVolume: true }) })
-        }).on('error', (error) => {
-          utils.debugLog('retrieveStream', 4, { type: 2, sourceName: sourceName, query: title, message: error.message })
-
-          resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
-        })
+        resolve({ status: 1, exception: { message: trackData.exception.message, severity: 'fault', cause: 'Unknown' } })
       }
+
+      this.cache.url = url
+
+      resolve({ stream: djsVoice.createAudioResource(trackData.stream, { inputType: trackData.type, inlineVolume: true }) })
     })
   }
 
@@ -327,14 +277,14 @@ class VoiceConnection {
       this.config.filters = filter.configure(this.config.filters)
 
       filterEnabled = true
-      resource = await filter.createResource(this.config.guildId, decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg)  
+      resource = await filter.getResource(this.config.guildId, decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg, urlInfo.additionalData)  
 
-      if (oldTrack) this._stopTrack(true)
+      if (oldTrack) this._stopTrack()
     } else {
       this.cache.url = urlInfo.url
-      resource = await this.getResource(decodedTrack.title, decodedTrack.sourceName, urlInfo.url, urlInfo.protocol)
+      resource = await this.getResource(decodedTrack, urlInfo.url, urlInfo.protocol, urlInfo.additionalData)
 
-      if (oldTrack) this._stopTrack(true)
+      if (oldTrack) this._stopTrack()
     }
   
     if (resource.exception) {
@@ -357,6 +307,10 @@ class VoiceConnection {
   
     if (filterEnabled) this.cache.ffmpeg = resource.ffmpeg
 
+    if (!this.player) {
+      this.player = djsVoice.createAudioPlayer()
+      this.setupEvents()
+    }
     if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
     this.player.play(resource.stream)
 
@@ -424,7 +378,7 @@ class VoiceConnection {
   }
 
   volume(volume) {
-    if (!this.player.state.resource) {
+    if (!this.player?.state?.resource) {
       this.cache.volume = volume / 100
 
       return this.config
@@ -465,7 +419,7 @@ class VoiceConnection {
     if (!this.config.track) return this.config
 
     const protocol = this.config.track.info.sourceName == 'local' ? 'file' : (this.config.track.info.sourceName == 'http' ? 'http' : 'https')
-    const resource = await filter.createResource(this.config.guildId, this.config.track.info, protocol, this.cache.url, filters.endTime, this.cache, this.cache.ffmpeg)
+    const resource = await filter.getResource(this.config.guildId, this.config.track.info, protocol, this.cache.url, filters.endTime, this.cache, this.cache.ffmpeg)
 
     if (resource.exception) {
       this.config.track = null

@@ -1,5 +1,5 @@
 import os from 'node:os'
-import { URLSearchParams, URL } from 'node:url'
+import { URL } from 'node:url'
 
 import utils from '../utils.js'
 import config from '../../config.js'
@@ -142,9 +142,9 @@ async function requestHandler(req, res) {
   if (parsedUrl.pathname == '/v4/decodetrack') {
     if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
 
-    utils.debugLog('decodetrack', 1, { params: parsedUrl.query, headers: req.headers })
+    utils.debugLog('decodetrack', 1, { params: parsedUrl.search, headers: req.headers })
     
-    const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
+    const encodedTrack = parsedUrl.searchParams.get('encodedTrack')
 
     if (!encodedTrack) return utils.send(req, res, {
       timestamp: Date.now(),
@@ -326,7 +326,7 @@ async function requestHandler(req, res) {
   if (parsedUrl.pathname == '/v4/loadtracks') {
     if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
 
-    utils.debugLog('loadtracks', 1, { params: parsedUrl.query, headers: req.headers })
+    utils.debugLog('loadtracks', 1, { params: parsedUrl.search, headers: req.headers })
 
     const identifier = parsedUrl.searchParams.get('identifier')
 
@@ -345,20 +345,21 @@ async function requestHandler(req, res) {
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const spSearch = config.search.sources.spotify ? identifier.startsWith('spsearch:') : null
-    const spRegex = config.search.sources.youtube && config.search.sources.spotify && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:.+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
-    if (config.search.sources[config.search.defaultSearchSource] && config.search.sources.spotify && (spSearch || spRegex))
+    const spRegex = config.search.sources.spotify && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
+    if (config.search.sources[config.search.defaultSearchSource] && (spSearch || spRegex))
        search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
 
     if (utils.sendNonNull(req, res, search) == true) return;
 
-    const dzRegex = config.search.sources.youtube && config.search.sources.deezer ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)$/.exec(identifier) : null
-    if (config.search.sources[config.search.defaultSearchSource] && config.search.sources.deezer && dzRegex)
-      search = await sources.deezer.loadFrom(identifier, dzRegex)
+    const dzRegex = config.search.sources.deezer.enabled ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)$/.exec(identifier) : null
+    const dzSearch = config.search.sources.deezer.enabled ? identifier.startsWith('dzsearch:') : null
+    if (config.search.sources.deezer.enabled && (dzSearch || dzRegex))
+      search = dzSearch ? await sources.deezer.search(identifier.replace('dzsearch:', ''), true) : await sources.deezer.loadFrom(identifier, dzRegex)
 
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/(?:sets\/)?[a-zA-Z0-9-_]+$/.test(identifier)))
+    if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/(?:sets\/)?[a-zA-Z0-9-_]+(?:\?.*)?$/.test(identifier)))
       search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', ''), true) : await sources.soundcloud.loadFrom(identifier)
 
     if (utils.sendNonNull(req, res, search) == true) return;
@@ -370,7 +371,7 @@ async function requestHandler(req, res) {
     if (utils.sendNonNull(req, res, search) == true) return;
 
     const pdSearch = config.search.sources.pandora ? identifier.startsWith('pdsearch:') : null
-    if (config.search.sources[config.search.defaultSearchSource] && config.search.sources.pandora && (pdSearch || /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.test(identifier)))
+    if (config.search.sources[config.search.defaultSearchSource] && (pdSearch || /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.test(identifier)))
       search = pdSearch ? await sources.pandora.search(identifier.replace('pdsearch:', '')) : await sources.pandora.loadFrom(identifier)
 
     if (utils.sendNonNull(req, res, search) == true) return;
@@ -395,9 +396,9 @@ async function requestHandler(req, res) {
   if (parsedUrl.pathname == '/v4/loadcaptions') {
     if (utils.verifyMethod(parsedUrl, req, res, 'GET')) return;
 
-    utils.debugLog('loadcaptions', 1, { params: parsedUrl.query, headers: req.headers })
+    utils.debugLog('loadcaptions', 1, { params: parsedUrl.search, headers: req.headers })
 
-    const encodedTrack = new URLSearchParams(parsedUrl.query).get('encodedTrack')
+    const encodedTrack = parsedUrl.searchParams.get('encodedTrack')
 
     if (!encodedTrack) return utils.send(req, res, {
       timestamp: Date.now(),
@@ -411,7 +412,7 @@ async function requestHandler(req, res) {
     const decodedTrack = utils.decodeTrack(encodedTrack)
 
     if (!decodedTrack) {
-      utils.debugLog('loadcaptions', 4, { params: parsedUrl.query, headers: req.headers, error: 'Failed to decode track.' })
+      utils.debugLog('loadcaptions', 4, { params: parsedUrl.search, headers: req.headers, error: 'Failed to decode track.' })
 
       return utils.send(req, res, {
         timestamp: Date.now(),
@@ -423,7 +424,7 @@ async function requestHandler(req, res) {
       }, 400)
     }
 
-    const language = new URLSearchParams(parsedUrl.query).get('language')
+    const language = parsedUrl.searchParams.get('language')
 
     let captions = null
 
@@ -479,7 +480,7 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      utils.debugLog('sessions', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+      utils.debugLog('sessions', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
 
       buffer = JSON.parse(buffer)
 
@@ -530,7 +531,7 @@ async function requestHandler(req, res) {
     const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
 
     if (!client) {
-      utils.debugLog('player', 1, { params: parsedUrl.query, headers: req.headers, error: 'The provided session Id doesn\'t exist.' })
+      utils.debugLog('player', 1, { params: parsedUrl.search, headers: req.headers, error: 'The provided session Id doesn\'t exist.' })
 
       return utils.send(req, res, {
         timestamp: new Date(),
@@ -551,12 +552,12 @@ async function requestHandler(req, res) {
       let player = client.players.get(guildId)
 
       if (req.method == 'GET') {    
-        utils.debugLog('getPlayer', 1, { params: parsedUrl.query, headers: req.headers })
+        utils.debugLog('getPlayer', 1, { params: parsedUrl.search, headers: req.headers })
     
         const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
 
         if (!guildId) {
-          utils.debugLog('getPlayer', 1, { params: parsedUrl.query, headers: req.headers, error: 'Missing guildId parameter.' })
+          utils.debugLog('getPlayer', 1, { params: parsedUrl.search, headers: req.headers, error: 'Missing guildId parameter.' })
 
           return utils.send(req, res, {
             timestamp: new Date(),
@@ -585,10 +586,10 @@ async function requestHandler(req, res) {
         utils.send(req, res, player.config, 200)
       } else {
         if (buffer.voice != undefined) {
-          utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          utils.debugLog('voice', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
 
           if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
-            utils.debugLog('voice', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: `Invalid voice object.` })
+            utils.debugLog('voice', 1, { params: parsedUrl.search, headers: req.headers, body: buffer, error: `Invalid voice object.` })
 
             return utils.send(req, res, {
               timestamp: new Date(),
@@ -627,10 +628,10 @@ async function requestHandler(req, res) {
         }
 
         if (buffer.encodedTrack !== undefined || buffer.encodedTrack === null) {
-          if (buffer.encodedTrack == null) utils.debugLog('stop', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
-          else utils.debugLog('play', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          if (buffer.encodedTrack == null) utils.debugLog('stop', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
+          else utils.debugLog('play', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
 
-          const noReplace = new URLSearchParams(parsedUrl.query).get('noReplace')
+          const noReplace = parsedUrl.searchParams.get('noReplace')
 
           if (!player) player = new VoiceConnection(guildId, client)
 
@@ -642,7 +643,7 @@ async function requestHandler(req, res) {
               const decodedTrack = utils.decodeTrack(buffer.encodedTrack)
 
               if (!decodedTrack) {
-                utils.debugLog('play', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'Failed to decode track.' })
+                utils.debugLog('play', 1, { params: parsedUrl.search, headers: req.headers, body: buffer, error: 'Failed to decode track.' })
 
                 return utils.send(req, res, {
                   timestamp: Date.now(),
@@ -680,10 +681,10 @@ async function requestHandler(req, res) {
         }
 
         if (buffer.volume != undefined) {
-          utils.debugLog('volume', 1, { params: parsedUrl.query, params: parsedUrl.query, body: buffer })
+          utils.debugLog('volume', 1, { params: parsedUrl.search, params: parsedUrl.search, body: buffer })
 
           if (buffer.volume < 0 || buffer.volume > 1000) {
-            utils.debugLog('volume', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'The volume must be between 0 and 1000.' })
+            utils.debugLog('volume', 1, { params: parsedUrl.search, headers: req.headers, body: buffer, error: 'The volume must be between 0 and 1000.' })
 
             return utils.send(req, res, {
               timestamp: new Date(),
@@ -702,10 +703,10 @@ async function requestHandler(req, res) {
         }
 
         if (buffer.paused != undefined) {
-          utils.debugLog('pause', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          utils.debugLog('pause', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
 
           if (typeof buffer.paused != 'boolean') {
-            utils.debugLog('pause', 1, { params: parsedUrl.query, headers: req.headers, body: buffer, error: 'The paused value must be a boolean.' })
+            utils.debugLog('pause', 1, { params: parsedUrl.search, headers: req.headers, body: buffer, error: 'The paused value must be a boolean.' })
 
             return utils.send(req, res, {
               timestamp: new Date(),
@@ -726,19 +727,19 @@ async function requestHandler(req, res) {
         let filters = {}
 
         if (buffer.filters != undefined) {
-          utils.debugLog('filters', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          utils.debugLog('filters', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
 
           filters = buffer.filters
         }
 
         if (buffer.position != undefined) {
-          utils.debugLog('seek', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          utils.debugLog('seek', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
 
           filters.seek = buffer.position
         }
 
         if (buffer.endTime != undefined) {
-          utils.debugLog('endTime', 1, { params: parsedUrl.query, headers: req.headers, body: buffer })
+          utils.debugLog('endTime', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
 
           filters.endTime = buffer.endTime
         }
@@ -775,6 +776,9 @@ function startSourceAPIs() {
 
   if (config.search.sources.pandora)
     sources.pandora.setToken()
+
+  if (config.search.sources.deezer.enabled)
+    sources.deezer.initDeezer()
 }
 
 export default { setupConnection, requestHandler, startSourceAPIs }

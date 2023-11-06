@@ -2,6 +2,7 @@ import config from '../../config.js'
 import youtube from './youtube.js'
 import soundcloud from './soundcloud.js'
 import bandcamp from './bandcamp.js'
+import deezer from './deezer.js'
 
 async function searchWithDefault(query) {
   switch (config.search.defaultSearchSource) {
@@ -14,6 +15,9 @@ async function searchWithDefault(query) {
     }
     case 'bandcamp': {
       return bandcamp.search(query, false)
+    }
+    case 'deezer': {
+      return deezer.search(query, false)
     }
     default: {
       console.warn('[\u001b[33msources\u001b[37m]: Default search source: unknown, falling back to YouTube...')

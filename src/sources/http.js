@@ -56,4 +56,6 @@ async function loadFrom(uri) {
   }
 }
 
-export default loadFrom
+export default {
+  loadFrom
+}

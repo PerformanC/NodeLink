@@ -1,3 +1,4 @@
+import http from 'node:http'
 import https from 'node:https'
 import http2 from 'node:http2'
 import zlib from 'node:zlib'
@@ -26,21 +27,24 @@ function http1makeRequest(url, options) {
   return new Promise(async (resolve, reject) => {
     let compression, data = ''
 
-    const req = https.request(url, {
+    const req = (url.startsWith('https') ? https : http).request(url, {
       method: options.method,
       headers: {
         'Accept-Encoding': 'br, gzip, deflate',
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+        ...(options.headers || {})
       },
       rejectUnauthorized: false
     }, (res) => {
-      if (res.statusCode == 401) throw new Error(`[\u001b[31mmakeRequest1\u001b[37m]: Received 401 in url: ${url}.`)
+      if (res.statusCode == 401) throw new Error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Received 401 in url: ${url}.`)
 
       if (options.retrieveHeaders) {
         req.destroy()
 
         return resolve(res.headers)
       }
+
+      const isJson = res.headers['content-type'].startsWith('application/json')
 
       switch (res.headers['content-encoding']) {
         case 'deflate': {
@@ -62,14 +66,18 @@ function http1makeRequest(url, options) {
         res = compression
       }
 
-      res.on('data', (chunk) => (data += chunk))
+      if (options.streamOnly)
+        return resolve(res)
 
-      res.on('end', () => resolve(JSON.parse(data.toString())))
+      res.on('data', (chunk) => (data += chunk))
+      res.on('error', () => reject())
+      res.on('end', () => resolve(isJson ? JSON.parse(data.toString()) : data.toString()))
     }).end()
 
     req.on('error', (error) => {
-      console.error(`[\u001b[31mmakeRequest1\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
-      reject()
+      console.error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
+
+      reject(error)
     })
   })
 }
@@ -90,20 +98,19 @@ function makeRequest(url, options) {
 
     let req = client.request(reqOptions)
 
-    if (options.streamOnly)
-      return resolve(req)
-
     req.on('error', (error) => {
       console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
-      reject()
+
+      reject(error)
     })
 
     req.on('response', (headers) => {
-      if (options.retrieveCookies) {
+      if (options.cookiesOnly) {
         req.destroy()
 
         return resolve(headers['set-cookie'])
       }
+      let cookie = headers['set-cookie']
 
       switch (headers['content-encoding']) {
         case 'deflate': {
@@ -125,10 +132,20 @@ function makeRequest(url, options) {
         req = compression
       }
 
-      req.on('data', (chunk) => data += chunk)
+      if (options.streamOnly)
+        return resolve(req)
 
+      req.on('data', (chunk) => data += chunk)
+      req.on('error', (error) => reject(error))
       req.on('end', () => {
-        resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
+        if (options.getCookies) {
+          resolve({
+            cookies: cookie,
+            body: headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString()
+          })
+        } else {
+          resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
+        }
 
         client.close()
       })
@@ -138,11 +155,10 @@ function makeRequest(url, options) {
       if (options.disableBodyCompression)
         req.write(JSON.stringify(options.body), () => req.end())
       else zlib.gzip(JSON.stringify(options.body), (error, data) => {
-        if (error) throw new Error(`[makeRequest]: Failed gziping body: ${error}`)
+        if (error) throw new Error(`\u001b[31mmakeRequest\u001b[37m]: Failed gziping body: ${error}`)
         req.write(data, () => req.end())
       })
-    }
-    else req.end()
+    } else req.end()
   })
 }
 
@@ -375,6 +391,7 @@ async function checkForUpdates() {
 
       file.on('finish', () => {
         file.close()
+
         const args = []
         if (config.options.autoUpdate[3] == 'zip') args.push('PerformanC-Nodelink.zip')
         else if (config.options.autoUpdate[3] == '7zip') args.push('x', 'PerformanC-Nodelink.zip')
@@ -416,6 +433,8 @@ async function checkForUpdates() {
           })
         })
       })
+
+      res.end()
     }
   } else {
     console.log(`[\u001b[32mupdater\u001b[37m] NodeLink is up to date! (${version})`)
@@ -506,7 +525,7 @@ function debugLog(name, type, options) {
             console.log(`[\u001b[32mloadTracks\u001b[37m]: Loading \u001b[94m${options.loadType}\u001b[37m from ${options.sourceName}: ${options.query}`)
 
           if (options.type == 2 && config.debug.sources.loadtrack.results) {
-            if (options.loadType != 'search')
+            if (options.loadType != 'search' && options.loadType != 'track')
               console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.playlistName}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m.`)
             else
               console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: ${options.query}`)

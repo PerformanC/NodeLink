@@ -1,16 +1,27 @@
+import { PassThrough } from 'node:stream'
+
 import config from '../config.js'
 import bandcamp from './sources/bandcamp.js'
 import deezer from './sources/deezer.js'
-import http from './sources/http.js'
+import httpS from './sources/http.js'
 import local from './sources/local.js'
 import pandora from './sources/pandora.js'
 import soundcloud from './sources/soundcloud.js'
 import spotify from './sources/spotify.js'
 import youtube from './sources/youtube.js'
 
+import utils from './utils.js'
+import { error } from 'node:console'
+
 async function getTrackURL(track) {
   return new Promise(async (resolve) => {
-    switch ([ 'deezer', 'pandora', 'spotify' ].includes(track.sourceName) ? config.search.defaultSearchSource : track.sourceName) {
+    switch ([ 'pandora', 'spotify' ].includes(track.sourceName) ? config.search.defaultSearchSource : track.sourceName) {
+      case 'ytmusic':
+      case 'youtube': {
+        resolve(youtube.retrieveStream(track.identifier, track.sourceName, track.title))
+  
+        break
+      }
       case 'local': {
         resolve({ url: track.uri, protocol: 'file' })
 
@@ -24,19 +35,18 @@ async function getTrackURL(track) {
         break
       }
       case 'soundcloud': {
-        resolve(soundcloud.retrieveStream(track.identifier))
+        resolve(soundcloud.retrieveStream(track.identifier, track.title))
 
         break
       }
       case 'bandcamp': {
-        resolve(bandcamp.retrieveStream(track.uri))
+        resolve(bandcamp.retrieveStream(track.uri, track.title, track.author))
 
         break
       }
-      case 'ytmusic':
-      case 'youtube': {
-        resolve(youtube.retrieveStream(track.identifier, track.sourceName))
-  
+      case 'deezer': {
+        resolve(deezer.retrieveStream(track.identifier, track.title))
+
         break
       }
       default: {
@@ -48,40 +58,75 @@ async function getTrackURL(track) {
   })
 }
 
+function getTrackStream(decodedTrack, url, protocol, additionalData) {
+  return new Promise(async (resolve) => {
+    if (protocol == 'file') {
+      const file = fs.createReadStream(url)
+
+      file.on('error', () => {
+        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
+
+        resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'common', cause: 'No permission to access file or doesn\'t exist' } })
+      })
+
+      resolve({ stream: file, type: 'arbitrary' })
+    } else {
+      const trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
+
+      if (trueSource == 'deezer')
+        return resolve({ stream: deezer.loadTrack(url, additionalData), type: 'arbitrary' })
+
+      if (trueSource == 'soundcloud') {
+        const stream = await soundcloud.loadHls(url)
+
+        return resolve({ stream: stream, type: 'arbitrary' })
+      }
+
+      const res = await utils.makeRequest(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+          'Range': 'bytes=0-'
+        },
+        method: 'GET',
+        streamOnly: true
+      }).catch((error) => {
+        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
+
+        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+      })
+
+      // if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
+      //   res.destroy()
+
+      //   utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
+
+      //   return resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
+      // }
+
+      const stream = new PassThrough()
+
+      res.on('data', (chunk) => stream.write(chunk))
+      res.on('end', () => stream.end())
+      res.on('error', (error) => {
+        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
+
+        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+      })
+
+      resolve({ stream, type: [ 'youtube', 'ytmusic' ].includes(trueSource) ? 'webm/opus' : 'arbitrary' })
+    }
+  })
+}
+
 export default {
   getTrackURL,
-  bandcamp: {
-    loadFrom: bandcamp.loadFrom,
-    search: bandcamp.search
-  },
-  deezer: {
-    loadFrom: deezer
-  },
-  http: {
-    loadFrom: http
-  },
-  local: {
-    loadFrom: local
-  },
-  pandora: {
-    loadFrom: pandora.loadFrom,
-    search: pandora.search,
-    setToken: pandora.setToken
-  },
-  soundcloud: {
-    loadFrom: soundcloud.loadFrom,
-    search: soundcloud.search
-  },
-  spotify: {
-    loadFrom: spotify.loadFrom,
-    search: spotify.search,
-    setSpotifyToken: spotify.setSpotifyToken
-  },
-  youtube: {
-    search: youtube.search,
-    loadFrom: youtube.loadFrom,
-    startInnertube: youtube.startInnertube,
-    stopInnertube: youtube.stopInnertube,
-    loadCaptions: youtube.loadCaptions
-  }
+  getTrackStream,
+  bandcamp,
+  deezer,
+  http: httpS,
+  local,
+  pandora,
+  soundcloud,
+  spotify,
+  youtube,
 }
