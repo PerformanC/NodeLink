@@ -1,10 +1,9 @@
 import crypto from 'node:crypto'
 import { PassThrough } from 'node:stream'
-import https from 'https'
 import { Transform } from 'node:stream'
 
 import config from '../../config.js'
-import utils from '../utils.js'
+import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
 let playerInfo = {
   licenseToken: null,
@@ -17,9 +16,12 @@ const bufferSize = 2048
 const IV = Buffer.from(Array.from({length: 8}, (_i, x) => x))
 
 function initDeezer() {
-  utils.debugLog('deezer', 5, { type: 1, message: 'Fetching user data...' })
+  if (playerInfo.licenseToken) return;
+  // TODO: Need to reset when timestamp is expired
 
-  utils.makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=${config.search.sources.deezer.apiToken}`, {
+  debugLog('deezer', 5, { type: 1, message: 'Fetching user data...' })
+
+  makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=${config.search.sources.deezer.apiToken}`, {
     method: 'GET',
     getCookies: true
   }).then((res) => {
@@ -29,7 +31,7 @@ function initDeezer() {
     playerInfo.csrfToken = res.body.results.checkForm
     playerInfo.mediaUrl = res.body.results.URL_MEDIA
 
-    utils.debugLog('deezer', 5, { type: 1, message: 'Successfully fetched user data.' })
+    debugLog('deezer', 5, { type: 1, message: 'Successfully fetched user data.' })
   })
 }
 
@@ -51,9 +53,9 @@ async function loadFrom(query, type) {
         return resolve({ loadType: 'empty', data: {} })
     }
 
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Deezer', query })
+    debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Deezer', query })
 
-    const data = await utils.makeRequest(`https://api.deezer.com/2.0/${endpoint}`, { method: 'GET' })
+    const data = await makeRequest(`https://api.deezer.com/2.0/${endpoint}`, { method: 'GET' })
 
     if (data.error) {
       if (data.error.code == 800) 
@@ -78,12 +80,12 @@ async function loadFrom(query, type) {
           sourceName: 'deezer'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Deezer', track, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Deezer', track, query })
 
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             pluginInfo: {}
           }
@@ -114,13 +116,13 @@ async function loadFrom(query, type) {
           }
 
           tracks.push({
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             pluginInfo: {}
           })
         })
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Deezer', playlistName: data.title })
+        debugLog('loadtracks', 4, { type: 2, loadType: type[1], sourceName: 'Deezer', playlistName: data.title })
 
         resolve({
           loadType: type[1],
@@ -142,9 +144,9 @@ async function loadFrom(query, type) {
 
 function search(query, shouldLog) {
   return new Promise(async (resolve) => {
-    if (shouldLog) utils.debugLog('search', 4, { type: 1, sourceName: 'Deezer', query })
+    if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'Deezer', query })
 
-    const data = await utils.makeRequest(`https://api.deezer.com/2.0/search?q=${encodeURI(query)}`, { method: 'GET' })
+    const data = await makeRequest(`https://api.deezer.com/2.0/search?q=${encodeURI(query)}`, { method: 'GET' })
 
     // This API doesn't give ISRC, must change to internal API
 
@@ -172,7 +174,7 @@ function search(query, shouldLog) {
       }
 
       tracks.push({
-        encoded: utils.encodeTrack(track),
+        encoded: encodeTrack(track),
         info: track,
         pluginInfo: {}
       })
@@ -180,7 +182,7 @@ function search(query, shouldLog) {
 
     if (tracks.length == 0) resolve({ loadType: 'empty', data: {} })
 
-    if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'deezer', tracksLen: tracks.length, query })
+    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'deezer', tracksLen: tracks.length, query })
 
     resolve({
       loadType: 'search',
@@ -191,7 +193,7 @@ function search(query, shouldLog) {
 
 function retrieveStream(identifier, title) {
   return new Promise(async (resolve) => {
-    const data = await utils.makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=song.getListData&input=3&api_version=1.0&api_token=${playerInfo.csrfToken}`, {
+    const data = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=song.getListData&input=3&api_version=1.0&api_token=${playerInfo.csrfToken}`, {
       body: {
         sng_ids: [ identifier ]
       },
@@ -205,14 +207,14 @@ function retrieveStream(identifier, title) {
     if (data.error.length != 0) {
       const errorMessage = Object.keys(data.error).map((err) => data.error[err]).join('; ')
 
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: errorMessage })
+      debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: errorMessage })
 
       return resolve({ exception: { message: errorMessage, severity: 'fault', cause: 'Unknown' } })
     }
 
     const trackInfo = data.results.data[0]
 
-    const streamData = await utils.makeRequest('https://media.deezer.com/v1/get_url', {
+    const streamData = await makeRequest('https://media.deezer.com/v1/get_url', {
       body: {
         license_token: playerInfo.licenseToken,
         media: [{
@@ -253,110 +255,48 @@ function _calculateKey(songId) {
   return trackKey
 }
 
-class DecryptStream extends Transform {
-  constructor(songId, options) {
-    options = options || {}
-    options.objectMode = true
-    super(options)
-    this._buf = Buffer.alloc(0)
-    this._totalChunkCount = 0
-
-    const key = config.search.sources.deezer.decryptionKey
-    const songIdHash = crypto.createHash('md5').update(songId, 'ascii').digest('hex')
-    this._trackKey = Buffer.alloc(16)
-
-    for (let i = 0; i < 16; i++) {
-      this._trackKey.writeInt8(songIdHash[i].charCodeAt(0) ^ songIdHash[i + 16].charCodeAt(0) ^ key[i].charCodeAt(0), i);
-    }
-  }
-
-  _createDecipher() {
-    return crypto.createDecipheriv('bf-cbc', this._trackKey, IV).setAutoPadding(false);
-  }
-
-  _transform(data, _encoding, callback) {
-    this._buf = Buffer.concat([this._buf, data])
-
-    while (this._buf.length >= bufferSize) {
-      this._processChunk(this._buf.subarray(0, bufferSize))
-      this._buf = this._buf.subarray(bufferSize)
-    }
-
-    callback()
-  }
-
-  _processChunk(chunk) {
-    if (this._totalChunkCount % 3 === 0) {
-      const f = this._createDecipher()
-      this.push(f.update(chunk))
-      this.push(f.final())
-    } else this.push(chunk)
-
-    this._totalChunkCount++
-  }
-
-  _flush(callback) {
-    if (this._buf) this.push(this._buf)
-
-    callback()
-  }
-}
-
 function loadTrack(url, trackInfos) {
-  const stream = new DecryptStream(trackInfos.SNG_ID)// new PassThrough()
+  const stream = new PassThrough()
 
-  // const trackKey = _calculateKey(trackInfos.SNG_ID)
-  // let buf = Buffer.alloc(0)
-  // let i = 0
+  const trackKey = _calculateKey(trackInfos.SNG_ID)
+  let buf = Buffer.alloc(0)
+  let i = 0
 
-  // utils.http1makeRequest(url, { method: 'GET', streamOnly: true }).then((res) => {
-  https.get(url, (res) => {
-    res.pipe(stream)
-    // res.on('readable', () => {
-    //   let chunk = null
-    //   while (1) {
-    //     // if (res.destroyed || !res.readableLength) break
-    //     // if (res.readableLength <= bufferSize)  {
-    //     //   chunk = res.read(res.readableLength)
-          
-    //     //   stream.push(chunk)
-    //     //   break
-    //     // }
+  makeRequest(url, { method: 'GET', streamOnly: true }).then((res) => {
+    res.on('readable', () => {
+      let chunk = null
+      while (1) {
+        chunk = res.read(bufferSize)
 
-    //     chunk = res.read(bufferSize)
+        if (!chunk) {
+          if (res.readableLength) {
+            chunk = res.read(res.readableLength)
+            stream.push(chunk)
+          }
 
-    //     if (!chunk) {
-    //       console.log('ok..?')
-    //       if (res.readableLength) {
-    //         chunk = res.read(res.readableLength)
-    //         stream.push(chunk)
-    //       }
+          break
+        }
 
-    //       break
-    //     }
-          
-    //     // }
+        buf = Buffer.concat([buf, chunk])
 
-    //     buf = Buffer.concat([buf, chunk])
-
-    //     while (buf.length >= bufferSize) {
-    //       if (i % 3 == 0) {
-    //         const decipher = crypto.createDecipheriv('bf-cbc', trackKey, IV).setAutoPadding(false);
+        while (buf.length >= bufferSize) {
+          if (i % 3 == 0) {
+            const decipher = crypto.createDecipheriv('bf-cbc', trackKey, IV).setAutoPadding(false);
     
-    //         stream.push(decipher.update(buf.subarray(0, bufferSize)))
-    //         stream.push(decipher.final())
-    //       } else {
-    //         stream.push(chunk)
-    //       }
+            stream.push(decipher.update(buf.subarray(0, bufferSize)))
+            stream.push(decipher.final())
+          } else {
+            stream.push(chunk)
+          }
       
-    //       i++
+          i++
       
-    //       buf = buf.subarray(bufferSize)
-    //     }
-    //   }
-    // })
+          buf = buf.subarray(bufferSize)
+        }
+      }
+    })
 
-    // res.on('end', () => stream.end())
+    res.on('end', () => stream.end())
   })
 
   return stream

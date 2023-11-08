@@ -1,4 +1,4 @@
-import utils from '../utils.js'
+import { debugLog } from '../utils.js'
 import config from '../../config.js'
 import constants from '../../constants.js'
 import sources from '../sources.js'
@@ -9,7 +9,6 @@ import inputHandler from './inputHandler.js'
 import * as djsVoice from '@discordjs/voice'
 
 const adapters = new Map()
-global.clients = new Map()
 
 global.nodelinkPlayersCount = 0
 global.nodelinkPlayingPlayersCount = 0
@@ -95,7 +94,7 @@ class VoiceConnection {
           try {
             if (config.options.threshold) await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold)
           } catch (e) {
-            utils.debugLog('websocketClosed', 2, { track: this.config.track.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
+            debugLog('websocketClosed', 2, { track: this.config.track.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
             this._stopTrack()
             this.config.track = null
@@ -125,7 +124,7 @@ class VoiceConnection {
         this._stopTrack()
         this.cache.url = null
 
-        utils.debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'finished' })
+        debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'finished' })
 
         this.client.ws.send(JSON.stringify({
           op: 'event',
@@ -142,7 +141,7 @@ class VoiceConnection {
     this.player.on('error', (error) => {
       this._stopTrack()
 
-      utils.debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
+      debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -221,7 +220,7 @@ class VoiceConnection {
       const trackData = await sources.getTrackStream(decodedTrack, url, protocol, additionalData)
 
       if (trackData.exception) {
-        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: trackData.exception.message })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: trackData.exception.message })
 
         resolve({ status: 1, exception: { message: trackData.exception.message, severity: 'fault', cause: 'Unknown' } })
       }
@@ -255,7 +254,7 @@ class VoiceConnection {
     }
 
     if (oldTrack) {
-      utils.debugLog('trackEnd', 2, { track: decodedTrack, reason: 'replaced' })
+      debugLog('trackEnd', 2, { track: decodedTrack, reason: 'replaced' })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -292,7 +291,7 @@ class VoiceConnection {
       this.config.filters = []
       this.cache.url = null
 
-      utils.debugLog('trackException', 2, { track: decodedTrack, exception: resource.exception.message })
+      debugLog('trackException', 2, { track: decodedTrack, exception: resource.exception.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -331,12 +330,12 @@ class VoiceConnection {
       this.cache.startedAt = Date.now()
       this.config.track = { encoded: track, info: decodedTrack }
 
-      utils.debugLog('trackStart', 2, { track: decodedTrack, })
+      debugLog('trackStart', 2, { track: decodedTrack, })
       this.trackStarted()
     } catch (e) {
       this.config.track = null
 
-      utils.debugLog('trackStuck', 2, { track: decodedTrack })
+      debugLog('trackStuck', 2, { track: decodedTrack })
       this.client.ws.send(JSON.stringify({
         op: 'event',
         type: 'TrackStuckEvent',
@@ -352,7 +351,7 @@ class VoiceConnection {
   stop() {
     if (!this.config.track) return this.config
 
-    utils.debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'stopped' })
+    debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'stopped' })
 
     this.client.ws.send(JSON.stringify({
       op: 'event',

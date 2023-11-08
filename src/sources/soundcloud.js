@@ -1,13 +1,13 @@
 import { PassThrough } from 'node:stream'
 
 import config from '../../config.js'
-import utils from '../utils.js'
+import { debugLog, encodeTrack, http1makeRequest } from '../utils.js'
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'SoundCloud', query: url })
+    debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'SoundCloud', query: url })
 
-    const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+    const data = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
     if (JSON.stringify(data) == '{}')
       return resolve({ loadType: 'empty', data: {} })
@@ -28,12 +28,12 @@ async function loadFrom(url) {
           sourceName: 'soundcloud'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query: url })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query: url })
 
         return resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             playlistInfo: {}
           }
@@ -67,7 +67,7 @@ async function loadFrom(url) {
           }
 
           tracks.push({
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             playlistInfo: {}
           })
@@ -80,7 +80,7 @@ async function loadFrom(url) {
             if (tracks.length > config.options.maxAlbumPlaylistLength) return;
 
             const notLoadedLimited = notLoaded.slice(0, 50)
-            const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+            const data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
             data.forEach((item, index) => {
               const track = {
@@ -98,7 +98,7 @@ async function loadFrom(url) {
               }
 
               tracks.push({
-                encoded: utils.encodeTrack(track),
+                encoded: encodeTrack(track),
                 info: track,
                 playlistInfo: {}
               })
@@ -111,7 +111,7 @@ async function loadFrom(url) {
           }
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: data.title })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: data.title })
 
         return resolve({
           loadType: 'playlist',
@@ -131,9 +131,9 @@ async function loadFrom(url) {
 
 async function search(query, shouldLog) {
   return new Promise(async (resolve) => {
-    if (shouldLog) utils.debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
+    if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
 
-    const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
+    const data = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
       method: 'GET'
     })
 
@@ -162,13 +162,13 @@ async function search(query, shouldLog) {
       }
 
       tracks.push({
-        encoded: utils.encodeTrack(track),
+        encoded: encodeTrack(track),
         info: track,
         pluginInfo: {}
       })
     })
 
-    if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
 
     resolve({
       loadType: 'search',
@@ -179,10 +179,10 @@ async function search(query, shouldLog) {
 
 async function retrieveStream(identifier, title) {
   return new Promise(async (resolve) => {
-    const data = await utils.http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+    const data = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
       
     if (data.errors) {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: data.errors[0].error_message })
+      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: data.errors[0].error_message })
 
       return resolve({ exception: { message: data.errors[0].error_message, severity: 'fault', cause: 'Unknown' } })
     }
@@ -202,8 +202,8 @@ async function retrieveStream(identifier, title) {
 }
 
 async function loadHls(url) {
-  const streamHlsRedirect = await utils.http1makeRequest(url, { method: 'GET' })
-  const streamHls = await utils.http1makeRequest(streamHlsRedirect.url, { method: 'GET' })
+  const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
+  const streamHls = await http1makeRequest(streamHlsRedirect.url, { method: 'GET' })
   const streams = []
   
   streamHls.split('\n').forEach((line) => {
@@ -216,7 +216,7 @@ async function loadHls(url) {
   let i = 0
 
   function next() {
-    utils.http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
+    http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
       res.on('data', (chunk) => stream.write(chunk))
       res.on('end', () => {
         i++
@@ -225,7 +225,7 @@ async function loadHls(url) {
     })
   }
 
-  utils.http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
+  http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
     res.on('data', (chunk) => stream.write(chunk))
     res.on('end', () => {
       i++

@@ -4,11 +4,11 @@ import { parse } from 'url'
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
 import config from '../../config.js'
-import utils from '../utils.js'
+import { checkForUpdates } from '../utils.js'
 import { WebSocketServer } from '../ws.js'
 
 if (config.options.autoUpdate[2]) setInterval(() => {
-  utils.checkForUpdates()
+  checkForUpdates()
 }, config.options.autoUpdate[2])
 
 const server = createServer(connectionHandler.requestHandler)

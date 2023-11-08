@@ -3,7 +3,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 
 import config from '../config.js'
-import utils from './utils.js'
+import { debugLog } from './utils.js'
 
 import * as djsVoice from '@discordjs/voice'
 import prism from 'prism-media'
@@ -92,12 +92,12 @@ class Filters {
     return new Promise((resolve) => {
       if (oldFFmpeg) oldFFmpeg.destroy()
 
-      // Deezer is not properly working
+      // TODO: Deezer is not properly working, refactor this file's function.
 
       // const trackData = await sources.getTrackStream(decodedTrack, url, protocol, additionalData)
 
       // if (trackData.exception) {
-      //   utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: trackData.exception.message })
+      //   debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: trackData.exception.message })
 
       //   resolve({ status: 1, exception: { message: trackData.exception.message, severity: 'fault', cause: 'Unknown' } })
       // }

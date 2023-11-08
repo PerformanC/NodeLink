@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import utils from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, randomLetters, sleep } from '../utils.js'
 
 import vm from 'node:vm'
 import { URLSearchParams } from 'node:url'
@@ -9,7 +9,10 @@ let playerInfo = {
   innertubeInterval: null,
   signatureTimestamp: null,
   functions: [],
-  cache: {}
+  cache: {
+    cpn: randomLetters(16),
+    t: randomLetters(12)
+  }
 }
 
 function setIntervalNow(func, interval) {
@@ -17,17 +20,12 @@ function setIntervalNow(func, interval) {
   return setInterval(func, interval)
 }
 
-function startInnertube() {
-  playerInfo.cache = {
-    cpn: utils.randomLetters(16),
-    t: utils.randomLetters(12)
-  }
-
+async function startInnertube() {
   playerInfo.innertubeInterval = setIntervalNow(async () => {
-    utils.debugLog('innertube', 5, { type: 1, message: 'Fetching innertube data...' })
+    debugLog('innertube', 5, { type: 1, message: 'Fetching innertube data...' })
  
-    const data = await utils.makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch innertube data: ${err.message}` })
+    const data = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
+      debugLog('innertube', 5, { type: 2, message: `Failed to fetch innertube data: ${err.message}` })
     })
 
     playerInfo.innertube = {
@@ -37,7 +35,7 @@ function startInnertube() {
       client: {
         clientName: 'ANDROID',
         clientVersion: '17.29.34',
-        androidSdkVersion: '33',
+        androidSdkVersion: '34',
         screenDensityFloat: 1,
         screenHeightPoints: 1080,
         screenPixelDensity: 1,
@@ -45,13 +43,11 @@ function startInnertube() {
       }
     }
 
-    utils.debugLog('innertube', 5, { type: 1, message: 'Fetched innertube data, fetching player.js...' })
-
-    const player = await utils.makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
-      utils.debugLog('innertube', 5, { type: 2, message: `Failed to fetch player js: ${err.message}` })
+    const player = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
+      debugLog('innertube', 5, { type: 2, message: `Failed to fetch player js: ${err.message}` })
     })
 
-    utils.debugLog('innertube', 5, { type: 1, message: 'Fetched player.js, parsing...' })
+    debugLog('innertube', 5, { type: 1, message: 'Fetched player.js, parsing...' })
 
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
 
@@ -73,12 +69,17 @@ function startInnertube() {
     const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
     playerInfo.functions.push(new vm.Script(`const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`))
 
-    utils.debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
+    debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
   }, 3600000)
 }
 
 function stopInnertube() {
   clearInterval(playerInfo.innertubeInterval)
+  playerInfo.innertubeInterval = null
+
+  playerInfo.innertube = null
+  playerInfo.signatureTimestamp = null
+  playerInfo.functions = []
 }
 
 function checkURLType(url, type) {
@@ -106,12 +107,12 @@ async function search(query, type, shouldLog) {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      await utils.sleep(200)
+      await sleep(200)
     }
 
-    if (shouldLog) utils.debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
+    if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
-    const search = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
+    const search = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
       method: 'POST',
       body: {
         context: playerInfo.innertube,
@@ -121,7 +122,7 @@ async function search(query, type, shouldLog) {
     })
 
     if (search.error) {
-      utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
+      debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
 
       return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'fault', cause: 'Unknown' } })
     }
@@ -150,19 +151,19 @@ async function search(query, type, shouldLog) {
         }
 
         tracks.push({
-          encoded: utils.encodeTrack(track),
+          encoded: encodeTrack(track),
           info: track
         })
       }
 
       if (index == videos.length - 1 || tracks.length == config.options.maxResultsLength - 1) {
         if (tracks.length == 0) {
-          utils.debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
+          debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
     
           return resolve({ loadType: 'empty', data: {} })
         }
     
-        if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
+        if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
     
         return resolve({ loadType: 'search', data: tracks })
       }
@@ -175,16 +176,16 @@ async function loadFrom(query, type) {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      await utils.sleep(200)
+      await sleep(200)
     }
 
     switch (checkURLType(query, type)) {
       case 2: {
-        utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
+        debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
         
         const identifier = /v=([^&]+)/.exec(query)[1]
 
-        const video = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const video = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           body: {
             context: playerInfo.innertube,
             videoId: identifier,
@@ -202,7 +203,7 @@ async function loadFrom(query, type) {
         })
 
         if (video.playabilityStatus.status != 'OK') {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
+          debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
           
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
         }
@@ -221,21 +222,21 @@ async function loadFrom(query, type) {
           sourceName: type
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube', track, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube', track, query })
 
         return resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             pluginInfo: {}
           }
         })
       }
       case 3: {
-        utils.debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
+        debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
 
-        const playlist = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const playlist = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -249,7 +250,7 @@ async function loadFrom(query, type) {
 
         console.log(playlist.contents.singleColumnWatchNextResults.playlist)
         if (!playlist.contents.singleColumnWatchNextResults.playlist) {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'Failed to load playlist.' })
+          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'Failed to load playlist.' })
         
           return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'common', cause: 'Unknown' } })
         }
@@ -281,7 +282,7 @@ async function loadFrom(query, type) {
             }
 
             tracks.push({
-              encoded: utils.encodeTrack(track),
+              encoded: encodeTrack(track),
               info: track,
               pluginInfo: {}
             })
@@ -289,12 +290,12 @@ async function loadFrom(query, type) {
         })
 
         if (tracks.length == 0) {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'No matches found.' })
+          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title, tracksLen: tracks.length, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title, tracksLen: tracks.length, query })
 
         return resolve({
           loadType: 'playlist',
@@ -309,9 +310,9 @@ async function loadFrom(query, type) {
         })
       }
       case 4: {
-        utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
+        debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
 
-        const short = await utils.makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
+        const short = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -324,7 +325,7 @@ async function loadFrom(query, type) {
         })
 
         if (short.playabilityStatus.status != 'OK') {
-          utils.debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.playabilityStatus.reason || short.playabilityStatus.messages[0] })
+          debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.playabilityStatus.reason || short.playabilityStatus.messages[0] })
 
           return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason || short.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
         }
@@ -343,12 +344,12 @@ async function loadFrom(query, type) {
           sourceName: 'youtube'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube Shorts', track, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube Shorts', track, query })
 
         return resolve({
           loadType: 'short',
           data: {
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             pluginInfo: {}
           }
@@ -356,7 +357,7 @@ async function loadFrom(query, type) {
       }
 
       default: {
-        utils.debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'YouTube', query, message: 'No matches found.' })
+        debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'YouTube', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
@@ -369,10 +370,10 @@ async function retrieveStream(identifier, type, title) {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      await utils.sleep(200)
+      await sleep(200)
     }
 
-    const videos = await utils.makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const videos = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
         videoId: identifier,
@@ -393,7 +394,7 @@ async function retrieveStream(identifier, type, title) {
     })
 
     if (videos.playabilityStatus.status != 'OK') {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: title, message: videos.playabilityStatus.reason })
+      debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: title, message: videos.playabilityStatus.reason })
 
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
@@ -428,10 +429,10 @@ async function loadCaptions(decodedTrack, language) {
     if (!playerInfo.innertube) while (1) {
       if (playerInfo.innertube) break
 
-      await utils.sleep(200)
+      await sleep(200)
     }
 
-    const video = await utils.makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const video = await makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
         videoId: decodedTrack.identifier,
@@ -449,7 +450,7 @@ async function loadCaptions(decodedTrack, language) {
     })
 
     if (video.playabilityStatus.status != 'OK') {
-      utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
+      debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
 
       return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
@@ -460,13 +461,13 @@ async function loadCaptions(decodedTrack, language) {
       })
 
       if (!caption) {
-        utils.debugLog('loadcaptions', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
+        debugLog('loadcaptions', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
 
-      const captionsData = await utils.makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-        utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+      const captionsData = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+        debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
         return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
       })
@@ -489,8 +490,8 @@ async function loadCaptions(decodedTrack, language) {
         return resolve({ loadType: 'empty', data: {} })
 
       video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
-        const captionData = await utils.makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-          utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+        const captionData = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+          debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
           return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
         })
@@ -505,12 +506,12 @@ async function loadCaptions(decodedTrack, language) {
 
         if (i == video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
           if (captions.length == 0) {
-            utils.debugLog('loadcaptions', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
+            debugLog('loadcaptions', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
 
             return resolve({ loadType: 'empty', data: {} })
           }
 
-          utils.debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author } })
+          debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author } })
 
           return resolve({ loadType: 'captions', data: captions })
         }

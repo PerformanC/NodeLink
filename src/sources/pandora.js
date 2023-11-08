@@ -1,20 +1,20 @@
 import config from '../../config.js'
-import utils from '../utils.js'
+import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 import searchWithDefault from './default.js'
 
 let csrfToken = null
 let authToken = null
 
 async function setToken() {
-  utils.debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
+  debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
 
-  const csfr = await utils.makeRequest('https://www.pandora.com', { method: 'GET', cookiesOnly: true })
+  const csfr = await makeRequest('https://www.pandora.com', { method: 'GET', cookiesOnly: true })
 
-  if (!csfr[1]) return utils.debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
+  if (!csfr[1]) return debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
 
   csrfToken = { raw: csfr[1], parsed: /csrftoken=([a-f0-9]{16});/.exec(csfr[1])[1] }
 
-  const token = await utils.makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
+  const token = await makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
     headers: {
       'Cookie': csrfToken.raw,
       'Content-Type': 'application/json',
@@ -24,16 +24,16 @@ async function setToken() {
     method: 'POST'
   })
 
-  if (token.errorCode == 0) return utils.debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
+  if (token.errorCode == 0) return debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
 
   authToken = token.authToken
 
-  utils.debugLog('pandora', 5, { type: 1, message: 'Successfully set Pandora auth and CSRF token.' })
+  debugLog('pandora', 5, { type: 1, message: 'Successfully set Pandora auth and CSRF token.' })
 }
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    utils.debugLog('search', 4, { type: 1, sourceName: 'Pandora', query })
+    debugLog('search', 4, { type: 1, sourceName: 'Pandora', query })
 
     const body = {
       query,
@@ -46,7 +46,7 @@ async function search(query) {
       annotationRecipe: 'CLASS_OF_2019'
     }
    
-    const data = await utils.makeRequest('https://www.pandora.com/api/v3/sod/search', {
+    const data = await makeRequest('https://www.pandora.com/api/v3/sod/search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -88,7 +88,7 @@ async function search(query) {
           }
 
           tracks.push({
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             playlistInfo: {}
           })
@@ -107,7 +107,7 @@ async function search(query) {
             }
 
             if ((index2 == annotationKeys.length - 1) && (index3 == tracks.length - 1)) {
-              utils.debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
+              debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
 
               shouldStop = true
 
@@ -125,7 +125,7 @@ async function search(query) {
 
 async function loadFrom(query) {
   return new Promise(async (resolve) => {
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: type[2], sourceName: 'Pandora', query })
+    debugLog('loadtracks', 4, { type: 1, loadType: type[2], sourceName: 'Pandora', query })
 
     const type = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(query)
 
@@ -136,7 +136,7 @@ async function loadFrom(query) {
       case 'artist': {
         if (!csrfToken) return resolve({ loadType: 'error', data: { message: 'Pandora not avaible in current country.', severity: 'common', cause: 'Pandora avaibility' } })
 
-        const data = await utils.makeRequest(query, { method: 'GET' })
+        const data = await makeRequest(query, { method: 'GET' })
 
         const body = JSON.parse(data.split('var storeData = ')[1].split('}}]};')[0] + '}}]}')
 
@@ -162,12 +162,12 @@ async function loadFrom(query) {
             sourceName: 'pandora'
           }
 
-          utils.debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', track, query })
+          debugLog('loadtracks', 4, { type: 2, loadType: type[2], sourceName: 'Pandora', track, query })
   
           return resolve({
             loadType: 'track',
             data: {
-              encoded: utils.encodeTrack(track),
+              encoded: encodeTrack(track),
               info: track,
               playlistInfo: {}
             }
@@ -200,14 +200,14 @@ async function loadFrom(query) {
               }
         
               tracks.push({
-                encoded: utils.encodeTrack(track),
+                encoded: encodeTrack(track),
                 info: track,
                 playlistInfo: {}
               })
             }
       
             if (index == keys.length - 1 || index == config.options.maxAlbumPlaylistLength - 1) {
-              utils.debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', tracksLen: tracks.length, query })
+              debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', tracksLen: tracks.length, query })
 
               const new_tracks = []
               keys.forEach((key2, index2) => {
@@ -220,7 +220,7 @@ async function loadFrom(query) {
                   }
       
                   if ((index2 == keys.length - 1) && (index3 == tracks.length - 1)) {
-                    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', playlistName: data.name })
+                    debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', playlistName: data.name })
 
                     shouldStop = true
 
@@ -269,7 +269,7 @@ async function loadFrom(query) {
               }
         
               tracks.push({
-                encoded: utils.encodeTrack(infoObj),
+                encoded: encodeTrack(infoObj),
                 info: infoObj,
                 playlistInfo: {}
               })
@@ -287,7 +287,7 @@ async function loadFrom(query) {
                   }
       
                   if ((index2 == keys.length - 1) && (index3 == tracks.length - 1)) {
-                    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
+                    debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
 
                     shouldStop = true
 
@@ -328,7 +328,7 @@ async function loadFrom(query) {
           }
         }
 
-        const data = await utils.makeRequest('https://www.pandora.com/api/v7/playlists/getTracks', {
+        const data = await makeRequest('https://www.pandora.com/api/v7/playlists/getTracks', {
           method: 'POST',
           headers: {
             'Cookie': csrfToken.raw,
@@ -369,7 +369,7 @@ async function loadFrom(query) {
             }
       
             tracks.push({
-              encoded: utils.encodeTrack(infoObj),
+              encoded: encodeTrack(infoObj),
               info: infoObj,
               playlistInfo: {}
             })
@@ -387,7 +387,7 @@ async function loadFrom(query) {
                 }
     
                 if ((index2 == keys.length - 1) && (index3 == tracks.length - 1)) {
-                  utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
+                  debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
 
                   shouldStop = true
 

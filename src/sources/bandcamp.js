@@ -1,11 +1,11 @@
 import config from '../../config.js'
-import utils from '../utils.js'
+import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'BandCamp', query: url })
+    debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'BandCamp', query: url })
 
-    const data = await utils.makeRequest(url, { method: 'GET' })
+    const data = await makeRequest(url, { method: 'GET' })
 
     const matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
@@ -29,14 +29,12 @@ async function loadFrom(url) {
       sourceName: 'bandcamp'
     }
 
-    console.log(trackInfo)
-
-    utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query: url })
+    debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query: url })
 
     resolve({
       loadType: 'track',
       data: {
-        encoded: utils.encodeTrack(track),
+        encoded: encodeTrack(track),
         info: track,
         pluginInfo: {}
       }
@@ -46,9 +44,9 @@ async function loadFrom(url) {
 
 async function search(query, shouldLog) {
   return new Promise(async (resolve) => {
-    if (shouldLog) utils.debugLog('search', 4, { type: 1, sourceName: 'BandCamp', query })
+    if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'BandCamp', query })
 
-    const data = await utils.makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
+    const data = await makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
     const names = data.match(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
 
@@ -107,11 +105,11 @@ async function search(query, shouldLog) {
       const identifier = tracks[i].info.uri.match(/^https?:\/\/([^/]+)\/track\/([^/?]+)/)
       tracks[i].info.identifier = `${identifier[1]}:${identifier[2]}`
 
-      tracks[i].encoded = utils.encodeTrack(tracks[i].info)
+      tracks[i].encoded = encodeTrack(tracks[i].info)
       tracks[i].pluginInfo = {}
     })
 
-    if (shouldLog) utils.debugLog('search', 4, { type: 2, sourceName: 'BandCamp', tracksLen: tracks.length, query })
+    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'BandCamp', tracksLen: tracks.length, query })
 
     resolve({
       loadType: 'search',
@@ -122,12 +120,12 @@ async function search(query, shouldLog) {
 
 async function retrieveStream(uri, title, author) {
   return new Promise(async (resolve) => {
-    const data = await utils.makeRequest(uri, { method: 'GET' })
+    const data = await makeRequest(uri, { method: 'GET' })
 
     const streamURL = data.match(/https?:\/\/t4\.bcbits\.com\/stream\/[a-zA-Z0-9]+\/mp3-128\/\d+\?p=\d+&amp;ts=\d+&amp;t=[a-zA-Z0-9]+&amp;token=\d+_[a-zA-Z0-9]+/)
 
     if (!streamURL) {
-      utils.debugLog('retrieveStream', 4, { type: 2, sourceName: 'BandCamp', query: title, message: 'No stream URL was found.' })
+      debugLog('retrieveStream', 4, { type: 2, sourceName: 'BandCamp', query: title, message: 'No stream URL was found.' })
 
       return resolve({ exception: { message: 'Failed to get the stream from source.', severity: 'fault', cause: 'Unknown' } })
     }

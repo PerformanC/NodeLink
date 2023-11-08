@@ -10,8 +10,7 @@ import soundcloud from './sources/soundcloud.js'
 import spotify from './sources/spotify.js'
 import youtube from './sources/youtube.js'
 
-import utils from './utils.js'
-import { error } from 'node:console'
+import { debugLog, http1makeRequest, makeRequest } from './utils.js'
 
 async function getTrackURL(track) {
   return new Promise(async (resolve) => {
@@ -64,7 +63,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       const file = fs.createReadStream(url)
 
       file.on('error', () => {
-        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
 
         resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'common', cause: 'No permission to access file or doesn\'t exist' } })
       })
@@ -82,7 +81,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         return resolve({ stream: stream, type: 'arbitrary' })
       }
 
-      const res = await utils.makeRequest(url, {
+      const res = await (trueSource == 'youtube' || trueSource == 'ytmusic' ? http1makeRequest : makeRequest)(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
           'Range': 'bytes=0-'
@@ -90,7 +89,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         method: 'GET',
         streamOnly: true
       }).catch((error) => {
-        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
 
         resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
@@ -98,7 +97,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       // if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
       //   res.destroy()
 
-      //   utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
+      //   debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
 
       //   return resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
       // }
@@ -108,7 +107,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       res.on('data', (chunk) => stream.write(chunk))
       res.on('end', () => stream.end())
       res.on('error', (error) => {
-        utils.debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
 
         resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })

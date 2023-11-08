@@ -10,7 +10,7 @@ import config from '../config.js'
 
 let updated = false
 
-function randomLetters(size) {
+export function randomLetters(size) {
   let result = ''
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   
@@ -23,7 +23,7 @@ function randomLetters(size) {
   return result
 }
 
-function http1makeRequest(url, options) {
+export function http1makeRequest(url, options) { 
   return new Promise(async (resolve, reject) => {
     let compression, data = ''
 
@@ -82,7 +82,7 @@ function http1makeRequest(url, options) {
   })
 }
 
-function makeRequest(url, options) {
+export function makeRequest(url, options) {
   return new Promise(async (resolve, reject) => {
     let compression, data = '', parsedUrl = new URL(url)
     const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol, rejectUnauthorized: false })
@@ -138,6 +138,8 @@ function makeRequest(url, options) {
       req.on('data', (chunk) => data += chunk)
       req.on('error', (error) => reject(error))
       req.on('end', () => {
+        client.close()
+
         if (options.getCookies) {
           resolve({
             cookies: cookie,
@@ -146,8 +148,6 @@ function makeRequest(url, options) {
         } else {
           resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
         }
-
-        client.close()
       })
     })
 
@@ -215,7 +215,7 @@ class EncodeClass {
   }
 }
 
-function encodeTrack(obj) {
+export function encodeTrack(obj) {
   try {
     const buf = new EncodeClass()
 
@@ -286,7 +286,7 @@ class DecodeClass {
   }
 }
 
-function decodeTrack(track) {
+export function decodeTrack(track) {
   try {
     const buf = new DecodeClass(Buffer.from(track, 'base64'))
 
@@ -338,11 +338,11 @@ function decodeTrack(track) {
   }
 }
 
-async function sleep(ms) {
+export async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function checkForUpdates() {
+export async function checkForUpdates() {
   if (updated) return;
 
   const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`
@@ -441,7 +441,7 @@ async function checkForUpdates() {
   }
 }
 
-function debugLog(name, type, options) {
+export function debugLog(name, type, options) {
   switch (type) {
     case 1: {
       if (!config.debug.request.enabled) return;
@@ -511,6 +511,14 @@ function debugLog(name, type, options) {
           if (!config.debug.websocket.failedResume) return;
 
           console.log(`[\u001b[31mfailedResume[\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}"\u001b[37m failed to resume.`)
+
+          break
+        }
+
+        case 'resumeTimeout': {
+          if (!config.debug.websocket.resumeTimeout) return;
+
+          console.log(`[\u001b[31mresumeTimeout\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m failed to resume in time.`)
 
           break
         }
@@ -596,12 +604,22 @@ function debugLog(name, type, options) {
 
           break
         }
+
+        case 'deezer': {
+          if (options.type == 1 && config.debug.deezer.success)
+            console.log(`[\u001b[32mdeezer\u001b[37m]: ${options.message}`)
+
+          if (options.type == 2 && config.debug.deezer.error)
+            console.warn(`[\u001b[31mdeezer\u001b[37m]: ${options.message}`)
+
+          break
+        }
       }
     }
   }
 }
 
-function verifyMethod(parsedUrl, req, res, expected) {
+export function verifyMethod(parsedUrl, req, res, expected) {
   if (req.method != expected) {
     send(req, res, {
       timestamp: Date.now(),
@@ -617,7 +635,7 @@ function verifyMethod(parsedUrl, req, res, expected) {
   return 0
 }
 
-function send(req, res, data, status) {
+export function sendResponse(req, res, data, status) {
   if (req.headers && req.headers['accept-encoding'] && req.headers['accept-encoding'].includes('br')) {
     res.setHeader('Content-Encoding', 'br')
     res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
@@ -632,24 +650,10 @@ function send(req, res, data, status) {
   }
 }
 
-function sendNonNull(req, res, data, force) {
-  if (data == null && !force) return;
+export function sendResponseNonNull(req, res, data) {
+  if (data == null) return;
 
-  send(req, res, data, 200)
+  sendResponse(req, res, data, 200)
 
   return true
-}
-
-export default {
-  randomLetters,
-  http1makeRequest,
-  makeRequest,
-  encodeTrack,
-  decodeTrack,
-  sleep,
-  checkForUpdates,
-  debugLog,
-  verifyMethod,
-  send,
-  sendNonNull
 }

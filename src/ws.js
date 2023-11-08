@@ -32,12 +32,11 @@ function parseFrameHeader(data) {
 }
 
 class WebsocketConnection extends EventEmitter {
-  constructor(req, socket, head) {
+  constructor(req, socket) {
     super()
 
     this.req = req
     this.socket = socket
-    this.head = head
 
     const headers = [
       'HTTP/1.1 101 Switching Protocols',
@@ -66,15 +65,29 @@ class WebsocketConnection extends EventEmitter {
       }
     })
 
-    socket.on('error', (err) => this.emit('error', err))
+    socket.on('error', (err) => {
+      socket.end()
 
-    socket.on('end', () => this.emit('close', 1006, ''))
+      this.emit('error', err)
+    })
+
+    socket.on('end', () => {
+      socket.end()
+
+      this.emit('close', 1006, '')
+    })
   }
 
   send(data) {
     const payload = Buffer.from(data, 'utf-8')
 
     return this.sendFrame(payload, { len: payload.length, fin: true, opcode: 0x01 })
+  }
+
+  destroy() {
+    this.socket.destroy()
+    this.socket = null
+    this.req = null
   }
 
   sendFrame(data, options) {
@@ -122,7 +135,7 @@ class WebSocketServer extends EventEmitter {
   }
 
   handleUpgrade(req, socket, head, callback) {
-    const connection = new WebsocketConnection(req, socket, head)
+    const connection = new WebsocketConnection(req, socket)
 
     if (!socket.readable || !socket.writable) return socket.destroy()
 

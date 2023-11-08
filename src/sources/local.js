@@ -1,10 +1,10 @@
 import fs from 'node:fs'
 
-import utils from '../utils.js'
+import { debugLog, encodeTrack } from '../utils.js'
 
 async function loadFrom(path) {
   return new Promise(async (resolve) => {
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'local', query: path })
+    debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'local', query: path })
 
     fs.open(path, (err) => {
       if (err)
@@ -31,12 +31,12 @@ async function loadFrom(path) {
         sourceName: 'local'
       }
 
-      utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'local', track, query: path })
+      debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'local', track, query: path })
 
       resolve({
         loadType: 'track',
         data: {
-          encoded: utils.encodeTrack(track),
+          encoded: encodeTrack(track),
           info: track,
           pluginInfo: {}
         }

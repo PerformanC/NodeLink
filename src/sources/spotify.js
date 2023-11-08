@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import utils from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, sleep } from '../utils.js'
 import searchWithDefault from './default.js'
 
 import https from 'node:https'
@@ -8,7 +8,7 @@ import zlib from 'node:zlib'
 let playerInfo = {}
 
 async function setSpotifyToken() {
-  const token = await utils.makeRequest('https://open.spotify.com/get_access_token', {
+  const token = await makeRequest('https://open.spotify.com/get_access_token', {
     method: 'GET'
   })
 
@@ -76,10 +76,10 @@ async function search(query) {
     if (!playerInfo.accessToken) while (1) {
       if (playerInfo.accessToken) break
 
-      utils.sleep(200)
+      sleep(200)
     }
 
-    utils.debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
+    debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
     https.get({
       hostname: 'api-partner.spotify.com',
@@ -116,7 +116,7 @@ async function search(query) {
         data = JSON.parse(data)
 
         if (data.data.searchV2.tracksV2.totalCount == 0) {
-          utils.debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+          debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
         }
@@ -148,7 +148,7 @@ async function search(query) {
               }
 
               tracks.push({
-                encoded: utils.encodeTrack(track),
+                encoded: encodeTrack(track),
                 info: track,
                 pluginInfo: {}
               })
@@ -164,7 +164,7 @@ async function search(query) {
                   new_tracks.push(track2)
                 }
 
-                utils.debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: new_tracks.length, query })
+                debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: new_tracks.length, query })
 
                 if ((index2 == data.data.searchV2.tracksV2.items.length - 1) && (index3 == tracks.length - 1))
                   resolve({
@@ -210,9 +210,9 @@ async function loadFrom(query, type) {
       }
     }
 
-    utils.debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Spotify', query })
+    debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Spotify', query })
 
-    let data = await utils.makeRequest(`https://api.spotify.com/v1${endpoint}`, {
+    let data = await makeRequest(`https://api.spotify.com/v1${endpoint}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${playerInfo.accessToken}`
@@ -223,7 +223,7 @@ async function loadFrom(query, type) {
       if (data.error.status == 401) {
         setSpotifyToken()
 
-        data = await utils.makeRequest(`https://api.spotify.com/v1${endpoint}`, {
+        data = await makeRequest(`https://api.spotify.com/v1${endpoint}`, {
           method: 'GET',
           headers: {
             Authorization: `Bearer ${playerInfo.accessToken}`
@@ -232,13 +232,13 @@ async function loadFrom(query, type) {
       }
 
       if (data.error.status == 400) {
-        utils.debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+        debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
     
       if (data.error) {
-        utils.debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: data.error.message })
+        debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: data.error.message })
 
         return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'fault', cause: 'Unknown' } })
       }
@@ -265,12 +265,12 @@ async function loadFrom(query, type) {
           sourceName: 'spotify'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
 
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             pluginInfo: {}
           }
@@ -298,12 +298,12 @@ async function loadFrom(query, type) {
           sourceName: 'spotify'
         }
 
-        utils.debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
 
         resolve({
           loadType: 'track',
           data: {
-            encoded: utils.encodeTrack(track),
+            encoded: encodeTrack(track),
             info: track,
             pluginInfo: {}
           }
@@ -341,7 +341,7 @@ async function loadFrom(query, type) {
               }
 
               tracks.push({
-                encoded: utils.encodeTrack(track),
+                encoded: encodeTrack(track),
                 info: track,
                 pluginInfo: {}
               })
@@ -362,7 +362,7 @@ async function loadFrom(query, type) {
                 if ((index2 == data.tracks.items.length - 1) && (index3 == tracks.length - 1)) {
                   shouldStop = true
 
-                  utils.debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
+                  debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
 
                   resolve({
                     loadType: type[1],
@@ -409,7 +409,7 @@ async function loadFrom(query, type) {
             }
 
             tracks.push({
-              encoded: utils.encodeTrack(track),
+              encoded: encodeTrack(track),
               info: track,
               pluginInfo: {}
             })
@@ -429,7 +429,7 @@ async function loadFrom(query, type) {
                 if ((index2 == data.episodes.items.length - 1) && (index3 == tracks.length - 1)) {
                   shouldStop = true
 
-                  utils.debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
+                  debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
 
                   resolve({
                     loadType: 'show',

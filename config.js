@@ -1,22 +1,20 @@
 /*
-Any of the settings below can be disabled by setting them to false.
+Any of the settings below can be disabled by setting them to false, times are in milliseconds.
 
-threshold: 5000 = 5 seconds
-playerUpdateInterval: 5000 = 5 seconds
-statsInterval: 5000 = 5 seconds
-autoUpdate: [ beta? autoUpdate?, interval, [tar, zip] ]
+autoUpdate: [ beta?, autoUpdate?, interval, [tar, zip] ]
 */
 
 export default {
   version: {
     major: '1',
-    minor: '13',
-    patch: '1',
+    minor: '14',
+    patch: '0',
     preRelease: null
   },
   server: {
     port: 2333,
-    password: 'youshallnotpass'
+    password: 'youshallnotpass',
+    resumeTimeout: 10000,
   },
   options: {
     threshold: false,
@@ -35,11 +33,16 @@ export default {
       success: true,
       error: true
     },
+    deezer: {
+      success: true,
+      error: true
+    },
     websocket: {
       connect: true,
       disconnect: true,
       resume: true,
-      failedResume: true
+      failedResume: true,
+      resumeTimeout: true
     },
     request: {
       enabled: true,
@@ -79,14 +82,19 @@ export default {
       youtube: true,
       youtubeMusic: true,
       spotify: true,
-      deezer: true,
       bandcamp: true,
       http: true,
       local: true,
       pandora: false,
+      deezer: {
+        enabled: false,
+        decryptionKey: '...', // For legal reasons, this key is not provided.
+        urlEncryptionKey: '...', // For legal reasons, this key is not provided.
+        apiKey: 'YOUR_DEEZER_API_TOKEN' // Available in Deezer website API requests in "api_token" parameter.
+      },
       soundcloud: {
-        enabled: true,
-        clientId: 'YOUR_SOUNDCLOUD_CLIENT_ID'
+        enabled: false,
+        clientId: 'YOUR_SOUNDCLOUD_CLIENT_ID' // Available in SoundCloud website API requests in "client_id" parameter.
       }
     }
   },

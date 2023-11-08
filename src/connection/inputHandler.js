@@ -4,8 +4,8 @@ import * as djsVoice from '@discordjs/voice'
 const Connections = {}
 
 function setupConnection(ws, req) {
-  const userId = req.headers['user-id']
-  const guildId = req.headers['guild-id']
+  let userId = req.headers['user-id']
+  let guildId = req.headers['guild-id']
 
   if (!userId || !guildId) {
     console.log('[\u001b[31mwebsocketCD\u001b[39m]: Invalid request. Closing connection...')
@@ -32,7 +32,6 @@ function setupConnection(ws, req) {
 }
 
 function handleStartSpeaking(receiver, userId, guildId) {
-  return;
   const opusStream = receiver.subscribe(userId, {
     end: {
       behavior: djsVoice.EndBehaviorType.AfterSilence,
@@ -50,11 +49,12 @@ function handleStartSpeaking(receiver, userId, guildId) {
     }
   })
 
-  const buffer = []
+  let buffer = []
   oggStream.on('data', (chunk) => {
     if (Object.keys(Connections).length == 0) {
       oggStream.destroy()
       opusStream.destroy()
+      buffer = null
 
       return;
     }
@@ -62,7 +62,14 @@ function handleStartSpeaking(receiver, userId, guildId) {
     buffer.push(chunk)
   })
 
-  oggStream.on('error', (err) => console.error(`[\u001b[31mwebsocketCD\u001b[37m]: \u001b[31m${err}\u001b[37m`))
+  oggStream.on('error', (err) => {
+    console.error(`[\u001b[31mwebsocketCD\u001b[37m]: \u001b[31m${err}\u001b[37m`)
+
+    oggStream.destroy()
+    opusStream.destroy()
+
+    buffer = null
+  })
 
   opusStream.on('end', () => {    
     oggStream.destroy()
@@ -84,6 +91,8 @@ function handleStartSpeaking(receiver, userId, guildId) {
 
       i++
     })
+
+    buffer = null
 
     console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Finished speaking. Sent data to \u001b[31m${i}\u001b[37m clients.`)
   })
