@@ -1,5 +1,5 @@
-import prism from 'prism-media'
 import * as djsVoice from '@discordjs/voice'
+import { OggLogicalBitstream, OpusHead } from '../prism-media.js'
 
 const Connections = {}
 
@@ -39,8 +39,8 @@ function handleStartSpeaking(receiver, userId, guildId) {
     }
   })
 
-  const oggStream = new prism.opus.OggLogicalBitstream({
-    opusHead: new prism.opus.OpusHead({
+  const oggStream = new OggLogicalBitstream({
+    opusHead: new OpusHead({
       channelCount: 2,
       sampleRate: 48000,
     }),

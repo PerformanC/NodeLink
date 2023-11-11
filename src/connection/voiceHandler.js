@@ -34,11 +34,9 @@ class VoiceConnection {
     this.player
     this.client = client
     this.cache = {
-      startedAt: 0,
       silence: false,
       ffmpeg: null,
       url: null,
-      pauseTime: [ 0, 0 ],
       track: null,
       volume: 100
     }
@@ -72,12 +70,10 @@ class VoiceConnection {
       connected: false,
       ping: -1
     }
-
-    this.cache.startedAt = 0
   }
 
   _getRealTime() {
-    return (new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
+    return this.player.state.playbackDuration
   }
 
   setup() {
@@ -198,7 +194,6 @@ class VoiceConnection {
   destroy() {
     this.config.track = null
     this.config.filters = []
-    this.cache.startedAt = 0
     if (this.player) {
       this.cache.silence = true
 
@@ -318,16 +313,10 @@ class VoiceConnection {
       this.config.volume = 100
     }
 
-    if (this.config.paused) {
-      this.cache.pauseTime[1] = Date.now()
-
-      this.cache.startedAt += this.cache.pauseTime[1] - this.cache.pauseTime[0]
-    }
 
     try {
       if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
 
-      this.cache.startedAt = Date.now()
       this.config.track = { encoded: track, info: decodedTrack }
 
       debugLog('trackStart', 2, { track: decodedTrack, })
@@ -363,7 +352,6 @@ class VoiceConnection {
 
     this.config.track = null
     this.config.filters = []
-    this.cache.startedAt = 0
     if (this.player) {
       this.cache.silence = true
 
@@ -391,17 +379,8 @@ class VoiceConnection {
   }
 
   pause(pause) {
-    if (pause) {
-      this.cache.pauseTime[0] = Date.now()
-
-      this.player.pause()
-    }
-    else {
-      if (this.config.paused)
-        this.cache.pauseTime[1] = Date.now() - this.cache.pauseTime[0]
-
-      this.player.unpause()
-    }
+    if (pause) this.player.pause()
+    else this.player.unpause()
 
     this.config.paused = pause
     
@@ -418,7 +397,7 @@ class VoiceConnection {
     if (!this.config.track) return this.config
 
     const protocol = this.config.track.info.sourceName == 'local' ? 'file' : (this.config.track.info.sourceName == 'http' ? 'http' : 'https')
-    const resource = await filter.getResource(this.config.guildId, this.config.track.info, protocol, this.cache.url, filters.endTime, this.cache, this.cache.ffmpeg)
+    const resource = await filter.getResource(this.config.guildId, this.config.track.info, protocol, this.cache.url, this._getRealTime(), filters.endTime, this.cache.ffmpeg, null)
 
     if (resource.exception) {
       this.config.track = null

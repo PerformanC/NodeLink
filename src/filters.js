@@ -88,7 +88,7 @@ class Filters {
     return result
   }
 
-  getResource(guildId, decodedTrack, protocol, url, endTime, cache, oldFFmpeg, additionalData) {
+  getResource(guildId, decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
     return new Promise((resolve) => {
       if (oldFFmpeg) oldFFmpeg.destroy()
 
@@ -110,8 +110,8 @@ class Filters {
           '-threads', config.filters.threads,
           '-filter_threads', config.filters.threads,
           '-filter_complex_threads', config.filters.threads,
-          ...(cache ? ['-ss', `${(new Date() - cache.startedAt) - cache.pauseTime[1]}ms`] : []),
-          '-i', `"${url}"`,
+          ...(startTime ? ['-ss', `${startTime}ms`] : []),
+          '-i', encodeURI(url),
           '-af', this.command.join(','),
           ...(endTime ? ['-t', `${endTime}ms`] : []),
           '-f', 's16le',
@@ -120,8 +120,8 @@ class Filters {
         ]
       })
 
-      ffmpeg._stdout.once('data', () => {
-        return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg._stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
+      ffmpeg.process.stdout.once('readable', () => {
+        return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
       })
 
       ffmpeg.on('error', (err) => console.error(err))
