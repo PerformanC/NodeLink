@@ -248,7 +248,6 @@ async function loadFrom(query, type) {
           }
         })
 
-        console.log(playlist.contents.singleColumnWatchNextResults.playlist)
         if (!playlist.contents.singleColumnWatchNextResults.playlist) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'Failed to load playlist.' })
         
@@ -270,7 +269,7 @@ async function loadFrom(query, type) {
             const track = {
               identifier: video.videoId,
               isSeekable: true,
-              author: video.shortBylineText.runs[0].text,
+              author: video.shortBylineText.runs ? video.shortBylineText.runs[0].text : 'Unknown author',
               length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
               isStream: false,
               position: i++,
