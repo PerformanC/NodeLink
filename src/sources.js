@@ -76,7 +76,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         return resolve({ stream: deezer.loadTrack(url, additionalData), type: 'arbitrary' })
 
       if (trueSource == 'soundcloud') {
-        const stream = await soundcloud.loadHls(url)
+        const stream = await soundcloud.loadStream(url, protocol)
 
         return resolve({ stream: stream, type: 'arbitrary' })
       }

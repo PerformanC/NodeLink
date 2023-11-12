@@ -187,51 +187,43 @@ async function retrieveStream(identifier, title) {
       return resolve({ exception: { message: data.errors[0].error_message, severity: 'fault', cause: 'Unknown' } })
     }
 
-    // let oggOpus = null
-    // data.media.transcodings.forEach(async (transcoding) => {
-    //   if (transcoding.format.mime_type == 'audio/ogg; codecs="opus"') {
-    //     opus = transcoding
-    //   }
-    // })
-    const transcoding = data.media.transcodings[0]
+    const oggOpus = data.media.transcodings.find((transcoding) => transcoding.format.mime_type == 'audio/ogg; codecs="opus"')
 
-    // if (!oggOpus) {
-      resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: 'https', type: 'opus' })
-    // }
+    const transcoding = oggOpus || data.media.transcodings[0]
+
+    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, type: oggOpus ? 'opus' : 'arbitrary', snipped: transcoding.snipped ? transcoding.duration : false })
   })
 }
 
-async function loadHls(url) {
-  const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
-  const streamHls = await http1makeRequest(streamHlsRedirect.url, { method: 'GET' })
-  const streams = []
-  
-  streamHls.split('\n').forEach((line) => {
-    if (!line.startsWith('https://')) return;
-
-    streams.push(line)
-  })
-
+async function loadStream(url, protocol) {
   const stream = new PassThrough()
-  let i = 0
 
-  function next() {
-    http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
-      res.on('data', (chunk) => stream.write(chunk))
-      res.on('end', () => {
-        i++
-        if (i < streams.length) next()
+  if (protocol == 'hls') {
+    const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
+    const streamHls = await http1makeRequest(streamHlsRedirect.url, { method: 'GET' })
+    const streams = streamHls.split('\n').filter((line) => line.startsWith('https://'))
+
+    let i = 0
+
+    function loadNext() {
+      http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
+        res.on('data', (chunk) => stream.write(chunk))
+        res.on('end', () => {
+          i++
+
+          if (i < streams.length) loadNext()
+          else stream.end()
+        })
       })
+    }
+
+    loadNext()
+  } else {
+    http1makeRequest(url, { streamOnly: true }).then((res) => {
+      res.on('data', (chunk) => stream.write(chunk))
+      res.on('end', () => stream.end())
     })
   }
-
-  http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
-    res.on('data', (chunk) => stream.write(chunk))
-    res.on('end', () => {
-      i++
-      if (i < streams.length) next()
-    })
-  })
 
   return stream
 }
@@ -240,5 +232,5 @@ export default {
   loadFrom,
   search,
   retrieveStream,
-  loadHls
+  loadStream
 }
