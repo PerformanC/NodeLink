@@ -8,8 +8,6 @@ import { URL } from 'node:url'
 
 import config from '../config.js'
 
-let updated = false
-
 export function randomLetters(size) {
   let result = ''
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -131,6 +129,12 @@ export function makeRequest(url, options) {
         req.pipe(compression)
         req = compression
       }
+
+      if (options.streamHeaders)
+        return resolve({
+          headers: headers,
+          stream: req
+        })
 
       if (options.streamOnly)
         return resolve(req)
@@ -343,8 +347,6 @@ export async function sleep(ms) {
 }
 
 export async function checkForUpdates() {
-  if (updated) return;
-
   const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`
 
   console.log(`[\u001b[32mupdater\u001b[37m] Checking for updates in ${config.options.autoUpdate[0] ? 'beta' : 'stable'} releases...`)
@@ -379,15 +381,25 @@ export async function checkForUpdates() {
   else selected = data
 
   if (selected.name != version) {
+    const newVersion = selected.name.match(/v(\d+)\.(\d+)\.(\d+)-?(\w+)?/)
+
+    config.version = {
+      major: newVersion[1],
+      minor: newVersion[2],
+      patch: newVersion[3],
+      preRelease: newVersion[4]
+    }
+
     console.log(`[\u001b[33mupdater\u001b[37m] A new ${selected.prelease ? 'beta' : 'stable'} version of NodeLink is available! (${selected.name})`)
 
     if (config.options.autoUpdate[1]) {
       console.log(`[\u001b[32mupdater\u001b[37m] Updating NodeLink, downloading ${config.options.autoUpdate[3]}...`)
 
-      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamOnly: true })
+      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamHeaders: true })
+      const filename = 'PerformanC-NodeLink-' + res.headers['content-disposition'].match(/-0-g(\w+).(tar.gz|7zip|zip)/)[1]
 
       const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`)
-      res.pipe(file)
+      res.stream.pipe(file)
 
       file.on('finish', () => {
         file.close()
@@ -399,42 +411,26 @@ export async function checkForUpdates() {
 
         cp.spawn(config.options.autoUpdate[3] == 'zip' ? 'unzip' : config.options.autoUpdate[3] == '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
           fs.readdir('.', (err, files) => {
-            if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to read current directory: ${err}`)
+            if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to read ${filename} directory: ${err}`)
 
-            files.forEach((file) => {
-              if (file.startsWith('PerformanC-NodeLink-')) {
-                const moveFiles = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}"/*`, '"."', '-f' ] : [ `${file}/*`, '.', '-f' ], { shell: true })
-                moveFiles.stdin.write('Y')
+            for (const folder of files) {
+              if (folder != filename && folder != 'node_modules' && (folder == '.github' || !folder.startsWith('.')))
+                fs.rmSync(folder, { recursive: true, force: true })
+            }
 
-                moveFiles.on('close', () => {
-                  fs.readdir(file, (err, subfiles) => {
-                    if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to read ${file} directory: ${err}`)
+            const moveFiles = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${filename}/*"`, `"."`, '-f' ] : [ `${filename}/*`, `.`, '-f' ], { shell: true })
+            cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${filename}/.github"`, `"."`, '-f' ] : [ `${filename}/.github`, `.`, '-f' ], { shell: true })
 
-                    subfiles.forEach((subfile) => {
-                      fs.rm(`./${subfile}`, { recursive: true, force: true }, (err) => {
-                        if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to remove ${subfile}: ${err}`)
+            moveFiles.on('close', () => {
+              fs.rm(filename, { recursive: true, force: true }, () => {})
 
-                        const moveDirs = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${file}/${subfile}`, `"."`, '-f' ] : [ `${file}/${subfile}`, `.`, '-f' ], { shell: true })
-
-                        moveDirs.stdin.write('Y')
-                      })
-                    })
-                  })
-
-                  fs.rm(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`, { force: true }, () => {})
-                  fs.rm(file, { recursive: true, force: true }, () => {})
-
-                  updated = true
-
-                  console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
-                })
-              }
+              console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
             })
           })
         })
       })
 
-      res.end()
+      res.stream.end()
     }
   } else {
     console.log(`[\u001b[32mupdater\u001b[37m] NodeLink is up to date! (${version})`)
