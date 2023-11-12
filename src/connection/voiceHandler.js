@@ -34,6 +34,8 @@ class VoiceConnection {
     this.player
     this.client = client
     this.cache = {
+      startedAt: 0,
+      pauseTime: [ 0, 0 ],
       silence: false,
       ffmpeg: null,
       url: null,
@@ -70,10 +72,13 @@ class VoiceConnection {
       connected: false,
       ping: -1
     }
+
+    this.cache.startedAt = 0
+    this.cache.pauseTime = [ 0, 0 ]
   }
 
   _getRealTime() {
-    return this.player.state.playbackDuration
+    return (new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
   }
 
   setup() {
@@ -192,6 +197,8 @@ class VoiceConnection {
   }
 
   destroy() {
+    this.cache.startedAt = 0
+    this.cache.pauseTime = [ 0, 0 ]
     this.config.track = null
     this.config.filters = []
     if (this.player) {
@@ -313,9 +320,16 @@ class VoiceConnection {
       this.config.volume = 100
     }
 
+    if (this.config.paused) {
+      this.cache.pauseTime[1] = Date.now()
+
+      this.cache.startedAt += this.cache.pauseTime[1] - this.cache.pauseTime[0]
+    }
 
     try {
       if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
+
+      this.cache.startedAt = Date.now()
 
       this.config.track = { encoded: track, info: decodedTrack }
 
@@ -350,6 +364,8 @@ class VoiceConnection {
       reason: 'stopped'
     }))
 
+    this.cache.startedAt = 0
+    this.cache.pauseTime = [ 0, 0 ]
     this.config.track = null
     this.config.filters = []
     if (this.player) {
@@ -379,8 +395,17 @@ class VoiceConnection {
   }
 
   pause(pause) {
-    if (pause) this.player.pause()
-    else this.player.unpause()
+    if (pause) {
+      this.cache.pauseTime[0] = Date.now()
+
+      this.player.pause()
+    }
+    else {
+      if (this.config.paused)
+        this.cache.pauseTime[1] = Date.now() - this.cache.pauseTime[0]
+
+      this.player.unpause()
+    }
 
     this.config.paused = pause
     
