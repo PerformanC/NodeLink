@@ -383,6 +383,17 @@ export async function checkForUpdates() {
   if (selected.name != version) {
     const newVersion = selected.name.match(/v(\d+)\.(\d+)\.(\d+)-?(\w+)?/)
 
+    if (
+      (newVersion[1] < config.version.major) ||
+      (newVersion[1] == config.version.major && newVersion[2] < config.version.minor) ||
+      (newVersion[1] == config.version.major && newVersion[2] == config.version.minor && newVersion[3] < config.version.patch) ||
+      (newVersion[1] == config.version.major && newVersion[2] == config.version.minor && newVersion[3] == config.version.patch && newVersion[4] == config.version.preRelease)
+    ) {
+      console.log(`[\u001b[32mupdater\u001b[37m] NodeLink is newer than latest! (${version} > ${selected.name})`)
+
+      return;
+    }
+
     config.version = {
       major: newVersion[1],
       minor: newVersion[2],
@@ -423,6 +434,87 @@ export async function checkForUpdates() {
 
             moveFiles.on('close', () => {
               fs.rm(filename, { recursive: true, force: true }, () => {})
+
+              fs.readFile('./config.js', (err, data) => {
+                if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to read config.js: ${err}`)
+
+                const sanitizedJson = data.toString().split('export default ')[1].replace(/'/g, '"').replace(/([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, "$1\"$2\":")
+                let newJson = JSON.parse(sanitizedJson)
+
+                newJson.server = {
+                  ...newJson.server,
+                  port: config.server.port,
+                  password: config.server.password,
+                  resumeTimeout: config.options.resumeTimeout
+                }
+
+                newJson.options = {
+                  ...newJson.options,
+                  threshold: config.options.threshold,
+                  playerUpdateInterval: config.options.playerUpdateInterval,
+                  statsInterval: config.options.statsInterval,
+                  autoUpdate: config.options.autoUpdate,
+                  maxResultsLength: config.options.maxResultsLength,
+                  maxAlbumPlaylistLength: config.options.maxAlbumPlaylistLength
+                }
+
+                newJson.search = {
+                  ...newJson.search,
+                  defaultSearchSource: config.search.defaultSearchSource,
+                  sources: {
+                    ...newJson.search.sources,
+                    youtube: config.search.sources.youtube,
+                    youtubeMusic: config.search.sources.youtubeMusic,
+                    spotify: config.search.sources.spotify,
+                    bandcamp: config.search.sources.bandcamp,
+                    http: config.search.sources.http,
+                    local: config.search.sources.local,
+                    pandora: config.search.sources.pandora,
+                    deezer: {
+                      ...newJson.search.sources.deezer,
+                      enabled: config.search.sources.deezer.enabled,
+                      decryptionKey: config.search.sources.deezer.decryptionKey,
+                      urlEncryptionKey: config.search.sources.deezer.urlEncryptionKey,
+                      apiKey: config.search.sources.deezer.apiKey
+                    },
+                    soundcloud: {
+                      ...newJson.search.sources.soundcloud,
+                      enabled: config.search.sources.soundcloud.enabled,
+                      clientId: config.search.sources.soundcloud.clientId
+                    }
+                  }
+                }
+
+                newJson.filters = {
+                  ...newJson.filters,
+                  enabled: config.filters.enabled,
+                  threads: config.filters.threads,
+                  list: {
+                    ...newJson.filters.list,
+                    volume: config.filters.list.volume,
+                    equalizer: config.filters.list.equalizer,
+                    karaoke: config.filters.list.karaoke,
+                    timescale: config.filters.list.timescale,
+                    tremolo: config.filters.list.tremolo,
+                    vibrato: config.filters.list.vibrato,
+                    rotation: config.filters.list.rotation,
+                    distortion: config.filters.list.distortion,
+                    channelMix: config.filters.list.channelMix,
+                    lowPass: config.filters.list.lowPass
+                  }
+                }
+
+                newJson.audio = {
+                  ...newJson.audio,
+                  quality: config.audio.quality
+                }
+
+                fs.writeFile('./config.js', 'export default ' + JSON.stringify(newJson, null, 2), (err) => {
+                  if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to write to config.js: ${err}`)
+
+                  console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
+                })
+              })
 
               console.log('[\u001b[32mupdater\u001b[37m] Nodelink has been updated, please restart NodeLink to apply the changes.')
             })
