@@ -50,7 +50,7 @@ function setupConnection(ws, req) {
 
     if (clients.size == 1) {
       if (config.search.sources.youtube || config.search.sources.youtubeMusic)
-        sources.youtube.stopInnertube()
+        sources.youtube.free()
 
       clearInterval(statsInterval)
       statsInterval = null
@@ -366,10 +366,10 @@ async function requestHandler(req, res) {
  
     if (sendResponseNonNull(req, res, search) == true) return;
 
-    const spSearch = config.search.sources.spotify ? identifier.startsWith('spsearch:') : null
-    const spRegex = config.search.sources.spotify && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
+    const spSearch = config.search.sources.spotify.enabled ? identifier.startsWith('spsearch:') : null
+    const spRegex = config.search.sources.spotify.enabled && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
     if (config.search.sources[config.search.defaultSearchSource] && (spSearch || spRegex))
-       search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
+       search = spSearch ? await sources.spotify.enabled.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
@@ -381,19 +381,20 @@ async function requestHandler(req, res) {
     if (sendResponseNonNull(req, res, search) == true) return;
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/(?:sets\/)?[a-zA-Z0-9-_]+(?:\?.*)?$/.test(identifier)))
+    if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/?(?:sets\/)?[a-zA-Z0-9-_]+(?:\?.*)?$/).test(identifier))
       search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', ''), true) : await sources.soundcloud.loadFrom(identifier)
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
     const bcSearch = config.search.sources.bandcamp ? identifier.startsWith('bcsearch:') : null
-    if (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(identifier)))
+    if (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com(\/(track|album)\/[\w-]+)?/.test(identifier)))
       search = bcSearch ? await sources.bandcamp.search(identifier.replace('bcsearch:', ''), true) : await sources.bandcamp.loadFrom(identifier)
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
+    const pdRegex = config.search.sources.pandora ? /^https:\/\/www\.pandora\.com\/(?:playlist|station|podcast|artist)\/.+/.exec(identifier) : null
     const pdSearch = config.search.sources.pandora ? identifier.startsWith('pdsearch:') : null
-    if (config.search.sources[config.search.defaultSearchSource] && (pdSearch || /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.test(identifier)))
+    if (config.search.sources.pandora && (pdSearch || pdRegex))
       search = pdSearch ? await sources.pandora.search(identifier.replace('pdsearch:', '')) : await sources.pandora.loadFrom(identifier)
 
     if (sendResponseNonNull(req, res, search) == true) return;
@@ -466,7 +467,7 @@ async function requestHandler(req, res) {
         break
       }
       case 'spotify': {
-        if (!config.search.sources.spotify || !config.search.sources.youtube) {
+        if (!config.search.sources.spotify.enabled || !config.search.sources.youtube) {
           console.log('[\u001b[31mloadCaptions\u001b[37m]: No possible search source found.')
 
           captions = { loadType: 'empty', data: {} }
@@ -793,16 +794,16 @@ function startSourceAPIs() {
   if (clients.size != 0) return;
 
   if (config.search.sources.youtube || config.search.sources.youtubeMusic)
-    sources.youtube.startInnertube()
+    sources.youtube.init()
 
-  if (config.search.sources.spotify)
-    sources.spotify.setSpotifyToken()
+  if (config.search.sources.spotify.enabled)
+    sources.spotify.init()
 
   if (config.search.sources.pandora)
-    sources.pandora.setToken()
+    sources.pandora.init()
 
   if (config.search.sources.deezer.enabled)
-    sources.deezer.initDeezer()
+    sources.deezer.init()
 
   if (config.options.statsInterval)
     startStats()

@@ -15,24 +15,24 @@ let playerInfo = {
 const bufferSize = 2048
 const IV = Buffer.from(Array.from({length: 8}, (_i, x) => x))
 
-function initDeezer() {
+async function init() {
   if (playerInfo.licenseToken) return;
   // TODO: Need to reset when timestamp is expired
 
   debugLog('deezer', 5, { type: 1, message: 'Fetching user data...' })
 
-  makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=${config.search.sources.deezer.apiToken}`, {
+  const res = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=${config.search.sources.deezer.apiToken}`, {
     method: 'GET',
     getCookies: true
-  }).then((res) => {
-    playerInfo.Cookie = res.cookies.join('; ')
-
-    playerInfo.licenseToken = res.body.results.USER.OPTIONS.license_token
-    playerInfo.csrfToken = res.body.results.checkForm
-    playerInfo.mediaUrl = res.body.results.URL_MEDIA
-
-    debugLog('deezer', 5, { type: 1, message: 'Successfully fetched user data.' })
   })
+
+  playerInfo.Cookie = res.cookies.join('; ')
+
+  playerInfo.licenseToken = res.body.results.USER.OPTIONS.license_token
+  playerInfo.csrfToken = res.body.results.checkForm
+  playerInfo.mediaUrl = res.body.results.URL_MEDIA
+
+  debugLog('deezer', 5, { type: 1, message: 'Successfully fetched user data.' })
 }
 
 async function loadFrom(query, type) {
@@ -239,7 +239,7 @@ function retrieveStream(identifier, title) {
       disableBodyCompression: true
     })
 
-    return resolve({ url: streamData.data[0].media[0].sources[0].url, protocol: 'https', additionalData: trackInfo })
+    return resolve({ url: streamData.data[0].media[0].sources[0].url, protocol: 'https', type: 'arbitrary', additionalData: trackInfo })
   })
 }
 
@@ -255,14 +255,26 @@ function _calculateKey(songId) {
   return trackKey
 }
 
-function loadTrack(url, trackInfos) {
-  const stream = new PassThrough()
+function loadTrack(title, url, trackInfos) {
+  return new Promise(async (resolve) => {
+    const stream = new PassThrough()
 
-  const trackKey = _calculateKey(trackInfos.SNG_ID)
-  let buf = Buffer.alloc(0)
-  let i = 0
+    const trackKey = _calculateKey(trackInfos.SNG_ID)
+    let buf = Buffer.alloc(0)
+    let i = 0
 
-  makeRequest(url, { method: 'GET', streamOnly: true }).then((res) => {
+    const res = await makeRequest(url, {
+      method: 'GET',
+      streamOnly: true
+    })
+
+    res.on('error', (error) => {
+      debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: error.message })
+
+      resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+    })
+    res.on('end', () => stream.end())
+
     res.on('readable', () => {
       let chunk = null
       while (1) {
@@ -294,16 +306,14 @@ function loadTrack(url, trackInfos) {
           buf = buf.subarray(bufferSize)
         }
       }
+
+      resolve(stream)
     })
-
-    res.on('end', () => stream.end())
   })
-
-  return stream
 }
 
 export default {
-  initDeezer,
+  init,
   loadFrom,
   search,
   retrieveStream,

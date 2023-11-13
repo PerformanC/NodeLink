@@ -37,6 +37,10 @@ export default {
       "success": true,
       "error": true
     },
+    "spotify": {
+      "success": true,
+      "error": true
+    },
     "websocket": {
       "connect": true,
       "disconnect": true,
@@ -81,11 +85,14 @@ export default {
     "sources": {
       "youtube": true,
       "youtubeMusic": true,
-      "spotify": true,
       "bandcamp": true,
       "http": true,
       "local": true,
       "pandora": false,
+      "spotify": {
+        "enabled": true,
+        "market": "BR"
+      },
       "deezer": {
         "enabled": false,
         "decryptionKey": "...", // For legal reasons, this key is not provided.

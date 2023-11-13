@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import config from '../config.js'
 import bandcamp from './sources/bandcamp.js'
 import deezer from './sources/deezer.js'
-import httpS from './sources/http.js'
+import httpSource from './sources/http.js'
 import local from './sources/local.js'
 import pandora from './sources/pandora.js'
 import soundcloud from './sources/soundcloud.js'
@@ -39,7 +39,7 @@ async function getTrackURL(track) {
         break
       }
       case 'bandcamp': {
-        resolve(bandcamp.retrieveStream(track.uri, track.title, track.author))
+        resolve(bandcamp.retrieveStream(track.uri, track.title))
 
         break
       }
@@ -49,7 +49,7 @@ async function getTrackURL(track) {
         break
       }
       default: {
-        resolve({ exception: { message: 'Unknown source', severity: 'common', cause: 'Not supported sourceName.' } })
+        resolve({ exception: { message: 'Unknown source', severity: 'common', cause: 'Not supported source.' } })
 
         break
       }
@@ -73,15 +73,15 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       const trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
       if (trueSource == 'deezer')
-        return resolve({ stream: deezer.loadTrack(url, additionalData), type: 'arbitrary' })
+        return resolve({ stream: await deezer.loadTrack(title, url, additionalData), type: 'arbitrary' })
 
       if (trueSource == 'soundcloud') {
-        const stream = await soundcloud.loadStream(url, protocol)
+        const stream = await soundcloud.loadStream(title, url, protocol)
 
         return resolve({ stream: stream, type: 'arbitrary' })
       }
 
-      const res = await (trueSource == 'youtube' || trueSource == 'ytmusic' ? http1makeRequest : makeRequest)(url, {
+      const res = await ((trueSource == 'youtube' || trueSource == 'ytmusic') ? http1makeRequest : makeRequest)(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
           'Range': 'bytes=0-'
@@ -94,13 +94,13 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
 
-      // if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
-      //   res.destroy()
+      if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
+        res.destroy()
 
-      //   debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
 
-      //   return resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
-      // }
+        return resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
+      }
 
       const stream = new PassThrough()
 
@@ -112,7 +112,9 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
 
-      resolve({ stream, type: [ 'youtube', 'ytmusic' ].includes(trueSource) ? 'webm/opus' : 'arbitrary' })
+      res.once('readable', () => {
+        resolve({ stream, type: [ 'youtube', 'ytmusic' ].includes(trueSource) ? 'webm/opus' : 'arbitrary' })
+      })
     }
   })
 }
@@ -122,7 +124,7 @@ export default {
   getTrackStream,
   bandcamp,
   deezer,
-  http: httpS,
+  http: httpSource,
   local,
   pandora,
   soundcloud,

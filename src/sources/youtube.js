@@ -20,12 +20,12 @@ function setIntervalNow(func, interval) {
   return setInterval(func, interval)
 }
 
-async function startInnertube() {
+async function init() {
   playerInfo.innertubeInterval = setIntervalNow(async () => {
-    debugLog('innertube', 5, { type: 1, message: 'Fetching innertube data...' })
+    debugLog('innertube', 5, { type: 1, message: 'Fetching deciphering functions...' })
  
     const data = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      debugLog('innertube', 5, { type: 2, message: `Failed to fetch innertube data: ${err.message}` })
+      debugLog('innertube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
     })
 
     playerInfo.innertube = {
@@ -44,7 +44,7 @@ async function startInnertube() {
     }
 
     const player = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
-      debugLog('innertube', 5, { type: 2, message: `Failed to fetch player js: ${err.message}` })
+      debugLog('innertube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
     })
 
     debugLog('innertube', 5, { type: 1, message: 'Fetched player.js, parsing...' })
@@ -69,11 +69,11 @@ async function startInnertube() {
     const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
     playerInfo.functions.push(new vm.Script(`const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`))
 
-    debugLog('innertube', 5, { type: 1, message: 'Extracted signatureTimestamp, decipher signature and ncode functions.' })
+    debugLog('innertube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
   }, 3600000)
 }
 
-function stopInnertube() {
+function free() {
   clearInterval(playerInfo.innertubeInterval)
   playerInfo.innertubeInterval = null
 
@@ -294,7 +294,7 @@ async function loadFrom(query, type) {
           return resolve({ loadType: 'empty', data: {} })
         }
 
-        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title, tracksLen: tracks.length, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title })
 
         return resolve({
           loadType: 'playlist',
@@ -520,8 +520,8 @@ async function loadCaptions(decodedTrack, language) {
 }
 
 export default {
-  startInnertube,
-  stopInnertube,
+  init,
+  free,
   search,
   loadFrom,
   retrieveStream,

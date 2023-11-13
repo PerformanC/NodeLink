@@ -30,7 +30,9 @@ export function http1makeRequest(url, options) {
       headers: {
         'Accept-Encoding': 'br, gzip, deflate',
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
-        ...(options.headers || {})
+        'DNT': '1',
+        ...(options.headers || {}),
+        ...(options.body ? { 'Content-Type': 'application/json' } : {})
       },
       rejectUnauthorized: false
     }, (res) => {
@@ -42,7 +44,7 @@ export function http1makeRequest(url, options) {
         return resolve(res.headers)
       }
 
-      const isJson = res.headers['content-type'].startsWith('application/json')
+      let isJson = res.headers['content-type'] ? res.headers['content-type'].startsWith('application/json') : null
 
       switch (res.headers['content-encoding']) {
         case 'deflate': {
@@ -69,8 +71,21 @@ export function http1makeRequest(url, options) {
 
       res.on('data', (chunk) => (data += chunk))
       res.on('error', () => reject())
-      res.on('end', () => resolve(isJson ? JSON.parse(data.toString()) : data.toString()))
-    }).end()
+      res.on('end', () => {
+        if (isJson == null) isJson = (data.toString().startsWith('{') && data.toString().endsWith('}')) || (data.toString().startsWith('[') && data.toString().endsWith(']'))
+
+        resolve(isJson ? JSON.parse(data.toString()) : data.toString())
+      })
+    })
+
+    if (options.body) {
+      if (options.disableBodyCompression)
+        req.end(JSON.stringify(options.body))
+      else zlib.gzip(JSON.stringify(options.body), (error, data) => {
+        if (error) throw new Error(`\u001b[31mhttp1makeRequest\u001b[37m]: Failed gziping body: ${error}`)
+        req.end(data)
+      })
+    } else req.end()
 
     req.on('error', (error) => {
       console.error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
@@ -89,10 +104,15 @@ export function makeRequest(url, options) {
       ':method': options.method,
       ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'br, gzip, deflate',
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+      'DNT': '1',
+      ...(options.headers || {})
     }
-    if (options.body && !options.disableBodyCompression) reqOptions['Content-Encoding'] = 'gzip'
-    if (options.headers) reqOptions = { ...reqOptions, ...options.headers }
+    if (options.body) {
+      if (!options.disableBodyCompression) reqOptions['Content-Encoding'] = 'gzip'
+
+      reqOptions['Content-Type'] = 'application/json'
+    }
 
     let req = client.request(reqOptions)
 
@@ -157,10 +177,10 @@ export function makeRequest(url, options) {
 
     if (options.body) {
       if (options.disableBodyCompression)
-        req.write(JSON.stringify(options.body), () => req.end())
+        req.end(JSON.stringify(options.body))
       else zlib.gzip(JSON.stringify(options.body), (error, data) => {
         if (error) throw new Error(`\u001b[31mmakeRequest\u001b[37m]: Failed gziping body: ${error}`)
-        req.write(data, () => req.end())
+        req.end(data)
       })
     } else req.end()
   })
@@ -169,11 +189,11 @@ export function makeRequest(url, options) {
 class EncodeClass {
   constructor() {
     this.position = 0
-    this.buffer = Buffer.alloc(256)
+    this.buffer = Buffer.alloc(512)
   }
 
   changeBytes(bytes) {
-    if (this.position + bytes > 252) {
+    if (this.position + bytes > this.buffer.length) {
       const newBuffer = Buffer.alloc(Math.max(this.buffer.length * 2, this.position + bytes))
       this.buffer.copy(newBuffer)
       this.buffer = newBuffer
@@ -699,6 +719,16 @@ export function debugLog(name, type, options) {
 
           if (options.type == 2 && config.debug.deezer.error)
             console.warn(`[\u001b[31mdeezer\u001b[37m]: ${options.message}`)
+
+          break
+        }
+
+        case 'spotify': {
+          if (options.type == 1 && config.debug.spotify.success)
+            console.log(`[\u001b[32mspotify\u001b[37m]: ${options.message}`)
+
+          if (options.type == 2 && config.debug.spotify.error)
+            console.warn(`[\u001b[31mspotify\u001b[37m]: ${options.message}`)
 
           break
         }

@@ -3,42 +3,93 @@ import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'BandCamp', query: url })
+    if (!/https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(url))
+      return resolve({ loadType: 'empty', data: {} })
 
     const data = await makeRequest(url, { method: 'GET' })
-
     const matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
     if (!matches.length)
       return resolve({ loadType: 'empty', data: {} })
 
     const trackInfo = JSON.parse(matches[1])
-    const identifier = url.match(/^https?:\/\/([^/]+)\/track\/([^/?]+)/)
 
-    const track = {
-      identifier: `${identifier[1]}:${identifier[2]}`,
-      isSeekable: true,
-      author: trackInfo.byArtist.name,
-      length: (trackInfo.duration.split('P')[1].split('H')[0] * 3600000) + (trackInfo.duration.split('H')[1].split('M')[0] * 60000) + (trackInfo.duration.split('M')[1].split('S')[0] * 1000),
-      isStream: false,
-      position: 0,
-      title: trackInfo.name,
-      uri: trackInfo['@id'],
-      artworkUrl: trackInfo.image,
-      isrc: null,
-      sourceName: 'bandcamp'
-    }
+    debugLog('loadtracks', 4, { type: 1, loadType: trackInfo['@type'] == 'MusicRecording' ? 'track' : 'album', sourceName: 'BandCamp', query: url })
 
-    debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query: url })
+    switch (trackInfo['@type']) {
+      case 'MusicRecording': {
+        const identifier = trackInfo['@id'].match(/^https?:\/\/([^/]+)\/track\/([^/?]+)/)
+    
+        const track = {
+          identifier: `${identifier[1]}:${identifier[2]}`,
+          isSeekable: true,
+          author: trackInfo.byArtist.name,
+          length: (trackInfo.duration.split('P')[1].split('H')[0] * 3600000) + (trackInfo.duration.split('H')[1].split('M')[0] * 60000) + (trackInfo.duration.split('M')[1].split('S')[0] * 1000),
+          isStream: false,
+          position: 0,
+          title: trackInfo.name,
+          uri: trackInfo['@id'],
+          artworkUrl: trackInfo.image,
+          isrc: null,
+          sourceName: 'bandcamp'
+        }
+    
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'BandCamp', track, query: url })
+    
+        resolve({
+          loadType: 'track',
+          data: {
+            encoded: encodeTrack(track),
+            info: track,
+            pluginInfo: {}
+          }
+        })
 
-    resolve({
-      loadType: 'track',
-      data: {
-        encoded: encodeTrack(track),
-        info: track,
-        pluginInfo: {}
+        break
       }
-    })
+      case 'MusicAlbum': {
+        const tracks = []
+
+        trackInfo.track.itemListElement.forEach((item, i) => {
+          const identifier = item.item['@id'].match(/^https?:\/\/([^/]+)\/track\/([^/?]+)/)
+
+          const track = {
+            identifier: `${identifier[1]}:${identifier[2]}`,
+            isSeekable: true,
+            author: trackInfo.byArtist.name,
+            length: (item.item.duration.split('P')[1].split('H')[0] * 3600000) + (item.item.duration.split('H')[1].split('M')[0] * 60000) + (item.item.duration.split('M')[1].split('S')[0] * 1000),
+            isStream: false,
+            position: i,
+            title: item.item.name,
+            uri: item.item['@id'],
+            artworkUrl: trackInfo.image,
+            isrc: null,
+            sourceName: 'bandcamp'
+          }
+
+          tracks.push({
+            encoded: encodeTrack(track),
+            info: track,
+            pluginInfo: {}
+          })
+        })
+
+        debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'BandCamp', playlistName: trackInfo.name })
+
+        resolve({
+          loadType: 'album',
+          data: {
+            info: {
+              name: trackInfo.name,
+              selectedTrack: 0
+            },
+            tracks
+          }
+        })
+
+        break
+      }
+    }
   })
 }
 
@@ -118,7 +169,7 @@ async function search(query, shouldLog) {
   })
 }
 
-async function retrieveStream(uri, title, author) {
+async function retrieveStream(uri, title) {
   return new Promise(async (resolve) => {
     const data = await makeRequest(uri, { method: 'GET' })
 

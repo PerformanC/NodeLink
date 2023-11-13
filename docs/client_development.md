@@ -10,7 +10,7 @@ Here's a small list of differences between NodeLink and Lavalink which is import
 
 ### LoadTracks
 
-The loadtracks have a small difference between NodeLink and Lavalink, while in Lavalink we have only `track`, `playlist`, `search`, `empty` and `error`, NodeLink has one more, `shorts` and `album`, so you can differentiate a track from a short, and a playlist from an album. This endpoint is available in all NodeLink versions.
+The loadtracks have a small difference between NodeLink and Lavalink, while in Lavalink we have only `track`, `playlist`, `search`, `empty` and `error`, NodeLink has one more, `shorts`, `album`, `artist`, `show`, `episode`, so that you can differentiate tracks from others. This endpoint is available in all NodeLink versions.
 
 ### loadCaptions
 
@@ -31,6 +31,10 @@ There's a big issue with Node.js, the fact that QUIC is not supported, and this 
 The compression is not enabled in all endpoints, the /version endpoint doesn't support it, and neither 401 responses do.
 
 For you to enable compression, you need to send the `Accept-Encoding` header with the value `br`, and NodeLink will send the response compressed, and for now, it only supports brotli compression.
+
+## Encoded Length
+
+While Lavalink has a buffer of 256 bytes, NodeLink has a buffer of 512 bytes, since it can send more data from the track. This happens since NodeLink 1.14.0.
 
 ## End of the document
 

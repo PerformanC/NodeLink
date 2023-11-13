@@ -5,12 +5,15 @@ import { debugLog, encodeTrack, http1makeRequest } from '../utils.js'
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'SoundCloud', query: url })
-
     const data = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
-    if (JSON.stringify(data) == '{}')
+    debugLog('loadtracks', 4, { type: 1, loadType: data.kind || 'unknown', sourceName: 'SoundCloud', query: url })
+
+    if (Object.keys(data).length == 0) {
+      debugLog('loadtracks', 4, { type: 3, loadType: data.kind || 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
+
       return resolve({ loadType: 'empty', data: {} })
+    }
 
     switch (data.kind) {
       case 'track': {
@@ -41,12 +44,12 @@ async function loadFrom(url) {
       }
       case 'playlist': {
         const tracks = []
-
         const notLoaded = []
 
-        data.tracks.forEach((item, index) => {
-          if (tracks.length > config.options.maxAlbumPlaylistLength) return;
+        if (data.tracks.length > config.options.maxAlbumPlaylistLength)
+          data.tracks = data.tracks.slice(0, config.options.maxAlbumPlaylistLength)
 
+        data.tracks.forEach((item, index) => {
           if (!item.title) {
             notLoaded.push(item.id.toString())
             return;
@@ -76,9 +79,7 @@ async function loadFrom(url) {
         if (notLoaded.length) {
           let stop = false
 
-          while (notLoaded.length && !stop) {
-            if (tracks.length > config.options.maxAlbumPlaylistLength) return;
-
+          while ((notLoaded.length && !stop) && (tracks.length > config.options.maxAlbumPlaylistLength)) {
             const notLoadedLimited = notLoaded.slice(0, 50)
             const data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
 
@@ -124,6 +125,11 @@ async function loadFrom(url) {
             tracks,
           }
         })
+      }
+      case 'user': {
+        debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'SoundCloud', playlistName: data.full_name })
+
+        return resolve({ loadType: 'empty', data: {} })
       }
     }
   })
@@ -191,41 +197,68 @@ async function retrieveStream(identifier, title) {
 
     const transcoding = oggOpus || data.media.transcodings[0]
 
-    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, type: oggOpus ? 'opus' : 'arbitrary', snipped: transcoding.snipped ? transcoding.duration : false })
+    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, type: oggOpus ? 'webm/opus' : 'arbitrary' })
   })
 }
 
-async function loadStream(url, protocol) {
-  const stream = new PassThrough()
+async function loadStream(title, url, protocol) {
+  return new Promise(async (resolve) => {
+    const stream = new PassThrough()
 
-  if (protocol == 'hls') {
-    const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
-    const streamHls = await http1makeRequest(streamHlsRedirect.url, { method: 'GET' })
-    const streams = streamHls.split('\n').filter((line) => line.startsWith('https://'))
+    if (protocol == 'hls') {
+      const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
+      const streamHls = await http1makeRequest(streamHlsRedirect.url, { method: 'GET' })
+      const streams = streamHls.split('\n').filter((line) => line.startsWith('https://'))
 
-    let i = 0
+      let i = 0
 
-    function loadNext() {
-      http1makeRequest(streams[i], { streamOnly: true }).then((res) => {
+      async function loadNext() {
+        const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
+
         res.on('data', (chunk) => stream.write(chunk))
+        res.on('error', (error) => {
+          debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
+  
+          resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+        })
         res.on('end', () => {
           i++
 
           if (i < streams.length) loadNext()
           else stream.end()
         })
-      })
-    }
+      }
 
-    loadNext()
-  } else {
-    http1makeRequest(url, { streamOnly: true }).then((res) => {
+      const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
+
       res.on('data', (chunk) => stream.write(chunk))
-      res.on('end', () => stream.end())
-    })
-  }
+      res.on('error', (error) => {
+        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
 
-  return stream
+        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+      })
+      res.on('end', () => {
+        i++
+
+        if (i < streams.length) loadNext()
+        else stream.end()
+      })
+
+      res.once('readable', () => resolve(stream))
+    } else {
+      const res = await http1makeRequest(url, { method: 'GET', streamOnly: true })
+
+      res.on('data', (chunk) => stream.write(chunk))
+      res.on('error', (error) => {
+        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
+
+        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+      })
+      res.on('end', () => stream.end())
+
+      res.once('readable', () => resolve(stream))
+    }
+  })
 }
 
 export default {

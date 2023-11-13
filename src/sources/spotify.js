@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import { debugLog, makeRequest, encodeTrack, sleep } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, sleep, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
 
 import https from 'node:https'
@@ -7,68 +7,59 @@ import zlib from 'node:zlib'
 
 let playerInfo = {}
 
-async function setSpotifyToken() {
+async function init() {
+  debugLog('spotify', 5, { type: 1, message: 'Fetching token...' })
+
   const token = await makeRequest('https://open.spotify.com/get_access_token', {
     method: 'GET'
   })
 
-  const req = https.request({
-    hostname: 'clienttoken.spotify.com',
-    path: '/v1/clienttoken',
-    method: 'POST',
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
-      'Accept': 'application/json',
-      'Accept-Language': 'en-US,en;q=0.5',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Referer': 'https://open.spotify.com/',
-      'Content-Type': 'application/json',
-      'Origin': 'https://open.spotify.com',
-      'DNT': '1',
-      'Connection': 'keep-alive',
-      'Sec-Fetch-Dest': 'empty',
-      'Sec-Fetch-Mode': 'cors',
-      'Sec-Fetch-Site': 'same-site'
-    }
-  }, (res) => {
-    let data = ''
+  if (typeof token != 'object') {
+    debugLog('spotify', 5, { type: 2, message: 'Failed to fetch Spotify token.' })
 
-    const compression = zlib.createGunzip()
-    res.pipe(compression)
-  
-    compression.on('data', (chunk) => data += chunk)
-  
-    compression.on('end', () => {
-      data = JSON.parse(data)
+    return;
+  }
 
-      if (data.response_type == 'RESPONSE_GRANTED_TOKEN_RESPONSE') {
-        playerInfo = {
-          accessToken: token.accessToken,
-          clientToken: data.granted_token.token
+  const data = await http1makeRequest('https://clienttoken.spotify.com/v1/clienttoken', {
+    body: {
+      client_data: {
+        client_version: '1.2.9.2269.g2fe25d39',
+        client_id: 'd8a5ed958d274c2e8ee717e6a4b0971d',
+        js_sdk_data: {
+          device_brand: 'unknown',
+          device_model: 'unknown',
+          os: 'linux',
+          os_version: 'unknown',
+          device_id: '0c5f7c36-855e-4d0a-a661-1a79958ee6de',
+          device_type: 'computer'
         }
       }
-    })
+    },
+    headers: {
+      'Accept': 'application/json'
+    },
+    method: 'POST',
+    disableBodyCompression: true
   })
-  
-  req.on('error', (error) => {
-    console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to clienttoken.spotify.com: ${error}`)
-  })
-  
-  req.write(JSON.stringify({
-    client_data: {
-      client_version: '1.2.9.2269.g2fe25d39',
-      client_id: 'd8a5ed958d274c2e8ee717e6a4b0971d',
-      js_sdk_data: {
-        device_brand: 'unknown',
-        device_model: 'unknown',
-        os: 'linux',
-        os_version: 'unknown',
-        device_id: '0c5f7c36-855e-4d0a-a661-1a79958ee6de',
-        device_type: 'computer'
-      }
-    }
-  }))
-  req.end()
+
+  if (typeof data != 'object') {
+    debugLog('spotify', 5, { type: 2, message: 'Failed to fetch client token.' })
+
+    return;
+  }
+
+  if (data.response_type != 'RESPONSE_GRANTED_TOKEN_RESPONSE') {
+    debugLog('spotify', 5, { type: 2, message: 'Failed to fetch client token.' })
+
+    return;
+  }
+
+  playerInfo = {
+    accessToken: token.accessToken,
+    clientToken: data.granted_token.token
+  }
+
+  debugLog('spotify', 5, { type: 1, message: 'Successfully fetched token.' })
 }
 
 async function search(query) {
@@ -122,11 +113,12 @@ async function search(query) {
         }
           
         const tracks = []
+        let index = 0
 
         if (data.data.searchV2.tracksV2.items.length > config.options.maxResultsLength)
           data.data.searchV2.tracksV2.items = data.data.searchV2.tracksV2.items.splice(0, config.options.maxResultsLength) 
 
-        data.data.searchV2.tracksV2.items.forEach(async (items, index) => {
+        data.data.searchV2.tracksV2.items.forEach(async (items) => {
           if (items) {
             items = items.item.data
 
@@ -156,6 +148,12 @@ async function search(query) {
           }
 
           if (index == data.data.searchV2.tracksV2.items.length - 1) {
+            if (tracks.length == 0) {
+              debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
+              return resolve({ loadType: 'empty', data: {} })
+            }
+
             const new_tracks = []
             data.data.searchV2.tracksV2.items.forEach((items2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -174,6 +172,8 @@ async function search(query) {
               })
             })
           }
+
+          index++
         })
       })
     })
@@ -197,12 +197,12 @@ async function loadFrom(query, type) {
         endpoint = `/albums/${type[2]}`
         break
       }
-      case 'episodes': {
-        endpoint = `/episodes/${type[2]}?market=${Infos.Configs.SpotifyMarket}`
+      case 'episode': {
+        endpoint = `/episodes/${type[2]}?market=${config.search.sources.spotify.market}`
         break
       }
       case 'show': {
-        endpoint = `/shows/${type[2]}?market=US`
+        endpoint = `/shows/${type[2]}?market=${config.search.sources.spotify.market}`
         break
       }
       default: {
@@ -232,13 +232,19 @@ async function loadFrom(query, type) {
       }
 
       if (data.error.status == 400) {
-        debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+        debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
+
+        return resolve({ loadType: 'empty', data: {} })
+      }
+
+      if (data.error.message == 'Invalid playlist Id') {
+        debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
     
       if (data.error) {
-        debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: data.error.message })
+        debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: data.error.message })
 
         return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'fault', cause: 'Unknown' } })
       }
@@ -279,7 +285,7 @@ async function loadFrom(query, type) {
         break
       }
       case 'episode': {
-        const search = await searchWithDefault(`"${data.name} ${data.publisher}"`)
+        const search = await searchWithDefault(`"${data.name} ${data.show.publisher}"`)
 
         if (search.loadType != 'search')
           return resolve(search)
@@ -287,7 +293,7 @@ async function loadFrom(query, type) {
         const track = {
           identifier: search.data[0].info.identifier,
           isSeekable: true,
-          author: data.publisher,
+          author: data.show.publisher,
           length: search.data[0].info.length,
           isStream: false,
           position: 0,
@@ -314,12 +320,13 @@ async function loadFrom(query, type) {
       case 'playlist':
       case 'album': {
         const tracks = []
+        let index = 0
         let shouldStop = false
 
         if (data.tracks.items.length > config.options.maxAlbumPlaylistLength)
           data.tracks.items = data.tracks.items.splice(0, config.options.maxAlbumPlaylistLength)
 
-        data.tracks.items.forEach(async (item, index) => {
+        data.tracks.items.forEach(async (item) => {
           if (type[1] == 'playlist' ? item.track : item) {
             let search
             if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
@@ -336,7 +343,7 @@ async function loadFrom(query, type) {
                 title: type[1] == 'playlist' ? item.track.name : item.name,
                 uri: type[1] == 'playlist' ? item.track.external_urls.spotify : item.external_urls.spotify,
                 artworkUrl: search.data[0].info.artworkUrl,
-                isrc: type[1] == 'playlist' ? item.track.external_ids.isrc : item.external_ids.isrc,
+                isrc: null,
                 sourceName: 'spotify'
               }
 
@@ -349,6 +356,12 @@ async function loadFrom(query, type) {
           }
 
           if (index == data.tracks.items.length - 1) {
+            if (tracks.length == 0) {
+              debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
+              return resolve({ loadType: 'empty', data: {} })
+            }
+
             const new_tracks = []
             data.tracks.items.forEach((item2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -379,25 +392,28 @@ async function loadFrom(query, type) {
               })
             })
           }
+
+          index++
         })
 
         break
       }
       case 'show': {
         const tracks = []
+        let index = 0
         let shouldStop = false
 
         if (data.episodes.items.length > config.options.maxAlbumPlaylistLength)
           data.episodes.items = data.episodes.items.splice(0, config.options.maxAlbumPlaylistLength)
 
-        data.episodes.items.forEach(async (episode, index) => {
-          const search = await searchWithDefault(`${episode.name} ${episode.publisher}`)
+        data.episodes.items.forEach(async (episode) => {
+          const search = await searchWithDefault(`${episode.name} ${episode.show.publisher}`)
 
           if (search.loadType == 'search') {
             const track = {
               identifier: search.data[0].info.identifier,
               isSeekable: true,
-              author: episode.publisher,
+              author: episode.show.publisher,
               length: search.data[0].info.length,
               isStream: false,
               position: 0,
@@ -416,6 +432,12 @@ async function loadFrom(query, type) {
           }
 
           if (index == data.episodes.items.length - 1) {
+            if (tracks.length == 0) {
+              debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
+              return resolve({ loadType: 'empty', data: {} })
+            }
+
             const new_tracks = []
             data.episodes.items.forEach((episode2, index2) => {
               tracks.forEach((track2, index3) => {
@@ -446,6 +468,8 @@ async function loadFrom(query, type) {
               })
             })
           }
+
+          index++
         })
 
         break
@@ -455,7 +479,7 @@ async function loadFrom(query, type) {
 }
 
 export default {
-  setSpotifyToken,
+  init,
   search,
   loadFrom
 }
