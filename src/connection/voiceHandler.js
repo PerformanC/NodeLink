@@ -156,6 +156,14 @@ class VoiceConnection {
         }
       }))
 
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackEndEvent',
+        guildId: this.config.guildId,
+        track: this.config.track,
+        reason: 'loadFailed'
+      }))
+
       this.config.track = null
       this.cache.silence = true
     })
@@ -248,8 +256,22 @@ class VoiceConnection {
         op: 'event',
         type: 'TrackExceptionEvent',
         guildId: this.config.guildId,
-        track: decodedTrack,
+        track: {
+          encoded: track,
+          info: decodedTrack
+        },
         exception: urlInfo.exception
+      }))
+
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackEndEvent',
+        guildId: this.config.guildId,
+        track: {
+          encoded: track,
+          info: decodedTrack
+        },
+        reason: 'loadFailed'
       }))
 
       return this.config
@@ -299,8 +321,22 @@ class VoiceConnection {
         op: 'event',
         type: 'TrackExceptionEvent',
         guildId: this.config.guildId,
-        track: decodedTrack,
+        track: {
+          encoded: track,
+          info: decodedTrack
+        },
         exception: resource.exception
+      }))
+
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackEndEvent',
+        guildId: this.config.guildId,
+        track: {
+          encoded: track,
+          info: decodedTrack
+        },
+        reason: 'loadFailed'
       }))
 
       return this.config
@@ -433,8 +469,16 @@ class VoiceConnection {
         op: 'event',
         type: 'TrackExceptionEvent',
         guildId: this.config.guildId,
-        track: this.config.track.info,
+        track: this.config.track,
         exception: resource.exception
+      }))
+
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackEndEvent',
+        guildId: this.config.guildId,
+        track: this.config.track.info,
+        reason: 'loadFailed'
       }))
 
       return this.config
