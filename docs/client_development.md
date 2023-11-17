@@ -32,10 +32,6 @@ The compression is not enabled in all endpoints, the /version endpoint doesn't s
 
 For you to enable compression, you need to send the `Accept-Encoding` header with the value `br`, and NodeLink will send the response compressed, and for now, it only supports brotli compression.
 
-## Encoded Length
-
-While Lavalink has a buffer of 256 bytes, NodeLink has a buffer of 512 bytes, since it can send more data from the track. This happens since NodeLink 1.14.0.
-
 ## End of the document
 
 And that's it, you now know the differences between NodeLink and Lavalink, and you can start developing your client for NodeLink, and if you have any questions, you can join PerformanC's [Discord server](https://discord.gg/uPveNfTuCJ) and ask for help in the #help channel.

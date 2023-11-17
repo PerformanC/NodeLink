@@ -1,47 +1,65 @@
 # Contributing
 
-NodeLink is a big project, and highly easy to break, and for that, we made a few rules to make sure that the project is always in a good state.
+Because of NodeLink's size, it's easy to break it. To ensure its stability and maintainability, we have a few protocols to follow.
 
 ## Indentation
 
-It's extremely important that we keep the indentation consistent, so we use 2 spaces for indentation and no tabs.
+Firstly, for better readability, we keep the same indentation across all PerformanC projects, which is:
 
-The name of the variables should be in camelCase, and when a variable isn't re-assigned, it should be in const (var is not allowed).
+- 2 spaces
+- camelCase for anything else than macros, and macros should be in SCREAMING_SNAKE_CASE
+- No semicolons, except for when it's needed
+- Always use const, unless you need to re-assign the variable
 
 ## Commits
 
-The name of the commits should follow the style below:
+The name of the commits **MUST** follow the style below:
 
 ```txt
-[UPDATED | ADDED | REMOVED] [SHORT DESCRIPTION]
+add | update | remove | fix | improve: short description
 
-[DESCRIPTION]
+Full description
 
-[IF THERE'S A CO-AUTHOR, ADD IT HERE (OPTIONAL)]
+If there are co-authors, add them here.
 ```
 
-## Npms
+## NPMs
 
-While we love the idea of using npm, we don't want our project to be bloated with dependencies, and neither to depend on packages, so we use as few as possible. Although, feel free to use as many Node.js built-in npms as you want.
+While the idea of using npm is great, they can slow down the project and create security issues, so we try to use as few as possible, and we don't use any packages that are not needed.
 
-Here's a list of the packages we use, and you can use:
+We enforce the idea of using built-in Node.js modules over third-party packages.
+
+And because we do use some packages, we have a list of packages that we use (in this project), and that you can use:
 
 ### ws
 
-No dependencies
+The usage of `ws` is deprecated in this project, and PWSL (ws.js) must be used instead.
+
+### node-crc
+
+- @napi-rs/cli
 
 ### @discord.js/voice
 
-* discord-api-types
-* prism-media
-* tslib (soon to be removed)
-* @types/ws (soon to be removed)
+#### Required
+
+- ws
+- discord-api-types
+- prism-media
+- tslib (soon to be removed)
+
+#### Optional
+
+- libsodium-wrappers
+- sodium-native
+
+All of these packages are optional, but at least one of them is required.
 
 ### prism-media
 
-* opusscript
-* @discordjs/opus
-* node-opus
+- opusscript
+- @discordjs/opus
+- node-opus
 
 All of these packages are optional, but at least one of them is required, to use them, you can use `prism.opus` instead.
 
@@ -65,7 +83,7 @@ breaking changes are allowed, but only if they either are necessary or will impr
 
 ## Security
 
-Security is a big issue, especially in big projects like NodeLink, to make sure that we keep NodeLink safe from attacks, we always make sure that we verify the input from the client, and we don't trust it, and we always make sure that we don't send any sensitive information to the client.
+To ensure NodeLink's security, always check the input from the client, and never trust it, and always make sure to not send any sensitive information to the client or give it access to any potentially dangerous functions.
 
 ## End of the document
 
