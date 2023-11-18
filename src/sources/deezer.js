@@ -239,7 +239,7 @@ function retrieveStream(identifier, title) {
       disableBodyCompression: true
     })
 
-    return resolve({ url: streamData.data[0].media[0].sources[0].url, protocol: 'https', type: 'arbitrary', additionalData: trackInfo })
+    return resolve({ url: streamData.data[0].media[0].sources[0].url, protocol: 'https', format: 'arbitrary', additionalData: trackInfo })
   })
 }
 

@@ -197,7 +197,7 @@ async function retrieveStream(identifier, title) {
 
     const transcoding = oggOpus || data.media.transcodings[0]
 
-    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, type: oggOpus ? 'webm/opus' : 'arbitrary' })
+    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, format: oggOpus ? 'webm/opus' : 'arbitrary' })
   })
 }
 

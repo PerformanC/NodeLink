@@ -73,12 +73,12 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       const trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
       if (trueSource == 'deezer')
-        return resolve({ stream: await deezer.loadTrack(title, url, additionalData), type: 'arbitrary' })
+        return resolve({ stream: await deezer.loadTrack(title, url, additionalData) })
 
       if (trueSource == 'soundcloud') {
         const stream = await soundcloud.loadStream(title, url, protocol)
 
-        return resolve({ stream: stream, type: 'arbitrary' })
+        return resolve({ stream })
       }
 
       const res = await ((trueSource == 'youtube' || trueSource == 'ytmusic') ? http1makeRequest : makeRequest)(url, {
@@ -113,7 +113,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       })
 
       res.once('readable', () => {
-        resolve({ stream, type: [ 'youtube', 'ytmusic' ].includes(trueSource) ? 'webm/opus' : 'arbitrary' })
+        resolve({ stream })
       })
     }
   })

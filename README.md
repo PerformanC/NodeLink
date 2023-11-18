@@ -1,44 +1,84 @@
 # NodeLink
 
-![alt text](images/Nodelink.png "NodeLink")
+![NodeLink logo](images/Nodelink.png "NodeLink")
 
-Performant and efficient audio-sending node using Node.js.
+Lavalink protocol compatible music sending node using Node.js.
 
 ## Lavalink compatibility
 
 - [x] All events and filters
 - [x] All endpoints (Router planner API: no)
-- [x] LoadTracks endpoint (Unsupported & additional: Pandora: yes, Vimeo: no, Twitch: no)
+- [x] LoadTracks endpoint (Unsupported & additional: Pandora: yes, Deezer: yes, Vimeo: no, Twitch: no)
 - [x] Track(s) encoding & loadCaptions (NodeLink-only endpoint)
 - [x] Resume system
 
+## Sources
+
+- [x] BandCamp: Master
+- [x] Deezer: Master
+- [x] HTTP: Master
+- [x] Local: Master
+- [x] Pandora: Master dependant
+- [x] SoundCloud: Master
+- [x] Spotify: Master dependant
+- [x] YouTube: Master
+- [x] YouTube Music: Master
+
+**Obs.:** Master means that it can directly play from the source, without using other source to get its stream.
+
 ## NodeLink vs Lavalink
 
-NodeLink is a Lavalink-compatible node, using [`@discordjs/voice`](https://npmjs.com/package/@discordjs/voice), [`ffmpeg`](https://ffmpeg.org/) to send audio to Discord, while Lavalink uses [`Java`](https://www.java.com), [`Lavaplayer`](https://github.com/sedmelluq/lavaplayer), and [`Koe`](https://github.com/KyokoBot/koe) to send audio.
+NodeLink is a music-sending node that follows LavaLink protocols, it uses `@discordjs/voice` and `ffmpeg` to send audio to Discord, while LavaLink uses `Lavaplayer` and `Koe`.
 
-NodeLink is built to be more efficient than LavaLink, and to be more resource-friendly, allowing it to be run on low-end machines, while LavaLink requires a machine with at least 200MB of ram to run without forcing the [GC](https://en.wikipedia.org/wiki/Garbage_collection_(computer_science)) to deallocate memory.
+### Performance
 
-NodeLink uses its own systems to retrieve tracks, while LavaLink uses Lavaplayer to retrieve tracks, this allows NodeLink to be more efficient since it's built-in to NodeLink, and it's not an external dependency.
+While NodeLink outperforms LavaLink in scenarios like filtering, LavaLink outperforms when it comes to loading tracks, but it's a negligible difference.
 
-Lavalink was built for stability, NodeLink was for performance, and even then, we're limited by Node.js, since it doesn't support [QUIC](https://en.wikipedia.org/wiki/QUIC), which is crucial for NodeLink to be faster than Lavalink, but for resource-intensive actions, like filtering, NodeLink is faster than Lavalink.
+It comes to preference in this aspect, as NodeLink will be extremely faster than LavaLink in filtering, but LavaLink will be faster than NodeLink in loading tracks.
 
-Both have different goals and depending on your needs, you should use one or another.
+### Stability
+
+Because of LavaLink is an older project, it's more stable than NodeLink, but NodeLink is still stable, and we're always working to make it more stable.
+
+### Resource usage
+
+Because of Java's memory management, LavaLink uses more resources than NodeLink, and it's more resource-intensive, while NodeLink is more resource-friendly, and it can be run on low-end machines.
+
+### Features
+
+NodeLink has more features than LavaLink, like the ability to encode tracks, and the ability to load captions from YouTube videos, and it's also more customizable than LavaLink.
+
+Although LavaLink with plugins will have more features than NodeLink, NodeLink is more customizable than LavaLink, and it's easier to add features to NodeLink than LavaLink.
 
 ## Usage
 
-NodeLink is powered by [Node.js](https://nodejs.org), so you will need to have it installed on your system, with the minimum requirement of having version 15 (latest) installed.
+### Minimum requirements
+
+- NodeJS[Node.js](https://nodejs.org) 16.6.0 or higher
+- FFmpeg or ffmpeg-static
+- v4 compatible Lavalink wrapper for usage
+
+### Recommended requirements
+
+- NodeJS[Node.js](https://nodejs.org) latest
+- FFmpeg
+- [FastLink](https://github.com/PerformanC/FastLink)
 
 ### Installation
 
-To install NodeLink, you need to clone the repository and install the dependencies.
+**Obs.:** node-crc, NodeLink dependency for audio receive, requires a `cargo` (`rustup`) installation.
+
+To install NodeLink, you must clone the repository and install the dependencies.
 
 ```bash
 $ git clone https://github.com/PerformanC/NodeLink
 $ cd NodeLink
-$ npm install @discordjs/voice @discordjs/opus sodium-native ws
+$ npm i
 ```
 
-You can replace the [`sodium-native`](https://npmjs.com/package/sodium-native) dependency with alternatives like [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers).
+You can replace the [`sodium-native`](https://npmjs.com/package/sodium-native) dependency with alternatives like [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) in the [`package.json`](package.json) file.
+
+You can also replace the [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus) dependency with alternatives like [`opusscript`](https://npmjs.com/package/opusscript).
 
 For filtering, you will need to install [`ffmpeg`](https://ffmpeg.org/) on your system, and you can install it using [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static) through npm.
 

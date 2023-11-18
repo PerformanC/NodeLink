@@ -225,19 +225,15 @@ class VoiceConnection {
     this.client.players.delete(this.config.guildId)
   }
 
-  async getResource(decodedTrack, url, protocol, additionalData) {
+  async getResource(decodedTrack, urlInfo) {
     return new Promise(async (resolve) => {
-      const trackData = await sources.getTrackStream(decodedTrack, url, protocol, additionalData)
+      const streamInfo = await sources.getTrackStream(decodedTrack, urlInfo.url, urlInfo.protocol, urlInfo.additionalData)
 
-      if (trackData.exception) {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: trackData.exception.message })
+      if (streamInfo.exception) return resolve(streamInfo)
 
-        resolve({ status: 1, exception: { message: trackData.exception.message, severity: 'fault', cause: 'Unknown' } })
-      }
+      this.cache.url = urlInfo.url
 
-      this.cache.url = url
-
-      resolve({ stream: djsVoice.createAudioResource(trackData.stream, { inputType: trackData.type, inlineVolume: true }) })
+      resolve({ stream: djsVoice.createAudioResource(streamInfo.stream, { inputType: urlInfo.format, inlineVolume: true }) })
     })
   }
 
@@ -305,7 +301,7 @@ class VoiceConnection {
       if (oldTrack) this._stopTrack()
     } else {
       this.cache.url = urlInfo.url
-      resource = await this.getResource(decodedTrack, urlInfo.url, urlInfo.protocol, urlInfo.additionalData)
+      resource = await this.getResource(decodedTrack, urlInfo)
 
       if (oldTrack) this._stopTrack()
     }

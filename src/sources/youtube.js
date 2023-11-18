@@ -419,7 +419,7 @@ async function retrieveStream(identifier, type, title) {
     if (args.get('n'))
       url += `&${args.get('n')}=${playerInfo.functions[1].runInNewContext({ ncode: decodeURIComponent(args.get('n')) })}`
 
-    resolve({ url, protocol: 'https' })
+    resolve({ url, protocol: 'https', format: audio.mimeType == 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
   })
 }
 
