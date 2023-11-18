@@ -54,13 +54,13 @@ Although LavaLink with plugins will have more features than NodeLink, NodeLink i
 
 ### Minimum requirements
 
-- NodeJS[Node.js](https://nodejs.org) 16.6.0 or higher
+- [Node.js](https://nodejs.org) 16.6.0 or higher
 - FFmpeg or ffmpeg-static
 - v4 compatible Lavalink wrapper for usage
 
 ### Recommended requirements
 
-- NodeJS[Node.js](https://nodejs.org) latest
+- [Node.js](https://nodejs.org) latest
 - FFmpeg
 - [FastLink](https://github.com/PerformanC/FastLink)
 
