@@ -630,6 +630,14 @@ export function debugLog(name, type, options) {
 
           break
         }
+
+        default: {
+          if (!config.debug.request.errors) return;
+
+          console.warn(`[\u001b[31m${name}\u001b[37m]: \u001b[31m${options.error}\u001b[37m${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
+
+          break
+        }
       }
 
       break

@@ -152,7 +152,7 @@ class VoiceConnection {
         exception: {
           message: error.message,
           severity: 'fault',
-          cause: 'unknown'
+          cause: `${error.name}: ${error.message}`
         }
       }))
 
