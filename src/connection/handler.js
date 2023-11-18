@@ -177,7 +177,7 @@ async function requestHandler(req, res) {
         message: 'Missing encodedTrack query parameter',
         path: '/v4/decodetrack'
       }, 400)
-  }
+    }
 
     const decodedTrack = decodeTrack(encodedTrack)
 
@@ -613,9 +613,25 @@ async function requestHandler(req, res) {
       const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
       let player = client.players.get(guildId)
 
-      if (req.method == 'GET') {    
-        const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
+      if (req.method == 'DELETE') {
+        if (!player) {
+          debugLog('deletePlayer', 3, { params: parsedUrl.search, headers: req.headers, error: 'The provided guildId doesn\'t exist.' })
 
+          return sendResponse(req, res, {
+            timestamp: new Date(),
+            status: 404,
+            trace: null,
+            message: 'The provided guildId doesn\'t exist.',
+            path: parsedUrl.pathname
+          }, 404)
+        }
+
+        player.destroy()
+
+        debugLog('deletePlayer', 1, { params: parsedUrl.search, headers: req.headers })
+
+        sendResponse(req, res, null, 204)
+      } else if (req.method == 'GET') {   
         if (!guildId) {
           debugLog('getPlayer', 3, { params: parsedUrl.search, headers: req.headers, error: 'Missing guildId parameter.' })
 
@@ -631,7 +647,7 @@ async function requestHandler(req, res) {
         let player = client.players.get(guildId)
     
         if (!player) {
-          player = new VoiceConnection(guildId, client.userId, client.sessionId, client.timeout)
+          player = new VoiceConnection(guildId, client)
     
           client.players.set(guildId, player)
         }
@@ -646,7 +662,7 @@ async function requestHandler(req, res) {
         debugLog('getPlayer', 1, { params: parsedUrl.search, headers: req.headers })
     
         sendResponse(req, res, player.config, 200)
-      } else {
+      } else if (req.method == 'PATCH') {
         if (buffer.voice != undefined) {
           if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
             debugLog('voice', 3, { params: parsedUrl.search, headers: req.headers, body: buffer, error: `Invalid voice object.` })

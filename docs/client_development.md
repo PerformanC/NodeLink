@@ -18,7 +18,7 @@ The `loadCaptions` endpoint is a NodeLink-only endpoint, which allows you to get
 
 ### EncodeTrack
 
-Yet another NodeLink-only endpoint, which allows you to encode a track, so you can send it to the client. Available since NodeLink 1.1.0.
+NodeLink-only endpoint, which allows you to encode a track, so you can send it to the client. Available since NodeLink 1.1.0.
 
 ## GetRouterPlanner
 
