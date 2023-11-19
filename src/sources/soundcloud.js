@@ -216,32 +216,32 @@ async function loadStream(title, url, protocol) {
         const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
 
         res.on('data', (chunk) => stream.write(chunk))
-        res.on('error', (error) => {
-          debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
-  
-          resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
-        })
         res.on('end', () => {
           i++
 
           if (i < streams.length) loadNext()
           else stream.end()
         })
+        res.on('error', (error) => {
+          debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
+  
+          resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+        })
       }
 
       const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
 
       res.on('data', (chunk) => stream.write(chunk))
-      res.on('error', (error) => {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
-
-        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
-      })
       res.on('end', () => {
         i++
 
         if (i < streams.length) loadNext()
         else stream.end()
+      })
+      res.on('error', (error) => {
+        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
+
+        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
 
       res.once('readable', () => resolve(stream))
@@ -249,12 +249,12 @@ async function loadStream(title, url, protocol) {
       const res = await http1makeRequest(url, { method: 'GET', streamOnly: true })
 
       res.on('data', (chunk) => stream.write(chunk))
+      res.on('end', () => stream.end())
       res.on('error', (error) => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
 
         resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
-      res.on('end', () => stream.end())
 
       res.once('readable', () => resolve(stream))
     }

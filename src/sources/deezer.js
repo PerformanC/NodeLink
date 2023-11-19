@@ -268,12 +268,12 @@ function loadTrack(title, url, trackInfos) {
       streamOnly: true
     })
 
+    res.on('end', () => stream.end())
     res.on('error', (error) => {
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: error.message })
 
       resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
     })
-    res.on('end', () => stream.end())
 
     res.on('readable', () => {
       let chunk = null

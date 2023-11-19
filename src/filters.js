@@ -1,12 +1,9 @@
-import https from 'node:https'
-import http from 'node:http'
-import fs from 'node:fs'
-
 import config from '../config.js'
 import { debugLog } from './utils.js'
 
 import * as djsVoice from '@discordjs/voice'
 import prism from 'prism-media'
+import { PassThrough } from 'node:stream'
 
 class Filters {
   constructor() {
@@ -116,15 +113,24 @@ class Filters {
           ...(endTime ? ['-t', `${endTime}ms`] : []),
           '-f', 's16le',
           '-ar', '48000',
-          '-ac', '2'
+          '-ac', '2',
+          '-crf', '0'
         ]
       })
 
-      ffmpeg.process.stdout.once('readable', () => {
-        return resolve({ stream: new djsVoice.AudioResource([], [ffmpeg.process.stdout, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
+      const stream = PassThrough()
+
+      ffmpeg.process.stdout.on('data', (data) => stream.write(data))
+      ffmpeg.process.stdout.once('end', () => stream.end())
+      ffmpeg.on('error', (err) => {
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
+
+        resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Unknown' } })
       })
 
-      ffmpeg.on('error', (err) => console.error(err))
+      ffmpeg.process.stdout.once('readable', () => {
+        resolve({ stream: new djsVoice.AudioResource([], [stream, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
+      })
     })
   }
 }
