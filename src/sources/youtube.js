@@ -65,7 +65,7 @@ async function init() {
     playerInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
 
     debugLog('innertube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
-  }, 4000)
+  }, 3600000)
 }
 
 function free() {
@@ -98,8 +98,8 @@ function checkURLType(url, type) {
 
 async function search(query, type, shouldLog) {
   return new Promise(async (resolve) => {
-    if (!playerInfo.innertube) while (1) {
-      if (playerInfo.innertube) break
+    if (playerInfo.functions.length != 2) while (1) {
+      if (playerInfo.functions.length != 2) break
 
       await sleep(200)
     }
@@ -167,8 +167,8 @@ async function search(query, type, shouldLog) {
 
 async function loadFrom(query, type) {
   return new Promise(async (resolve) => {
-    if (!playerInfo.innertube) while (1) {
-      if (playerInfo.innertube) break
+    if (playerInfo.functions.length != 2) while (1) {
+      if (playerInfo.functions.length != 2) break
 
       await sleep(200)
     }
@@ -360,8 +360,8 @@ async function loadFrom(query, type) {
 
 async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
-    if (!playerInfo.innertube) while (1) {
-      if (playerInfo.innertube) break
+    if (playerInfo.functions.length != 2) while (1) {
+      if (playerInfo.functions.length != 2) break
 
       await sleep(200)
     }
@@ -420,8 +420,8 @@ async function retrieveStream(identifier, type, title) {
 
 async function loadCaptions(decodedTrack, language) {
   return new Promise(async (resolve) => {
-    if (!playerInfo.innertube) while (1) {
-      if (playerInfo.innertube) break
+    if (playerInfo.functions.length != 2) while (1) {
+      if (playerInfo.functions.length != 2) break
 
       await sleep(200)
     }
