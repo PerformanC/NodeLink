@@ -64,7 +64,7 @@ async function search(query) {
     let index = 0
     let shouldStop = false
 
-    const annotationKeys = Object.keys(data.annotations)
+    let annotationKeys = Object.keys(data.annotations)
 
     if (annotationKeys.length > config.options.maxResultsLength)
       annotationKeys = annotationKeys.slice(0, config.options.maxResultsLength)
@@ -240,8 +240,8 @@ async function loadFrom(query) {
             const tracks = []
             let index = 0
             let shouldStop = false
-  
-            const trackKeys = Object.keys(data.annotations)
+
+            let trackKeys = Object.keys(data.annotations)
   
             if (trackKeys.length > config.options.maxAlbumPlaylistLength)
               trackKeys = trackKeys.slice(0, config.options.maxAlbumPlaylistLength)
@@ -345,7 +345,8 @@ async function loadFrom(query) {
             const tracks = []
             let index = 0
             let shouldStop = false
-            const topTracks = data.data.entity.topTracksWithCollaborations
+
+            let topTracks = data.data.entity.topTracksWithCollaborations
   
             if (topTracks.length > config.options.maxAlbumPlaylistLength)
               topTracks = topTracks.slice(0, config.options.maxAlbumPlaylistLength)
@@ -455,7 +456,7 @@ async function loadFrom(query) {
         let index = 0
         let shouldStop = false
 
-        const keys = Object.keys(data.annotations).filter((key) => key.indexOf('TR:') != -1)
+        let keys = Object.keys(data.annotations).filter((key) => key.indexOf('TR:') != -1)
 
         if (keys.length > config.options.maxAlbumPlaylistLength)
           keys = keys.slice(0, config.options.maxAlbumPlaylistLength)
@@ -558,7 +559,7 @@ async function loadFrom(query) {
         let index = 0
         let shouldStop = false
 
-        const seeds = stationData.seeds
+        let seeds = stationData.seeds
 
         if (seeds.length > config.options.maxAlbumPlaylistLength)
           seeds = seeds.slice(0, config.options.maxAlbumPlaylistLength)
@@ -732,6 +733,9 @@ async function loadFrom(query) {
               allEpisodesIds.push(...yearInfo.episodes)
             })
 
+            if (allEpisodesIds.length > config.options.maxAlbumPlaylistLength)
+              allEpisodesIds = allEpisodesIds.slice(0, config.options.maxAlbumPlaylistLength)
+
             const allEpisodesData = await http1makeRequest('https://www.pandora.com/api/v1/aesop/annotateObjects', {
               body: {
                 catalogVersion: 4,
@@ -759,9 +763,6 @@ async function loadFrom(query) {
             }
 
             let episodes = Object.keys(allEpisodesData.annotations)
-
-            if (episodes.length > config.options.maxAlbumPlaylistLength)
-              episodes = episodes.slice(0, config.options.maxAlbumPlaylistLength)
 
             episodes.forEach(async (episode) => {
               episode = allEpisodesData.annotations[episode]
