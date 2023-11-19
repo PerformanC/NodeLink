@@ -403,10 +403,11 @@ async function retrieveStream(identifier, type, title) {
       case 'high': itag = 251; break
       case 'medium': itag = 250; break
       case 'low': itag = 249; break
+      case 'lowest': itag = 599; break
       default: itag = 251; break
     }
 
-    const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag == itag)
+    const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag == itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
 
     const args = new URLSearchParams(audio.url || audio.signatureCipher || audio.cipher)
     let url = decodeURIComponent(audio.url || args.get('url'))
