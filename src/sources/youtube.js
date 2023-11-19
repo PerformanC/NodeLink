@@ -1,11 +1,23 @@
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack, randomLetters, sleep } from '../utils.js'
 
-import vm from 'node:vm'
 import { URLSearchParams } from 'node:url'
 
 let playerInfo = {
-  innertube: null,
+  innertube: {
+    thirdParty: {
+      embedUrl: 'https://google.com'
+    },
+    client: {
+      clientName: 'ANDROID',
+      clientVersion: '17.29.34',
+      androidSdkVersion: '34',
+      screenDensityFloat: 1,
+      screenHeightPoints: 1080,
+      screenPixelDensity: 1,
+      screenWidthPoints: 1920
+    }
+  },
   innertubeInterval: null,
   signatureTimestamp: null,
   functions: [],
@@ -28,26 +40,9 @@ async function init() {
       debugLog('innertube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
     })
 
-    playerInfo.innertube = {
-      thirdParty: {
-        embedUrl: 'https://google.com'
-      },
-      client: {
-        clientName: 'ANDROID',
-        clientVersion: '17.29.34',
-        androidSdkVersion: '34',
-        screenDensityFloat: 1,
-        screenHeightPoints: 1080,
-        screenPixelDensity: 1,
-        screenWidthPoints: 1920
-      }
-    }
-
     const player = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
       debugLog('innertube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
     })
-
-    debugLog('innertube', 5, { type: 1, message: 'Fetched player.js, parsing...' })
 
     playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
 
@@ -59,7 +54,7 @@ async function init() {
     functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
     const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
 
-    playerInfo.functions.push(new vm.Script(`const ${functionName}={${sigWrapper}};${sigFunction}${decipherFunctionName}(sig);`))
+    playerInfo.functions[0] = `const ${functionName}={${sigWrapper}};${sigFunction}${decipherFunctionName}(sig);`
 
     functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
 
@@ -67,17 +62,16 @@ async function init() {
       functionName = player.match(new RegExp(`${functionName.match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
     
     const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
-    playerInfo.functions.push(new vm.Script(`const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`))
+    playerInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
 
     debugLog('innertube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
-  }, 3600000)
+  }, 4000)
 }
 
 function free() {
   clearInterval(playerInfo.innertubeInterval)
   playerInfo.innertubeInterval = null
 
-  playerInfo.innertube = null
   playerInfo.signatureTimestamp = null
   playerInfo.functions = []
 }
@@ -415,10 +409,10 @@ async function retrieveStream(identifier, type, title) {
     url += '&ratebypass=yes&range=0-'
 
     if (audio.signatureCipher || audio.cipher)
-      url += `&${args.get('sp')}=${playerInfo.functions[0].runInNewContext({ sig: decodeURIComponent(args.get('s')) })}`
+      url += `&${args.get('sp')}=${eval(`const sig = ${args.get('s')};` + playerInfo.functions[0])}`
 
     if (args.get('n'))
-      url += `&${args.get('n')}=${playerInfo.functions[1].runInNewContext({ ncode: decodeURIComponent(args.get('n')) })}`
+      url += `&${args.get('n')}=${eval(`const ncode = ${args.get('s')};` + playerInfo.functions[1])}`
 
     resolve({ url, protocol: 'https', format: audio.mimeType == 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
   })
