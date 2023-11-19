@@ -1,5 +1,6 @@
 import https from 'node:https'
 import zlib from 'node:zlib'
+import crypto from 'node:crypto'
 
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack, sleep, http1makeRequest } from '../utils.js'
@@ -72,112 +73,85 @@ async function search(query) {
 
     debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
-    https.get({
-      hostname: 'api-partner.spotify.com',
-      path: `/pathfinder/v1/query?operationName=searchDesktop&variables=%7B%22searchTerm%22%3A%22${encodeURI(query)}%22%2C%22offset%22%3A0%2C%22limit%22%3A10%2C%22numberOfTopResults%22%3A5%2C%22includeAudiobooks%22%3Atrue%7D&extensions=%7B%22persistedQuery%22%3A%7B%22version%22%3A1%2C%22sha256Hash%22%3A%221d3a8f81abf4f33f49d1e389ed0956761af669eedb62a050c6c7bce5c66070bb%22%7D%7D`,
+    const data = await makeRequest(`https://api.spotify.com/v1/search?q=${encodeURI(query)}&type=track&limit=${config.options.maxResultsLength}&market=${config.search.sources.spotify.market}`, {
       method: 'GET',
       headers: {
-        'Host': 'api-partner.spotify.com',
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
-        'Accept': 'application/json',
-        'Accept-Language': 'en',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Referer': 'https://open.spotify.com/',
-        'authorization': `Bearer ${playerInfo.accessToken}`,
-        'app-platform': 'WebPlayer',
-        'spotify-app-version': '1.2.9.1649.gd4540f47',
-        'content-type': 'application/json;charset=UTF-8',
+        Authorization: `Bearer ${playerInfo.accessToken}`,
         'client-token': playerInfo.clientToken,
-        'Origin': 'https://open.spotify.com',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-site'
+        'accept': 'application/json'
       }
-    }, (res) => {
-      let data = ''
+    })
 
-      const compression = zlib.createGunzip()
-      res.pipe(compression)
-    
-      compression.on('data', (chunk) => data += chunk)
-    
-      compression.on('end', () => {
-        data = JSON.parse(data)
+    if (data.tracks.total == 0) {
+      debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
-        if (data.data.searchV2.tracksV2.totalCount == 0) {
-          debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+      return resolve({ loadType: 'empty', data: {} })
+    }
+      
+    const tracks = []
+    let index = 0
 
-          return resolve({ loadType: 'empty', data: {} })
+    if (data.tracks.items.length > config.options.maxResultsLength)
+      data.tracks.items = data.tracks.items.splice(0, config.options.maxResultsLength) 
+
+    data.tracks.items.forEach(async (items) => {
+      const search = await searchWithDefault(`${items.name} ${items.artists[0].name}`)
+
+      if (search.loadType == 'search') {
+        const track = {
+          identifier: search.data[0].info.identifier,
+          isSeekable: true,
+          author: items.artists.map((artist) => artist.name).join(', '),
+          length: items.duration_ms,
+          isStream: false,
+          position: 0,
+          title: items.name,
+          uri: items.href,
+          artworkUrl: items.album.images[0].url,
+          isrc: items.external_ids.isrc,
+          sourceName: 'spotify'
         }
-          
-        const tracks = []
-        let index = 0
 
-        if (data.data.searchV2.tracksV2.items.length > config.options.maxResultsLength)
-          data.data.searchV2.tracksV2.items = data.data.searchV2.tracksV2.items.splice(0, config.options.maxResultsLength) 
-
-        data.data.searchV2.tracksV2.items.forEach(async (items) => {
-          if (items) {
-            items = items.item.data
-
-            const search = await searchWithDefault(`${items.name} ${items.artists.items[0].profile.name}`)
-
-            if (search.loadType == 'search') {
-              const track = {
-                identifier: search.data[0].info.identifier,
-                isSeekable: true,
-                author: items.artists.items.map((artist) => artist.profile.name).join(', '),
-                length: items.duration.totalMilliseconds,
-                isStream: false,
-                position: 0,
-                title: items.name,
-                uri: items.uri,
-                artworkUrl: search.data[0].info.artworkUrl,
-                isrc: items.external_ids.isrc,
-                sourceName: 'spotify'
-              }
-
-              tracks.push({
-                encoded: encodeTrack(track),
-                info: track,
-                pluginInfo: {}
-              })
-            }
-          }
-
-          if (index == data.data.searchV2.tracksV2.items.length - 1) {
-            if (tracks.length == 0) {
-              debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
-
-              return resolve({ loadType: 'empty', data: {} })
-            }
-
-            const new_tracks = []
-            data.data.searchV2.tracksV2.items.forEach((items2, index2) => {
-              tracks.forEach((track2, index3) => {
-                if (track2.info.title == items2.item.data.name && track2.info.author == items2.item.data.artists.items.map((artist) => artist.profile.name).join(', ')) {
-                  track2.info.position = index2
-                  new_tracks.push(track2)
-                }
-
-                debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', trackLen: new_tracks.length, query })
-
-                if ((index2 == data.data.searchV2.tracksV2.items.length - 1) && (index3 == tracks.length - 1))
-                  resolve({
-                    loadType: 'search',
-                    data: new_tracks
-                  })
-              })
-            })
-          }
-
-          index++
+        tracks.push({
+          encoded: null,
+          info: track,
+          pluginInfo: {}
         })
+      }
+
+      if (index != data.tracks.items.length - 1) return index++
+
+      if (tracks.length == 0) {
+        debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
+        return resolve({ loadType: 'empty', data: {} })
+      }
+
+      const new_tracks = []
+      data.tracks.items.nForEach((items2, index2) => {
+        tracks.nForEach((track) => {
+          if (track.info.title != items2.name || track.info.author != items2.artists.map((artist) => artist.name).join(', ')) return false
+
+          track.info.position = index2
+          track.encoded = encodeTrack(track.info)
+          new_tracks.push(track)
+
+          return true
+        })
+
+        if (new_tracks.length != tracks.length) return false
+
+        debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', tracksLen: new_tracks.length, query })
+
+        resolve({
+          loadType: 'search',
+          data: new_tracks
+        })
+
+        return true
       })
     })
-  })    
+  })   
 }
 
 async function loadFrom(query, type) {
@@ -321,7 +295,6 @@ async function loadFrom(query, type) {
       case 'album': {
         const tracks = []
         let index = 0
-        let shouldStop = false
 
         if (data.tracks.items.length > config.options.maxAlbumPlaylistLength)
           data.tracks.items = data.tracks.items.splice(0, config.options.maxAlbumPlaylistLength)
@@ -348,52 +321,51 @@ async function loadFrom(query, type) {
               }
 
               tracks.push({
-                encoded: encodeTrack(track),
+                encoded: null,
                 info: track,
                 pluginInfo: {}
               })
             }
           }
 
-          if (index == data.tracks.items.length - 1) {
-            if (tracks.length == 0) {
-              debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+          if (index != data.tracks.items.length - 1) return index++
 
-              return resolve({ loadType: 'empty', data: {} })
-            }
+          if (tracks.length == 0) {
+            debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
-            const new_tracks = []
-            data.tracks.items.forEach((item2, index2) => {
-              tracks.forEach((track2, index3) => {
-                if (shouldStop) return;
-
-                if (track2.info.title == (type[1] == 'playlist' ? item2.track.name : item2.name) && track2.info.author == (type[1] == 'playlist' ? item2.track.artists[0].name : item2.artists[0].name)) {
-                  track2.info.position = index2
-                  new_tracks.push(track2)
-                }
-
-                if ((index2 == data.tracks.items.length - 1) && (index3 == tracks.length - 1)) {
-                  shouldStop = true
-
-                  debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
-
-                  resolve({
-                    loadType: type[1],
-                    data: {
-                      info: {
-                        name: data.name,
-                        selectedTrack: 0
-                      },
-                      pluginInfo: {},
-                      tracks: new_tracks
-                    }
-                  })
-                }
-              })
-            })
+            return resolve({ loadType: 'empty', data: {} })
           }
 
-          index++
+          const new_tracks = []
+          data.tracks.items.nForEach((item2, index2) => {
+            tracks.forEach((track) => {
+              if (track.info.title != (type[1] == 'playlist' ? item2.track.name : item2.name) || track.info.author != (type[1] == 'playlist' ? item2.track.artists[0].name : item2.artists[0].name)) return false
+
+              track.info.position = index2
+              track.encoded = encodeTrack(track.info)
+              new_tracks.push(track)
+
+              return true
+            })
+
+            if (new_tracks.length != tracks.length) return false
+
+            debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
+
+            resolve({
+              loadType: type[1],
+              data: {
+                info: {
+                  name: data.name,
+                  selectedTrack: 0
+                },
+                pluginInfo: {},
+                tracks: new_tracks
+              }
+            })
+
+            return true
+          })
         })
 
         break
@@ -401,7 +373,6 @@ async function loadFrom(query, type) {
       case 'show': {
         const tracks = []
         let index = 0
-        let shouldStop = false
 
         if (data.episodes.items.length > config.options.maxAlbumPlaylistLength)
           data.episodes.items = data.episodes.items.splice(0, config.options.maxAlbumPlaylistLength)
@@ -425,51 +396,50 @@ async function loadFrom(query, type) {
             }
 
             tracks.push({
-              encoded: encodeTrack(track),
+              encoded: null,
               info: track,
               pluginInfo: {}
             })
           }
 
-          if (index == data.episodes.items.length - 1) {
-            if (tracks.length == 0) {
-              debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+          if (index != data.episodes.items.length - 1) return index++
 
-              return resolve({ loadType: 'empty', data: {} })
-            }
+          if (tracks.length == 0) {
+            debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
-            const new_tracks = []
-            data.episodes.items.forEach((episode2, index2) => {
-              tracks.forEach((track2, index3) => {
-                if (shouldStop) return;
-
-                if (track2.info.title == episode2.name && track2.info.author == episode2.publisher) {
-                  track2.info.position = index2
-                  new_tracks.push(track2)
-                }
-
-                if ((index2 == data.episodes.items.length - 1) && (index3 == tracks.length - 1)) {
-                  shouldStop = true
-
-                  debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
-
-                  resolve({
-                    loadType: 'show',
-                    data: {
-                      info: {
-                        name: data.name,
-                        selectedTrack: 0
-                      },
-                      pluginInfo: {},
-                      tracks: new_tracks
-                    }
-                  })
-                }
-              })
-            })
+            return resolve({ loadType: 'empty', data: {} })
           }
 
-          index++
+          const new_tracks = []
+          data.episodes.items.nForEach((episode2, index2) => {
+            tracks.forEach((track) => {
+              if (track.info.title != episode2.name || track.info.author != episode2.publisher) return false
+
+              track.info.position = index2
+              track.encoded = encodeTrack(track.info)
+              new_tracks.push(track)
+
+              return true
+            })
+            
+            if (new_tracks.length != tracks.length) return false
+
+            debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
+
+            resolve({
+              loadType: 'show',
+              data: {
+                info: {
+                  name: data.name,
+                  selectedTrack: 0
+                },
+                pluginInfo: {},
+                tracks: new_tracks
+              }
+            })
+
+            return true
+          })
         })
 
         break

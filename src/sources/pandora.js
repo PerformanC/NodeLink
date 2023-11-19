@@ -62,7 +62,6 @@ async function search(query) {
 
     const tracks = []
     let index = 0
-    let shouldStop = false
 
     let annotationKeys = Object.keys(data.annotations)
 
@@ -89,37 +88,38 @@ async function search(query) {
           }
 
           tracks.push({
-            encoded: encodeTrack(track),
+            encoded: null,
             info: track,
             playlistInfo: {}
           })
         }
       }
 
-      if (index == data.results.length - 1) {
-        const new_tracks = []
-        annotationKeys.forEach((key2, index2) => {
-          tracks.forEach((track3, index3) => {
-            if (shouldStop) return;
+      if (index != data.results.length - 1) return index++
 
-            if (track3.info.title == data.annotations[key2].name && track3.info.author == data.annotations[key2].artistName) {
-              track3.info.position = index2
-              new_tracks.push(track3)
-            }
+      const new_tracks = []
+      annotationKeys.nForEach((key2, index2) => {
+        tracks.nForEach((track) => {
+          if (track.info.title != data.annotations[key2].name || track.info.author != data.annotations[key2].artistName) return false
 
-            if ((index2 == annotationKeys.length - 1) && (index3 == tracks.length - 1)) {
-              debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
+          track.position = index2
+          track.encoded = encodeTrack(track.info)
+          new_tracks.push(track)
 
-              shouldStop = true
-
-              resolve({
-                loadType: 'search',
-                data: new_tracks
-              })
-            }
-          })
+          return true
         })
-      }
+
+        if (new_tracks.length != tracks.length) return false
+
+        debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
+
+        resolve({
+          loadType: 'search',
+          data: new_tracks
+        })
+
+        return true
+      })
     })
   })
 }
@@ -239,14 +239,13 @@ async function loadFrom(query) {
   
             const tracks = []
             let index = 0
-            let shouldStop = false
 
             let trackKeys = Object.keys(data.annotations)
   
             if (trackKeys.length > config.options.maxAlbumPlaylistLength)
               trackKeys = trackKeys.slice(0, config.options.maxAlbumPlaylistLength)
   
-            trackKeys.forEach(async (key, i) => {
+            trackKeys.forEach(async (key) => {
               const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
         
               if (search.loadType == 'search') {
@@ -271,47 +270,44 @@ async function loadFrom(query) {
                 })
               }
         
-              if (index == trackKeys.length - 1) {
-                if (tracks.length == 0) {
-                  debugLog('loadtracks', 4, { type: 3, loadType: 'album', sourceName: 'Pandora', query, message: 'No matches found.' })
-  
-                  return resolve({ loadType: 'empty', data: {} })
-                }
+              if (index != trackKeys.length - 1) return index++
 
-                const new_tracks = []
-                trackKeys.forEach((key2, index2) => {
-                  tracks.forEach((track3, index3) => {
-                    if (shouldStop) return;
-  
-                    if (track3.info.title == data.annotations[key2].name && track3.info.author == data.annotations[key2].artistName) {
-                      track3.info.position = index2
-                      track3.encoded = encodeTrack(track3.info)
-  
-                      new_tracks.push(track3)
-                    }
-        
-                    if ((index2 == trackKeys.length - 1) && (index3 == tracks.length - 1)) {
-                      shouldStop = true
-  
-                      debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', playlistName: trackData[trackId].name })
-  
-                      resolve({
-                        loadType: 'album',
-                        data: {
-                          info: {
-                            name: trackData[trackId].name,
-                            selectedTrack: 0,
-                          },
-                          pluginInfo: {},
-                          tracks: new_tracks,
-                        }
-                      })
-                    }
-                  })
-                })
+              if (tracks.length == 0) {
+                debugLog('loadtracks', 4, { type: 3, loadType: 'album', sourceName: 'Pandora', query, message: 'No matches found.' })
+
+                return resolve({ loadType: 'empty', data: {} })
               }
 
-              index++
+              const new_tracks = []
+              trackKeys.nForEach((key2, index2) => {
+                tracks.nForEach((track) => {
+                  if (track.info.title != data.annotations[key2].name || track.info.author != data.annotations[key2].artistName) return false
+
+                  track.info.position = index2
+                  track.encoded = encodeTrack(track.info)
+                  new_tracks.push(track)
+
+                  return true
+                })
+      
+                if (new_tracks.length != tracks.length) return false
+
+                debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', playlistName: trackData[trackId].name })
+
+                resolve({
+                  loadType: 'album',
+                  data: {
+                    info: {
+                      name: trackData[trackId].name,
+                      selectedTrack: 0,
+                    },
+                    pluginInfo: {},
+                    tracks: new_tracks,
+                  }
+                })
+
+                return true
+              })
             })
 
             break
@@ -344,7 +340,6 @@ async function loadFrom(query) {
   
             const tracks = []
             let index = 0
-            let shouldStop = false
 
             let topTracks = data.data.entity.topTracksWithCollaborations
   
@@ -376,47 +371,44 @@ async function loadFrom(query) {
                 })
               }
         
-              if (index == topTracks.length - 1) {
-                if (tracks.length == 0) {
-                  debugLog('loadtracks', 4, { type: 3, loadType: 'artist', sourceName: 'Pandora', query, message: 'No matches found.' })
+              if (index != topTracks.length - 1) return index++
 
-                  return resolve({ loadType: 'empty', data: {} })
-                }
+              if (tracks.length == 0) {
+                debugLog('loadtracks', 4, { type: 3, loadType: 'artist', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-                const new_tracks = []
-                topTracks.forEach((track2, index2) => {
-                  tracks.forEach((track3, index3) => {
-                    if (shouldStop) return;
-  
-                    if (track3.info.title == track2.name && track3.info.author == track2.artistName.name) {
-                      track3.info.position = index2
-                      track3.encoded = encodeTrack(track3.info)
-    
-                      new_tracks.push(track3)
-                    }
-        
-                    if ((index2 == topTracks.length - 1) && (index3 == tracks.length - 1)) {
-                      shouldStop = true
-  
-                      debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.data.entity.name })
-  
-                      resolve({
-                        loadType: 'artist',
-                        data: {
-                          info: {
-                            name: trackData[trackId].name,
-                            artworkUrl: `https://content-images.p-cdn.com/${trackData[trackId].icon.artUrl}`,
-                          },
-                          pluginInfo: {},
-                          tracks: new_tracks,
-                        }
-                      })
-                    }
-                  })
-                })
+                return resolve({ loadType: 'empty', data: {} })
               }
 
-              index++
+              const new_tracks = []
+              topTracks.nForEach((pTrack2, index2) => {
+                tracks.nForEach((track) => {
+                  if (track.info.title != pTrack2.name || track.info.author != pTrack2.artistName.name) return false
+
+                  track.info.position = index2
+                  track.encoded = encodeTrack(track.info)
+                  track.push(track)
+
+                  return true
+                })
+      
+                if (new_tracks.length != tracks.length) return false
+
+                debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.data.entity.name })
+
+                resolve({
+                  loadType: 'artist',
+                  data: {
+                    info: {
+                      name: trackData[trackId].name,
+                      artworkUrl: `https://content-images.p-cdn.com/${trackData[trackId].icon.artUrl}`,
+                    },
+                    pluginInfo: {},
+                    tracks: new_tracks,
+                  }
+                })
+
+                return true
+              })
             })
 
             break
@@ -454,7 +446,6 @@ async function loadFrom(query) {
     
         const tracks = []
         let index = 0
-        let shouldStop = false
 
         let keys = Object.keys(data.annotations).filter((key) => key.indexOf('TR:') != -1)
 
@@ -480,51 +471,50 @@ async function loadFrom(query) {
             }
       
             tracks.push({
-              encoded: encodeTrack(track),
+              encoded: null,
               info: track,
               playlistInfo: {}
             })
           }
     
-          if (index == keys.length - 1) {
-            if (tracks.length == 0) {
-              debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'Pandora', query, message: 'No matches found.' })
+          if (index != keys.length - 1) return index++
 
-              return resolve({ loadType: 'empty', data: {} })
-            }
+          if (tracks.length == 0) {
+            debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-            const new_tracks = []
-            keys.forEach((key2, index2) => {
-              tracks.forEach((track3, index3) => {
-                if (shouldStop) return;
-
-                if (track3.info.title == data.annotations[key2].name && track3.info.author == data.annotations[key2].artistName) {
-                  track3.info.position = index2
-                  new_tracks.push(track3)
-                }
-    
-                if ((index2 == keys.length - 1) && (index3 == tracks.length - 1)) {
-                  shouldStop = true
-
-                  debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
-
-                  resolve({
-                    loadType: 'playlist',
-                    data: {
-                      info: {
-                        name: data.name,
-                        selectedTrack: 0,
-                      },
-                      pluginInfo: {},
-                      tracks: new_tracks,
-                    }
-                  })
-                }
-              })
-            })
+            return resolve({ loadType: 'empty', data: {} })
           }
 
-          index++
+          const new_tracks = []
+          keys.nForEach((key2, index2) => {
+            tracks.nForEach((track) => {
+              if (track.info.title != data.annotations[key2].name || track.info.author != data.annotations[key2].artistName) return false
+              
+              track.info.position = index2
+              track.encoded = encodeTrack(track.info)
+              new_tracks.push(track)
+            
+              return true
+            })
+  
+            if (new_tracks.length != tracks.length) return false
+
+            debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
+
+            resolve({
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: data.name,
+                  selectedTrack: 0,
+                },
+                pluginInfo: {},
+                tracks: new_tracks,
+              }
+            })
+
+            return true
+          })
         })
 
         break
@@ -557,7 +547,6 @@ async function loadFrom(query) {
 
         const tracks = []
         let index = 0
-        let shouldStop = false
 
         let seeds = stationData.seeds
 
@@ -589,47 +578,44 @@ async function loadFrom(query) {
             })
           }
 
-          if (index == seeds.length - 1) {
-            if (tracks.length == 0) {
-              debugLog('loadtracks', 4, { type: 3, loadType: 'station', sourceName: 'Pandora', query, message: 'No matches found.' })
+          if (index != seeds.length - 1) return index++
 
-              return resolve({ loadType: 'empty', data: {} })
-            }
+          if (tracks.length == 0) {
+            debugLog('loadtracks', 4, { type: 3, loadType: 'station', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-            const new_tracks = []
-            seeds.forEach((seed2, index2) => {
-              tracks.forEach((track3, index3) => {
-                if (shouldStop) return;
-
-                if (track3.info.title == seed2.song.songTitle && track3.info.author == seed2.song.artistSummary) {
-                  track3.info.position = index2
-                  track3.encoded = encodeTrack(track3.info)
-
-                  new_tracks.push(track3)
-                }
-    
-                if ((index2 == seeds.length - 1) && (index3 == tracks.length - 1)) {
-                  shouldStop = true
-
-                  debugLog('loadtracks', 4, { type: 2, loadType: 'station', sourceName: 'Pandora', playlistName: stationData.name })
-
-                  resolve({
-                    loadType: 'station',
-                    data: {
-                      info: {
-                        name: stationData.name,
-                        selectedTrack: 0,
-                      },
-                      pluginInfo: {},
-                      tracks: new_tracks,
-                    }
-                  })
-                }
-              })
-            })
+            return resolve({ loadType: 'empty', data: {} })
           }
 
-          index++
+          const new_tracks = []
+          seeds.nForEach((seed2, index2) => {
+            tracks.nForEach((track) => {
+              if (track.info.title != seed2.song.songTitle || track.info.author != seed2.song.artistSummary) return false
+
+              track.info.position = index2
+              track.encoded = encodeTrack(track.info)
+              new_tracks.push(track)
+
+              return true
+            })
+
+            if (new_tracks.length != tracks.length) return false
+
+            debugLog('loadtracks', 4, { type: 2, loadType: 'station', sourceName: 'Pandora', playlistName: stationData.name })
+
+            resolve({
+              loadType: 'station',
+              data: {
+                info: {
+                  name: stationData.name,
+                  selectedTrack: 0,
+                },
+                pluginInfo: {},
+                tracks: new_tracks,
+              }
+            })
+
+            return true
+          })
         })
 
         break
@@ -663,7 +649,6 @@ async function loadFrom(query) {
 
         const tracks = []
         let index = 0
-        let shouldStop = false
 
         switch (podcastData.details.podcastProgramDetails ? podcastData.details.podcastProgramDetails.type : podcastData.details.podcastEpisodeDetails.type) {
           case 'PE': {
@@ -791,51 +776,48 @@ async function loadFrom(query) {
                 })
               }
 
-              if (index == episodes.length - 1) {
-                if (tracks.length == 0) {
-                  debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
+              if (index != episodes.length - 1) return index++
 
-                  return resolve({ loadType: 'empty', data: {} })
-                }
+              if (tracks.length == 0) {
+                debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-                const new_tracks = []
-                episodes.forEach((episode2, index2) => {
-                  tracks.forEach((track3, index3) => {
-                    if (shouldStop) return;
-
-                    if (typeof episode2 != 'object') episode2 = allEpisodesData.annotations[episode2]
-
-                    if (track3.info.title == episode2.name && track3.info.author == episode2.programName) {
-                      track3.info.position = index2
-                      track3.encoded = encodeTrack(track3.info)
-
-                      new_tracks.push(track3)
-                    }
-        
-                    if ((index2 == episodes.length - 1) && (index3 == tracks.length - 1)) {
-                      shouldStop = true
-
-                      const podcastName = podcastData.details.annotations[Object.keys(podcastData.details.annotations).find((key) => key == podcastData.details.podcastProgramDetails.pandoraId)].name
-
-                      debugLog('loadtracks', 4, { type: 2, loadType: 'podcast', sourceName: 'Pandora', playlistName: podcastName })
-
-                      resolve({
-                        loadType: 'podcast',
-                        data: {
-                          info: {
-                            name: podcastName,
-                            selectedTrack: 0,
-                          },
-                          pluginInfo: {},
-                          tracks: new_tracks,
-                        }
-                      })
-                    }
-                  })
-                })
+                return resolve({ loadType: 'empty', data: {} })
               }
 
-              index++
+              const new_tracks = []
+              episodes.nForEach((episode2, index2) => {
+                if (typeof episode2 != 'object') episode2 = allEpisodesData.annotations[episode2]
+
+                tracks.nForEach((track) => {
+                  if (track.info.title != episode2.name || track.info.author != episode2.programName) return false
+
+                  track.info.position = index2
+                  track.encoded = encodeTrack(track.info)
+                  new_tracks.push(track)
+
+                  return true
+                })
+      
+                if (new_tracks.length != tracks.length) return false
+
+                const podcastName = podcastData.details.annotations[Object.keys(podcastData.details.annotations).find((key) => key == podcastData.details.podcastProgramDetails.pandoraId)].name
+
+                debugLog('loadtracks', 4, { type: 2, loadType: 'podcast', sourceName: 'Pandora', playlistName: podcastName })
+
+                resolve({
+                  loadType: 'podcast',
+                  data: {
+                    info: {
+                      name: podcastName,
+                      selectedTrack: 0,
+                    },
+                    pluginInfo: {},
+                    tracks: new_tracks,
+                  }
+                })
+
+                return true
+              })
             })
 
             break

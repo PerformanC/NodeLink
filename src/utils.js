@@ -789,3 +789,17 @@ export function sendResponseNonNull(req, res, data) {
 
   return true
 }
+
+Array.prototype.nForEach = async function(callback) {
+  let i = 0
+  async function next() {
+    if (i == this.length) return;
+
+    const res = await callback(this[i], i++, next.bind(this))
+
+    if (res) return res
+    else return next.call(this)
+  }
+
+  return next.call(this)
+}

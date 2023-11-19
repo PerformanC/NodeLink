@@ -382,7 +382,7 @@ async function requestHandler(req, res) {
     const spSearch = config.search.sources.spotify.enabled ? identifier.startsWith('spsearch:') : null
     const spRegex = config.search.sources.spotify.enabled && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
     if (config.search.sources[config.search.defaultSearchSource] && (spSearch || spRegex))
-       search = spSearch ? await sources.spotify.enabled.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
+       search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
