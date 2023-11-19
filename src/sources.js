@@ -73,10 +73,10 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       const trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
       if (trueSource == 'deezer')
-        return resolve({ stream: await deezer.loadTrack(title, url, additionalData) })
+        return resolve({ stream: await deezer.loadTrack(decodedTrack.title, url, additionalData) })
 
       if (trueSource == 'soundcloud') {
-        const stream = await soundcloud.loadStream(title, url, protocol)
+        const stream = await soundcloud.loadStream(decodedTrack.title, url, protocol)
 
         return resolve({ stream })
       }

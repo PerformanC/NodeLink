@@ -194,10 +194,9 @@ async function retrieveStream(identifier, title) {
     }
 
     const oggOpus = data.media.transcodings.find((transcoding) => transcoding.format.mime_type == 'audio/ogg; codecs="opus"')
-
     const transcoding = oggOpus || data.media.transcodings[0]
 
-    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, format: oggOpus ? 'webm/opus' : 'arbitrary' })
+    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, format: oggOpus ? 'ogg/opus' : 'arbitrary' })
   })
 }
 

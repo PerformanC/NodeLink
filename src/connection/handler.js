@@ -368,15 +368,17 @@ async function requestHandler(req, res) {
     let search = null
 
     const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
-    if (config.search.sources.youtube && (ytSearch || /^(https?:\/\/)?(www\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier)))
+    const ytRegex = config.search.sources.youtube && !ytSearch ? /^(https?:\/\/)?(www\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier) : null
+    if (config.search.sources.youtube && (ytSearch || ytRegex))
       search = ytSearch ? await sources.youtube.search(identifier.replace('ytsearch:', ''), 'youtube', true) : await sources.youtube.loadFrom(identifier, 'youtube')
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
     const ytMusicSearch = config.search.sources.youtubeMusic ? identifier.startsWith('ytmsearch:') : null
-    if (config.search.sources.youtubeMusic && (ytMusicSearch || /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier)))
+    const ytMusicRegex = config.search.sources.youtubeMusic && !ytMusicSearch ? /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier) : null
+    if (config.search.sources.youtubeMusic && (ytMusicSearch || ytMusicRegex))
       search = ytMusicSearch ? await sources.youtube.search(identifier.replace('ytmsearch:', ''), 'ytmusic', true) : await sources.youtube.loadFrom(identifier, 'ytmusic')
- 
+
     if (sendResponseNonNull(req, res, search) == true) return;
 
     const spSearch = config.search.sources.spotify.enabled ? identifier.startsWith('spsearch:') : null
@@ -386,27 +388,29 @@ async function requestHandler(req, res) {
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
-    const dzRegex = config.search.sources.deezer.enabled ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)$/.exec(identifier) : null
     const dzSearch = config.search.sources.deezer.enabled ? identifier.startsWith('dzsearch:') : null
+    const dzRegex = config.search.sources.deezer.enabled && !dzSearch ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)$/.exec(identifier) : null
     if (config.search.sources.deezer.enabled && (dzSearch || dzRegex))
       search = dzSearch ? await sources.deezer.search(identifier.replace('dzsearch:', ''), true) : await sources.deezer.loadFrom(identifier, dzRegex)
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    if (config.search.sources.soundcloud.enabled && (scSearch || /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/?(?:sets\/)?[a-zA-Z0-9-_]+(?:\?.*)?$/).test(identifier))
+    const scRegex = config.search.sources.soundcloud.enabled && !scSearch ? /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/?(?:sets\/)?[a-zA-Z0-9-_]+(?:\?.*)?$/ : null
+    if (config.search.sources.soundcloud.enabled && (scSearch || scRegex))
       search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', ''), true) : await sources.soundcloud.loadFrom(identifier)
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
     const bcSearch = config.search.sources.bandcamp ? identifier.startsWith('bcsearch:') : null
-    if (config.search.sources.bandcamp && (bcSearch || /https?:\/\/[\w-]+\.bandcamp\.com(\/(track|album)\/[\w-]+)?/.test(identifier)))
+    const bcRegex = config.search.sources.bandcamp && !bcSearch ? /^https?:\/\/[\w-]+\.bandcamp\.com(\/(track|album)\/[\w-]+)?/.test(identifier) : null
+    if (config.search.sources.bandcamp && (bcSearch || bcRegex))
       search = bcSearch ? await sources.bandcamp.search(identifier.replace('bcsearch:', ''), true) : await sources.bandcamp.loadFrom(identifier)
 
     if (sendResponseNonNull(req, res, search) == true) return;
 
-    const pdRegex = config.search.sources.pandora ? /^https:\/\/www\.pandora\.com\/(?:playlist|station|podcast|artist)\/.+/.exec(identifier) : null
     const pdSearch = config.search.sources.pandora ? identifier.startsWith('pdsearch:') : null
+    const pdRegex = config.search.sources.pandora && !pdRegex ? /^https:\/\/www\.pandora\.com\/(?:playlist|station|podcast|artist)\/.+/.exec(identifier) : null
     if (config.search.sources.pandora && (pdSearch || pdRegex))
       search = pdSearch ? await sources.pandora.search(identifier.replace('pdsearch:', '')) : await sources.pandora.loadFrom(identifier)
 
