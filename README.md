@@ -92,6 +92,10 @@ $ npm start
 
 And done, you have successfully started NodeLink, and you will be able to connect to it using any Lavalink wrapper.
 
+## Discord Server & Feedback
+
+If you have any questions about NodeLink or any other PerformanC project, or only want to give a feedback about our projects, join [our Discord server](https://discord.gg/uPveNfTuCJ).
+
 ## License
 
 NodeLink is licensed under PerformanC's License, which is a modified version of the MIT License, focusing on the protection of the source code and the rights of the PerformanC team over the source code.
