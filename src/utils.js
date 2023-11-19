@@ -69,12 +69,13 @@ export function http1makeRequest(url, options) {
       if (options.streamOnly)
         return resolve(res)
 
-      res.on('data', (chunk) => (data += chunk))
+      res.setEncoding('utf8')
+      res.on('data', (chunk) => data += chunk)
       res.on('error', () => reject())
       res.on('end', () => {
-        if (isJson == null) isJson = (data.toString().startsWith('{') && data.toString().endsWith('}')) || (data.toString().startsWith('[') && data.toString().endsWith(']'))
+        if (isJson == null) isJson = (data.startsWith('{') && data.endsWith('}')) || (data.startsWith('[') && data.endsWith(']'))
 
-        resolve(isJson ? JSON.parse(data.toString()) : data.toString())
+        resolve(isJson ? JSON.parse(data) : data)
       })
     })
 
@@ -159,6 +160,7 @@ export function makeRequest(url, options) {
       if (options.streamOnly)
         return resolve(req)
 
+      req.setEncoding('utf8')
       req.on('data', (chunk) => data += chunk)
       req.on('error', (error) => reject(error))
       req.on('end', () => {
@@ -167,10 +169,10 @@ export function makeRequest(url, options) {
         if (options.getCookies) {
           resolve({
             cookies: cookie,
-            body: headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString()
+            body: headers['content-type'].startsWith('application/json') ? JSON.parse(data) : data
           })
         } else {
-          resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data.toString()) : data.toString())
+          resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data) : data)
         }
       })
     })
