@@ -1,7 +1,7 @@
+import { URLSearchParams } from 'node:url'
+
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack, randomLetters, sleep } from '../utils.js'
-
-import { URLSearchParams } from 'node:url'
 
 let playerInfo = {
   innertube: {

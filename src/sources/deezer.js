@@ -1,6 +1,5 @@
 import crypto from 'node:crypto'
 import { PassThrough } from 'node:stream'
-import { Transform } from 'node:stream'
 
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack } from '../utils.js'

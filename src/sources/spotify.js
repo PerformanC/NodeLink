@@ -1,9 +1,9 @@
+import https from 'node:https'
+import zlib from 'node:zlib'
+
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack, sleep, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
-
-import https from 'node:https'
-import zlib from 'node:zlib'
 
 let playerInfo = {}
 

@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import { debugLog, makeRequest, encodeTrack, http1makeRequest, decodeTrack } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
 
 let csrfToken = null

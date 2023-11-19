@@ -120,7 +120,7 @@ export function makeRequest(url, options) {
     req.on('error', (error) => {
       console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
 
-      reject(error)
+      client.close()
     })
 
     req.on('response', (headers) => {
@@ -162,7 +162,6 @@ export function makeRequest(url, options) {
 
       req.setEncoding('utf8')
       req.on('data', (chunk) => data += chunk)
-      req.on('error', (error) => reject(error))
       req.on('end', () => {
         client.close()
 
@@ -174,6 +173,11 @@ export function makeRequest(url, options) {
         } else {
           resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data) : data)
         }
+      })
+      req.on('error', (error) => {
+        console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed receiving HTTP response from ${url}: \u001b[31m${error}\u001b[37m`)
+
+        client.close()
       })
     })
 

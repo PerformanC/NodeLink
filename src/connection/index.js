@@ -1,5 +1,5 @@
-import { createServer } from 'http'
-import { parse } from 'url'
+import { createServer } from 'node:http'
+import { parse } from 'node:url'
 
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
