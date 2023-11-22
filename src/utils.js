@@ -44,6 +44,8 @@ export function http1makeRequest(url, options) {
         return resolve(res.headers)
       }
 
+      const statusCode = res.statusCode
+      const headers = res.headers
       let isJson = res.headers['content-type'] ? res.headers['content-type'].startsWith('application/json') : null
 
       switch (res.headers['content-encoding']) {
@@ -67,7 +69,11 @@ export function http1makeRequest(url, options) {
       }
 
       if (options.streamOnly)
-        return resolve(res)
+        return resolve({
+          statusCode,
+          headers,
+          stream: res
+        })
 
       res.setEncoding('utf8')
       res.on('data', (chunk) => data += chunk)
@@ -75,7 +81,11 @@ export function http1makeRequest(url, options) {
       res.on('end', () => {
         if (isJson == null) isJson = (data.startsWith('{') && data.endsWith('}')) || (data.startsWith('[') && data.endsWith(']'))
 
-        resolve(isJson ? JSON.parse(data) : data)
+        resolve({
+          statusCode,
+          headers,
+          body: isJson ? JSON.parse(data) : data
+        })
       })
     })
 
@@ -129,7 +139,6 @@ export function makeRequest(url, options) {
 
         return resolve(headers['set-cookie'])
       }
-      let cookie = headers['set-cookie']
 
       switch (headers['content-encoding']) {
         case 'deflate': {
@@ -151,28 +160,23 @@ export function makeRequest(url, options) {
         req = compression
       }
 
-      if (options.streamHeaders)
+      if (options.streamOnly)
         return resolve({
+          statusCode: headers[':status'],
           headers: headers,
           stream: req
         })
-
-      if (options.streamOnly)
-        return resolve(req)
 
       req.setEncoding('utf8')
       req.on('data', (chunk) => data += chunk)
       req.on('end', () => {
         client.close()
 
-        if (options.getCookies) {
-          resolve({
-            cookies: cookie,
-            body: headers['content-type'].startsWith('application/json') ? JSON.parse(data) : data
-          })
-        } else {
-          resolve(headers['content-type'].startsWith('application/json') ? JSON.parse(data) : data)
-        }
+        resolve({
+          statusCode: headers[':status'],
+          headers: headers,
+          body: headers['content-type'].startsWith('application/json') ? JSON.parse(data) : data
+        })
       })
       req.on('error', (error) => {
         console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed receiving HTTP response from ${url}: \u001b[31m${error}\u001b[37m`)
@@ -397,6 +401,8 @@ export async function checkForUpdates() {
     }
   }
 
+  data = data.body
+
   if (data.message) {
     console.error(`[\u001b[31mupdater\u001b[37m] GitHub error: ${data.message} (documentation: ${data.documentation_url})`)
 
@@ -432,7 +438,7 @@ export async function checkForUpdates() {
     if (config.options.autoUpdate[1]) {
       console.log(`[\u001b[32mupdater\u001b[37m] Updating NodeLink, downloading ${config.options.autoUpdate[3]}...`)
 
-      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamHeaders: true })
+      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamOnly: true })
       const filename = 'PerformanC-NodeLink-' + res.headers['content-disposition'].match(/-0-g(\w+).(tar.gz|7zip|zip)/)[1]
 
       const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`)

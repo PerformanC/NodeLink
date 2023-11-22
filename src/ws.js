@@ -1,68 +1,132 @@
 import EventEmitter from 'node:events'
 import crypto from 'node:crypto'
 
-function parseFrameHeader(data) {
+function parseFrameHeader(buffer) {
   let startIndex = 2
 
-  const opcode = data[0] & 0b00001111
+  const opcode = buffer[0] & 0b00001111
+  const fin = (buffer[0] & 0b10000000) == 0b10000000
+  const isMasked = (buffer[1] & 0x80) == 0x80
+  let payloadLength = buffer[1] & 0b01111111
 
-  if (opcode == 0x0) startIndex += 2
-
-  const isMasked = !!(data[1] & 0b10000000)
-  let length = data[1] & 0b01111111
-
-  if (length == 126) {
+  if (payloadLength == 126) {
     startIndex += 2
-    length = data.readUInt16BE(2)
-  } else if (length == 127) {
+    payloadLength = buffer.readUInt16BE(2)
+  } else if (payloadLength == 127) {
+    const buf = buffer.subarray(startIndex, startIndex + 8)
+
+    payloadLength = buf.readUInt32BE(0) * Math.pow(2, 32) + buf.readUInt32BE(4)
     startIndex += 8
-    length = data.readBigUInt64BE(2)
   }
 
+  let mask = null
+
   if (isMasked) {
-    data.slice(startIndex, startIndex + 4)
+    mask = buffer.subarray(startIndex, startIndex + 4)
     startIndex += 4
+
+    buffer = buffer.subarray(startIndex, startIndex + payloadLength)
+    
+    for (let i = 0; i < buffer.length; i++) {
+      buffer[i] ^= mask[i & 3];
+    }
+  } else {
+    buffer = buffer.subarray(startIndex, startIndex + payloadLength)
   }
 
   return {
     opcode,
-    isMasked,
-    buffer: data.slice(startIndex, startIndex + length)
+    fin,
+    buffer,
+    payloadLength
   }
 }
 
 class WebsocketConnection extends EventEmitter {
-  constructor(req, socket) {
+  constructor(req, socket, head, addHeaders) {
     super()
 
     this.req = req
     this.socket = socket
+
+    socket.setNoDelay()
+    socket.setKeepAlive(true)
+
+    if (head.length != 0) socket.unshift(head)
 
     const headers = [
       'HTTP/1.1 101 Switching Protocols',
       'Upgrade: websocket',
       'Connection: Upgrade',
       'Sec-WebSocket-Accept: ' + crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64'),
-      'Sec-WebSocket-Version: 13'
+      'Sec-WebSocket-Version: 13',
     ]
+
+    if (addHeaders) {
+      for (const [key, value] of Object.entries(addHeaders)) {
+        headers.push(`${key}: ${value}`)
+      }
+    }
 
     socket.write(headers.join('\r\n') + '\r\n\r\n')
 
+    const cachedData = []
+
     socket.on('data', (data) => {
-      const { opcode, buffer } = parseFrameHeader(data)
+      const headers = parseFrameHeader(data)
 
-      if (opcode == 0x08) {
-        if (buffer.length == 0) {
-          this.emit('close', 1006, '')
-        } else {
-          const code = buffer.readUInt16BE(0)
-          const reason = buffer.slice(2).toString('utf-8')
+      switch (headers.opcode) {
+        case 0x0: {
+          this.cachedData.push(headers.buffer)
 
-          this.emit('close', code, reason)
+          if (headers.fin) {
+            this.emit('message', Buffer.concat(this.cachedData).toString())
+
+            this.cachedData = []
+          }
+
+          break
         }
+        case 0x1: {
+          this.emit('message', headers.buffer.toString())
 
-        return socket.end()
+          break
+        }
+        case 0x2: {
+          throw new Error('Binary data is not supported.')
+
+          break
+        }
+        case 0x8: {
+          if (headers.buffer.length == 0) {
+            this.emit('close', 1006, '')
+          } else {
+            const code = headers.buffer.readUInt16BE(0)
+            const reason = headers.buffer.subarray(2).toString('utf-8')
+
+            this.emit('close', code, reason)
+          }
+
+          socket.end()
+
+          break
+        }
+        case 0x9: {
+          const pong = Buffer.allocUnsafe(2)
+          pong[0] = 0x8a
+          pong[1] = 0x00
+
+          this.socket.write(pong)
+
+          break
+        }
+        case 0x10: {
+          this.emit('pong')
+        }
       }
+
+      if (headers.buffer.length > headers.payloadLength)
+        this.socket.unshift(headers.buffer)
     })
 
     socket.on('error', (err) => {
@@ -134,8 +198,8 @@ class WebSocketServer extends EventEmitter {
     super()
   }
 
-  handleUpgrade(req, socket, head, callback) {
-    const connection = new WebsocketConnection(req, socket)
+  handleUpgrade(req, socket, head, headers, callback) {
+    const connection = new WebsocketConnection(req, socket, head, headers)
 
     if (!socket.readable || !socket.writable) return socket.destroy()
 

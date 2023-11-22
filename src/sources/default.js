@@ -4,8 +4,8 @@ import soundcloud from './soundcloud.js'
 import bandcamp from './bandcamp.js'
 import deezer from './deezer.js'
 
-async function searchWithDefault(query) {
-  switch (config.search.defaultSearchSource) {
+async function searchWithDefault(query, fallback) {
+  switch (fallback ? config.search.fallbackSearchSource : config.search.defaultSearchSource) {
     case 'ytmusic':
     case 'youtube': {
       return youtube.search(query, config.search.defaultSearchSource, false)

@@ -1,7 +1,3 @@
-import https from 'node:https'
-import zlib from 'node:zlib'
-import crypto from 'node:crypto'
-
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack, sleep, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
@@ -11,7 +7,7 @@ let playerInfo = {}
 async function init() {
   debugLog('spotify', 5, { type: 1, message: 'Fetching token...' })
 
-  const token = await makeRequest('https://open.spotify.com/get_access_token', {
+  const { body: token } = await makeRequest('https://open.spotify.com/get_access_token', {
     method: 'GET'
   })
 
@@ -21,7 +17,7 @@ async function init() {
     return;
   }
 
-  const data = await http1makeRequest('https://clienttoken.spotify.com/v1/clienttoken', {
+  const { body: data } = await http1makeRequest('https://clienttoken.spotify.com/v1/clienttoken', {
     body: {
       client_data: {
         client_version: '1.2.9.2269.g2fe25d39',
@@ -73,7 +69,7 @@ async function search(query) {
 
     debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
-    const data = await makeRequest(`https://api.spotify.com/v1/search?q=${encodeURI(query)}&type=track&limit=${config.options.maxResultsLength}&market=${config.search.sources.spotify.market}`, {
+    const { body: data } = await makeRequest(`https://api.spotify.com/v1/search?q=${encodeURI(query)}&type=track&limit=${config.options.maxResultsLength}&market=${config.search.sources.spotify.market}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${playerInfo.accessToken}`,
@@ -186,7 +182,7 @@ async function loadFrom(query, type) {
 
     debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Spotify', query })
 
-    let data = await makeRequest(`https://api.spotify.com/v1${endpoint}`, {
+    let { body: data } = await makeRequest(`https://api.spotify.com/v1${endpoint}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${playerInfo.accessToken}`
@@ -203,6 +199,7 @@ async function loadFrom(query, type) {
             Authorization: `Bearer ${playerInfo.accessToken}`
           }
         })
+        data = data.body
       }
 
       if (data.error.status == 400) {

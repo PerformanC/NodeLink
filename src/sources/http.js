@@ -5,9 +5,9 @@ async function loadFrom(uri) {
   debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: type, query: uri })
 
   try {
-    const data = await makeRequest(uri, { method: 'GET', retrieveHeaders: true })
+    const data = await makeRequest(uri, { method: 'GET' })
 
-    if (!data['content-type'].startsWith('audio/')) {
+    if (!data.headers['content-type'].startsWith('audio/')) {
       return {
         loadType: 'error',
         data: {

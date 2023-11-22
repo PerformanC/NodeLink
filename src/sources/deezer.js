@@ -25,7 +25,7 @@ async function init() {
     getCookies: true
   })
 
-  playerInfo.Cookie = res.cookies.join('; ')
+  playerInfo.Cookie = res.headers['set-cookies'].join('; ')
 
   playerInfo.licenseToken = res.body.results.USER.OPTIONS.license_token
   playerInfo.csrfToken = res.body.results.checkForm
@@ -54,7 +54,7 @@ async function loadFrom(query, type) {
 
     debugLog('loadtracks', 4, { type: 1, loadType: type[1], sourceName: 'Deezer', query })
 
-    const data = await makeRequest(`https://api.deezer.com/2.0/${endpoint}`, { method: 'GET' })
+    const { body: data } = await makeRequest(`https://api.deezer.com/2.0/${endpoint}`, { method: 'GET' })
 
     if (data.error) {
       if (data.error.code == 800) 
@@ -145,7 +145,7 @@ function search(query, shouldLog) {
   return new Promise(async (resolve) => {
     if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'Deezer', query })
 
-    const data = await makeRequest(`https://api.deezer.com/2.0/search?q=${encodeURI(query)}`, { method: 'GET' })
+    const { body: data } = await makeRequest(`https://api.deezer.com/2.0/search?q=${encodeURI(query)}`, { method: 'GET' })
 
     // This API doesn't give ISRC, must change to internal API
 
@@ -192,7 +192,7 @@ function search(query, shouldLog) {
 
 function retrieveStream(identifier, title) {
   return new Promise(async (resolve) => {
-    const data = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=song.getListData&input=3&api_version=1.0&api_token=${playerInfo.csrfToken}`, {
+    const { body: data } = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=song.getListData&input=3&api_version=1.0&api_token=${playerInfo.csrfToken}`, {
       body: {
         sng_ids: [ identifier ]
       },
@@ -213,7 +213,7 @@ function retrieveStream(identifier, title) {
 
     const trackInfo = data.results.data[0]
 
-    const streamData = await makeRequest('https://media.deezer.com/v1/get_url', {
+    const { body: streamData } = await makeRequest('https://media.deezer.com/v1/get_url', {
       body: {
         license_token: playerInfo.licenseToken,
         media: [{
@@ -267,21 +267,21 @@ function loadTrack(title, url, trackInfos) {
       streamOnly: true
     })
 
-    res.on('end', () => stream.end())
-    res.on('error', (error) => {
+    res.stream.on('end', () => stream.end())
+    res.stream.on('error', (error) => {
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: error.message })
 
       resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
     })
 
-    res.on('readable', () => {
+    res.stream.on('readable', () => {
       let chunk = null
       while (1) {
-        chunk = res.read(bufferSize)
+        chunk = res.stream.read(bufferSize)
 
         if (!chunk) {
-          if (res.readableLength) {
-            chunk = res.read(res.readableLength)
+          if (res.stream.readableLength) {
+            chunk = res.stream.read(res.stream.readableLength)
             stream.push(chunk)
           }
 

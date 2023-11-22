@@ -6,7 +6,7 @@ async function loadFrom(url) {
     if (!/https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(url))
       return resolve({ loadType: 'empty', data: {} })
 
-    const data = await makeRequest(url, { method: 'GET' })
+    const { body: data } = await makeRequest(url, { method: 'GET' })
     const matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
     if (!matches.length)
@@ -97,7 +97,7 @@ async function search(query, shouldLog) {
   return new Promise(async (resolve) => {
     if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'BandCamp', query })
 
-    const data = await makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
+    const { body: data } = await makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
     const names = data.match(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
 
@@ -171,7 +171,7 @@ async function search(query, shouldLog) {
 
 async function retrieveStream(uri, title) {
   return new Promise(async (resolve) => {
-    const data = await makeRequest(uri, { method: 'GET' })
+    const { body: data } = await makeRequest(uri, { method: 'GET' })
 
     const streamURL = data.match(/https?:\/\/t4\.bcbits\.com\/stream\/[a-zA-Z0-9]+\/mp3-128\/\d+\?p=\d+&amp;ts=\d+&amp;t=[a-zA-Z0-9]+&amp;token=\d+_[a-zA-Z0-9]+/)
 

@@ -8,13 +8,13 @@ let authToken = null
 async function init() {
   debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
 
-  const csfr = await makeRequest('https://www.pandora.com', { method: 'GET', cookiesOnly: true })
+  const { body: csfr } = await makeRequest('https://www.pandora.com', { method: 'GET', cookiesOnly: true })
 
   if (!csfr[1]) return debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
 
   csrfToken = { raw: csfr[1], parsed: /csrftoken=([a-f0-9]{16});/.exec(csfr[1])[1] }
 
-  const token = await makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
+  const { body: token } = await makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
     headers: {
       'Cookie': csrfToken.raw,
       'Content-Type': 'application/json',
@@ -46,7 +46,7 @@ async function search(query) {
       annotationRecipe: 'CLASS_OF_2019'
     }
    
-    const data = await makeRequest('https://www.pandora.com/api/v3/sod/search', {
+    const { body: data } = await makeRequest('https://www.pandora.com/api/v3/sod/search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -141,7 +141,7 @@ async function loadFrom(query) {
 
     switch (type[2]) {
       case 'artist': {
-        const trackData = await http1makeRequest('https://www.pandora.com/api/v4/catalog/annotateObjectsSimple', {
+        const { body: trackData } = await http1makeRequest('https://www.pandora.com/api/v4/catalog/annotateObjectsSimple', {
           body: {
             pandoraIds: [ lastPart ],
           },
@@ -216,7 +216,7 @@ async function loadFrom(query) {
             break
           }
           case 'AL': {
-            const data = await http1makeRequest('https://www.pandora.com/api/v4/catalog/getDetails', {
+            const { body: data } = await http1makeRequest('https://www.pandora.com/api/v4/catalog/getDetails', {
               body: {
                 pandoraId: trackId
               },
@@ -313,7 +313,7 @@ async function loadFrom(query) {
             break
           }
           case 'AR': {
-            const data = await http1makeRequest('https://www.pandora.com/api/v1/graphql/graphql', {
+            const { body: data } = await http1makeRequest('https://www.pandora.com/api/v1/graphql/graphql', {
               body: {
                 operationName: 'GetArtistDetailsWithCuratorsWeb',
                 query: 'query GetArtistDetailsWithCuratorsWeb($pandoraId: String!) {\n  entity(id: $pandoraId) {\n    ... on Artist {\n      id\n      type\n      urlPath\n      name\n      trackCount\n      albumCount\n      bio\n      canSeedStation\n      stationListenerCount\n      albumCount\n      artistTracksId\n      art {\n        ...ArtFragment\n        __typename\n      }\n      isMegastar\n      headerArt {\n        ...ArtFragment\n        __typename\n      }\n      topTracksWithCollaborations {\n        ...TrackFragment\n        __typename\n      }\n      artistPlay {\n        id\n        __typename\n      }\n      events {\n        externalId\n        __typename\n      }\n      latestReleaseWithCollaborations {\n        ...AlbumFragment\n        __typename\n      }\n      topAlbumsWithCollaborations {\n        ...AlbumFragment\n        __typename\n      }\n      similarArtists {\n        id\n        name\n        art {\n          ...ArtFragment\n          __typename\n        }\n        urlPath\n        __typename\n      }\n      twitterHandle\n      twitterUrl\n      allArtistAlbums {\n        totalItems\n        __typename\n      }\n      curator {\n        ...CurationFragment\n        __typename\n      }\n      featured(types: [PL, AR, AL, TR, SF, PC, PE]) {\n        ... on Playlist {\n          ...PlaylistFragment\n          __typename\n        }\n        ... on StationFactory {\n          ...StationFactoryFragment\n          __typename\n        }\n        ... on Artist {\n          ...ArtistFragment\n          __typename\n        }\n        ... on Album {\n          ...AlbumFragment\n          __typename\n        }\n        ... on Track {\n          ...TrackFragment\n          __typename\n        }\n        ... on Podcast {\n          ...PodcastFragment\n          __typename\n        }\n        ... on PodcastEpisode {\n          ...PodcastEpisodeFragment\n          __typename\n        }\n        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n}\n\nfragment ArtFragment on Art {\n  artId\n  dominantColor\n  artUrl: url(size: WIDTH_500)\n}\n\nfragment TrackFragment on Track {\n  pandoraId: id\n  type\n  name\n  sortableName\n  duration\n  trackNumber\n  explicitness\n  hasRadio: canSeedStation\n  shareableUrlPath: urlPath\n  modificationtime: dateModified\n  slugPlusPandoraId: slugPlusId\n  artistId: artist {\n    pandoraId: id\n    __typename\n  }\n  artistName: artist {\n    name\n    __typename\n  }\n  albumId: album {\n    pandoraId: id\n    __typename\n  }\n  albumName: album {\n    name\n    __typename\n  }\n  album {\n    urlPath\n    __typename\n  }\n  icon: art {\n    ...ArtFragment\n    __typename\n  }\n  rightsInfo: rights {\n    ...RightsFragment\n    __typename\n  }\n}\n\nfragment AlbumFragment on Album {\n  pandoraId: id\n  type\n  name\n  sortableName\n  duration\n  trackCount\n  releaseDate\n  explicitness\n  isCompilation\n  shareableUrlPath: urlPath\n  modificationTime: dateModified\n  slugPlusPandoraId: slugPlusId\n  artistId: artist {\n    pandoraId: id\n    __typename\n  }\n  artistName: artist {\n    name\n    __typename\n  }\n  icon: art {\n    ...ArtFragment\n    __typename\n  }\n  artist {\n    url\n    __typename\n  }\n  rightsInfo: rights {\n    ...RightsFragment\n    __typename\n  }\n}\n\nfragment CurationFragment on Curator {\n  curatedStations {\n    items {\n      ...StationFactoryFragment\n      __typename\n    }\n    __typename\n  }\n  playlists {\n    items {\n      ...PlaylistFragment\n      __typename\n    }\n    __typename\n  }\n}\n\nfragment PlaylistFragment on Playlist {\n  pandoraId: id\n  type\n  name\n  sortableName\n  description\n  duration\n  totalTracks\n  version\n  isEditable\n  linkedId\n  linkedType: origin\n  shareableUrlPath: urlPath\n  modificationTime: dateModified\n  unlocked: isUnlocked\n  autogenForListener: isOfAnyOrigin(origins: [PERSONALIZED, SHARED])\n  hasVoiceTrack: includesAny(types: [AM])\n  listenerIdInfo: owner {\n    listenerPandoraId: id\n    displayName\n    isMe\n    __typename\n  }\n  icon: art {\n    ...ArtFragment\n    __typename\n  }\n}\n\nfragment StationFactoryFragment on StationFactory {\n  pandoraId: id\n  type\n  name\n  sortableName\n  hasTakeoverModes\n  isHosted\n  shareableUrlPath: urlPath\n  modificationTime: dateModified\n  seedId: seed {\n    pandoraId: id\n    __typename\n  }\n  seedType: seed {\n    type\n    __typename\n  }\n  icon: art {\n    ...ArtFragment\n    __typename\n  }\n  listenerCount\n}\n\nfragment ArtistFragment on Artist {\n  pandoraId: id\n  type\n  name\n  sortableName\n  trackCount\n  collaboration: isCollaboration\n  megastar: isMegastar\n  shareableUrlPath: urlPath\n  modificationTime: dateModified\n  hasRadio: canSeedStation\n  icon: art {\n    ...ArtFragment\n    __typename\n  }\n}\n\nfragment PodcastFragment on Podcast {\n  pandoraId: id\n  type\n  name\n  sortableName\n  publisherName\n  ordering: releaseType\n  episodeCount: totalEpisodeCount\n  shareableUrlPath: urlPath\n  modificationTime: dateModified\n  icon: art {\n    ...ArtFragment\n    __typename\n  }\n  rightsInfo: rights {\n    ...RightsFragment\n    __typename\n  }\n}\n\nfragment PodcastEpisodeFragment on PodcastEpisode {\n  pandoraId: id\n  type\n  name\n  sortableName\n  duration\n  releaseDate\n  explicitness\n  shareableUrlPath: urlPath\n  modificationTime: dateModified\n  podcastId: podcast {\n    pandoraId: id\n    __typename\n  }\n  programName: podcast {\n    name\n    __typename\n  }\n  elapsedTime: playbackProgress {\n    elapsedTime\n    __typename\n  }\n  icon: art {\n    ...ArtFragment\n    __typename\n  }\n  rightsInfo: rights {\n    ...RightsFragment\n    __typename\n  }\n}\n\nfragment RightsFragment on Rights {\n  expirationTime\n  hasInteractive\n  hasRadioRights\n  hasOffline\n}\n',
@@ -430,7 +430,7 @@ async function loadFrom(query) {
           }
         }
 
-        const data = await makeRequest('https://www.pandora.com/api/v7/playlists/getTracks', {
+        const { body: data } = await makeRequest('https://www.pandora.com/api/v7/playlists/getTracks', {
           method: 'POST',
           headers: {
             'Cookie': csrfToken.raw,
@@ -520,7 +520,7 @@ async function loadFrom(query) {
         break
       }
       case 'station': {
-        const stationData = await http1makeRequest('https://www.pandora.com/api/v1/station/getStationDetails', {
+        const { body: stationData } = await http1makeRequest('https://www.pandora.com/api/v1/station/getStationDetails', {
           body: {
             stationId: lastPart
           },
@@ -621,7 +621,7 @@ async function loadFrom(query) {
         break
       }
       case 'podcast': {
-        const podcastData = await http1makeRequest('https://www.pandora.com/api/v1/aesop/getDetails', {
+        const { body: podcastData } = await http1makeRequest('https://www.pandora.com/api/v1/aesop/getDetails', {
           body: {
             catalogVersion: 4,
             pandoraId: lastPart
@@ -687,7 +687,7 @@ async function loadFrom(query) {
             break
           }
           case 'PC': {
-            const allEpisodesIdsData = await http1makeRequest('https://www.pandora.com/api/v1/aesop/getAllEpisodesByPodcastProgram', {
+            const { body: allEpisodesIdsData } = await http1makeRequest('https://www.pandora.com/api/v1/aesop/getAllEpisodesByPodcastProgram', {
               body: {
                 catalogVersion: 4,
                 pandoraId: lastPart
@@ -721,7 +721,7 @@ async function loadFrom(query) {
             if (allEpisodesIds.length > config.options.maxAlbumPlaylistLength)
               allEpisodesIds = allEpisodesIds.slice(0, config.options.maxAlbumPlaylistLength)
 
-            const allEpisodesData = await http1makeRequest('https://www.pandora.com/api/v1/aesop/annotateObjects', {
+            const { body: allEpisodesData } = await http1makeRequest('https://www.pandora.com/api/v1/aesop/annotateObjects', {
               body: {
                 catalogVersion: 4,
                 pandoraIds: allEpisodesIds

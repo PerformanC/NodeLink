@@ -70,15 +70,19 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
 
       resolve({ stream: file, type: 'arbitrary' })
     } else {
-      const trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
+      let trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
       if (trueSource == 'deezer')
         return resolve({ stream: await deezer.loadTrack(decodedTrack.title, url, additionalData) })
 
       if (trueSource == 'soundcloud') {
-        const stream = await soundcloud.loadStream(decodedTrack.title, url, protocol)
+        if (additionalData != true) {
+          const stream = await soundcloud.loadStream(decodedTrack.title, url, protocol)
 
-        return resolve({ stream })
+          return resolve({ stream })
+        } else {
+          trueSource = config.search.fallbackSearchSource
+        }
       }
 
       const res = await ((trueSource == 'youtube' || trueSource == 'ytmusic') ? http1makeRequest : makeRequest)(url, {
@@ -94,8 +98,8 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
 
-      if (res.statusCode != 200 && res.statusCode != 206 && res.statusCode != 302) {
-        res.destroy()
+      if (![ 200, 206, 302 ].includes(res.statusCode)) {
+        res.stream.destroy()
 
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
 
@@ -104,15 +108,15 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
 
       const stream = new PassThrough()
 
-      res.on('data', (chunk) => stream.write(chunk))
-      res.on('end', () => stream.end())
-      res.on('error', (error) => {
+      res.stream.on('data', (chunk) => stream.write(chunk))
+      res.stream.on('end', () => stream.end())
+      res.stream.on('error', (error) => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
 
         resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
 
-      res.once('readable', () => {
+      res.stream.once('readable', () => {
         resolve({ stream })
       })
     }

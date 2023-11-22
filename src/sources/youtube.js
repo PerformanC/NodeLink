@@ -36,11 +36,11 @@ async function init() {
   playerInfo.innertubeInterval = setIntervalNow(async () => {
     debugLog('innertube', 5, { type: 1, message: 'Fetching deciphering functions...' })
  
-    const data = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
+    const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
       debugLog('innertube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
     })
 
-    const player = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
+    const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
       debugLog('innertube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
     })
 
@@ -106,7 +106,7 @@ async function search(query, type, shouldLog) {
 
     if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
-    const search = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
+    const { body: search } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
       method: 'POST',
       body: {
         context: playerInfo.innertube,
@@ -179,7 +179,7 @@ async function loadFrom(query, type) {
         
         const identifier = /v=([^&]+)/.exec(query)[1]
 
-        const video = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const { body: video } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           body: {
             context: playerInfo.innertube,
             videoId: identifier,
@@ -230,7 +230,7 @@ async function loadFrom(query, type) {
       case 3: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
 
-        const playlist = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const { body: playlist } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -305,7 +305,7 @@ async function loadFrom(query, type) {
       case 4: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
 
-        const short = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
+        const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           method: 'POST',
           body: {
             context: playerInfo.innertube,
@@ -366,7 +366,7 @@ async function retrieveStream(identifier, type, title) {
       await sleep(200)
     }
 
-    const videos = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const { body: videos } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
         videoId: identifier,
@@ -426,7 +426,7 @@ async function loadCaptions(decodedTrack, language) {
       await sleep(200)
     }
 
-    const video = await makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const { body: video } = await makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
         videoId: decodedTrack.identifier,
@@ -460,7 +460,7 @@ async function loadCaptions(decodedTrack, language) {
         return resolve({ loadType: 'empty', data: {} })
       }
 
-      const captionsData = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+      const { body: captionsData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
         debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
         return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
@@ -484,7 +484,7 @@ async function loadCaptions(decodedTrack, language) {
         return resolve({ loadType: 'empty', data: {} })
 
       video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
-        const captionData = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+        const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
           debugLog('loadcaptions', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
           return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
