@@ -31,19 +31,14 @@ We enforce the idea of using built-in Node.js modules over third-party packages.
 
 And because we do use some packages, we have a list of packages that we use (in this project), and that you can use:
 
-### ws
-
-The usage of `ws` is deprecated in this project, and PWSL (ws.js) must be used instead.
-
 ### node-crc
 
 - @napi-rs/cli
 
-### @discord.js/voice
+### @discord.js/voice (PerformanC's fork)
 
 #### Required
 
-- ws
 - discord-api-types
 - prism-media
 - tslib (soon to be removed)
