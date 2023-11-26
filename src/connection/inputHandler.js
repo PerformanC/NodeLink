@@ -1,5 +1,5 @@
-import * as djsVoice from '@discordjs/voice'
 import { OggLogicalBitstream, OpusHead } from '../prism-media.js'
+import discordVoice from '@performanc/voice'
 
 const Connections = {}
 
@@ -31,13 +31,8 @@ function setupConnection(ws, req) {
   }
 }
 
-function handleStartSpeaking(receiver, userId, guildId) {
-  const opusStream = receiver.subscribe(userId, {
-    end: {
-      behavior: djsVoice.EndBehaviorType.AfterSilence,
-      duration: 1000
-    }
-  })
+function handleStartSpeaking(ssrc, userId, guildId) {
+  const opusStream = discordVoice.getSpeakStream(ssrc)
 
   const oggStream = new OggLogicalBitstream({
     opusHead: new OpusHead({
@@ -67,13 +62,11 @@ function handleStartSpeaking(receiver, userId, guildId) {
 
     oggStream.destroy()
     opusStream.destroy()
-
     buffer = null
   })
 
   opusStream.on('end', () => {    
     oggStream.destroy()
-    opusStream.destroy()
 
     let i = 0
 

@@ -177,7 +177,7 @@ class WebsocketConnection extends EventEmitter {
       header.writeUIntBE(options.len, 4, 6)
     }
 
-    this.socket.write(Buffer.concat([header, data]))
+    if (this.socket) this.socket.write(Buffer.concat([header, data]))
 
     return true
   }

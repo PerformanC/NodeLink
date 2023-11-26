@@ -35,18 +35,13 @@ And because we do use some packages, we have a list of packages that we use (in 
 
 - @napi-rs/cli
 
-### @discord.js/voice (PerformanC's fork)
+### @performanc/voice
 
 #### Required
 
-- discord-api-types
-- prism-media
-- tslib (soon to be removed)
-
-#### Optional
-
 - libsodium-wrappers
 - sodium-native
+- tweetnacl
 
 All of these packages are optional, but at least one of them is required.
 

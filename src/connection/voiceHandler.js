@@ -1,4 +1,4 @@
-import { debugLog } from '../utils.js'
+import { debugLog, waitForEvent } from '../utils.js'
 import config from '../../config.js'
 import constants from '../../constants.js'
 import sources from '../sources.js'
@@ -6,32 +6,16 @@ import Filters from '../filters.js'
 
 import inputHandler from './inputHandler.js'
 
-import * as djsVoice from '@discordjs/voice'
+import voiceUtils from '../voice/utils.js'
 
-const adapters = new Map()
+import discordVoice from '@performanc/voice'
 
 global.nodelinkPlayersCount = 0
 global.nodelinkPlayingPlayersCount = 0
-
-function voiceAdapterCreator(userId, guildId) {
-  return (methods) => {
-    adapters.set(`${userId}/${guildId}`, methods)
-
-    return {
-      sendPayload(data) {
-        return !!data
-      },
-      destroy() {
-        return adapters.delete(`${userId}/${guildId}`)
-      }
-    }
-  }
-}
  
 class VoiceConnection {
   constructor(guildId, client) {
     this.connection
-    this.player
     this.client = client
     this.cache = {
       startedAt: 0,
@@ -58,7 +42,6 @@ class VoiceConnection {
     }
 
     this.connection = null
-    this.player = null
   }
 
   _stopTrack() {
@@ -84,23 +67,23 @@ class VoiceConnection {
   setup() {
     nodelinkPlayersCount++
 
-    this.connection = djsVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, group: this.client.userId, adapterCreator: voiceAdapterCreator(this.client.userId, this.config.guildId) })
-    this.connection.receiver.speaking.on('start', (userId) => inputHandler.handleStartSpeaking(this.connection.receiver, userId, this.config.guildId))
+    this.connection = discordVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, userId: this.client.userId })
+    this.connection.on('speakStart', (userId, ssrc) => inputHandler.handleStartSpeaking(ssrc, userId, this.config.guildId))
 
     this.connection.on('stateChange', async (oldState, newState) => {
       switch (newState.status) {
-        case djsVoice.VoiceConnectionStatus.Disconnected: {
-          if (oldState.status == djsVoice.VoiceConnectionStatus.Disconnected) return;
+        case 'disconnected': {
+          if (oldState.status == 'disconnected') return;
 
           try {
-            if (config.options.threshold) await djsVoice.entersState(this.connection, djsVoice.VoiceConnectionStatus.Connecting, config.options.threshold)
+            await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'ready', config.options.threshold || undefined)
           } catch (e) {
-            debugLog('websocketClosed', 2, { track: this.config.track.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
+            debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
             this._stopTrack()
             this.config.track = null
 
-            if (newState.reason == djsVoice.VoiceConnectionDisconnectReason.WebSocketClose) {
+            if (newState.reason == 'websocketClose') {
               this.client.ws.send(JSON.stringify({
                 op: 'event',
                 type: 'WebSocketClosedEvent',
@@ -115,11 +98,9 @@ class VoiceConnection {
         }
       }
     })
-  }
-  
-  setupEvents() {
-    this.player.on('stateChange', (oldState, newState) => {
-      if (newState.status == djsVoice.AudioPlayerStatus.Idle && oldState.status != djsVoice.AudioPlayerStatus.Idle) {
+
+    this.connection.on('playerStateChange', (oldState, newState) => {
+      if (newState.status == 'idle' && oldState.status != 'idle') {
         if (this.cache.silence) return (this.cache.silence = false)
 
         this._stopTrack()
@@ -139,7 +120,7 @@ class VoiceConnection {
       }
     })
 
-    this.player.on('error', (error) => {
+    this.connection.on('error', (error) => {
       this._stopTrack()
 
       debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
@@ -178,9 +159,9 @@ class VoiceConnection {
         guildId: this.config.guildId,
         state: {
           time: Date.now(),
-          position: this.player.state.status == djsVoice.AudioPlayerStatus.Playing ? this._getRealTime() : 0,
-          connected: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready,
-          ping: this.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? this.connection.ping.ws || -1 : -1
+          position: this.connection.playerState.status == 'playing' ? this._getRealTime() : 0,
+          connected: this.connection.state.status == 'ready',
+          ping: this.connection.state.status == 'ready' ? this.connection.ping || -1 : -1
         }
       }))
     }, config.options.playerUpdateInterval)
@@ -196,24 +177,20 @@ class VoiceConnection {
   updateVoice(buffer) {
     this.config.voice = buffer
 
-    const adapter = adapters.get(`${this.client.userId}/${this.config.guildId}`)
-
-    if (!adapter) return;
-
-    adapter.onVoiceStateUpdate({ channel_id: "", guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId, deaf: false, self_deaf: false, mute: false, self_mute: false, self_video: false, suppress: false, request_to_speak_timestamp: null })
-    adapter.onVoiceServerUpdate({ token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
+    discordVoice.voiceStateUpdate({ guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId })
+    discordVoice.voiceServerUpdate({ user_id: this.client.userId, token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
   }
 
   destroy() {
     this.cache.startedAt = 0
     this.cache.pauseTime = [ 0, 0 ]
-    this.config.track = null
-    this.config.filters = []
-    if (this.player) {
+    if (this.config.track) {
       this.cache.silence = true
 
-      this.player.stop(true)
+      this.connection.stop()
     }
+    this.config.track = null
+    this.config.filters = []
     this.cache.url = null
 
     if (this.connection) this.connection.destroy()
@@ -233,7 +210,7 @@ class VoiceConnection {
 
       this.cache.url = urlInfo.url
 
-      resolve({ stream: djsVoice.createAudioResource(streamInfo.stream, { inputType: urlInfo.format, inlineVolume: true }) })
+      resolve({ stream: voiceUtils.createAudioResource(streamInfo.stream) })
     })
   }
 
@@ -340,15 +317,13 @@ class VoiceConnection {
   
     if (filterEnabled) this.cache.ffmpeg = resource.ffmpeg
 
-    if (!this.player) {
-      this.player = djsVoice.createAudioPlayer()
-      this.setupEvents()
-    }
-    if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
-    this.player.play(resource.stream)
+    if (!this.connection.ws) this.connection.connect(() => {
+      this.connection.play(resource.stream)
+    })
+    else this.connection.play(resource.stream)
 
     if (this.cache.volume != 100) {
-      this.player.state.resource.volume.setVolume(this.cache.volume)
+      this.connection.audioStream.setVolume(this.cache.volume)
       this.config.volume = 100
     }
 
@@ -359,16 +334,16 @@ class VoiceConnection {
     }
 
     try {
-      if (config.options.threshold) await djsVoice.entersState(this.player, djsVoice.AudioPlayerStatus.Playing, config.options.threshold)
+      await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status == 'playing', config.options.threshold || undefined)
 
       this.cache.startedAt = Date.now()
 
       this.config.track = { encoded: track, info: decodedTrack }
 
-      debugLog('trackStart', 2, { track: decodedTrack, })
+      debugLog('trackStart', 2, { track: decodedTrack })
       this.trackStarted()
     } catch (e) {
-      this.config.track = null
+      this._stopTrack()
 
       debugLog('trackStuck', 2, { track: decodedTrack })
       this.client.ws.send(JSON.stringify({
@@ -398,13 +373,13 @@ class VoiceConnection {
 
     this.cache.startedAt = 0
     this.cache.pauseTime = [ 0, 0 ]
-    this.config.track = null
-    this.config.filters = []
-    if (this.player) {
+    if (this.config.track) {
       this.cache.silence = true
 
-      this.player.stop(true)
+      this.connection.stop()
     }
+    this.config.track = null
+    this.config.filters = []
     this.cache.url = null
 
     if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
@@ -413,13 +388,13 @@ class VoiceConnection {
   }
 
   volume(volume) {
-    if (!this.player?.state?.resource) {
+    if (!this.config.track) {
       this.cache.volume = volume / 100
 
       return this.config
     }
 
-    this.player.state.resource.volume.setVolume(volume / 100)
+    this.connection.audioStream.volume.setVolume(volume / 100)
 
     this.config.volume = volume / 100
 
@@ -430,13 +405,13 @@ class VoiceConnection {
     if (pause) {
       this.cache.pauseTime[0] = Date.now()
 
-      this.player.pause()
+      this.connection.pause()
     }
     else {
       if (this.config.paused)
         this.cache.pauseTime[1] = Date.now() - this.cache.pauseTime[0]
 
-      this.player.unpause()
+      this.connection.unpause()
     }
 
     this.config.paused = pause
@@ -445,7 +420,7 @@ class VoiceConnection {
   }
 
   async filters(filters) {
-    if (!this.player || this.player.state.status != djsVoice.AudioPlayerStatus.Playing || !config.filters.enabled) return this.config
+    if (this.connection.playerState.status != 'playing' || !config.filters.enabled) return this.config
 
     const filter = new Filters()
 
@@ -482,8 +457,10 @@ class VoiceConnection {
 
     this.cache.ffmpeg = resource.ffmpeg
 
-    if (this.player.subscribers.length == 0) this.connection.subscribe(this.player)
-    this.player.play(resource.stream)
+    if (!this.connection?.ws) this.connection.connect(() => {
+      this.connection.play(resource.stream)
+    })
+    else this.connection.play(resource.stream)
 
     return this.config
   }

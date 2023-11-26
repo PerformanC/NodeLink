@@ -595,7 +595,7 @@ export function debugLog(name, type, options) {
         }
         case 'trackStuck': {
           if (config.debug.track.stuck)
-            console.warn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: [\u001b[33m${config.options.threshold}ms have passed.]\u001b[37m`)
+            console.warn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[33m${config.options.threshold}ms have passed.\u001b[37m`)
 
             break
         }
@@ -808,4 +808,21 @@ Array.prototype.nForEach = async function(callback) {
   }
 
   return next.call(this)
+}
+
+export function waitForEvent(emitter, eventName, func, timeoutMs) {
+  return new Promise((resolve) => {
+    const timeout = timeoutMs ? setTimeout(() => {
+      throw new Error(`Event ${eventName} timed out after ${timeoutMs}ms`)
+    }, timeoutMs) : null
+
+    const listener = (param, param2) => {
+      if (func(param, param2) == true) {
+        emitter.removeListener(eventName, listener)
+        timeoutMs ? clearTimeout(timeout) : null
+        resolve()
+      }
+    }
+    emitter.on(eventName, listener)
+  })
 }

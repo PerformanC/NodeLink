@@ -82,6 +82,7 @@ export default {
   },
   "search": {
     "defaultSearchSource": "youtube",
+    "fallbackSearchSource": "bandcamp",
     "sources": {
       "youtube": true,
       "youtubeMusic": true,
@@ -96,12 +97,12 @@ export default {
       "deezer": {
         "enabled": false,
         "decryptionKey": "...", // For legal reasons, this key is not provided.
-        "urlEncryptionKey": "...", // For legal reasons, this key is not provided.
         "apiKey": "YOUR_DEEZER_API_TOKEN" // Available in Deezer website API requests in "api_token" parameter.
       },
       "soundcloud": {
-        "enabled": false,
-        "clientId": "YOUR_SOUNDCLOUD_CLIENT_ID" // Available in SoundCloud website API requests in "client_id" parameter.
+        "enabled": true,
+        "clientId": "DuYwymhe5Cn4kj2R7suZ1DBTsGjQTyuf", // Available in SoundCloud website API requests in "client_id" parameter.
+        "fallbackIfSnipped": true
       }
     }
   },

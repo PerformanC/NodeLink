@@ -6,8 +6,6 @@ import config from '../../config.js'
 import sources from '../sources.js'
 import VoiceConnection from './voiceHandler.js'
 
-import * as djsVoice from '@discordjs/voice'
-
 const clients = new Map()
 // TODO: Use object
 let statsInterval = null
@@ -566,9 +564,9 @@ async function requestHandler(req, res) {
     client.players.forEach((player) => {
       player.config.state = {
         time: new Date(),
-        position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-        connected: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready : false,
-        ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
+        position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status == 'ready' : false,
+        ping: player.connection ? player.connection.state.status == 'ready' ? player.connection.ping : -1 : -1
       }
 
       players.push(player.config)
@@ -658,9 +656,9 @@ async function requestHandler(req, res) {
     
         player.config.state = {
           time: new Date(),
-          position: player.player ? player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-          connected: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready : false,
-          ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
+          position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
+          connected: player.connection ? player.connection.state.status == 'ready' : false,
+          ping: player.connection ? player.connection.state.status == 'ready' ? player.connection.ping : -1 : -1
         }
 
         debugLog('getPlayer', 1, { params: parsedUrl.search, headers: req.headers })
@@ -714,7 +712,7 @@ async function requestHandler(req, res) {
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          if (buffer.encodedTrack == null) player.player ? player.stop() : null
+          if (buffer.encodedTrack == null) player.config.track ? player.stop() : null
           else {
             if (!player.connection) player.setup()
 
@@ -857,9 +855,9 @@ async function requestHandler(req, res) {
 
         player.config.state = {
           time: new Date(),
-          position: player.player ? player.player.state.status == djsVoice.AudioPlayerStatus.Playing ? new Date() - player.cache.startedAt : 0 : 0,
-          connected: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready : false,
-          ping: player.connection ? player.connection.state.status == djsVoice.VoiceConnectionStatus.Ready ? player.connection.ping.ws : -1 : -1
+          position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
+          connected: player.connection ? player.connection.state.status == 'ready' : false,
+          ping: player.connection ? player.connection.state.status == 'ready' ? player.connection.ping : -1 : -1
         }
 
         sendResponse(req, res, player.config, 200)

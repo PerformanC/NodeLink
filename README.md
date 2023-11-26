@@ -28,13 +28,11 @@ Lavalink protocol compatible music sending node using Node.js.
 
 ## NodeLink vs Lavalink
 
-NodeLink is a music-sending node that follows LavaLink protocols, it uses `@discordjs/voice` and `ffmpeg` to send audio to Discord, while LavaLink uses `Lavaplayer` and `Koe`.
+NodeLink is a music-sending node that follows LavaLink protocols, it uses `@performanc/voice` and `ffmpeg` to send audio to Discord, while LavaLink uses `Lavaplayer` and `Koe`.
 
 ### Performance
 
-While NodeLink outperforms LavaLink in scenarios like filtering, LavaLink outperforms when it comes to loading tracks, but it's a negligible difference.
-
-It comes to preference in this aspect, as NodeLink will be extremely faster than LavaLink in filtering, but LavaLink will be faster than NodeLink in loading tracks.
+NodeLink will be extremely faster than LavaLink in filtering. And NodeLink will be slightly faster in track loading.
 
 ### Stability
 
@@ -54,7 +52,7 @@ Although LavaLink with plugins will have more features than NodeLink, NodeLink i
 
 ### Minimum requirements
 
-- [Node.js](https://nodejs.org) 16.6.0 or higher
+- [Node.js](https://nodejs.org) 14.0.0
 - FFmpeg or ffmpeg-static
 - v4 compatible Lavalink wrapper for usage
 

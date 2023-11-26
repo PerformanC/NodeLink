@@ -1,7 +1,6 @@
 import config from '../config.js'
 import { debugLog } from './utils.js'
 
-import * as djsVoice from '@discordjs/voice'
 import prism from 'prism-media'
 import { PassThrough } from 'node:stream'
 
@@ -121,7 +120,10 @@ class Filters {
       const stream = PassThrough()
 
       ffmpeg.process.stdout.on('data', (data) => stream.write(data))
-      ffmpeg.process.stdout.once('end', () => stream.end())
+      ffmpeg.process.stdout.once('end', () => {
+        stream.end()
+        ffmpeg.destroy()
+      })
       ffmpeg.on('error', (err) => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
 
@@ -129,7 +131,7 @@ class Filters {
       })
 
       ffmpeg.process.stdout.once('readable', () => {
-        resolve({ stream: new djsVoice.AudioResource([], [stream, new prism.VolumeTransformer({ type: 's16le' }), new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }) ], null, 5), ffmpeg })
+         resolve({ stream: stream.pipe(new prism.VolumeTransformer({ type: 's16le' })).pipe(new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 })), ffmpeg })
       })
     })
   }
