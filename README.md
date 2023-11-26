@@ -76,7 +76,7 @@ $ npm i
 
 You can replace the [`sodium-native`](https://npmjs.com/package/sodium-native) dependency with alternatives like [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) in the [`package.json`](package.json) file.
 
-You can also replace the [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus) dependency with alternatives like [`opusscript`](https://npmjs.com/package/opusscript).
+You can also replace the [`opusscript`](https://npmjs.com/package/opusscript) dependency with alternatives like [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus).
 
 For filtering, you will need to install [`ffmpeg`](https://ffmpeg.org/) on your system, and you can install it using [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static) through npm.
 
