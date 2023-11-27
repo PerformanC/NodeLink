@@ -21,8 +21,8 @@ class VoiceConnection {
       startedAt: 0,
       pauseTime: [ 0, 0 ],
       silence: false,
-      ffmpeg: null,
       url: null,
+      protocol: null,
       track: null,
       volume: 100
     }
@@ -195,8 +195,6 @@ class VoiceConnection {
 
     if (this.connection) this.connection.destroy()
 
-    if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
-
     this._stopTrack()
 
     this.client.players.delete(this.config.guildId)
@@ -260,12 +258,9 @@ class VoiceConnection {
         track: oldTrack,
         reason: 'replaced'
       }))
-
-      this.cache.silence = true
     }
 
     let resource = null
-    let filterEnabled = false
 
     if (Object.keys(this.config.filters).length > 0) {
       const filter = new Filters()
@@ -314,13 +309,19 @@ class VoiceConnection {
 
       return this.config
     }
-  
-    if (filterEnabled) this.cache.ffmpeg = resource.ffmpeg
 
+    this.config.track = { encoded: track, info: decodedTrack }
+  
     if (!this.connection.ws) this.connection.connect(() => {
       this.connection.play(resource.stream)
     })
-    else this.connection.play(resource.stream)
+    else {
+      const oldStream = this.connection.audioStream
+
+      this.connection.play(resource.stream)
+
+      if (oldStream) oldStream.destroy()
+    }
 
     if (this.cache.volume != 100) {
       this.connection.audioStream.setVolume(this.cache.volume)
@@ -333,12 +334,12 @@ class VoiceConnection {
       this.cache.startedAt += this.cache.pauseTime[1] - this.cache.pauseTime[0]
     }
 
+    this.cache.protocol = urlInfo.protocol
+
     try {
       await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status == 'playing', config.options.threshold || undefined)
 
       this.cache.startedAt = Date.now()
-
-      this.config.track = { encoded: track, info: decodedTrack }
 
       debugLog('trackStart', 2, { track: decodedTrack })
       this.trackStarted()
@@ -381,8 +382,6 @@ class VoiceConnection {
     this.config.track = null
     this.config.filters = []
     this.cache.url = null
-
-    if (this.cache.ffmpeg) this.cache.ffmpeg.destroy()
 
     this._stopTrack()
   }
@@ -428,7 +427,7 @@ class VoiceConnection {
 
     if (!this.config.track) return this.config
 
-    const protocol = this.config.track.info.sourceName == 'local' ? 'file' : (this.config.track.info.sourceName == 'http' ? 'http' : 'https')
+    const protocol = this.cache.protocol
     const resource = await filter.getResource(this.config.guildId, this.config.track.info, protocol, this.cache.url, this._getRealTime(), filters.endTime, this.cache.ffmpeg, null)
 
     if (resource.exception) {
@@ -455,12 +454,16 @@ class VoiceConnection {
       return this.config
     }
 
-    this.cache.ffmpeg = resource.ffmpeg
-
     if (!this.connection?.ws) this.connection.connect(() => {
       this.connection.play(resource.stream)
     })
-    else this.connection.play(resource.stream)
+    else {
+      const oldStream = this.connection.audioStream
+
+      this.connection.play(resource.stream)
+
+      if (oldStream) oldStream.destroy()
+    }
 
     return this.config
   }

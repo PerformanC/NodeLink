@@ -733,7 +733,7 @@ async function requestHandler(req, res) {
             if (!player.config.voice.endpoint) {
               player.cache.track = buffer.encodedTrack
             } else {
-              if (player.connection._state != 'connecting' || player.connection._state != 'ready') player.updateVoice(player.config.voice)
+              if (player.connection.state.status != 'connecting' || player.connection.state.status != 'ready') player.updateVoice(player.config.voice)
   
               player.play(buffer.encodeTrack, decodedTrack, noReplace == true)
             }
