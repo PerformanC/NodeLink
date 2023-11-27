@@ -8,7 +8,8 @@ let authToken = null
 async function init() {
   debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
 
-  const { body: csfr } = await makeRequest('https://www.pandora.com', { method: 'GET', cookiesOnly: true })
+  const { headers: headers } = await makeRequest('https://www.pandora.com', { method: 'HEAD' })
+  const csfr = headers['set-cookie']
 
   if (!csfr[1]) return debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
 

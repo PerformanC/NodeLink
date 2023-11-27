@@ -21,8 +21,8 @@ export default {
     "playerUpdateInterval": false,
     "statsInterval": false,
     "autoUpdate": [ false, true, 3600000, "tar" ],
-    "maxResultsLength": 20,
-    "maxAlbumPlaylistLength": 20
+    "maxResultsLength": 200,
+    "maxAlbumPlaylistLength": 200
   },
   "debug": {
     "pandora": {
@@ -101,7 +101,7 @@ export default {
       },
       "soundcloud": {
         "enabled": true,
-        "clientId": "DuYwymhe5Cn4kj2R7suZ1DBTsGjQTyuf", // Available in SoundCloud website API requests in "client_id" parameter.
+        "clientId": "YOUR_SOUNDCLOUD_CLIENT_ID", // Available in SoundCloud website API requests in "client_id" parameter.
         "fallbackIfSnipped": true
       }
     }

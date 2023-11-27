@@ -38,12 +38,6 @@ export function http1makeRequest(url, options) {
     }, (res) => {
       if (res.statusCode == 401) throw new Error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Received 401 in url: ${url}.`)
 
-      if (options.retrieveHeaders) {
-        req.destroy()
-
-        return resolve(res.headers)
-      }
-
       const statusCode = res.statusCode
       const headers = res.headers
       let isJson = res.headers['content-type'] ? res.headers['content-type'].startsWith('application/json') : null
@@ -134,12 +128,6 @@ export function makeRequest(url, options) {
     })
 
     req.on('response', (headers) => {
-      if (options.cookiesOnly) {
-        req.destroy()
-
-        return resolve(headers['set-cookie'])
-      }
-
       switch (headers['content-encoding']) {
         case 'deflate': {
           compression = zlib.createInflate()
