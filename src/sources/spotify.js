@@ -312,7 +312,7 @@ async function loadFrom(query, type) {
                 position: 0,
                 title: type[1] == 'playlist' ? item.track.name : item.name,
                 uri: type[1] == 'playlist' ? item.track.external_urls.spotify : item.external_urls.spotify,
-                artworkUrl: search.data[0].info.artworkUrl,
+                artworkUrl: type[1] == 'playlist' ? item.track.album.images[0].url : item.track.album.images[0].url,
                 isrc: null,
                 sourceName: 'spotify'
               }
