@@ -211,7 +211,6 @@ async function retrieveStream(identifier, title) {
       }
     }
 
-
     resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, format: oggOpus ? 'ogg/opus' : 'arbitrary' })
   })
 }
@@ -276,9 +275,22 @@ async function loadStream(title, url, protocol) {
   })
 }
 
+function loadFilters(url, protocol) {
+  return new Promise(async (resolve) => {
+    if (protocol == 'hls') {
+      const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
+
+      resolve(streamHlsRedirect.body.url)
+    } else {
+      resolve(url)
+    }
+  })
+}
+
 export default {
   loadFrom,
   search,
   retrieveStream,
-  loadStream
+  loadStream,
+  loadFilters
 }

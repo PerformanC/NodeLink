@@ -1,8 +1,11 @@
+import { PassThrough } from 'node:stream'
+
 import config from '../config.js'
 import { debugLog } from './utils.js'
+import soundcloud from './sources/soundcloud.js'
+import voiceUtils from './voice/utils.js'
 
 import prism from 'prism-media'
-import { PassThrough } from 'node:stream'
 
 class Filters {
   constructor() {
@@ -21,14 +24,24 @@ class Filters {
 		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
       result.equalizer = filters.equalizer
 
-			const bandSettings = [ { band: 0, gain: 0.2 }, { band: 1, gain: 0.2 }, { band: 2, gain: 0.2 }, { band: 3, gain: 0.2 }, { band: 4, gain: 0.2 }, { band: 5, gain: 0.2 }, { band: 6, gain: 0.2 }, { band: 7, gain: 0.2 }, { band: 8, gain: 0.2 }, { band: 9, gain: 0.2 }, { band: 10, gain: 0.2 }, { band: 11, gain: 0.2 }, { band: 12, gain: 0.2 }, { band: 13, gain: 0.2 }, { band: 14, gain: 0.2 }]
+			const bandSettings = [ { band: 0, gain: 0 }, { band: 1, gain: 0 }, { band: 2, gain: 0 }, { band: 3, gain: 0 }, { band: 4, gain: 0 }, { band: 5, gain: 0 }, { band: 6, gain: 0 }, { band: 7, gain: 0 }, { band: 8, gain: 0 }, { band: 9, gain: 0 }, { band: 10, gain: 0 }, { band: 11, gain: 0 }, { band: 12, gain: 0 }, { band: 13, gain: 0 }, { band: 14, gain: 0 }]
+      const bandFrequencies = [ 25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000 ]
 
-      filters.equalizer.forEach((eq) => {
-        const cur = bandSettings.find(i => i.band == eq.band)
-				if (cur) cur.gain = eq.gain
+      for (const equalizedBand of filters.equalizer) {
+        const band = bandSettings.find(i => i.band == equalizedBand.band)
+        if (band) band.gain = equalizedBand.gain
+      }
+
+      const equalizer = []
+      bandSettings.forEach((band) => {
+        if (band.gain == 0) return;
+
+        const ffmpegGain = (band.gain + 0.25) * 80 - 60
+    
+        equalizer.push(`equalizer=f=${bandFrequencies[band.band]}:width_type=h:w=2:g=${ffmpegGain}`)
       })
 
-      this.command.push(filters.equalizer.map((eq) => `equalizer=f=${eq.band}:width_type=h:width=1:g=${eq.gain}`).join(','))
+      this.command.push(equalizer.join(','))
 		}
 
     if (filters.karaoke && filters.karaoke.level && filters.karaoke.monoLevel && filters.karaoke.filterBand && filters.karaoke.filterWidth && config.filters.list.karaoke) {
@@ -85,9 +98,7 @@ class Filters {
   }
 
   getResource(guildId, decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
-    return new Promise((resolve) => {
-      if (oldFFmpeg) oldFFmpeg.destroy()
-
+    return new Promise(async (resolve) => {
       // TODO: Deezer is not properly working, refactor this file's function.
 
       // const trackData = await sources.getTrackStream(decodedTrack, url, protocol, additionalData)
@@ -97,6 +108,9 @@ class Filters {
 
       //   resolve({ status: 1, exception: { message: trackData.exception.message, severity: 'fault', cause: 'Unknown' } })
       // }
+
+      if (decodedTrack.sourceName == 'soundcloud')
+        url = await soundcloud.loadFilters(url, protocol)
 
       const ffmpeg = new prism.FFmpeg({
         args: [
@@ -120,10 +134,7 @@ class Filters {
       const stream = PassThrough()
 
       ffmpeg.process.stdout.on('data', (data) => stream.write(data))
-      ffmpeg.process.stdout.once('end', () => {
-        stream.end()
-        ffmpeg.destroy()
-      })
+      ffmpeg.process.stdout.on('end', () => stream.end())
       ffmpeg.on('error', (err) => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
 
@@ -131,7 +142,12 @@ class Filters {
       })
 
       ffmpeg.process.stdout.once('readable', () => {
-         resolve({ stream: stream.pipe(new prism.VolumeTransformer({ type: 's16le' })).pipe(new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 })), ffmpeg })
+        resolve({
+          stream: new voiceUtils.NodeLinkStream(stream, [
+            new prism.VolumeTransformer({ type: 's16le' }),
+            new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 })
+          ])
+        })
       })
     })
   }

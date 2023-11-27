@@ -65,6 +65,17 @@ class NodeLinkStream {
     this.stream?.resume()
   }
 
+  destroy() {
+    this.stream?.destroy()
+
+    this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
+    this.listeners = []
+
+    if (this.ffmpeg) this.ffmpeg.destroy()
+    if (this.volume) this.volume.destroy()
+    if (this.encoder) this.encoder.destroy()
+  }
+
   setVolume(volume) {
     this.volume.setVolume(volume)
   }
@@ -95,5 +106,6 @@ function createAudioResource(stream) {
 }
 
 export default {
+  NodeLinkStream,
   createAudioResource
 }
