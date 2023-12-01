@@ -1,48 +1,60 @@
-import fs from 'node:fs'
+import fs from "node:fs";
 
-import { debugLog, encodeTrack } from '../utils.js'
+import { debugLog, encodeTrack } from "../utils.js";
 
 async function loadFrom(path) {
   return new Promise(async (resolve) => {
-    debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'local', query: path })
+    debugLog("loadtracks", 4, {
+      type: 1,
+      loadType: "track",
+      sourceName: "local",
+      query: path,
+    });
 
     fs.open(path, (err) => {
       if (err)
         return resolve({
-          loadType: 'error',
+          loadType: "error",
           exception: {
-            message: 'Failed to retrieve stream from source. (File not found or not accessible)',
-            severity: 'common',
-            cause: 'No permission to access file or doesn\'t exist'
-          }
-        })
-    
+            message:
+              "Failed to retrieve stream from source. (File not found or not accessible)",
+            severity: "common",
+            cause: "No permission to access file or doesn't exist",
+          },
+        });
+
       const track = {
-        identifier: 'unknown',
+        identifier: "unknown",
         isSeekable: false,
-        author: 'unknown',
+        author: "unknown",
         length: -1,
         isStream: false,
         position: 0,
-        title: 'unknown',
+        title: "unknown",
         uri: path,
         artworkUrl: null,
         isrc: null,
-        sourceName: 'local'
-      }
+        sourceName: "local",
+      };
 
-      debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'local', track, query: path })
+      debugLog("loadtracks", 4, {
+        type: 2,
+        loadType: "track",
+        sourceName: "local",
+        track,
+        query: path,
+      });
 
       resolve({
-        loadType: 'track',
+        loadType: "track",
         data: {
           encoded: encodeTrack(track),
           info: track,
-          pluginInfo: {}
-        }
-      })
-    })
-  })
+          pluginInfo: {},
+        },
+      });
+    });
+  });
 }
 
-export default loadFrom
+export default loadFrom;

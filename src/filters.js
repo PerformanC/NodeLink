@@ -28,13 +28,13 @@ class Filters {
       const bandFrequencies = [ 25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000 ]
 
       for (const equalizedBand of filters.equalizer) {
-        const band = bandSettings.find(i => i.band == equalizedBand.band)
+        const band = bandSettings.find(i => i.band === equalizedBand.band)
         if (band) band.gain = equalizedBand.gain
       }
 
       const equalizer = []
       bandSettings.forEach((band) => {
-        if (band.gain == 0) return;
+        if (band.gain === 0) return;
 
         const ffmpegGain = (band.gain + 0.25) * 80 - 60
     
@@ -97,7 +97,8 @@ class Filters {
     return result
   }
 
-  getResource(guildId, decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
+  //getResource(guildId, decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) { -- guildId, oldFFmpeg, additionalData not used
+  getResource(guildId, decodedTrack, protocol, url, startTime, endTime) {
     return new Promise(async (resolve) => {
       // TODO: Deezer is not properly working, refactor this file's function.
 
@@ -109,7 +110,7 @@ class Filters {
       //   resolve({ status: 1, exception: { message: trackData.exception.message, severity: 'fault', cause: 'Unknown' } })
       // }
 
-      if (decodedTrack.sourceName == 'soundcloud')
+      if (decodedTrack.sourceName === 'soundcloud')
         url = await soundcloud.loadFilters(url, protocol)
 
       const ffmpeg = new prism.FFmpeg({

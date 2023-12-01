@@ -8,7 +8,7 @@ let authToken = null
 async function init() {
   debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
 
-  const { headers: headers } = await makeRequest('https://www.pandora.com', { method: 'HEAD' })
+  const { headers } = await makeRequest('https://www.pandora.com', { method: 'HEAD' })
   const csfr = headers['set-cookie']
 
   if (!csfr[1]) return debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
@@ -25,7 +25,7 @@ async function init() {
     method: 'POST'
   })
 
-  if (token.errorCode == 0) return debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
+  if (token.errorCode === 0) return debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
 
   authToken = token.authToken
 
@@ -58,7 +58,7 @@ async function search(query) {
       disableBodyCompression: true
     })
 
-    if (data.results.length == 0)
+    if (data.results.length === 0)
       return resolve({ loadType: 'empty', data: {} })
 
     const tracks = []
@@ -70,10 +70,10 @@ async function search(query) {
       annotationKeys = annotationKeys.slice(0, config.options.maxResultsLength)
 
     annotationKeys.forEach(async (key) => {
-      if (data.annotations[key].type == 'TR') {
+      if (data.annotations[key].type === 'TR') {
         const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
 
-        if (search.loadType == 'search') {
+        if (search.loadType === 'search') {
           const track = {
             identifier: search.data[0].info.identifier,
             isSeekable: true,
@@ -96,12 +96,12 @@ async function search(query) {
         }
       }
 
-      if (index != data.results.length - 1) return index++
+      if (index !== data.results.length - 1) return index++
 
       const new_tracks = []
       annotationKeys.nForEach((key2, index2) => {
         tracks.nForEach((track) => {
-          if (track.info.title != data.annotations[key2].name || track.info.author != data.annotations[key2].artistName) return false
+          if (track.info.title !== data.annotations[key2].name || track.info.author !== data.annotations[key2].artistName) return false
 
           track.position = index2
           track.encoded = encodeTrack(track.info)
@@ -110,7 +110,7 @@ async function search(query) {
           return true
         })
 
-        if (new_tracks.length != tracks.length) return false
+        if (new_tracks.length !== tracks.length) return false
 
         debugLog('search', 4, { type: 2, sourceName: 'Pandora', tracksLen: new_tracks.length, query })
 
@@ -166,7 +166,7 @@ async function loadFrom(query) {
           default: trackType = 'unknown'; break
         }
 
-        if (keysTrackData.length == 0) {
+        if (keysTrackData.length === 0) {
           debugLog('loadtracks', 4, { type: 3, loadType: trackType, sourceName: 'Pandora', query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
@@ -186,7 +186,7 @@ async function loadFrom(query) {
 
             const search = await searchWithDefault(`${item.name} ${item.artistName}`)
 
-            if (search.loadType != 'search')
+            if (search.loadType !== 'search')
               return resolve(search)
     
             const track = {
@@ -230,8 +230,8 @@ async function loadFrom(query) {
               disableBodyCompression: true
             })
   
-            if (data.errors || typeof data != 'object') {
-              const errorMessage = typeof data != 'object' ? 'Unknown error' : data.errors.map((err) => `${err.message} (${err.extensions.code})`).join('; ')
+            if (data.errors || typeof data !== 'object') {
+              const errorMessage = typeof data !== 'object' ? 'Unknown error' : data.errors.map((err) => `${err.message} (${err.extensions.code})`).join('; ')
   
               debugLog('loadtracks', 4, { type: 3, loadType: 'album', sourceName: 'Pandora', query, message: errorMessage })
           
@@ -249,7 +249,7 @@ async function loadFrom(query) {
             trackKeys.forEach(async (key) => {
               const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
         
-              if (search.loadType == 'search') {
+              if (search.loadType === 'search') {
                 const track = {
                   identifier: search.data[0].info.identifier,
                   isSeekable: true,
@@ -271,9 +271,9 @@ async function loadFrom(query) {
                 })
               }
         
-              if (index != trackKeys.length - 1) return index++
+              if (index !== trackKeys.length - 1) return index++
 
-              if (tracks.length == 0) {
+              if (tracks.length === 0) {
                 debugLog('loadtracks', 4, { type: 3, loadType: 'album', sourceName: 'Pandora', query, message: 'No matches found.' })
 
                 return resolve({ loadType: 'empty', data: {} })
@@ -282,7 +282,7 @@ async function loadFrom(query) {
               const new_tracks = []
               trackKeys.nForEach((key2, index2) => {
                 tracks.nForEach((track) => {
-                  if (track.info.title != data.annotations[key2].name || track.info.author != data.annotations[key2].artistName) return false
+                  if (track.info.title !== data.annotations[key2].name || track.info.author !== data.annotations[key2].artistName) return false
 
                   track.info.position = index2
                   track.encoded = encodeTrack(track.info)
@@ -291,7 +291,7 @@ async function loadFrom(query) {
                   return true
                 })
       
-                if (new_tracks.length != tracks.length) return false
+                if (new_tracks.length !== tracks.length) return false
 
                 debugLog('loadtracks', 4, { type: 2, loadType: 'album', sourceName: 'Pandora', playlistName: trackData[trackId].name })
 
@@ -331,8 +331,8 @@ async function loadFrom(query) {
               disableBodyCompression: true
             })
   
-            if (data.errors || typeof data != 'object') {
-              const errorMessage = typeof data != 'object' ? 'Unknown error' : data.errors.map((err) => `${err.message} (${err.extensions.code})`).join('; ')
+            if (data.errors || typeof data !== 'object') {
+              const errorMessage = typeof data !== 'object' ? 'Unknown error' : data.errors.map((err) => `${err.message} (${err.extensions.code})`).join('; ')
   
               debugLog('loadtracks', 4, { type: 3, loadType: 'artist', sourceName: 'Pandora', query, message: errorMessage })
           
@@ -350,7 +350,7 @@ async function loadFrom(query) {
             topTracks.forEach(async (pTrack) => {
               const search = await searchWithDefault(`${pTrack.name} ${pTrack.artistName.name}`)
         
-              if (search.loadType == 'search') {
+              if (search.loadType === 'search') {
                 const track = {
                   identifier: search.data[0].info.identifier,
                   isSeekable: true,
@@ -372,9 +372,9 @@ async function loadFrom(query) {
                 })
               }
         
-              if (index != topTracks.length - 1) return index++
+              if (index !== topTracks.length - 1) return index++
 
-              if (tracks.length == 0) {
+              if (tracks.length === 0) {
                 debugLog('loadtracks', 4, { type: 3, loadType: 'artist', sourceName: 'Pandora', query, message: 'No matches found.' })
 
                 return resolve({ loadType: 'empty', data: {} })
@@ -383,7 +383,7 @@ async function loadFrom(query) {
               const new_tracks = []
               topTracks.nForEach((pTrack2, index2) => {
                 tracks.nForEach((track) => {
-                  if (track.info.title != pTrack2.name || track.info.author != pTrack2.artistName.name) return false
+                  if (track.info.title !== pTrack2.name || track.info.author !== pTrack2.artistName.name) return false
 
                   track.info.position = index2
                   track.encoded = encodeTrack(track.info)
@@ -392,7 +392,7 @@ async function loadFrom(query) {
                   return true
                 })
       
-                if (new_tracks.length != tracks.length) return false
+                if (new_tracks.length !== tracks.length) return false
 
                 debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.data.entity.name })
 
@@ -448,7 +448,7 @@ async function loadFrom(query) {
         const tracks = []
         let index = 0
 
-        let keys = Object.keys(data.annotations).filter((key) => key.indexOf('TR:') != -1)
+        let keys = Object.keys(data.annotations).filter((key) => key.indexOf('TR:') !== -1)
 
         if (keys.length > config.options.maxAlbumPlaylistLength)
           keys = keys.slice(0, config.options.maxAlbumPlaylistLength)
@@ -456,7 +456,7 @@ async function loadFrom(query) {
         keys.forEach(async (key) => {
           const search = await searchWithDefault(`${data.annotations[key].name} ${data.annotations[key].artistName}`)
     
-          if (search.loadType == 'search') {
+          if (search.loadType === 'search') {
             const track = {
               identifier: search.data[0].info.identifier,
               isSeekable: data.annotations[key].visible,
@@ -478,9 +478,9 @@ async function loadFrom(query) {
             })
           }
     
-          if (index != keys.length - 1) return index++
+          if (index !== keys.length - 1) return index++
 
-          if (tracks.length == 0) {
+          if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'Pandora', query, message: 'No matches found.' })
 
             return resolve({ loadType: 'empty', data: {} })
@@ -489,7 +489,7 @@ async function loadFrom(query) {
           const new_tracks = []
           keys.nForEach((key2, index2) => {
             tracks.nForEach((track) => {
-              if (track.info.title != data.annotations[key2].name || track.info.author != data.annotations[key2].artistName) return false
+              if (track.info.title !== data.annotations[key2].name || track.info.author !== data.annotations[key2].artistName) return false
               
               track.info.position = index2
               track.encoded = encodeTrack(track.info)
@@ -498,7 +498,7 @@ async function loadFrom(query) {
               return true
             })
   
-            if (new_tracks.length != tracks.length) return false
+            if (new_tracks.length !== tracks.length) return false
 
             debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Pandora', playlistName: data.name })
 
@@ -534,7 +534,7 @@ async function loadFrom(query) {
           disableBodyCompression: true
         })
 
-        if (stationData.length == 0) {
+        if (stationData.length === 0) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'station', sourceName: 'Pandora', query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
@@ -557,7 +557,7 @@ async function loadFrom(query) {
         seeds.forEach(async (seed) => {
           const search = await searchWithDefault(`${seed.song.songTitle} ${seed.song.artistSummary}`)
 
-          if (search.loadType == 'search') {
+          if (search.loadType === 'search') {
             const track = {
               identifier: search.data[0].info.identifier,
               isSeekable: true,
@@ -579,9 +579,9 @@ async function loadFrom(query) {
             })
           }
 
-          if (index != seeds.length - 1) return index++
+          if (index !== seeds.length - 1) return index++
 
-          if (tracks.length == 0) {
+          if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, loadType: 'station', sourceName: 'Pandora', query, message: 'No matches found.' })
 
             return resolve({ loadType: 'empty', data: {} })
@@ -590,7 +590,7 @@ async function loadFrom(query) {
           const new_tracks = []
           seeds.nForEach((seed2, index2) => {
             tracks.nForEach((track) => {
-              if (track.info.title != seed2.song.songTitle || track.info.author != seed2.song.artistSummary) return false
+              if (track.info.title !== seed2.song.songTitle || track.info.author !== seed2.song.artistSummary) return false
 
               track.info.position = index2
               track.encoded = encodeTrack(track.info)
@@ -599,7 +599,7 @@ async function loadFrom(query) {
               return true
             })
 
-            if (new_tracks.length != tracks.length) return false
+            if (new_tracks.length !== tracks.length) return false
 
             debugLog('loadtracks', 4, { type: 2, loadType: 'station', sourceName: 'Pandora', playlistName: stationData.name })
 
@@ -636,7 +636,7 @@ async function loadFrom(query) {
           disableBodyCompression: true
         })
 
-        if (podcastData.length == 0) {
+        if (podcastData.length === 0) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
@@ -653,11 +653,11 @@ async function loadFrom(query) {
 
         switch (podcastData.details.podcastProgramDetails ? podcastData.details.podcastProgramDetails.type : podcastData.details.podcastEpisodeDetails.type) {
           case 'PE': {
-            const podcastEpisode = podcastData.details.annotations[Object.keys(podcastData.details.annotations).find((key) => key == podcastData.details.podcastEpisodeDetails.pandoraId)]
+            const podcastEpisode = podcastData.details.annotations[Object.keys(podcastData.details.annotations).find((key) => key === podcastData.details.podcastEpisodeDetails.pandoraId)]
 
             const search = await searchWithDefault(`${podcastEpisode.name} ${podcastEpisode.programName}`)
 
-            if (search.loadType != 'search')
+            if (search.loadType !== 'search')
               return resolve(search)
 
             const track = {
@@ -702,7 +702,7 @@ async function loadFrom(query) {
               disableBodyCompression: true
             })
 
-            if (allEpisodesIdsData.length == 0) {
+            if (allEpisodesIdsData.length === 0) {
               debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
               return resolve({ loadType: 'empty', data: {} })
@@ -736,7 +736,7 @@ async function loadFrom(query) {
               disableBodyCompression: true
             })
 
-            if (allEpisodesData.length == 0) {
+            if (allEpisodesData.length === 0) {
               debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
               return resolve({ loadType: 'empty', data: {} })
@@ -755,7 +755,7 @@ async function loadFrom(query) {
 
               const search = await searchWithDefault(`${episode.name} ${episode.programName}`)
 
-              if (search.loadType == 'search') {
+              if (search.loadType === 'search') {
                 const track = {
                   identifier: search.data[0].info.identifier,
                   isSeekable: true,
@@ -777,9 +777,9 @@ async function loadFrom(query) {
                 })
               }
 
-              if (index != episodes.length - 1) return index++
+              if (index !== episodes.length - 1) return index++
 
-              if (tracks.length == 0) {
+              if (tracks.length === 0) {
                 debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
                 return resolve({ loadType: 'empty', data: {} })
@@ -787,10 +787,10 @@ async function loadFrom(query) {
 
               const new_tracks = []
               episodes.nForEach((episode2, index2) => {
-                if (typeof episode2 != 'object') episode2 = allEpisodesData.annotations[episode2]
+                if (typeof episode2 !== 'object') episode2 = allEpisodesData.annotations[episode2]
 
                 tracks.nForEach((track) => {
-                  if (track.info.title != episode2.name || track.info.author != episode2.programName) return false
+                  if (track.info.title !== episode2.name || track.info.author !== episode2.programName) return false
 
                   track.info.position = index2
                   track.encoded = encodeTrack(track.info)
@@ -799,9 +799,9 @@ async function loadFrom(query) {
                   return true
                 })
       
-                if (new_tracks.length != tracks.length) return false
+                if (new_tracks.length !== tracks.length) return false
 
-                const podcastName = podcastData.details.annotations[Object.keys(podcastData.details.annotations).find((key) => key == podcastData.details.podcastProgramDetails.pandoraId)].name
+                const podcastName = podcastData.details.annotations[Object.keys(podcastData.details.annotations).find((key) => key === podcastData.details.podcastProgramDetails.pandoraId)].name
 
                 debugLog('loadtracks', 4, { type: 2, loadType: 'podcast', sourceName: 'Pandora', playlistName: podcastName })
 

@@ -14,7 +14,7 @@ function setupConnection(ws, req) {
   }
 
   ws.on('close', (code, reason) => {
-    console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Closed connection with code \u001b[31m${code}\u001b[37m and reason \u001b[31m${reason == '' ? 'none' : reason}\u001b[37m`)
+    console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Closed connection with code \u001b[31m${code}\u001b[37m and reason \u001b[31m${reason === '' ? 'none' : reason}\u001b[37m`)
 
     delete Connections[userId]
   })
@@ -46,7 +46,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
   let buffer = []
   oggStream.on('data', (chunk) => {
-    if (Object.keys(Connections).length == 0) {
+    if (Object.keys(Connections).length === 0) {
       oggStream.destroy()
       opusStream.destroy()
       buffer = null
@@ -71,7 +71,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
     let i = 0
 
     Object.keys(Connections).forEach((botId) => {
-      if (Connections[botId].guildId != guildId) return;
+      if (Connections[botId].guildId !== guildId) return;
 
       Connections[botId].ws.send(JSON.stringify({
         type: 'endSpeakingEvent',
@@ -93,7 +93,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
   opusStream.pipe(oggStream)
 
   Object.keys(Connections).forEach((botId) => {
-    if (Connections[botId].guildId != guildId) return;
+    if (Connections[botId].guildId !== guildId) return;
 
     Connections[botId].ws.send(JSON.stringify({
       type: 'startSpeakingEvent',

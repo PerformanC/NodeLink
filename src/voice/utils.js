@@ -1,111 +1,126 @@
-import { pipeline } from 'node:stream'
+import { pipeline } from "node:stream";
 
-import config from '../../config.js'
+import config from "../../config.js";
 
-import prism from 'prism-media'
+import prism from "prism-media";
 
 class NodeLinkStream {
   constructor(stream, pipes) {
-    pipes.unshift(stream)
+    pipes.unshift(stream);
 
-    this.stream = pipeline(pipes, () => {})
-    this.listeners = []
-  
+    this.stream = pipeline(pipes, () => {});
+    this.listeners = [];
+
     pipes.forEach((pipe) => {
       if (pipe instanceof prism.FFmpeg) {
-        this.ffmpeg = pipe
+        this.ffmpeg = pipe;
       }
       if (pipe instanceof prism.VolumeTransformer) {
-        this.volume = pipe
+        this.volume = pipe;
       }
       if (pipe instanceof prism.opus.Encoder) {
-        this.encoder = pipe
+        this.encoder = pipe;
       }
-    })
+    });
 
-    this.stream.once('readable', () => this.started = true)
-    this.stream.on('end', () => {
-      this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
-      this.listeners = []
-    
-      if (this.ffmpeg) this.ffmpeg.destroy()
-      if (this.volume) this.volume.destroy()
-      if (this.encoder) this.encoder.destroy()
+    this.stream.once("readable", () => (this.started = true));
+    this.stream.on("end", () => {
+      this.listeners.forEach(({ event, listener }) =>
+        this.stream.removeListener(event, listener)
+      );
+      this.listeners = [];
 
-      this.stream = null
-      this.ffmpeg = null
-      this.volume = null
-      this.encoder = null
-    })
+      if (this.ffmpeg) this.ffmpeg.destroy();
+      if (this.volume) this.volume.destroy();
+      if (this.encoder) this.encoder.destroy();
+
+      this.stream = null;
+      this.ffmpeg = null;
+      this.volume = null;
+      this.encoder = null;
+    });
   }
 
   on(event, listener) {
-    this.listeners.push({ event, listener })
+    this.listeners.push({ event, listener });
 
-    this.stream.on(event, listener)
+    this.stream.on(event, listener);
   }
 
   once(event, listener) {
-    this.listeners.push({ event, listener })
+    this.listeners.push({ event, listener });
 
-    this.stream.once(event, listener)
+    this.stream.once(event, listener);
 
-    if (event == 'readable' && this.started) listener()
+    if (event === "readable" && this.started) listener();
   }
 
   emit(event, ...args) {
-    this.stream.emit(event, ...args)
+    this.stream.emit(event, ...args);
   }
 
   read() {
-    return this.stream?.read()
+    return this.stream?.read();
   }
 
   resume() {
-    this.stream?.resume()
+    this.stream?.resume();
   }
 
   destroy() {
-    this.stream?.destroy()
+    this.stream?.destroy();
 
-    this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
-    this.listeners = []
+    this.listeners.forEach(({ event, listener }) =>
+      this.stream.removeListener(event, listener)
+    );
+    this.listeners = [];
 
-    if (this.ffmpeg) this.ffmpeg.destroy()
-    if (this.volume) this.volume.destroy()
-    if (this.encoder) this.encoder.destroy()
+    if (this.ffmpeg) this.ffmpeg.destroy();
+    if (this.volume) this.volume.destroy();
+    if (this.encoder) this.encoder.destroy();
   }
 
   setVolume(volume) {
-    this.volume.setVolume(volume)
+    this.volume.setVolume(volume);
   }
 }
 
 function createAudioResource(stream) {
   const ffmpeg = new prism.FFmpeg({
     args: [
-      '-loglevel', '0',
-      '-analyzeduration', '0',
-      '-hwaccel', 'auto',
-      '-threads', config.filters.threads,
-      '-filter_threads', config.filters.threads,
-      '-filter_complex_threads', config.filters.threads,
-      '-i', '-',
-      '-f', 's16le',
-      '-ar', '48000',
-      '-ac', '2',
-      '-crf', '0'
-    ]
-  })
+      "-loglevel",
+      "0",
+      "-analyzeduration",
+      "0",
+      "-hwaccel",
+      "auto",
+      "-threads",
+      config.filters.threads,
+      "-filter_threads",
+      config.filters.threads,
+      "-filter_complex_threads",
+      config.filters.threads,
+      "-i",
+      "-",
+      "-f",
+      "s16le",
+      "-ar",
+      "48000",
+      "-ac",
+      "2",
+      "-crf",
+      "0",
+    ],
+  });
 
   return new NodeLinkStream(stream, [
-    ffmpeg, 
-    new prism.VolumeTransformer({ type: 's16le' }),
-    new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 })
-  ])
+    ffmpeg,
+    new prism.VolumeTransformer({ type: "s16le" }),
+    new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 }),
+  ]);
 }
 
 export default {
   NodeLinkStream,
-  createAudioResource
-}
+  createAudioResource,
+};

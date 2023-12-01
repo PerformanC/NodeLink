@@ -1,24 +1,40 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough } from "node:stream";
 
-import config from '../../config.js'
-import { debugLog, encodeTrack, http1makeRequest } from '../utils.js'
-import searchWithDefault from './default.js'
-import sources from '../sources.js'
+import config from "../../config.js";
+import { debugLog, encodeTrack, http1makeRequest } from "../utils.js";
+import searchWithDefault from "./default.js";
+import sources from "../sources.js";
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    let { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+    let { body: data } = await http1makeRequest(
+      `https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${
+        config.search.sources.soundcloud.clientId
+      }`,
+      { method: "GET" }
+    );
 
-    debugLog('loadtracks', 4, { type: 1, loadType: data.kind || 'unknown', sourceName: 'SoundCloud', query: url })
+    debugLog("loadtracks", 4, {
+      type: 1,
+      loadType: data.kind || "unknown",
+      sourceName: "SoundCloud",
+      query: url,
+    });
 
-    if (Object.keys(data).length == 0) {
-      debugLog('loadtracks', 4, { type: 3, loadType: data.kind || 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
+    if (Object.keys(data).length === 0) {
+      debugLog("loadtracks", 4, {
+        type: 3,
+        loadType: data.kind || "unknown",
+        sourceName: "Soundcloud",
+        query: url,
+        message: "No matches found.",
+      });
 
-      return resolve({ loadType: 'empty', data: {} })
+      return resolve({ loadType: "empty", data: {} });
     }
 
     switch (data.kind) {
-      case 'track': {
+      case "track": {
         const track = {
           identifier: data.id.toString(),
           isSeekable: true,
@@ -30,30 +46,39 @@ async function loadFrom(url) {
           uri: data.permalink_url,
           artworkUrl: data.artwork_url,
           isrc: data.publisher_metadata ? data.publisher_metadata.isrc : null,
-          sourceName: 'soundcloud'
-        }
+          sourceName: "soundcloud",
+        };
 
-        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query: url })
+        debugLog("loadtracks", 4, {
+          type: 2,
+          loadType: "track",
+          sourceName: "SoundCloud",
+          track,
+          query: url,
+        });
 
         return resolve({
-          loadType: 'track',
+          loadType: "track",
           data: {
             encoded: encodeTrack(track),
             info: track,
-            playlistInfo: {}
-          }
-        })
+            playlistInfo: {},
+          },
+        });
       }
-      case 'playlist': {
-        const tracks = []
-        const notLoaded = []
+      case "playlist": {
+        const tracks = [];
+        const notLoaded = [];
 
         if (data.tracks.length > config.options.maxAlbumPlaylistLength)
-          data.tracks = data.tracks.slice(0, config.options.maxAlbumPlaylistLength)
+          data.tracks = data.tracks.slice(
+            0,
+            config.options.maxAlbumPlaylistLength
+          );
 
         data.tracks.forEach((item, index) => {
           if (!item.title) {
-            notLoaded.push(item.id.toString())
+            notLoaded.push(item.id.toString());
             return;
           }
 
@@ -68,23 +93,32 @@ async function loadFrom(url) {
             uri: item.permalink_url,
             artworkUrl: item.artwork_url,
             isrc: item.publisher_metadata?.isrc,
-            sourceName: 'soundcloud'
-          }
+            sourceName: "soundcloud",
+          };
 
           tracks.push({
             encoded: encodeTrack(track),
             info: track,
-            playlistInfo: {}
-          })
-        })
+            playlistInfo: {},
+          });
+        });
 
         if (notLoaded.length) {
-          let stop = false
+          let stop = false;
 
-          while ((notLoaded.length && !stop) && (tracks.length > config.options.maxAlbumPlaylistLength)) {
-            const notLoadedLimited = notLoaded.slice(0, 50)
-            data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
-            data = data.body
+          while (
+            notLoaded.length &&
+            !stop &&
+            tracks.length > config.options.maxAlbumPlaylistLength
+          ) {
+            const notLoadedLimited = notLoaded.slice(0, 50);
+            data = await http1makeRequest(
+              `https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join(
+                "%2C"
+              )}&client_id=${config.search.sources.soundcloud.clientId}`,
+              { method: "GET" }
+            );
+            data = data.body;
 
             data.forEach((item, index) => {
               const track = {
@@ -97,28 +131,34 @@ async function loadFrom(url) {
                 title: item.title,
                 uri: item.permalink_url,
                 artworkUrl: item.artwork_url,
-                isrc: item.publisher_metadata ? item.publisher_metadata.isrc : null,
-                sourceName: 'soundcloud'
-              }
+                isrc: item.publisher_metadata
+                  ? item.publisher_metadata.isrc
+                  : null,
+                sourceName: "soundcloud",
+              };
 
               tracks.push({
                 encoded: encodeTrack(track),
                 info: track,
-                playlistInfo: {}
-              })
-            })
+                playlistInfo: {},
+              });
+            });
 
-            notLoaded.splice(0, 50)
+            notLoaded.splice(0, 50);
 
-            if (notLoaded.length == 0)
-              stop = true
+            if (notLoaded.length === 0) stop = true;
           }
         }
 
-        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: data.title })
+        debugLog("loadtracks", 4, {
+          type: 2,
+          loadType: "playlist",
+          sourceName: "SoundCloud",
+          playlistName: data.title,
+        });
 
         return resolve({
-          loadType: 'playlist',
+          loadType: "playlist",
           data: {
             info: {
               name: data.title,
@@ -126,35 +166,48 @@ async function loadFrom(url) {
             },
             pluginInfo: {},
             tracks,
-          }
-        })
+          },
+        });
       }
-      case 'user': {
-        debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'SoundCloud', playlistName: data.full_name })
+      case "user": {
+        debugLog("loadtracks", 4, {
+          type: 2,
+          loadType: "artist",
+          sourceName: "SoundCloud",
+          playlistName: data.full_name,
+        });
 
-        return resolve({ loadType: 'empty', data: {} })
+        return resolve({ loadType: "empty", data: {} });
       }
     }
-  })
+  });
 }
 
 async function search(query, shouldLog) {
   return new Promise(async (resolve) => {
-    if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
+    if (shouldLog)
+      debugLog("search", 4, { type: 1, sourceName: "SoundCloud", query });
 
-    const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
-      method: 'GET'
-    })
+    const { body: data } = await http1makeRequest(
+      `https://api-v2.soundcloud.com/search?q=${encodeURI(
+        query
+      )}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${
+        config.search.sources.soundcloud.clientId
+      }&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`,
+      {
+        method: "GET",
+      }
+    );
 
-    if (data.total_results == 0)
-      return resolve({ loadType: 'empty', data: {} })
+    if (data.total_results === 0)
+      return resolve({ loadType: "empty", data: {} });
 
-    const tracks = []
-    let index = 0
+    const tracks = [];
+    let index = 0;
 
-    data.collection.forEach((item, i) => {
-      if (tracks.length > config.options.maxSearchResults) return
-      if (item.kind != 'track') return;
+    data.collection.forEach((item) => {
+      if (tracks.length > config.options.maxSearchResults) return;
+      if (item.kind !== "track") return;
 
       const track = {
         identifier: item.id.toString(),
@@ -167,124 +220,215 @@ async function search(query, shouldLog) {
         uri: item.uri,
         artworkUrl: item.artwork_url,
         isrc: null,
-        sourceName: 'soundcloud'
-      }
+        sourceName: "soundcloud",
+      };
 
       tracks.push({
         encoded: encodeTrack(track),
         info: track,
-        pluginInfo: {}
-      })
-    })
+        pluginInfo: {},
+      });
+    });
 
-    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+    if (shouldLog)
+      debugLog("search", 4, {
+        type: 2,
+        sourceName: "SoundCloud",
+        tracksLen: tracks.length,
+        query,
+      });
 
     resolve({
-      loadType: 'search',
-      data: tracks
-    })
-  })
+      loadType: "search",
+      data: tracks,
+    });
+  });
 }
 
 async function retrieveStream(identifier, title) {
   return new Promise(async (resolve) => {
-    const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
-      
-    if (data.errors) {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: data.errors[0].error_message })
+    const { body: data } = await http1makeRequest(
+      `https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`,
+      { method: "GET" }
+    );
 
-      return resolve({ exception: { message: data.errors[0].error_message, severity: 'fault', cause: 'Unknown' } })
+    if (data.errors) {
+      debugLog("retrieveStream", 4, {
+        type: 2,
+        sourceName: "SoundCloud",
+        query: title,
+        message: data.errors[0].error_message,
+      });
+
+      return resolve({
+        exception: {
+          message: data.errors[0].error_message,
+          severity: "fault",
+          cause: "Unknown",
+        },
+      });
     }
 
-    const oggOpus = data.media.transcodings.find((transcoding) => transcoding.format.mime_type == 'audio/ogg; codecs="opus"')
-    const transcoding = oggOpus || data.media.transcodings[0]
+    const oggOpus = data.media.transcodings.find(
+      (transcoding) =>
+        transcoding.format.mime_type === 'audio/ogg; codecs="opus"'
+    );
+    const transcoding = oggOpus || data.media.transcodings[0];
 
-    if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: 'Track is snipped, falling back to: ... .' })
+    if (
+      transcoding.snipped &&
+      config.search.sources.soundcloud.fallbackIfSnipped
+    ) {
+      debugLog("retrieveStream", 4, {
+        type: 2,
+        sourceName: "SoundCloud",
+        query: title,
+        message: "Track is snipped, falling back to: ... .",
+      });
 
-      const search = await searchWithDefault(title, true)
+      const search = await searchWithDefault(title, true);
 
-      if (search.loadType == 'search') {
-        const urlInfo = await sources.getTrackURL(search.data[0].info)
+      if (search.loadType === "search") {
+        const urlInfo = await sources.getTrackURL(search.data[0].info);
 
-        return resolve({ url: urlInfo.url, protocol: urlInfo.protocol, format: urlInfo.format, additionalData: true })
+        return resolve({
+          url: urlInfo.url,
+          protocol: urlInfo.protocol,
+          format: urlInfo.format,
+          additionalData: true,
+        });
       }
     }
 
-    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, format: oggOpus ? 'ogg/opus' : 'arbitrary' })
-  })
+    resolve({
+      url:
+        transcoding.url +
+        `?client_id=${config.search.sources.soundcloud.clientId}`,
+      protocol: transcoding.format.protocol,
+      format: oggOpus ? "ogg/opus" : "arbitrary",
+    });
+  });
 }
 
 async function loadStream(title, url, protocol) {
   return new Promise(async (resolve) => {
-    const stream = new PassThrough()
+    const stream = new PassThrough();
 
-    if (protocol == 'hls') {
-      const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
-      const streamHls = await http1makeRequest(streamHlsRedirect.body.url, { method: 'GET' })
-      const streams = streamHls.body.split('\n').filter((line) => line.startsWith('https://'))
+    if (protocol === "hls") {
+      const streamHlsRedirect = await http1makeRequest(url, { method: "GET" });
+      const streamHls = await http1makeRequest(streamHlsRedirect.body.url, {
+        method: "GET",
+      });
+      const streams = streamHls.body
+        .split("\n")
+        .filter((line) => line.startsWith("https://"));
 
-      let i = 0
+      let i = 0;
 
       async function loadNext() {
-        const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
+        const res = await http1makeRequest(streams[i], {
+          method: "GET",
+          streamOnly: true,
+        });
 
-        res.stream.on('data', (chunk) => stream.write(chunk))
-        res.stream.on('end', () => {
-          i++
+        res.stream.on("data", (chunk) => stream.write(chunk));
+        res.stream.on("end", () => {
+          i++;
 
-          if (i < streams.length) loadNext()
-          else stream.end()
-        })
-        res.stream.on('error', (error) => {
-          debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
-  
-          resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
-        })
+          if (i < streams.length) loadNext();
+          else stream.end();
+        });
+        res.stream.on("error", (error) => {
+          debugLog("retrieveStream", 4, {
+            type: 2,
+            sourceName: "SoundCloud",
+            query: title,
+            message: error.message,
+          });
+
+          resolve({
+            status: 1,
+            exception: {
+              message: error.message,
+              severity: "fault",
+              cause: "Unknown",
+            },
+          });
+        });
       }
 
-      const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
+      const res = await http1makeRequest(streams[i], {
+        method: "GET",
+        streamOnly: true,
+      });
 
-      res.stream.on('data', (chunk) => stream.write(chunk))
-      res.stream.on('end', () => {
-        i++
+      res.stream.on("data", (chunk) => stream.write(chunk));
+      res.stream.on("end", () => {
+        i++;
 
-        if (i < streams.length) loadNext()
-        else stream.end()
-      })
-      res.stream.on('error', (error) => {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
+        if (i < streams.length) loadNext();
+        else stream.end();
+      });
+      res.stream.on("error", (error) => {
+        debugLog("retrieveStream", 4, {
+          type: 2,
+          sourceName: "SoundCloud",
+          query: title,
+          message: error.message,
+        });
 
-        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
-      })
+        resolve({
+          status: 1,
+          exception: {
+            message: error.message,
+            severity: "fault",
+            cause: "Unknown",
+          },
+        });
+      });
 
-      res.stream.once('readable', () => resolve(stream))
+      res.stream.once("readable", () => resolve(stream));
     } else {
-      const res = await http1makeRequest(url, { method: 'GET', streamOnly: true })
+      const res = await http1makeRequest(url, {
+        method: "GET",
+        streamOnly: true,
+      });
 
-      res.stream.on('data', (chunk) => stream.write(chunk))
-      res.stream.on('end', () => stream.end())
-      res.stream.on('error', (error) => {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
+      res.stream.on("data", (chunk) => stream.write(chunk));
+      res.stream.on("end", () => stream.end());
+      res.stream.on("error", (error) => {
+        debugLog("retrieveStream", 4, {
+          type: 2,
+          sourceName: "SoundCloud",
+          query: title,
+          message: error.message,
+        });
 
-        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
-      })
+        resolve({
+          status: 1,
+          exception: {
+            message: error.message,
+            severity: "fault",
+            cause: "Unknown",
+          },
+        });
+      });
 
-      res.stream.once('readable', () => resolve(stream))
+      res.stream.once("readable", () => resolve(stream));
     }
-  })
+  });
 }
 
 function loadFilters(url, protocol) {
   return new Promise(async (resolve) => {
-    if (protocol == 'hls') {
-      const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
+    if (protocol === "hls") {
+      const streamHlsRedirect = await http1makeRequest(url, { method: "GET" });
 
-      resolve(streamHlsRedirect.body.url)
+      resolve(streamHlsRedirect.body.url);
     } else {
-      resolve(url)
+      resolve(url);
     }
-  })
+  });
 }
 
 export default {
@@ -292,5 +436,5 @@ export default {
   search,
   retrieveStream,
   loadStream,
-  loadFilters
-}
+  loadFilters,
+};

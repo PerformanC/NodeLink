@@ -36,7 +36,7 @@ export function http1makeRequest(url, options) {
       },
       rejectUnauthorized: false
     }, (res) => {
-      if (res.statusCode == 401) throw new Error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Received 401 in url: ${url}.`)
+      if (res.statusCode === 401) throw new Error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Received 401 in url: ${url}.`)
 
       const statusCode = res.statusCode
       const headers = res.headers
@@ -73,7 +73,7 @@ export function http1makeRequest(url, options) {
       res.on('data', (chunk) => data += chunk)
       res.on('error', () => reject())
       res.on('end', () => {
-        if (isJson == null) isJson = (data.startsWith('{') && data.endsWith('}')) || (data.startsWith('[') && data.endsWith(']'))
+        if (isJson === null) isJson = (data.startsWith('{') && data.endsWith('}')) || (data.startsWith('[') && data.endsWith(']'))
 
         resolve({
           statusCode,
@@ -321,7 +321,7 @@ export function decodeTrack(track) {
           author: buf.read('utf'),
           length: Number(buf.read('long')),
           identifier: buf.read('utf'),
-          isStream: buf.read('byte') == 1,
+          isStream: buf.read('byte') === 1,
           uri: null,
           source: buf.read('utf'),
           position: Number(buf.read('long'))
@@ -333,8 +333,8 @@ export function decodeTrack(track) {
           author: buf.read('utf'),
           length: Number(buf.read('long')),
           identifier: buf.read('utf'),
-          isStream: buf.read('byte') == 1,
-          uri: buf.read('byte') == 1 ? buf.read('utf') : null,
+          isStream: buf.read('byte') === 1,
+          uri: buf.read('byte') === 1 ? buf.read('utf') : null,
           source: buf.read('utf'),
           position: Number(buf.read('long'))
         }
@@ -346,10 +346,10 @@ export function decodeTrack(track) {
           length: Number(buf.read('long')),
           identifier: buf.read('utf'),
           isSeekable: true,
-          isStream: buf.read('byte') == 1,
-          uri: buf.read('byte') == 1 ? buf.read('utf') : null,
-          artworkUrl: buf.read('byte') == 1 ? buf.read('utf') : null,
-          isrc: buf.read('byte') == 1 ? buf.read('utf') : null,
+          isStream: buf.read('byte') === 1,
+          uri: buf.read('byte') === 1 ? buf.read('utf') : null,
+          artworkUrl: buf.read('byte') === 1 ? buf.read('utf') : null,
+          isrc: buf.read('byte') === 1 ? buf.read('utf') : null,
           sourceName: buf.read('utf'),
           position: Number(buf.read('long'))
         }
@@ -400,14 +400,14 @@ export async function checkForUpdates() {
   if (config.options.autoUpdate[0]) selected = data.find((e) => !e.prerelease)[0]
   else selected = data
 
-  if (selected.name != version) {
+  if (selected.name !== version) {
     const newVersion = selected.name.match(/v(\d+)\.(\d+)\.(\d+)-?(\w+)?/)
 
     if (
       (newVersion[1] < config.version.major) ||
-      (newVersion[1] == config.version.major && newVersion[2] < config.version.minor) ||
-      (newVersion[1] == config.version.major && newVersion[2] == config.version.minor && newVersion[3] < config.version.patch) ||
-      (newVersion[1] == config.version.major && newVersion[2] == config.version.minor && newVersion[3] == config.version.patch && newVersion[4] == config.version.preRelease)
+      (newVersion[1] === config.version.major && newVersion[2] < config.version.minor) ||
+      (newVersion[1] === config.version.major && newVersion[2] === config.version.minor && newVersion[3] < config.version.patch) ||
+      (newVersion[1] === config.version.major && newVersion[2] === config.version.minor && newVersion[3] === config.version.patch && newVersion[4] === config.version.preRelease)
     ) {
       console.log(`[\u001b[32mupdater\u001b[37m] NodeLink is newer than latest! (${version} > ${selected.name})`)
 
@@ -426,31 +426,31 @@ export async function checkForUpdates() {
     if (config.options.autoUpdate[1]) {
       console.log(`[\u001b[32mupdater\u001b[37m] Updating NodeLink, downloading ${config.options.autoUpdate[3]}...`)
 
-      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] == 'zip' || config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamOnly: true })
+      const res = await makeRequest(`https://codeload.github.com/PerformanC/NodeLink/legacy.${config.options.autoUpdate[3] === 'zip' || config.options.autoUpdate[3] === '7zip' ? 'zip' : 'tar.gz'}/refs/tags/${selected.name}`, { method: 'GET', streamOnly: true })
       const filename = 'PerformanC-NodeLink-' + res.headers['content-disposition'].match(/-0-g(\w+).(tar.gz|7zip|zip)/)[1]
 
-      const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[3] == '7zip' ? 'zip' : 'tar.gz' }`)
+      const file = fs.createWriteStream(`PerformanC-Nodelink.${config.options.autoUpdate[3] === '7zip' ? 'zip' : 'tar.gz' }`)
       res.stream.pipe(file)
 
       file.on('finish', () => {
         file.close()
 
         const args = []
-        if (config.options.autoUpdate[3] == 'zip') args.push('PerformanC-Nodelink.zip')
-        else if (config.options.autoUpdate[3] == '7zip') args.push('x', 'PerformanC-Nodelink.zip')
+        if (config.options.autoUpdate[3] === 'zip') args.push('PerformanC-Nodelink.zip')
+        else if (config.options.autoUpdate[3] === '7zip') args.push('x', 'PerformanC-Nodelink.zip')
         else args.push('-xvf', 'PerformanC-Nodelink.tar.gz')
 
-        cp.spawn(config.options.autoUpdate[3] == 'zip' ? 'unzip' : config.options.autoUpdate[3] == '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
+        cp.spawn(config.options.autoUpdate[3] === 'zip' ? 'unzip' : config.options.autoUpdate[3] === '7zip' ? '7z' : 'tar', args, { shell: true }).on('close', () => {
           fs.readdir('.', (err, files) => {
             if (err) throw new Error(`[\u001b[31mupdater\u001b[37m] Failed to read ${filename} directory: ${err}`)
 
             for (const folder of files) {
-              if (folder != filename && folder != 'node_modules' && (folder == '.github' || !folder.startsWith('.')))
+              if (folder !== filename && folder !== 'node_modules' && (folder === '.github' || !folder.startsWith('.')))
                 fs.rmSync(folder, { recursive: true, force: true })
             }
 
-            const moveFiles = cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${filename}/*"`, `"."`, '-f' ] : [ `${filename}/*`, `.`, '-f' ], { shell: true })
-            cp.spawn(process.platform == 'win32' ? 'move' : 'mv', process.platform == 'win32' ? [ `"${filename}/.github"`, `"."`, '-f' ] : [ `${filename}/.github`, `.`, '-f' ], { shell: true })
+            const moveFiles = cp.spawn(process.platform === 'win32' ? 'move' : 'mv', process.platform === 'win32' ? [ `"${filename}/*"`, `"."`, '-f' ] : [ `${filename}/*`, `.`, '-f' ], { shell: true })
+            cp.spawn(process.platform === 'win32' ? 'move' : 'mv', process.platform === 'win32' ? [ `"${filename}/.github"`, `"."`, '-f' ] : [ `${filename}/.github`, `.`, '-f' ], { shell: true })
 
             moveFiles.on('close', () => {
               fs.rm(filename, { recursive: true, force: true }, () => {})
@@ -603,7 +603,7 @@ export function debugLog(name, type, options) {
         case 'disconnect': {
           if (!config.debug.websocket.disconnect) return;
 
-          console.log(`[\u001b[33mwebsocket\u001b[37m]: A connection was closed with a client.\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason == '' ? 'No reason provided' : options.reason}\u001b[37m`)
+          console.log(`[\u001b[33mwebsocket\u001b[37m]: A connection was closed with a client.\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason === '' ? 'No reason provided' : options.reason}\u001b[37m`)
         
           break
         }
@@ -645,29 +645,29 @@ export function debugLog(name, type, options) {
     case 4: {
       switch (name) {
         case 'loadtracks': {
-          if (options.type == 1 && config.debug.sources.loadtrack.request)
+          if (options.type === 1 && config.debug.sources.loadtrack.request)
             console.log(`[\u001b[32mloadTracks\u001b[37m]: Loading \u001b[94m${options.loadType}\u001b[37m from ${options.sourceName}: ${options.query}`)
 
-          if (options.type == 2 && config.debug.sources.loadtrack.results) {
-            if (options.loadType != 'search' && options.loadType != 'track')
+          if (options.type === 2 && config.debug.sources.loadtrack.results) {
+            if (options.loadType !== 'search' && options.loadType !== 'track')
               console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.playlistName}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m.`)
             else
               console.log(`[\u001b[32mloadTracks\u001b[37m]: Loaded \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: ${options.query}`)
           }
 
-          if (options.type == 3 && config.debug.sources.loadtrack.exception)
+          if (options.type === 3 && config.debug.sources.loadtrack.exception)
             console.warn(`[\u001b[31mloadTracks\u001b[37m]: Exception loading \u001b[94m${options.loadType}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
         case 'search': {
-          if (options.type == 1 && config.debug.sources.search.request)
+          if (options.type === 1 && config.debug.sources.search.request)
             console.log(`[\u001b[32msearch\u001b[37m]: Searching for \u001b[94m${options.query}\u001b[37m on \u001b[94m${options.sourceName}\u001b[37m`)
           
-          if (options.type == 2 && config.debug.sources.search.results)
+          if (options.type === 2 && config.debug.sources.search.results)
             console.log(`[\u001b[32msearch\u001b[37m]: Found \u001b[94m${options.tracksLen}\u001b[37m tracks on \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
-          if (options.type == 3 && config.debug.sources.search.exception)
+          if (options.type === 3 && config.debug.sources.search.exception)
             console.warn(`[\u001b[31msearch\u001b[37m]: Exception from ${options.sourceName} for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
@@ -675,22 +675,22 @@ export function debugLog(name, type, options) {
         case 'retrieveStream': {
           if (!config.debug.sources.retrieveStream) return;
 
-          if (options.type == 1)
+          if (options.type === 1)
             console.log(`[\u001b[32mretrieveStream\u001b[37m]: Retrieved from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
-          if (options.type == 2)
+          if (options.type === 2)
             console.warn(`[\u001b[31mretrieveStream\u001b[37m]: Exception from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
         case 'loadcaptions': {
-          if (options.type == 1 && config.debug.sources.loadcaptions.request)
+          if (options.type === 1 && config.debug.sources.loadcaptions.request)
             console.log(`[\u001b[32mloadCaptions\u001b[37m]: Loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m`)
 
-          if (options.type == 2 && config.debug.sources.loadcaptions.results)
+          if (options.type === 2 && config.debug.sources.loadcaptions.results)
             console.log(`[\u001b[32mloadCaptions\u001b[37m]: Loaded captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m`)
 
-          if (options.type == 3 && config.debug.sources.loadcaptions.exception)
+          if (options.type === 3 && config.debug.sources.loadcaptions.exception)
             console.warn(`[\u001b[31mloadCaptions\u001b[37m]: Exception loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
@@ -702,40 +702,40 @@ export function debugLog(name, type, options) {
     case 5: {
       switch (name) {
         case 'innertube': {
-          if (options.type == 1 && config.debug.innertube.success)
+          if (options.type === 1 && config.debug.innertube.success)
             console.log(`[\u001b[32minnertube\u001b[37m]: ${options.message}`)
 
-          if (options.type == 2 && config.debug.innertube.error)
+          if (options.type === 2 && config.debug.innertube.error)
             console.warn(`[\u001b[31minnertube\u001b[37m]: ${options.message}`)
 
           break
         }
 
         case 'pandora': {
-          if (options.type == 1 && config.debug.pandora.success)
+          if (options.type === 1 && config.debug.pandora.success)
             console.log(`[\u001b[32mpandora\u001b[37m]: ${options.message}`)
 
-          if (options.type == 2 && config.debug.pandora.error)
+          if (options.type === 2 && config.debug.pandora.error)
             console.warn(`[\u001b[31mpandora\u001b[37m]: ${options.message}`)
 
           break
         }
 
         case 'deezer': {
-          if (options.type == 1 && config.debug.deezer.success)
+          if (options.type === 1 && config.debug.deezer.success)
             console.log(`[\u001b[32mdeezer\u001b[37m]: ${options.message}`)
 
-          if (options.type == 2 && config.debug.deezer.error)
+          if (options.type === 2 && config.debug.deezer.error)
             console.warn(`[\u001b[31mdeezer\u001b[37m]: ${options.message}`)
 
           break
         }
 
         case 'spotify': {
-          if (options.type == 1 && config.debug.spotify.success)
+          if (options.type === 1 && config.debug.spotify.success)
             console.log(`[\u001b[32mspotify\u001b[37m]: ${options.message}`)
 
-          if (options.type == 2 && config.debug.spotify.error)
+          if (options.type === 2 && config.debug.spotify.error)
             console.warn(`[\u001b[31mspotify\u001b[37m]: ${options.message}`)
 
           break
@@ -746,8 +746,8 @@ export function debugLog(name, type, options) {
 }
 
 export function verifyMethod(parsedUrl, req, res, expected) {
-  if (req.method != expected) {
-    send(req, res, {
+  if (req.method !== expected) {
+    sendResponse(req, res, {
       timestamp: Date.now(),
       status: 405,
       error: 'Method Not Allowed',
@@ -777,7 +777,7 @@ export function sendResponse(req, res, data, status) {
 }
 
 export function sendResponseNonNull(req, res, data) {
-  if (data == null) return;
+  if (data === null) return;
 
   sendResponse(req, res, data, 200)
 
@@ -787,7 +787,7 @@ export function sendResponseNonNull(req, res, data) {
 Array.prototype.nForEach = async function(callback) {
   let i = 0
   async function next() {
-    if (i == this.length) return;
+    if (i === this.length) return;
 
     const res = await callback(this[i], i++, next.bind(this))
 
@@ -805,7 +805,7 @@ export function waitForEvent(emitter, eventName, func, timeoutMs) {
     }, timeoutMs) : null
 
     const listener = (param, param2) => {
-      if (func(param, param2) == true) {
+      if (func(param, param2) === true) {
         emitter.removeListener(eventName, listener)
         timeoutMs ? clearTimeout(timeout) : null
         resolve()
