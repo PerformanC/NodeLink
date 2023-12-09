@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import { URL } from 'node:url'
 
 import config from '../config.js'
+import constants from '../constants.js'
 
 export function randomLetters(size) {
   let result = ''
@@ -25,7 +26,7 @@ export function http1makeRequest(url, options) {
   return new Promise(async (resolve, reject) => {
     let compression, data = ''
 
-    const req = (url.startsWith('https') ? https : http).request(url, {
+    let req = (url.startsWith('https') ? https : http).request(url, {
       method: options.method,
       headers: {
         'Accept-Encoding': 'br, gzip, deflate',
@@ -74,6 +75,11 @@ export function http1makeRequest(url, options) {
       res.on('error', () => reject())
       res.on('end', () => {
         if (isJson == null) isJson = (data.startsWith('{') && data.endsWith('}')) || (data.startsWith('[') && data.endsWith(']'))
+
+        res.destroy()
+        req.destroy()
+        res = null
+        req = null
 
         resolve({
           statusCode,
@@ -813,4 +819,8 @@ export function waitForEvent(emitter, eventName, func, timeoutMs) {
     }
     emitter.on(eventName, listener)
   })
+}
+
+export function clamp16Bit(sample) {
+  return Math.max(constants.pcm.minimumRate, Math.min(sample, constants.pcm.maximumRate))
 }

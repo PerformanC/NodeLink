@@ -1,6 +1,5 @@
-import { pipeline } from 'node:stream'
-
 import config from '../../config.js'
+import constants from '../../constants.js'
 
 import prism from 'prism-media'
 
@@ -8,10 +7,11 @@ class NodeLinkStream {
   constructor(stream, pipes) {
     pipes.unshift(stream)
 
-    this.stream = pipeline(pipes, () => {})
-    this.listeners = []
-  
-    pipes.forEach((pipe) => {
+    for (let i = 0; i < pipes.length - 1; i++) {
+      const pipe = pipes[i]
+
+      pipe.pipe(pipes[i + 1])
+
       if (pipe instanceof prism.FFmpeg) {
         this.ffmpeg = pipe
       }
@@ -21,22 +21,32 @@ class NodeLinkStream {
       if (pipe instanceof prism.opus.Encoder) {
         this.encoder = pipe
       }
+    }
+
+    this.stream = pipes[pipes.length - 1]
+
+    this.listeners = []
+    this.pipes = pipes
+
+    this.stream.on('close', () => this._end())
+  }
+
+  _end() {
+    this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
+    this.listeners = []
+  
+    this.pipes.forEach((_, i) => {
+      if (this.pipes[i].destroy) this.pipes[i].destroy()
+      delete this.pipes[i]
     })
 
-    this.stream.once('readable', () => this.started = true)
-    this.stream.on('end', () => {
-      this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
-      this.listeners = []
-    
-      if (this.ffmpeg) this.ffmpeg.destroy()
-      if (this.volume) this.volume.destroy()
-      if (this.encoder) this.encoder.destroy()
-
+    if (this.stream) { 
+      this.stream.destroy()
       this.stream = null
-      this.ffmpeg = null
-      this.volume = null
-      this.encoder = null
-    })
+    }
+    this.ffmpeg = null
+    this.volume = null
+    this.encoder = null
   }
 
   on(event, listener) {
@@ -49,8 +59,6 @@ class NodeLinkStream {
     this.listeners.push({ event, listener })
 
     this.stream.once(event, listener)
-
-    if (event == 'readable' && this.started) listener()
   }
 
   emit(event, ...args) {
@@ -66,14 +74,7 @@ class NodeLinkStream {
   }
 
   destroy() {
-    this.stream?.destroy()
-
-    this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
-    this.listeners = []
-
-    if (this.ffmpeg) this.ffmpeg.destroy()
-    if (this.volume) this.volume.destroy()
-    if (this.encoder) this.encoder.destroy()
+    this._end()
   }
 
   setVolume(volume) {
@@ -101,7 +102,11 @@ function createAudioResource(stream) {
   return new NodeLinkStream(stream, [
     ffmpeg, 
     new prism.VolumeTransformer({ type: 's16le' }),
-    new prism.opus.Encoder({ rate: 48000, channels: 2, frameSize: 960 })
+    new prism.opus.Encoder({
+      rate: constants.opus.samplingRate,
+      channels: constants.opus.channels,
+      frameSize: constants.opus.frameSize
+    })
   ])
 }
 
