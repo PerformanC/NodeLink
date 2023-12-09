@@ -177,8 +177,8 @@ class VoiceConnection {
   updateVoice(buffer) {
     this.config.voice = buffer
 
-    discordVoice.voiceStateUpdate({ guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId })
-    discordVoice.voiceServerUpdate({ user_id: this.client.userId, token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
+    this.connection.voiceStateUpdate({ guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId })
+    this.connection.voiceServerUpdate({ user_id: this.client.userId, token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
   }
 
   destroy() {
@@ -267,7 +267,6 @@ class VoiceConnection {
 
       this.config.filters = filter.configure(this.config.filters)
 
-      filterEnabled = true
       resource = await filter.getResource(this.config.guildId, decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg, urlInfo.additionalData)  
 
       if (oldTrack) this._stopTrack()
@@ -315,13 +314,7 @@ class VoiceConnection {
     if (!this.connection.ws) this.connection.connect(() => {
       this.connection.play(resource.stream)
     })
-    else {
-      const oldStream = this.connection.audioStream
-
-      this.connection.play(resource.stream)
-
-      if (oldStream) oldStream.destroy()
-    }
+    else this.connection.play(resource.stream)
 
     if (this.cache.volume != 100) {
       this.connection.audioStream.setVolume(this.cache.volume)
@@ -457,13 +450,7 @@ class VoiceConnection {
     if (!this.connection?.ws) this.connection.connect(() => {
       this.connection.play(resource.stream)
     })
-    else {
-      const oldStream = this.connection.audioStream
-
-      this.connection.play(resource.stream)
-
-      if (oldStream) oldStream.destroy()
-    }
+    else this.connection.play(resource.stream)
 
     return this.config
   }
