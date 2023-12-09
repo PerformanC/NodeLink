@@ -680,6 +680,8 @@ async function requestHandler(req, res) {
 
           if (!player) player = new VoiceConnection(guildId, client)
 
+          if (!player.connection) player.setup()
+
           if (player.cache.track) {
             const decodedTrack = decodeTrack(player.cache.track)
 
