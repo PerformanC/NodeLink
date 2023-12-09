@@ -7,7 +7,9 @@ async function loadFrom(path) {
     debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'local', query: path })
 
     fs.open(path, (err) => {
-      if (err)
+      if (err) {
+        debugLog('loadtracks', 4, { type: 2, loadType: 'error', sourceName: 'local', query: path, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
+
         return resolve({
           loadType: 'error',
           exception: {
@@ -16,6 +18,7 @@ async function loadFrom(path) {
             cause: 'No permission to access file or doesn\'t exist'
           }
         })
+      }
     
       const track = {
         identifier: 'unknown',

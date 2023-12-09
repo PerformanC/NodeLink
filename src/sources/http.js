@@ -8,6 +8,8 @@ async function loadFrom(uri) {
     const data = await makeRequest(uri, { method: 'HEAD' })
 
     if (!data.headers['content-type'].startsWith('audio/')) {
+      debugLog('loadtracks', 4, { type: 2, loadType: 'error', sourceName: type, query: uri, message: 'Url is not a playable stream.' })
+
       return {
         loadType: 'error',
         data: {
