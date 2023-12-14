@@ -1,19 +1,21 @@
-Custom PerformanC License
+PerformanC's Custom License
 
 Copyright (c) 2023 PerformanC <performancorg@gmail.com>
 
 This Software may be shared, altered, and used without charge; 
 it may also be sold (though not as a stand-alone product); 
-and it can even be used for commercial purposes. 
-However, the software code neither can be used to train a neural network,
-nor any part of the code can be copied in any way without the permission
-of the PerformanC Organization team members. The PerformanC Organization
-provides this software freely, not meant to be used as a way to bypass
+and it can even be used for commercial purposes.
+However, its source code cannot be used to train a neural
+network, nor can it (The Software) be copied in any way without the
+permission of the PerformanC Organization. The PerformanC Organization
+provides this Software freely, not meant to be used as a way to bypass
 paywalls or to download music illegally, and are not responsible for
-any illegal use of this software.
+any illegal use of this Software.
 
-The license must be included at the source code of the PerformanC software
-outside the official PerformanC repository.
+In case of external usage or copy, the license also must be
+included at the source code of the PerformanC software
+outside the official PerformanC repository, followed by
+the URL of the PerformanC GitHub repository.
 
 The Software is given "as is" and without any warranties, 
 and its developers disclaim all liability for any harm it (The Software) may cause.
