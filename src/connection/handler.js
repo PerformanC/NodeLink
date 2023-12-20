@@ -93,7 +93,7 @@ function setupConnection(ws, req) {
 
       ws.send(JSON.stringify({
         op: 'ready',
-        resume: true,
+        resumed: true,
         sessionId: req.headers['session-id'],
       }))
     }
@@ -109,7 +109,7 @@ function setupConnection(ws, req) {
 
     ws.send(JSON.stringify({
       op: 'ready',
-      resume: false,
+      resumed: false,
       sessionId,
     }))
   }
