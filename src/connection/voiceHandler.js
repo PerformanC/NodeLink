@@ -316,10 +316,10 @@ class VoiceConnection {
     })
     else this.connection.play(resource.stream)
 
-    if (this.cache.volume != 100) {
-      this.connection.audioStream.setVolume(this.cache.volume)
-      this.config.volume = 100
-    }
+    if (this.connection.audioStream && this.cache.volume != 100) {
+      this.connection.audioStream.setVolume(this.cache.volume);
+      this.config.volume = 100;
+    }    
 
     if (this.config.paused) {
       this.cache.pauseTime[1] = Date.now()
