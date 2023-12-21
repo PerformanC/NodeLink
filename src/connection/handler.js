@@ -150,6 +150,9 @@ async function requestHandler(req, res) {
         commitTime: -1
       },
       nodejs: process.version,
+      isNodeLink: true,
+      jvm: '0.0.0',
+      lavaplayer: '0.0.0',
       sourceManagers: Object.keys(config.search.sources).filter((source) => {
         if (typeof config.search.sources[source] == 'boolean') return source
         return source.enabled
