@@ -240,7 +240,8 @@ class VoiceConnection {
         guildId: this.config.guildId,
         track: {
           encoded: track,
-          info: decodedTrack
+          info: decodedTrack,
+          userData: this.config.track.userData
         },
         reason: 'loadFailed'
       }))
@@ -290,7 +291,8 @@ class VoiceConnection {
         guildId: this.config.guildId,
         track: {
           encoded: track,
-          info: decodedTrack
+          info: decodedTrack,
+          userData: this.config.track.userData
         },
         exception: resource.exception
       }))
@@ -301,7 +303,8 @@ class VoiceConnection {
         guildId: this.config.guildId,
         track: {
           encoded: track,
-          info: decodedTrack
+          info: decodedTrack,
+          userData: this.config.track.userData
         },
         reason: 'loadFailed'
       }))
