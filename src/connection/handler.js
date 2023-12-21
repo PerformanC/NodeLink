@@ -712,19 +712,19 @@ async function requestHandler(req, res) {
           debugLog('voice', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
         }
 
-        if (buffer.encodedTrack !== undefined || buffer.encodedTrack === null) {
+        if (buffer.track?.encoded !== undefined || buffer.track?.encoded === null) {
           const noReplace = parsedUrl.searchParams.get('noReplace')
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          if (buffer.encodedTrack == null) player.config.track ? player.stop() : null
+          if (buffer.track.encoded == null) player.config.track ? player.stop() : null
           else {
             if (!player.connection) player.setup()
 
-            const decodedTrack = decodeTrack(buffer.encodedTrack)
+            const decodedTrack = decodeTrack(buffer.track.encoded)
 
             if (!decodedTrack) {
-              debugLog('play', 3, { track: buffer.encodedTrack, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
+              debugLog('play', 3, { track: buffer.track.encoded, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
         
               return sendResponse(req, res, {
                 timestamp: new Date(),
@@ -736,18 +736,29 @@ async function requestHandler(req, res) {
             }
 
             if (!player.config.voice.endpoint) {
-              player.cache.track = buffer.encodedTrack
+              player.cache.track = buffer.track.encoded
             } else {
               if (player.connection.state.status != 'connecting' || player.connection.state.status != 'ready') player.updateVoice(player.config.voice)
   
-              player.play(buffer.encodeTrack, decodedTrack, noReplace == true)
+              player.play(buffer.track.encoded, decodedTrack, noReplace == true)
             }
           }
 
           client.players.set(guildId, player)
 
-          if (buffer.encodedTrack == null) debugLog('stop', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
+          if (buffer.track.encoded == null) debugLog('stop', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
           else debugLog('play', 1, { params: parsedUrl.search, headers: req.headers, body: buffer })
+        }
+
+        if (buffer.track?.userData !== undefined) {
+          if (!player) player = new VoiceConnection(guildId, client)
+
+          player.config.track = {
+            ...(player.config.track ? player.config.track : {}),
+            userData: buffer.userData
+          }
+
+          debugLog('userData', 1, { params: parsedUrl.search, params: parsedUrl.search, body: buffer })
         }
 
         if (buffer.volume != undefined) {
