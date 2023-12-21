@@ -784,7 +784,7 @@ async function requestHandler(req, res) {
 
           if (!player) player = new VoiceConnection(guildId, client)
 
-          player.pause(buffer.paused)
+          if (player.connection.ws) player.pause(buffer.paused)
 
           client.players.set(guildId, player)
 
