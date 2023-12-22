@@ -314,9 +314,10 @@ class VoiceConnection {
 
     this.config.track = { encoded: track, info: decodedTrack }
    
-    if (this.cache.volume != 100) {
+    if (this.cache.volume !== 100) {
       resource.stream.setVolume(this.cache.volume)
-      this.config.volume = 100
+     
+      this.config.volume = this.cache.volume
     }
   
     if (!this.connection.ws) this.connection.connect(() => {
