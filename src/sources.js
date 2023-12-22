@@ -22,14 +22,14 @@ async function getTrackURL(track) {
         break
       }
       case 'local': {
-        resolve({ url: track.uri, protocol: 'file' })
+        resolve({ url: track.uri, protocol: 'file', format: 'arbitrary' })
 
         break
       }
 
       case 'http':
       case 'https': {
-        resolve({ url: track.uri, protocol: track.sourceName })
+        resolve({ url: track.uri, protocol: track.sourceName, format: 'arbitrary' })
         
         break
       }
