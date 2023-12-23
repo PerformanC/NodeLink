@@ -313,16 +313,17 @@ class VoiceConnection {
     }
 
     this.config.track = { encoded: track, info: decodedTrack }
+   
+    if (this.cache.volume != 100) {
+      resource.stream.setVolume(this.cache.volume)
+     
+      this.config.volume = this.cache.volume
+    }
   
     if (!this.connection.ws) this.connection.connect(() => {
       this.connection.play(resource.stream)
     })
     else this.connection.play(resource.stream)
-
-    if (this.cache.volume != 100) {
-      this.connection.audioStream.setVolume(this.cache.volume)
-      this.config.volume = 100
-    }
 
     if (this.config.paused) {
       this.cache.pauseTime[1] = Date.now()
