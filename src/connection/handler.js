@@ -512,10 +512,10 @@ async function requestHandler(req, res) {
     sendResponse(req, res, captions, 200)
   }
 
-  else if (/^\/v4\/sessions\/\{[a-zA-Z0-9_-]+\}$/.test(parsedUrl.pathname)) {
+  else if (/^\/v4\/sessions\/[A-Za-z0-9]+$/.test(parsedUrl.pathname)) {
     if (verifyMethod(parsedUrl, req, res, 'PATCH')) return;
 
-    const sessionId = /^\/v4\/sessions\/\{([a-zA-Z0-9_-]+)\}$/.exec(parsedUrl.pathname)[1]
+    const sessionId = /^\/v4\/sessions\/[A-Za-z0-9]+/.exec(parsedUrl.pathname)[1]
 
     let buffer = ''
 
