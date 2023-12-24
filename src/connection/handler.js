@@ -356,7 +356,7 @@ async function requestHandler(req, res) {
         lavalinkLoad: 0
       },
       frameStats: null
-    })
+    }, 200)
   }
 
   else if (parsedUrl.pathname == '/v4/loadtracks') {
