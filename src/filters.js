@@ -85,9 +85,7 @@ class ChannelProcessor {
   }
 
   process(samples) {
-    const bytes = constants.pcm.bytes
-
-    for (let i = 0; i < samples.length - bytes; i += bytes * 2) {
+    for (let i = 0; i < samples.length - constants.pcm.bytes; i += constants.pcm.bytes * 2) {
       const sample = samples.readInt16LE(i)
       let result = null
       
@@ -95,19 +93,23 @@ class ChannelProcessor {
         case constants.filtering.types.equalizer: {
           result = this.processEqualizer(sample)
 
-          if (this.current++ == 3) this.current = 0
-          if (this.minus1++ == 3) this.minus1 = 0
-          if (this.minus2++ == 3) this.minus2 = 0
+          if (++this.current == 3) this.current = 0
+          if (++this.minus1 == 3) this.minus1 = 0
+          if (++this.minus2 == 3) this.minus2 = 0
+
+          samples.writeInt16LE(clamp16Bit(result), i)
+          samples.writeInt16LE(clamp16Bit(result), i + 2)
 
           break
         }
         case constants.filtering.types.tremolo: {
           result = this.processTremolo(sample)
 
+          this.writeFiltering(samples, result, i)
+
           break
         }
         case constants.filtering.types.rotationHz: {
-          const rightSample = samples.readInt16LE(i + 2)
           const { left, right } = this.processRotationHz(sample, rightSample)
 
           samples.writeInt16LE(clamp16Bit(left), i)
@@ -116,9 +118,6 @@ class ChannelProcessor {
           break
         }
       }
-
-      if (this.type != constants.filtering.types.rotationHz)
-        samples.writeInt16LE(clamp16Bit(result), i)
     }
 
     return samples
@@ -333,7 +332,7 @@ class Filters {
           })
         )
 
-        resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines) })
+        resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines, this.result.volume) })
       })
     })
   }
