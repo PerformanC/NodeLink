@@ -751,22 +751,6 @@ export function debugLog(name, type, options) {
   }
 }
 
-export function verifyMethod(parsedUrl, req, res, expected) {
-  if (req.method != expected) {
-    send(req, res, {
-      timestamp: Date.now(),
-      status: 405,
-      error: 'Method Not Allowed',
-      message: `Request method must be ${expected}`,
-      path: parsedUrl.pathname
-    }, 405)
-
-    return 1
-  }
-
-  return 0
-}
-
 export function sendResponse(req, res, data, status) {
   if (req.headers && req.headers['accept-encoding'] && req.headers['accept-encoding'].includes('br')) {
     res.setHeader('Content-Encoding', 'br')
@@ -788,6 +772,22 @@ export function sendResponseNonNull(req, res, data) {
   sendResponse(req, res, data, 200)
 
   return true
+}
+
+export function verifyMethod(parsedUrl, req, res, expected) {
+  if (req.method != expected) {
+    sendResponse(req, res, {
+      timestamp: Date.now(),
+      status: 405,
+      error: 'Method Not Allowed',
+      message: `Request method must be ${expected}`,
+      path: parsedUrl.pathname
+    }, 405)
+
+    return 1
+  }
+
+  return 0
 }
 
 Array.prototype.nForEach = async function(callback) {
