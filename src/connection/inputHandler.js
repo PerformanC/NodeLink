@@ -29,6 +29,8 @@ function setupConnection(ws, req) {
     ws,
     guildId
   }
+
+  console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Opened connection with \u001b[31m${userId}\u001b[37m and \u001b[31m${guildId}\u001b[37m`)
 }
 
 function handleStartSpeaking(ssrc, userId, guildId) {
@@ -62,10 +64,10 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
     oggStream.destroy()
     opusStream.destroy()
-    buffer = null
+    buffer = []
   })
 
-  opusStream.on('end', () => {    
+  opusStream.on('end', () => {   
     oggStream.destroy()
 
     let i = 0
@@ -74,6 +76,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       if (Connections[botId].guildId != guildId) return;
 
       Connections[botId].ws.send(JSON.stringify({
+        op: 'speak',
         type: 'endSpeakingEvent',
         data: {
           userId,
@@ -85,7 +88,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       i++
     })
 
-    buffer = null
+    buffer = []
 
     console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Finished speaking. Sent data to \u001b[31m${i}\u001b[37m clients.`)
   })
@@ -96,6 +99,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
     if (Connections[botId].guildId != guildId) return;
 
     Connections[botId].ws.send(JSON.stringify({
+      op: 'speak',
       type: 'startSpeakingEvent',
       data: {
         userId,
