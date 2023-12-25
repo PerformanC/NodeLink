@@ -105,7 +105,8 @@ class ChannelProcessor {
         case constants.filtering.types.tremolo: {
           result = this.processTremolo(sample)
 
-          this.writeFiltering(samples, result, i)
+          samples.writeInt16LE(clamp16Bit(result), i)
+          samples.writeInt16LE(clamp16Bit(result), i + 2)
 
           break
         }
@@ -193,7 +194,7 @@ class Filters {
 
     if (filters.tremolo && filters.tremolo.frequency && filters.tremolo.depth && config.filters.list.tremolo) {
       result.tremolo = {
-        frequency: Math.min(filters.tremolo.frequency, 0.0),
+        frequency: Math.min(Math.max(filters.tremolo.frequency, 0.0), 14.0),
         depth: Math.min(Math.max(filters.tremolo.depth, 0.0), 1.0)
       }
     }
