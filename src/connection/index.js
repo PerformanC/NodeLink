@@ -78,7 +78,6 @@ v4.on('/v4/websocket', (ws, req) => {
     return ws.close(4001, 'Invalid password')
   }
 
-  connectionHandler.startSourceAPIs()
   connectionHandler.setupConnection(ws, req)
 })
 

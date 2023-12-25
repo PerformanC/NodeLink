@@ -37,7 +37,7 @@ function startStats() {
   }, config.options.statsInterval)
 }
 
-function setupConnection(ws, req) {
+async function setupConnection(ws, req) {
   debugLog('connect', 3, { headers: req.headers })
 
   let sessionId = null
@@ -74,30 +74,7 @@ function setupConnection(ws, req) {
   ws.on('error', (err) => disconnect(1006, `Error: ${err.message}`))
   ws.on('close', (code, reason) => disconnect(code, reason))
 
-  if (req.headers['session-id']) {
-    sessionId = req.headers['session-id']
-
-    const resumedClient = clients.get(sessionId)
-
-    if (!resumedClient) {
-      debugLog('failedResume', 3, { headers: req.headers })
-    } else {
-      debugLog('resume', 3, { headers: req.headers })
-
-      clearTimeout(resumedClient.timeout)
-      delete resumedClient.timeout
-      clients.set(sessionId, resumedClient)
-
-      sessionId = req.headers['session-id']
-      client = resumedClient
-
-      ws.send(JSON.stringify({
-        op: 'ready',
-        resumed: true,
-        sessionId: req.headers['session-id'],
-      }))
-    }
-  } else {
+  function initializeClient() {
     sessionId = randomLetters(16)
     client = {
       userId: req.headers['user-id'],
@@ -112,6 +89,37 @@ function setupConnection(ws, req) {
       resumed: false,
       sessionId,
     }))
+  }
+
+  await startSourceAPIs()
+
+  if (req.headers['session-id']) {
+    sessionId = req.headers['session-id']
+
+    const resumedClient = clients.get(sessionId)
+
+    if (!resumedClient) {
+      debugLog('failedResume', 3, { headers: req.headers })
+
+      initializeClient()
+    } else {
+      debugLog('resume', 3, { headers: req.headers })
+
+      clearTimeout(resumedClient.timeout)
+      delete resumedClient.timeout
+      clients.set(sessionId, resumedClient)
+
+      sessionId = req.headers['session-id']
+      client = resumedClient
+    }
+
+    ws.send(JSON.stringify({
+      op: 'ready',
+      resumed: !!resumedClient,
+      sessionId: !!resumedClient ? sessionId : randomLetters(16)
+    }))
+  } else {
+    initializeClient()
   }
 }
 
@@ -885,20 +893,36 @@ async function requestHandler(req, res) {
 function startSourceAPIs() {
   if (clients.size != 0) return;
 
-  if (config.search.sources.youtube || config.search.sources.youtubeMusic)
-    sources.youtube.init()
+  return new Promise((resolve) => {
+    const sourcesToInitialize = []
 
-  if (config.search.sources.spotify.enabled)
-    sources.spotify.init()
+    if (config.search.sources.youtube || config.search.sources.youtubeMusic)
+      sourcesToInitialize.push(sources.youtube)
 
-  if (config.search.sources.pandora)
-    sources.pandora.init()
+    if (config.search.sources.spotify.enabled)
+      sourcesToInitialize.push(sources.spotify)
 
-  if (config.search.sources.deezer.enabled)
-    sources.deezer.init()
+    if (config.search.sources.pandora)
+      sourcesToInitialize.push(sources.pandora)
 
-  if (config.options.statsInterval)
-    startStats()
+    if (config.search.sources.deezer.enabled)
+      sourcesToInitialize.push(sources.deezer)
+
+    if (config.options.statsInterval)
+      startStats()
+
+    let initializedAmount = 0
+
+    for (let i = 0;i < sourcesToInitialize.length;i++) {
+      const source = sourcesToInitialize[i]
+
+      source.init().then(() => {
+        initializedAmount++
+
+        if (initializedAmount == sourcesToInitialize.length) resolve()
+      })
+    }
+  })
 }
 
 export default {

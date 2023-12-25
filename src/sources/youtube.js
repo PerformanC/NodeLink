@@ -1,7 +1,7 @@
 import { URLSearchParams } from 'node:url'
 
 import config from '../../config.js'
-import { debugLog, makeRequest, encodeTrack, randomLetters, sleep } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, randomLetters } from '../utils.js'
 
 let playerInfo = {
   innertube: {
@@ -98,12 +98,6 @@ function checkURLType(url, type) {
 
 async function search(query, type, shouldLog) {
   return new Promise(async (resolve) => {
-    if (playerInfo.functions.length != 2) while (1) {
-      if (playerInfo.functions.length != 2) break
-
-      await sleep(200)
-    }
-
     if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
     const { body: search } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
@@ -167,12 +161,6 @@ async function search(query, type, shouldLog) {
 
 async function loadFrom(query, type) {
   return new Promise(async (resolve) => {
-    if (playerInfo.functions.length != 2) while (1) {
-      if (playerInfo.functions.length != 2) break
-
-      await sleep(200)
-    }
-
     switch (checkURLType(query, type)) {
       case 2: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
@@ -360,12 +348,6 @@ async function loadFrom(query, type) {
 
 async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
-    if (playerInfo.functions.length != 2) while (1) {
-      if (playerInfo.functions.length != 2) break
-
-      await sleep(200)
-    }
-
     const { body: videos } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,
@@ -420,12 +402,6 @@ async function retrieveStream(identifier, type, title) {
 
 async function loadCaptions(decodedTrack, language) {
   return new Promise(async (resolve) => {
-    if (playerInfo.functions.length != 2) while (1) {
-      if (playerInfo.functions.length != 2) break
-
-      await sleep(200)
-    }
-
     const { body: video } = await makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       body: {
         context: playerInfo.innertube,

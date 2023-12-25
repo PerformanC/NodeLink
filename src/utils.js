@@ -366,10 +366,6 @@ export function decodeTrack(track) {
   }
 }
 
-export async function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 export async function checkForUpdates() {
   const version = `v${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`
 
