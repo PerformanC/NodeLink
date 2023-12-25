@@ -187,7 +187,7 @@ class VoiceConnection {
     if (this.config.track) {
       this.cache.silence = true
 
-      this.connection.stop()
+      this.connection.destroy()
     }
     this.config.track = null
     this.config.filters = []
