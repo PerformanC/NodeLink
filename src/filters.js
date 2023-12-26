@@ -26,6 +26,7 @@ class ChannelProcessor {
         this.frequency = data.frequency
         this.depth = data.depth
         this.phase = 0
+        this.offset = 1 - this.depth / 2
 
         break
       }
@@ -58,14 +59,13 @@ class ChannelProcessor {
     return processedBand * 4
   }
 
-  processTremolo(sample) {
-    const lfo = Math.sin(constants.circunferece.diameter * this.frequency * this.phase / constants.opus.samplingRate)
-    const newAmplitude = sample * ((1 - this.depth) + this.depth * lfo)
+  getTremoloMultiplier() {
+    let env = this.frequency * this.phase / constants.opus.samplingRate
+    env = Math.sin(2 * Math.PI * ((env + 0.25) % 1.0))
 
-    if (this.phase >= constants.opus.samplingRate / this.frequency) this.phase = 0
-    else this.phase += 1
+    this.phase++
 
-    return newAmplitude
+    return env * (1 - Math.abs(this.offset)) + this.offset
   }
 
   processRotationHz(leftSample, rightSample) {
@@ -85,7 +85,10 @@ class ChannelProcessor {
   }
 
   process(samples) {
-    for (let i = 0; i < samples.length - constants.pcm.bytes; i += constants.pcm.bytes * 2) {
+    let bytes = constants.pcm.bytes
+    if ([ constants.filtering.types.rotationHz, constants.filtering.types.tremolo ].includes(this.type)) bytes *= 2
+
+    for (let i = 0; i < samples.length - constants.pcm.bytes; i += bytes) {
       const sample = samples.readInt16LE(i)
       let result = null
       
@@ -98,15 +101,16 @@ class ChannelProcessor {
           if (++this.minus2 == 3) this.minus2 = 0
 
           samples.writeInt16LE(clamp16Bit(result), i)
-          samples.writeInt16LE(clamp16Bit(result), i + 2)
 
           break
         }
         case constants.filtering.types.tremolo: {
-          result = this.processTremolo(sample)
+          const multiplier = this.getTremoloMultiplier()
 
-          samples.writeInt16LE(clamp16Bit(result), i)
-          samples.writeInt16LE(clamp16Bit(result), i + 2)
+          const rightSample = samples.readInt16LE(i + 2)
+
+          samples.writeInt16LE(clamp16Bit(sample * multiplier), i)
+          samples.writeInt16LE(clamp16Bit(rightSample * multiplier), i + 2)
 
           break
         }
@@ -310,8 +314,8 @@ class Filters {
         if (this.result.tremolo) {
           pipelines.push(
             new Filtering({
-              frequency: this.result.tremolo.frequency / 2,
-              depth: this.result.tremolo.depth / 2
+              frequency: this.result.tremolo.frequency,
+              depth: this.result.tremolo.depth
             },
             constants.filtering.types.tremolo)
           )
