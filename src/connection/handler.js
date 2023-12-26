@@ -678,6 +678,8 @@ async function requestHandler(req, res) {
     
         sendResponse(req, res, player.config, 200)
       } else if (req.method == 'PATCH') {
+        if (!player) player = new VoiceConnection(guildId, client)
+
         if (buffer.voice != undefined) {
           if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
             debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: `Invalid voice object.` })
@@ -690,8 +692,6 @@ async function requestHandler(req, res) {
               path: parsedUrl.pathname
             }, 400)
           }
-
-          if (!player) player = new VoiceConnection(guildId, client)
 
           if (!player.connection) player.setup()
 
@@ -724,8 +724,6 @@ async function requestHandler(req, res) {
 
         if (buffer.track?.encoded !== undefined || buffer.track?.encoded === null) {
           const noReplace = parsedUrl.searchParams.get('noReplace')
-
-          if (!player) player = new VoiceConnection(guildId, client)
 
           if (buffer.track.encoded == null) player.config.track ? player.stop() : null
           else {
@@ -761,8 +759,6 @@ async function requestHandler(req, res) {
         }
 
         if (buffer.track?.userData !== undefined) {
-          if (!player) player = new VoiceConnection(guildId, client)
-
           player.config.track = {
             ...(player.config.track ? player.config.track : {}),
             userData: buffer.userData
@@ -784,8 +780,6 @@ async function requestHandler(req, res) {
             }, 400)
           }
 
-          if (!player) player = new VoiceConnection(guildId, client)
-
           player.volume(buffer.volume)
 
           client.players.set(guildId, player)
@@ -805,8 +799,6 @@ async function requestHandler(req, res) {
               path: parsedUrl.pathname
             }, 400)
           }
-
-          if (!player) player = new VoiceConnection(guildId, client)
 
           if (player.connection.ws) player.pause(buffer.paused)
 
@@ -872,8 +864,6 @@ async function requestHandler(req, res) {
         }
 
         if (Object.keys(filters).length != 0) {
-          if (!player) player = new VoiceConnection(guildId, client)
-
           player.filters(filters)
 
           client.players.set(guildId, player)
