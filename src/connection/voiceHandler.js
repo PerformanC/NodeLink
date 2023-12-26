@@ -320,7 +320,7 @@ class VoiceConnection {
       this.config.volume = this.cache.volume
     }
   
-    if (!this.connection.ws) this.connection.connect(() => {
+    if (!this.connection.ws && this.connection.voiceServer) this.connection.connect(() => {
       this.connection.play(resource.stream)
     })
     else this.connection.play(resource.stream)
@@ -451,7 +451,7 @@ class VoiceConnection {
       return this.config
     }
 
-    if (!this.connection?.ws) this.connection.connect(() => {
+    if (!this.connection?.ws && this.connection.voiceServer) this.connection.connect(() => {
       this.connection.play(resource.stream)
     })
     else this.connection.play(resource.stream)
