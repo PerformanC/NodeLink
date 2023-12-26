@@ -46,11 +46,15 @@ export default {
       "disconnect": true,
       "resume": true,
       "failedResume": true,
-      "resumeTimeout": true
+      "resumeTimeout": true,
+      "error": true,
+      "connectCD": true,
+      "disconnectCD": true,
+      "sentDataCD": true
     },
     "request": {
       "enabled": true,
-      "errors": true,
+      "error": true,
       "showBody": true,
       "showHeaders": true,
       "showParams": true

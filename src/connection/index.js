@@ -4,7 +4,7 @@ import { parse } from 'node:url'
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
 import config from '../../config.js'
-import { checkForUpdates } from '../utils.js'
+import { checkForUpdates, debugLog } from '../utils.js'
 import { WebSocketServer } from '../ws.js'
 
 if (typeof config.server.port != 'number')
@@ -73,7 +73,7 @@ const v4 = new WebSocketServer()
 
 v4.on('/v4/websocket', (ws, req) => {
   if (req.headers.authorization != config.server.password) {
-    console.log('[\u001b[31mwebsocket\u001b[39m]: Invalid password. Closing connection...')
+    debugLog('disconnect', 3, { code: 4001, reason: 'Invalid password' })
 
     return ws.close(4001, 'Invalid password')
   }
@@ -83,7 +83,7 @@ v4.on('/v4/websocket', (ws, req) => {
 
 v4.on('/connection/data', (ws, req) => {
   if (req.headers.authorization != config.server.password) {
-    console.log('[\u001b[31mwebsocket\u001b[39m]: Invalid password. Closing connection...')
+    debugLog('disconnectCD', 3, { code: 4001, reason: 'Invalid password' })
 
     return ws.close(4001, 'Invalid password')
   }
@@ -102,11 +102,11 @@ server.on('upgrade', (req, socket, head) => {
 })
 
 v4.on('error', (err) => {
-  console.error(`[\u001b[31mwebsocket\u001b[37m]: Error: \u001b[31m${err}\u001b[37m`)
+  debugLog('error', 3, { error: err.message })
 })
 
 server.on('error', (err) => {
-  console.error(`[\u001b[31mhttp\u001b[37m]: Error: \u001b[31m${err}\u001b[37m`)
+  debugLog('http', 1, { error: err.message })
 })
 
 server.listen(config.server.port || 2333, () => {

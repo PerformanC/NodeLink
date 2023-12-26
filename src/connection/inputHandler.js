@@ -1,4 +1,6 @@
 import { OggLogicalBitstream, OpusHead } from '../prism-media.js'
+import { debugLog } from '../utils.js'
+
 import discordVoice from '@performanc/voice'
 
 const Connections = {}
@@ -8,19 +10,19 @@ function setupConnection(ws, req) {
   let guildId = req.headers['guild-id']
 
   if (!userId || !guildId) {
-    console.log('[\u001b[31mwebsocketCD\u001b[39m]: Invalid request. Closing connection...')
+    debugLog('disconnectCD', 3, { code: 4001, reason: 'Invalid request.', guildId: 'unknown' })
 
     return ws.close(4001, 'Invalid request')
   }
 
   ws.on('close', (code, reason) => {
-    console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Closed connection with code \u001b[31m${code}\u001b[37m and reason \u001b[31m${reason == '' ? 'none' : reason}\u001b[37m`)
+    debugLog('disconnectCD', 3, { code, reason, guildId })
 
     delete Connections[userId]
   })
 
   ws.on('error', (err) => {
-    console.error(`[\u001b[31mwebsocketCD\u001b[37m]: \u001b[31m${err}\u001b[37m`)
+    debugLog('disconnectCD', 3, { error: `Error: ${err.message}`, guildId })
 
     delete Connections[userId]
   })
@@ -30,7 +32,7 @@ function setupConnection(ws, req) {
     guildId
   }
 
-  console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Opened connection with \u001b[31m${userId}\u001b[37m and \u001b[31m${guildId}\u001b[37m`)
+  debugLog('connectCD', 3, { headers: req.headers, guildId })
 }
 
 function handleStartSpeaking(ssrc, userId, guildId) {
@@ -39,10 +41,10 @@ function handleStartSpeaking(ssrc, userId, guildId) {
   const oggStream = new OggLogicalBitstream({
     opusHead: new OpusHead({
       channelCount: 2,
-      sampleRate: 48000,
+      sampleRate: 48000
     }),
     pageSizeControl: {
-      maxPackets: 10,
+      maxPackets: 10
     }
   })
 
@@ -59,20 +61,20 @@ function handleStartSpeaking(ssrc, userId, guildId) {
     buffer.push(chunk)
   })
 
-  oggStream.on('error', (err) => {
-    console.error(`[\u001b[31mwebsocketCD\u001b[37m]: \u001b[31m${err}\u001b[37m`)
-
-    oggStream.destroy()
-    opusStream.destroy()
-    buffer = []
-  })
-
   opusStream.on('end', () => {   
     oggStream.destroy()
 
     let i = 0
 
-    Object.keys(Connections).forEach((botId) => {
+    const connectionsArray = Object.keys(Connections)
+
+    if (connectionsArray.length == 0) {
+      buffer = []
+
+      return;
+    }
+
+    connectionsArray.forEach((botId) => {
       if (Connections[botId].guildId != guildId) return;
 
       Connections[botId].ws.send(JSON.stringify({
@@ -90,7 +92,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
     buffer = []
 
-    console.log(`[\u001b[31mwebsocketCD\u001b[37m]: Finished speaking. Sent data to \u001b[31m${i}\u001b[37m clients.`)
+    debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
   })
 
   opusStream.pipe(oggStream)

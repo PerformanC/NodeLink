@@ -556,8 +556,13 @@ export function debugLog(name, type, options) {
     case 1: {
       if (!config.debug.request.enabled) return;
 
+      if (options.headers) {
+        options.headers.authorization = 'REDACTED'
+        options.headers.host = 'REDACTED'
+      }
+
       if (options.error)
-        console.warn(`[\u001b[32m${name}\u001b[37m]: Detected an error in a request: \u001b[31m${options.error}\u001b[37m${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
+        console.error(`[\u001b[32m${name}\u001b[37m]: Detected an error in a request: \u001b[31m${options.error}\u001b[37m${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
       else
         console.log(`[\u001b[32m${name}\u001b[37m]: Received a request from client.${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
 
@@ -579,7 +584,7 @@ export function debugLog(name, type, options) {
         }
         case 'trackException': {
           if (config.debug.track.exception)
-            console.warn(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
+            console.error(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
 
             break
         }
@@ -605,7 +610,7 @@ export function debugLog(name, type, options) {
         case 'disconnect': {
           if (!config.debug.websocket.disconnect) return;
 
-          console.log(`[\u001b[33mwebsocket\u001b[37m]: A connection was closed with a client.\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason == '' ? 'No reason provided' : options.reason}\u001b[37m`)
+          console.error(`[\u001b[33mwebsocket\u001b[37m]: A connection was closed with a client.\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason == '' ? 'No reason provided' : options.reason}\u001b[37m`)
         
           break
         }
@@ -616,15 +621,13 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'failedResume': {
           if (!config.debug.websocket.failedResume) return;
 
-          console.log(`[\u001b[31mfailedResume[\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}"\u001b[37m failed to resume.`)
+          console.error(`[\u001b[31mfailedResume[\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}"\u001b[37m failed to resume.`)
 
           break
         }
-
         case 'resumeTimeout': {
           if (!config.debug.websocket.resumeTimeout) return;
 
@@ -632,11 +635,38 @@ export function debugLog(name, type, options) {
 
           break
         }
+        case 'error': {
+          if (!config.debug.websocket.error) return;
 
+          console.error(`[\u001b[31mwebsocketError\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m: \u001b[31m${options.error}\u001b[37m`)
+
+          break
+        }
+        case 'connectCD': {
+          if (!config.debug.websocket.connectCD) return;
+
+          console.log(`[\u001b[32mwebsocketCD\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m client connected to NodeLink.\n Guild: \u001b[94m${options.guildId}\u001b[37m`)
+
+          break
+        }
+        case 'disconnectCD': {
+          if (!config.debug.websocket.disconnectCD) return;
+
+          console.error(`[\u001b[32mwebsocketCD\u001b[37m]: A connection was closed with a client.\n Guild: \u001b[94m${options.guildId}\u001b[37m\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason == '' ? 'No reason provided' : options.reason}\u001b[37m`)
+
+          break
+        }
+        case 'sentDataCD': {
+          if (!config.debug.websocket.sentDataCD) return;
+
+          console.log(`[\u001b[32msentData\u001b[37m]: Sent data to \u001b[94m${options.clientsAmount}\u001b[37m clients.\n Guild: \u001b[94m${options.guildId}\u001b[37m`)
+
+          break
+        }
         default: {
-          if (!config.debug.request.errors) return;
+          if (!config.debug.request.error) return;
 
-          console.warn(`[\u001b[31m${name}\u001b[37m]: \u001b[31m${options.error}\u001b[37m${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
+          console.error(`[\u001b[31m${name}\u001b[37m]: \u001b[31m${options.error}\u001b[37m${config.debug.request.showParams && options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${config.debug.request.showHeaders && options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${config.debug.request.showBody && options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
 
           break
         }
@@ -658,7 +688,7 @@ export function debugLog(name, type, options) {
           }
 
           if (options.type == 3 && config.debug.sources.loadtrack.exception)
-            console.warn(`[\u001b[31mloadTracks\u001b[37m]: Exception loading \u001b[94m${options.loadType}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
+            console.error(`[\u001b[31mloadTracks\u001b[37m]: Exception loading \u001b[94m${options.loadType}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
@@ -670,7 +700,7 @@ export function debugLog(name, type, options) {
             console.log(`[\u001b[32msearch\u001b[37m]: Found \u001b[94m${options.tracksLen}\u001b[37m tracks on \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
           if (options.type == 3 && config.debug.sources.search.exception)
-            console.warn(`[\u001b[31msearch\u001b[37m]: Exception from ${options.sourceName} for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
+            console.error(`[\u001b[31msearch\u001b[37m]: Exception from ${options.sourceName} for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
@@ -681,7 +711,7 @@ export function debugLog(name, type, options) {
             console.log(`[\u001b[32mretrieveStream\u001b[37m]: Retrieved from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m`)
 
           if (options.type == 2)
-            console.warn(`[\u001b[31mretrieveStream\u001b[37m]: Exception from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
+            console.error(`[\u001b[31mretrieveStream\u001b[37m]: Exception from \u001b[94m${options.sourceName}\u001b[37m for query \u001b[94m${options.query}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
@@ -693,7 +723,7 @@ export function debugLog(name, type, options) {
             console.log(`[\u001b[32mloadCaptions\u001b[37m]: Loaded captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m`)
 
           if (options.type == 3 && config.debug.sources.loadcaptions.exception)
-            console.warn(`[\u001b[31mloadCaptions\u001b[37m]: Exception loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
+            console.error(`[\u001b[31mloadCaptions\u001b[37m]: Exception loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
         }
@@ -708,7 +738,7 @@ export function debugLog(name, type, options) {
             console.log(`[\u001b[32minnertube\u001b[37m]: ${options.message}`)
 
           if (options.type == 2 && config.debug.innertube.error)
-            console.warn(`[\u001b[31minnertube\u001b[37m]: ${options.message}`)
+            console.error(`[\u001b[31minnertube\u001b[37m]: ${options.message}`)
 
           break
         }
@@ -718,7 +748,7 @@ export function debugLog(name, type, options) {
             console.log(`[\u001b[32mpandora\u001b[37m]: ${options.message}`)
 
           if (options.type == 2 && config.debug.pandora.error)
-            console.warn(`[\u001b[31mpandora\u001b[37m]: ${options.message}`)
+            console.error(`[\u001b[31mpandora\u001b[37m]: ${options.message}`)
 
           break
         }
@@ -728,7 +758,7 @@ export function debugLog(name, type, options) {
             console.log(`[\u001b[32mdeezer\u001b[37m]: ${options.message}`)
 
           if (options.type == 2 && config.debug.deezer.error)
-            console.warn(`[\u001b[31mdeezer\u001b[37m]: ${options.message}`)
+            console.error(`[\u001b[31mdeezer\u001b[37m]: ${options.message}`)
 
           break
         }
@@ -738,7 +768,7 @@ export function debugLog(name, type, options) {
             console.log(`[\u001b[32mspotify\u001b[37m]: ${options.message}`)
 
           if (options.type == 2 && config.debug.spotify.error)
-            console.warn(`[\u001b[31mspotify\u001b[37m]: ${options.message}`)
+            console.error(`[\u001b[31mspotify\u001b[37m]: ${options.message}`)
 
           break
         }
