@@ -46,6 +46,8 @@ async function setupConnection(ws, req) {
   function disconnect(code, reason) {
     debugLog('disconnect', 3, { code, reason })
 
+    if (!client) return;
+
     if (clients.size == 1) {
       if (config.search.sources.youtube || config.search.sources.youtubeMusic)
         sources.youtube.free()
