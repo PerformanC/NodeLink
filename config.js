@@ -22,7 +22,8 @@ export default {
     "statsInterval": false,
     "autoUpdate": [ false, true, 3600000, "tar" ],
     "maxResultsLength": 200,
-    "maxAlbumPlaylistLength": 200
+    "maxAlbumPlaylistLength": 200,
+    "maxCaptionsLength": 3
   },
   "debug": {
     "pandora": {
@@ -38,6 +39,10 @@ export default {
       "error": true
     },
     "spotify": {
+      "success": true,
+      "error": true
+    },
+    "soundcloud": {
       "success": true,
       "error": true
     },
@@ -105,7 +110,7 @@ export default {
       },
       "soundcloud": {
         "enabled": true,
-        "clientId": "YOUR_SOUNDCLOUD_CLIENT_ID", // Available in SoundCloud website API requests in "client_id" parameter.
+        "clientId": "AUTOMATIC", // Available in SoundCloud website API requests in "client_id" parameter.
         "fallbackIfSnipped": true
       }
     }

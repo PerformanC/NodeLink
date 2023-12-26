@@ -5,9 +5,41 @@ import { debugLog, encodeTrack, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
 import sources from '../sources.js'
 
+const sourceInfo = {
+  clientId: null
+}
+
+async function init() {
+  if (config.search.sources.soundcloud.clientId != 'AUTOMATIC') {
+    sourceInfo.clientId = config.search.sources.soundcloud.clientId
+
+    return;
+  }
+
+  debugLog('soundcloud', 5, { type: 1, message: 'clientId not provided. Fetching clientId...' })
+
+  const { body: data } = await http1makeRequest(`https://a-v2.sndcdn.com/assets/2-f17f825c.js`, {
+    method: 'GET'
+  }).catch(() => {
+    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+  })
+
+  const clientId = data.match(/client_id=([a-zA-Z0-9]{32})/)[1]
+
+  if (!clientId) {
+    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+
+    return;
+  }
+
+  sourceInfo.clientId = clientId
+
+  debugLog('soundcloud', 5, { type: 1, message: 'Successfully fetched clientId.' })
+}
+
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    let { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+    let { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
 
     debugLog('loadtracks', 4, { type: 1, loadType: data.kind || 'unknown', sourceName: 'SoundCloud', query: url })
 
@@ -83,7 +115,7 @@ async function loadFrom(url) {
 
           while ((notLoaded.length && !stop) && (tracks.length > config.options.maxAlbumPlaylistLength)) {
             const notLoadedLimited = notLoaded.slice(0, 50)
-            data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
+            data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
             data = data.body
 
             data.forEach((item, index) => {
@@ -142,7 +174,7 @@ async function search(query, shouldLog) {
   return new Promise(async (resolve) => {
     if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
 
-    const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${config.search.sources.soundcloud.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
+    const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=10&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
       method: 'GET'
     })
 
@@ -188,8 +220,8 @@ async function search(query, shouldLog) {
 
 async function retrieveStream(identifier, title) {
   return new Promise(async (resolve) => {
-    const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${config.search.sources.soundcloud.clientId}`, { method: 'GET' })
-      
+    const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
+
     if (data.errors) {
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: data.errors[0].error_message })
 
@@ -211,7 +243,7 @@ async function retrieveStream(identifier, title) {
       }
     }
 
-    resolve({ url: transcoding.url + `?client_id=${config.search.sources.soundcloud.clientId}`, protocol: transcoding.format.protocol, format: oggOpus ? 'ogg/opus' : 'arbitrary' })
+    resolve({ url: transcoding.url + `?client_id=${sourceInfo.clientId}`, protocol: transcoding.format.protocol, format: oggOpus ? 'ogg/opus' : 'arbitrary' })
   })
 }
 
@@ -288,6 +320,7 @@ function loadFilters(url, protocol) {
 }
 
 export default {
+  init,
   loadFrom,
   search,
   retrieveStream,

@@ -772,6 +772,16 @@ export function debugLog(name, type, options) {
 
           break
         }
+
+        case 'soundcloud': {
+          if (options.type == 1 && config.debug.soundcloud.success)
+            console.log(`[\u001b[32msoundcloud\u001b[37m]: ${options.message}`)
+
+          if (options.type == 2 && config.debug.soundcloud.error)
+            console.error(`[\u001b[31msoundcloud\u001b[37m]: ${options.message}`)
+
+          break
+        }
       }
     }
   }
