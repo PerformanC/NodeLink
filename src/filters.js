@@ -160,8 +160,6 @@ class Filters {
 
     if (filters.volume && config.filters.list.volume) {
       result.volume = filters.volume
-
-      this.command.push(`volume=${filters.volume}`)
     }
 
 		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
