@@ -26,6 +26,7 @@ class ChannelProcessor {
         this.frequency = data.frequency
         this.depth = data.depth
         this.phase = 0
+        this.offset = 1 - this.depth / 2
 
         break
       }
@@ -58,14 +59,13 @@ class ChannelProcessor {
     return processedBand * 4
   }
 
-  processTremolo(sample) {
-    const lfo = Math.sin(constants.circunferece.diameter * this.frequency * this.phase / constants.opus.samplingRate)
-    const newAmplitude = sample * ((1 - this.depth) + this.depth * lfo)
+  getTremoloMultiplier() {
+    let env = this.frequency * this.phase / constants.opus.samplingRate
+    env = Math.sin(2 * Math.PI * ((env + 0.25) % 1.0))
 
-    if (this.phase >= constants.opus.samplingRate / this.frequency) this.phase = 0
-    else this.phase += 1
+    this.phase++
 
-    return newAmplitude
+    return env * (1 - Math.abs(this.offset)) + this.offset
   }
 
   processRotationHz(leftSample, rightSample) {
@@ -85,9 +85,10 @@ class ChannelProcessor {
   }
 
   process(samples) {
-    const bytes = constants.pcm.bytes
+    let bytes = constants.pcm.bytes
+    if ([ constants.filtering.types.rotationHz, constants.filtering.types.tremolo ].includes(this.type)) bytes *= 2
 
-    for (let i = 0; i < samples.length - bytes; i += bytes * 2) {
+    for (let i = 0; i < samples.length - constants.pcm.bytes; i += bytes) {
       const sample = samples.readInt16LE(i)
       let result = null
       
@@ -95,19 +96,25 @@ class ChannelProcessor {
         case constants.filtering.types.equalizer: {
           result = this.processEqualizer(sample)
 
-          if (this.current++ == 3) this.current = 0
-          if (this.minus1++ == 3) this.minus1 = 0
-          if (this.minus2++ == 3) this.minus2 = 0
+          if (++this.current == 3) this.current = 0
+          if (++this.minus1 == 3) this.minus1 = 0
+          if (++this.minus2 == 3) this.minus2 = 0
+
+          samples.writeInt16LE(clamp16Bit(result), i)
 
           break
         }
         case constants.filtering.types.tremolo: {
-          result = this.processTremolo(sample)
+          const multiplier = this.getTremoloMultiplier()
+
+          const rightSample = samples.readInt16LE(i + 2)
+
+          samples.writeInt16LE(clamp16Bit(sample * multiplier), i)
+          samples.writeInt16LE(clamp16Bit(rightSample * multiplier), i + 2)
 
           break
         }
         case constants.filtering.types.rotationHz: {
-          const rightSample = samples.readInt16LE(i + 2)
           const { left, right } = this.processRotationHz(sample, rightSample)
 
           samples.writeInt16LE(clamp16Bit(left), i)
@@ -116,9 +123,6 @@ class ChannelProcessor {
           break
         }
       }
-
-      if (this.type != constants.filtering.types.rotationHz)
-        samples.writeInt16LE(clamp16Bit(result), i)
     }
 
     return samples
@@ -156,8 +160,6 @@ class Filters {
 
     if (filters.volume && config.filters.list.volume) {
       result.volume = filters.volume
-
-      this.command.push(`volume=${filters.volume}`)
     }
 
 		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
@@ -194,7 +196,7 @@ class Filters {
 
     if (filters.tremolo && filters.tremolo.frequency && filters.tremolo.depth && config.filters.list.tremolo) {
       result.tremolo = {
-        frequency: Math.min(filters.tremolo.frequency, 0.0),
+        frequency: Math.min(Math.max(filters.tremolo.frequency, 0.0), 14.0),
         depth: Math.min(Math.max(filters.tremolo.depth, 0.0), 1.0)
       }
     }
@@ -310,8 +312,8 @@ class Filters {
         if (this.result.tremolo) {
           pipelines.push(
             new Filtering({
-              frequency: this.result.tremolo.frequency / 2,
-              depth: this.result.tremolo.depth / 2
+              frequency: this.result.tremolo.frequency,
+              depth: this.result.tremolo.depth
             },
             constants.filtering.types.tremolo)
           )
@@ -333,7 +335,7 @@ class Filters {
           })
         )
 
-        resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines) })
+        resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines, this.result.volume) })
       })
     })
   }

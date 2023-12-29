@@ -4,7 +4,7 @@ import constants from '../../constants.js'
 import prism from 'prism-media'
 
 class NodeLinkStream {
-  constructor(stream, pipes) {
+  constructor(stream, pipes, volume) {
     pipes.unshift(stream)
 
     for (let i = 0; i < pipes.length - 1; i++) {
@@ -29,6 +29,10 @@ class NodeLinkStream {
     this.pipes = pipes
 
     this.stream.on('close', () => this._end())
+
+    if (volume) {
+      this.setVolume(volume)
+    }
   }
 
   _end() {

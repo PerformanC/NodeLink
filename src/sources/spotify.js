@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import { debugLog, makeRequest, encodeTrack, sleep, http1makeRequest } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
 
 let playerInfo = {}
@@ -61,12 +61,6 @@ async function init() {
 
 async function search(query) {
   return new Promise(async (resolve) => {
-    if (!playerInfo.accessToken) while (1) {
-      if (playerInfo.accessToken) break
-
-      sleep(200)
-    }
-
     debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
     const { body: data } = await makeRequest(`https://api.spotify.com/v1/search?q=${encodeURI(query)}&type=track&limit=${config.options.maxResultsLength}&market=${config.search.sources.spotify.market}`, {

@@ -144,6 +144,7 @@ export class OggLogicalBitstream extends Transform {
     this.opusTags = options.opusTags != null ? options.opusTags : new OpusTags()
     this.writeHeaderPages([ [ options.opusHead.toBuffer() ], [ this.opusTags.toBuffer() ] ])
   }
+
   calculateGranulePosition(packets) {
     const sampleRate = this.opusHead.sampleRate / 1000
     const newCount = packets.reduce((acc, val) => acc + sampleRate * FRAME_SIZE_MAP[val[0] >> 3], 0)
