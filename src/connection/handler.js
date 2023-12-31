@@ -880,6 +880,17 @@ async function requestHandler(req, res) {
       }
     })
   }
+
+  else {
+    sendResponse(req, res, {
+      timestamp: Date.now(),
+      status: 404,
+      error: 'Not Found',
+      trace: null,
+      message: 'The requested route was not found.',
+      path: parsedUrl.pathname
+    }, 404)
+  }
 }
 
 function startSourceAPIs() {
