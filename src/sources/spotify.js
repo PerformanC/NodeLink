@@ -291,22 +291,22 @@ async function loadFrom(query, type) {
           data.tracks.items = data.tracks.items.splice(0, config.options.maxAlbumPlaylistLength)
 
         data.tracks.items.forEach(async (item) => {
-          if (type[1] == 'playlist' ? item.track : item) {
-            let search
-            if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
-            else search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
+          item = type[1] == 'playlist' ? item.track : item
+
+          if (item) {
+            const search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
 
             if (search.loadType == 'search') {
               const track = {
                 identifier: search.data[0].info.identifier,
                 isSeekable: true,
-                author: type[1] == 'playlist' ? item.track.artists[0].name : item.artists[0].name,
+                author: item.artists[0].name,
                 length: search.data[0].info.length,
                 isStream: false,
                 position: 0,
-                title: type[1] == 'playlist' ? item.track.name : item.name,
-                uri: type[1] == 'playlist' ? item.track.external_urls.spotify : item.external_urls.spotify,
-                artworkUrl: type[1] == 'playlist' ? item.track.album.images[0].url : item.track.album.images[0].url,
+                title: item.name,
+                uri: item.external_urls.spotify,
+                artworkUrl: item.album.images[0].url,
                 isrc: null,
                 sourceName: 'spotify'
               }
@@ -328,9 +328,13 @@ async function loadFrom(query, type) {
           }
 
           const new_tracks = []
-          data.tracks.items.nForEach((item2, index2) => {
-            tracks.forEach((track) => {
-              if (track.info.title != (type[1] == 'playlist' ? item2.track.name : item2.name) || track.info.author != (type[1] == 'playlist' ? item2.track.artists[0].name : item2.artists[0].name)) return false
+          data.tracks.items.nForEach(async (item2, index2) => {
+            if (!item2.track) return false
+
+            item2 = type[1] == 'playlist' ? item2.track : item2
+
+            await tracks.nForEach((track) => {
+              if (track.info.title != item2.name || track.info.author != item2.artists[0].name) return false
 
               track.info.position = index2
               track.encoded = encodeTrack(track.info)
@@ -402,8 +406,8 @@ async function loadFrom(query, type) {
           }
 
           const new_tracks = []
-          data.episodes.items.nForEach((episode2, index2) => {
-            tracks.forEach((track) => {
+          data.episodes.items.nForEach(async (episode2, index2) => {
+            await tracks.nForEach((track) => {
               if (track.info.title != episode2.name || track.info.author != episode2.publisher) return false
 
               track.info.position = index2

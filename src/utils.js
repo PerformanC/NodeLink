@@ -827,17 +827,15 @@ export function verifyMethod(parsedUrl, req, res, expected) {
 }
 
 Array.prototype.nForEach = async function(callback) {
-  let i = 0
-  async function next() {
-    if (i == this.length) return;
+  return new Promise(async (resolve) => {
+    for (let i = 0; i < this.length; i++) {
+      const res = callback(this[i], i)
 
-    const res = await callback(this[i], i++, next.bind(this))
+      if (res) return resolve()
+    }
 
-    if (res) return res
-    else return next.call(this)
-  }
-
-  return next.call(this)
+    resolve()
+  })
 }
 
 export function waitForEvent(emitter, eventName, func, timeoutMs) {
