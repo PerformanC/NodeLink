@@ -444,7 +444,7 @@ async function requestHandler(req, res) {
     sendResponse(req, res, search, 200)
   }
 
-  else if (parsedUrl.pathname == '/v4/loadcaptions') {
+  else if (parsedUrl.pathname == '/v4/loadlyrics') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     const encodedTrack = parsedUrl.searchParams.get('encodedTrack')
@@ -455,13 +455,13 @@ async function requestHandler(req, res) {
       error: 'Bad Request',
       trace: null,
       message: 'Missing encodedTrack query parameter',
-      path: '/v4/loadcaptions'
+      path: '/v4/loadlyrics'
     }, 400)
 
     const decodedTrack = decodeTrack(encodedTrack)
 
     if (!decodedTrack) {
-      debugLog('loadcaptions', 4, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
+      debugLog('loadlyrics', 4, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
 
       return sendResponse(req, res, {
         timestamp: Date.now(),
@@ -488,7 +488,7 @@ async function requestHandler(req, res) {
           break
         }
 
-        captions = await sources.youtube.loadCaptions(decodedTrack, language)
+        captions = await sources.youtube.loadLyrics(decodedTrack, language)
 
         break
       }
@@ -511,13 +511,13 @@ async function requestHandler(req, res) {
           break
         }
 
-        captions = await sources.youtube.loadCaptions(search.data.tracks[0], language)
+        captions = await sources.youtube.loadLyrics(search.data.tracks[0], language)
 
         break
       }
     }
 
-    debugLog('loadcaptions', 1, { params: parsedUrl.pathname, headers: req.headers })
+    debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers })
 
     sendResponse(req, res, captions, 200)
   }

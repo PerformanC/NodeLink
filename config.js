@@ -82,7 +82,7 @@ export default {
         "results": true,
         "exception": true
       },
-      "loadcaptions": {
+      "loadlyrics": {
         "request": true,
         "results": true,
         "exception": true
