@@ -4,6 +4,20 @@
 
 LavaLink-protocol compatible standalone audio-sending node using Node.js.
 
+ ## Star, Fork History and People
+ 
+ <a href="https://star-history.com/#PerformanC/NodeLink&Date">
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=PerformanC/NodeLink&type=Date&theme=dark" />
+     <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=PerformanC/NodeLink&type=Date" />
+     <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=PerformanC/NodeLink&type=Date" />
+   </picture> 
+ </a>
+
+ [![Stargazers repo roster for @PerformanC/NodeLink](http://reporoster.com/stars/dark/PerformanC/NodeLink)](https://github.com/PerformanC/NodeLink/stargazers)
+
+ [![Forkers repo roster for @PerformanC/NodeLink](http://reporoster.com/forks/dark/PerformanC/NodeLink)](https://github.com/PerformanC/NodeLink/network/members)
+
 ## LavaLink API coverage
 
 - [x] Events
