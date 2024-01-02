@@ -282,24 +282,26 @@ function loadTrack(title, url, trackInfos) {
         if (!chunk) {
           if (res.stream.readableLength) {
             chunk = res.stream.read(res.stream.readableLength)
-            stream.push(chunk)
+            buf = Buffer.concat([ buf, chunk ])
           }
 
           break
+        } else {
+          buf = Buffer.concat([ buf, chunk ])
         }
 
-        buf = Buffer.concat([buf, chunk])
-
         while (buf.length >= bufferSize) {
+          const bufferSized = buf.subarray(0, bufferSize)
+
           if (i % 3 == 0) {
-            const decipher = crypto.createDecipheriv('bf-cbc', trackKey, IV).setAutoPadding(false);
+            const decipher = crypto.createDecipheriv('bf-cbc', trackKey, IV).setAutoPadding(false)
     
-            stream.push(decipher.update(buf.subarray(0, bufferSize)))
+            stream.push(decipher.update(bufferSized))
             stream.push(decipher.final())
           } else {
-            stream.push(chunk)
+            stream.push(bufferSized)
           }
-      
+
           i++
       
           buf = buf.subarray(bufferSize)
