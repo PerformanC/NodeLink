@@ -911,6 +911,9 @@ function startSourceAPIs() {
     if (config.search.sources.deezer.enabled)
       sourcesToInitialize.push(sources.deezer)
 
+    if (config.search.sources.soundcloud.enabled)
+      sourcesToInitialize.push(sources.soundcloud)
+
     if (config.options.statsInterval)
       startStats()
 
