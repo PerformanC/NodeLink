@@ -448,6 +448,7 @@ async function loadLyrics(decodedTrack, language) {
         loadType: 'lyricsSingle',
         data: {
           name: selectedCaption.languageCode,
+          synced: true,
           data: captionEvents,
           rtl: !!selectedCaption.rtl
         }
@@ -476,6 +477,7 @@ async function loadLyrics(decodedTrack, language) {
 
         captions.push({
           name: caption.languageCode,
+          synced: true,
           data: captionEvents,
           rtl: !!caption.rtl
         })

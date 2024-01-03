@@ -475,15 +475,13 @@ async function requestHandler(req, res) {
 
     const language = parsedUrl.searchParams.get('language')
 
-    let captions = null
+    let captions = { loadType: 'empty', data: {} }
 
     switch (decodedTrack.sourceName) {
       case 'ytmusic':
       case 'youtube': {
         if (!config.search.sources[decodedTrack.sourceName]) {
-          debugLog('encodetracks', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-          captions = { loadType: 'empty', data: {} }
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
         }
@@ -494,24 +492,51 @@ async function requestHandler(req, res) {
       }
       case 'spotify': {
         if (!config.search.sources[config.search.defaultSearchSource] || !config.search.sources.spotify.enabled) {
-          debugLog('encodetracks', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-          captions = { loadType: 'empty', data: {} }
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
         }
 
-        const search = await sources.youtube.search(`${decodedTrack.info.title} - ${decodedTrack.info.author}`, 'youtube')
+        captions = await sources.spotify.loadLyrics(decodedTrack, language) || captions
 
-        if (search.loadType == 'error') {
-          debugLog('encodetracks', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Failed to load track.' })
-
-          captions = search
+        break
+      }
+      case 'deezer': {
+        if (!config.search.sources.deezer.enabled) {
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
         }
 
-        captions = await sources.youtube.loadLyrics(search.data.tracks[0], language)
+        captions = await sources.deezer.loadLyrics(decodedTrack, language)
+
+        break
+      }
+      default: {
+        switch (config.search.lyricsFallbackSearchSource) {
+          case 'genius': {
+            if (!config.search.sources.genius) {
+              debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+              break
+            }
+
+            captions = await sources.genius.loadLyrics(decodedTrack, language) || captions
+
+            break
+          }
+          case 'musixmatch': {
+            if (!config.search.sources.musixmatch) {
+              debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+              break
+            }
+
+            captions = await sources.musixmatch.loadLyrics(decodedTrack, language) || captions
+
+            break
+          }
+        }
 
         break
       }
@@ -928,6 +953,9 @@ function startSourceAPIs() {
         if (initializedAmount == sourcesToInitialize.length) resolve()
       })
     }
+
+    if (config.search.sources.musixmatch.enabled)
+      sources.musixmatch.init()
   })
 }
 

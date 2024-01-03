@@ -742,7 +742,6 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'pandora': {
           if (options.type == 1 && config.debug.pandora.success)
             console.log(`[\u001b[32mpandora\u001b[37m]: ${options.message}`)
@@ -752,7 +751,6 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'deezer': {
           if (options.type == 1 && config.debug.deezer.success)
             console.log(`[\u001b[32mdeezer\u001b[37m]: ${options.message}`)
@@ -762,7 +760,6 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'spotify': {
           if (options.type == 1 && config.debug.spotify.success)
             console.log(`[\u001b[32mspotify\u001b[37m]: ${options.message}`)
@@ -772,13 +769,17 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'soundcloud': {
           if (options.type == 1 && config.debug.soundcloud.success)
             console.log(`[\u001b[32msoundcloud\u001b[37m]: ${options.message}`)
 
           if (options.type == 2 && config.debug.soundcloud.error)
             console.error(`[\u001b[31msoundcloud\u001b[37m]: ${options.message}`)
+
+          break
+        }
+        case 'musixmatch': {
+          console.log(`[\u001b[32mmusixmatch\u001b[37m]: ${options.message}`)
 
           break
         }

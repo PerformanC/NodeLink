@@ -46,6 +46,7 @@ export default {
       "success": true,
       "error": true
     },
+    "musixmatch": true,
     "websocket": {
       "connect": true,
       "disconnect": true,
@@ -92,6 +93,7 @@ export default {
   "search": {
     "defaultSearchSource": "youtube",
     "fallbackSearchSource": "bandcamp",
+    "lyricsFallbackSearchSource": "genius",
     "sources": {
       "youtube": true,
       "youtubeMusic": true,
@@ -101,17 +103,26 @@ export default {
       "pandora": false,
       "spotify": {
         "enabled": true,
-        "market": "BR"
+        "market": "BR",
+        "sp_dc": "DISABLED" // Necessary for direct Spotify loadLyrics. Available in Spotify website cookies in "sp_dc" parameter.
       },
       "deezer": {
         "enabled": false,
-        "decryptionKey": "...", // For legal reasons, this key is not provided.
-        "apiKey": "YOUR_DEEZER_API_TOKEN" // Available in Deezer website API requests in "api_token" parameter.
+        "decryptionKey": "DISABLED", // For legal reasons, this key is not provided.
+        "apiKey": "DISABLED", // Available in Deezer website API requests in "api_token" parameter.
+        "arl": "DISABLED" // Necessary for direct Deezer Lyrics. Available in Deezer website cookies in "arl" parameter.
       },
       "soundcloud": {
         "enabled": true,
         "clientId": "AUTOMATIC", // Available in SoundCloud website API requests in "client_id" parameter.
         "fallbackIfSnipped": true
+      },
+      "musixmatch": {
+        "enabled": false,
+        "signatureSecret": "DISABLED" // For legal reasons, this key is not provided.
+      },
+      "genius": {
+        "enabled": true
       }
     }
   },
