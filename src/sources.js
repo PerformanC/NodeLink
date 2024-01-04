@@ -9,6 +9,8 @@ import pandora from './sources/pandora.js'
 import soundcloud from './sources/soundcloud.js'
 import spotify from './sources/spotify.js'
 import youtube from './sources/youtube.js'
+import genius from './sources/genius.js'
+import musixmatch from './sources/musixmatch.js'
 
 import { debugLog, http1makeRequest, makeRequest } from './utils.js'
 
@@ -134,4 +136,6 @@ export default {
   soundcloud,
   spotify,
   youtube,
+  genius,
+  musixmatch
 }

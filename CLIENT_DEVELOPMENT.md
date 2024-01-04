@@ -12,9 +12,11 @@ Here's a small list of differences between NodeLink and Lavalink which is import
 
 The loadtracks have a small difference between NodeLink and Lavalink, while in Lavalink we have only `track`, `playlist`, `search`, `empty` and `error`, NodeLink has one more, `shorts`, `album`, `artist`, `show`, `episode`, so that you can differentiate tracks from others. This endpoint is available in all NodeLink versions.
 
-### loadCaptions
+### loadCaptions / loadLyrics
 
 The `loadCaptions` endpoint is a NodeLink-only endpoint, which allows you to get the captions of a YouTube video, and it's only available for YouTube videos, for now. This endpoint is available since NodeLink 1.7.0.
+
+In `v1.15.0` this endpoint was renamed to loadLyrics and the response was changed.
 
 ### EncodeTrack
 

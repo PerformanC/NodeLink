@@ -4,18 +4,19 @@ import { PassThrough } from 'node:stream'
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
-let playerInfo = {
+let sourceInfo = {
   licenseToken: null,
   csrfToken: null,
   mediaUrl: null,
-  Cookie: null
+  Cookie: null,
+  jwtToken: null
 }
 
 const bufferSize = 2048
-const IV = Buffer.from(Array.from({length: 8}, (_i, x) => x))
+const IV = Buffer.from(Array.from({ length: 8 }, (_i, x) => x))
 
 async function init() {
-  if (playerInfo.licenseToken) return;
+  if (sourceInfo.licenseToken) return;
   // TODO: Need to reset when timestamp is expired
 
   debugLog('deezer', 5, { type: 1, message: 'Fetching user data...' })
@@ -25,11 +26,24 @@ async function init() {
     getCookies: true
   })
 
-  playerInfo.Cookie = res.headers['set-cookies'].join('; ')
+  sourceInfo.Cookie = res.headers['set-cookie'].join('; ')
+  
+  if (config.search.sources.deezer.arl != 'DISABLED') {
+    sourceInfo.Cookie += `; arl=${config.search.sources.deezer.arl}`
 
-  playerInfo.licenseToken = res.body.results.USER.OPTIONS.license_token
-  playerInfo.csrfToken = res.body.results.checkForm
-  playerInfo.mediaUrl = res.body.results.URL_MEDIA
+    const { body: jwtInfo } = await makeRequest('https://auth.deezer.com/login/arl?jo=p&rto=c&i=c', {
+      headers: {
+        Cookie: sourceInfo.Cookie
+      },
+      method: 'POST'
+    })
+
+    sourceInfo.jwtToken = JSON.parse(jwtInfo).jwt
+  } 
+
+  sourceInfo.licenseToken = res.body.results.USER.OPTIONS.license_token
+  sourceInfo.csrfToken = res.body.results.checkForm
+  sourceInfo.mediaUrl = res.body.results.URL_MEDIA
 
   debugLog('deezer', 5, { type: 1, message: 'Successfully fetched user data.' })
 }
@@ -192,12 +206,12 @@ function search(query, shouldLog) {
 
 function retrieveStream(identifier, title) {
   return new Promise(async (resolve) => {
-    const { body: data } = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=song.getListData&input=3&api_version=1.0&api_token=${playerInfo.csrfToken}`, {
+    const { body: data } = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=song.getListData&input=3&api_version=1.0&api_token=${sourceInfo.csrfToken}`, {
       body: {
         sng_ids: [ identifier ]
       },
       headers: {
-        Cookie: playerInfo.Cookie
+        Cookie: sourceInfo.Cookie
       },
       method: 'POST',
       disableBodyCompression: true
@@ -215,7 +229,7 @@ function retrieveStream(identifier, title) {
 
     const { body: streamData } = await makeRequest('https://media.deezer.com/v1/get_url', {
       body: {
-        license_token: playerInfo.licenseToken,
+        license_token: sourceInfo.licenseToken,
         media: [{
           type: 'FULL',
           formats: [{
@@ -239,6 +253,52 @@ function retrieveStream(identifier, title) {
     })
 
     return resolve({ url: streamData.data[0].media[0].sources[0].url, protocol: 'https', format: 'arbitrary', additionalData: trackInfo })
+  })
+}
+
+function loadLyrics(decodedTrack, language) {
+  return new Promise(async (resolve) => {
+    const { body: video } = await makeRequest('https://pipe.deezer.com/api', {
+      headers: {
+        Cookie: sourceInfo.Cookie,
+        Authorization: `Bearer ${sourceInfo.jwtToken}`
+      },
+      body: {
+        operationName: 'SynchronizedTrackLyrics',
+        query: 'query SynchronizedTrackLyrics($trackId: String!) {\n  track(trackId: $trackId) {\n    ...SynchronizedTrackLyrics\n    __typename\n  }\n}\n\nfragment SynchronizedTrackLyrics on Track {\n  id\n  lyrics {\n    ...Lyrics\n    __typename\n  }\n  album {\n    cover {\n      small: urls(pictureRequest: {width: 100, height: 100})\n      medium: urls(pictureRequest: {width: 264, height: 264})\n      large: urls(pictureRequest: {width: 800, height: 800})\n      explicitStatus\n      __typename\n    }\n    __typename\n  }\n  __typename\n}\n\nfragment Lyrics on Lyrics {\n  id\n  copyright\n  text\n  writers\n  synchronizedLines {\n    ...LyricsSynchronizedLines\n    __typename\n  }\n  __typename\n}\n\nfragment LyricsSynchronizedLines on LyricsSynchronizedLine {\n  lrcTimestamp\n  line\n  lineTranslated\n  milliseconds\n  duration\n  __typename\n}',
+        variables: {
+          trackId: decodedTrack.identifier
+        }
+      },
+      method: 'POST',
+      disableBodyCompression: true
+    })
+
+    if (video.errors) {
+      const errorMessage = video.errors.map((err) => `${err.message} (${err.type})`).join('; ')
+
+      debugLog('loadlyrics', 4, { type: 3, track: decodedTrack, sourceName: 'Deezer', message: errorMessage })
+          
+      return resolve({ loadType: 'error', data: { message: errorMessage, severity: 'common', cause: 'Unknown' } })
+    }
+
+    const lyricsEvents = video.data.track.lyrics.synchronizedLines.map((event) => {
+      return {
+        startTime: event.milliseconds,
+        endTime: event.milliseconds + event.duration,
+        text: event.line
+      }
+    })
+
+    resolve({
+      loadType: 'lyricsSingle',
+      data: {
+        name: 'original',
+        synced: true,
+        data: lyricsEvents,
+        rtl: false
+      }
+    })
   })
 }
 
@@ -282,24 +342,26 @@ function loadTrack(title, url, trackInfos) {
         if (!chunk) {
           if (res.stream.readableLength) {
             chunk = res.stream.read(res.stream.readableLength)
-            stream.push(chunk)
+            buf = Buffer.concat([ buf, chunk ])
           }
 
           break
+        } else {
+          buf = Buffer.concat([ buf, chunk ])
         }
 
-        buf = Buffer.concat([buf, chunk])
-
         while (buf.length >= bufferSize) {
+          const bufferSized = buf.subarray(0, bufferSize)
+
           if (i % 3 == 0) {
-            const decipher = crypto.createDecipheriv('bf-cbc', trackKey, IV).setAutoPadding(false);
+            const decipher = crypto.createDecipheriv('bf-cbc', trackKey, IV).setAutoPadding(false)
     
-            stream.push(decipher.update(buf.subarray(0, bufferSize)))
+            stream.push(decipher.update(bufferSized))
             stream.push(decipher.final())
           } else {
-            stream.push(chunk)
+            stream.push(bufferSized)
           }
-      
+
           i++
       
           buf = buf.subarray(bufferSize)
@@ -316,5 +378,6 @@ export default {
   loadFrom,
   search,
   retrieveStream,
+  loadLyrics,
   loadTrack
 }

@@ -232,7 +232,7 @@ async function retrieveStream(identifier, title) {
     const transcoding = oggOpus || data.media.transcodings[0]
 
     if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: 'Track is snipped, falling back to: ... .' })
+      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: `Track is snipped, falling back to: ${config.search.fallbackSearchSource}.` })
 
       const search = await searchWithDefault(title, true)
 

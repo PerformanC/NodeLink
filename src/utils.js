@@ -715,14 +715,14 @@ export function debugLog(name, type, options) {
 
           break
         }
-        case 'loadcaptions': {
-          if (options.type == 1 && config.debug.sources.loadcaptions.request)
+        case 'loadlyrics': {
+          if (options.type == 1 && config.debug.sources.loadlyrics.request)
             console.log(`[\u001b[32mloadCaptions\u001b[37m]: Loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m`)
 
-          if (options.type == 2 && config.debug.sources.loadcaptions.results)
+          if (options.type == 2 && config.debug.sources.loadlyrics.results)
             console.log(`[\u001b[32mloadCaptions\u001b[37m]: Loaded captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m`)
 
-          if (options.type == 3 && config.debug.sources.loadcaptions.exception)
+          if (options.type == 3 && config.debug.sources.loadlyrics.exception)
             console.error(`[\u001b[31mloadCaptions\u001b[37m]: Exception loading captions for \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m from \u001b[94m${options.sourceName}\u001b[37m: \u001b[31m${options.message}\u001b[37m`)
 
           break
@@ -742,7 +742,6 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'pandora': {
           if (options.type == 1 && config.debug.pandora.success)
             console.log(`[\u001b[32mpandora\u001b[37m]: ${options.message}`)
@@ -752,7 +751,6 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'deezer': {
           if (options.type == 1 && config.debug.deezer.success)
             console.log(`[\u001b[32mdeezer\u001b[37m]: ${options.message}`)
@@ -762,7 +760,6 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'spotify': {
           if (options.type == 1 && config.debug.spotify.success)
             console.log(`[\u001b[32mspotify\u001b[37m]: ${options.message}`)
@@ -772,13 +769,17 @@ export function debugLog(name, type, options) {
 
           break
         }
-
         case 'soundcloud': {
           if (options.type == 1 && config.debug.soundcloud.success)
             console.log(`[\u001b[32msoundcloud\u001b[37m]: ${options.message}`)
 
           if (options.type == 2 && config.debug.soundcloud.error)
             console.error(`[\u001b[31msoundcloud\u001b[37m]: ${options.message}`)
+
+          break
+        }
+        case 'musixmatch': {
+          console.log(`[\u001b[32mmusixmatch\u001b[37m]: ${options.message}`)
 
           break
         }
@@ -827,17 +828,15 @@ export function verifyMethod(parsedUrl, req, res, expected) {
 }
 
 Array.prototype.nForEach = async function(callback) {
-  let i = 0
-  async function next() {
-    if (i == this.length) return;
+  return new Promise(async (resolve) => {
+    for (let i = 0; i < this.length; i++) {
+      const res = callback(this[i], i)
 
-    const res = await callback(this[i], i++, next.bind(this))
+      if (res) return resolve()
+    }
 
-    if (res) return res
-    else return next.call(this)
-  }
-
-  return next.call(this)
+    resolve()
+  })
 }
 
 export function waitForEvent(emitter, eventName, func, timeoutMs) {

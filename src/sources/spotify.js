@@ -1,3 +1,5 @@
+import crypto from 'node:crypto'
+
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
@@ -8,6 +10,9 @@ async function init() {
   debugLog('spotify', 5, { type: 1, message: 'Fetching token...' })
 
   const { body: token } = await makeRequest('https://open.spotify.com/get_access_token', {
+    headers: {
+      ...(config.search.sources.spotify.sp_dc != 'DISABLED' ? { Cookie: `sp_dc=${config.search.sources.spotify.sp_dc}` } : {})
+    },
     method: 'GET'
   })
 
@@ -21,13 +26,13 @@ async function init() {
     body: {
       client_data: {
         client_version: '1.2.9.2269.g2fe25d39',
-        client_id: 'd8a5ed958d274c2e8ee717e6a4b0971d',
+        client_id: token.clientId,
         js_sdk_data: {
           device_brand: 'unknown',
           device_model: 'unknown',
           os: 'linux',
           os_version: 'unknown',
-          device_id: '0c5f7c36-855e-4d0a-a661-1a79958ee6de',
+          device_id: crypto.randomUUID(),
           device_type: 'computer'
         }
       }
@@ -185,7 +190,7 @@ async function loadFrom(query, type) {
 
     if (data.error) {
       if (data.error.status == 401) {
-        setSpotifyToken()
+        await init()
 
         data = await makeRequest(`https://api.spotify.com/v1${endpoint}`, {
           method: 'GET',
@@ -291,22 +296,22 @@ async function loadFrom(query, type) {
           data.tracks.items = data.tracks.items.splice(0, config.options.maxAlbumPlaylistLength)
 
         data.tracks.items.forEach(async (item) => {
-          if (type[1] == 'playlist' ? item.track : item) {
-            let search
-            if (type[1] == 'playlist') search = await searchWithDefault(`${item.track.name} ${item.track.artists[0].name}`)
-            else search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
+          item = type[1] == 'playlist' ? item.track : item
+
+          if (item) {
+            const search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
 
             if (search.loadType == 'search') {
               const track = {
                 identifier: search.data[0].info.identifier,
                 isSeekable: true,
-                author: type[1] == 'playlist' ? item.track.artists[0].name : item.artists[0].name,
+                author: item.artists[0].name,
                 length: search.data[0].info.length,
                 isStream: false,
                 position: 0,
-                title: type[1] == 'playlist' ? item.track.name : item.name,
-                uri: type[1] == 'playlist' ? item.track.external_urls.spotify : item.external_urls.spotify,
-                artworkUrl: type[1] == 'playlist' ? item.track.album.images[0].url : item.track.album.images[0].url,
+                title: item.name,
+                uri: item.external_urls.spotify,
+                artworkUrl: item.album.images[0].url,
                 isrc: null,
                 sourceName: 'spotify'
               }
@@ -328,9 +333,13 @@ async function loadFrom(query, type) {
           }
 
           const new_tracks = []
-          data.tracks.items.nForEach((item2, index2) => {
-            tracks.forEach((track) => {
-              if (track.info.title != (type[1] == 'playlist' ? item2.track.name : item2.name) || track.info.author != (type[1] == 'playlist' ? item2.track.artists[0].name : item2.artists[0].name)) return false
+          data.tracks.items.nForEach(async (item2, index2) => {
+            if (!item2.track) return false
+
+            item2 = type[1] == 'playlist' ? item2.track : item2
+
+            await tracks.nForEach((track) => {
+              if (track.info.title != item2.name || track.info.author != item2.artists[0].name) return false
 
               track.info.position = index2
               track.encoded = encodeTrack(track.info)
@@ -402,8 +411,8 @@ async function loadFrom(query, type) {
           }
 
           const new_tracks = []
-          data.episodes.items.nForEach((episode2, index2) => {
-            tracks.forEach((track) => {
+          data.episodes.items.nForEach(async (episode2, index2) => {
+            await tracks.nForEach((track) => {
               if (track.info.title != episode2.name || track.info.author != episode2.publisher) return false
 
               track.info.position = index2
@@ -439,8 +448,41 @@ async function loadFrom(query, type) {
   })
 }
 
+async function loadLyrics(decodedTrack, language) {
+  const { body: data } = await makeRequest('https://spclient.wg.spotify.com/color-lyrics/v2/track/3jBJbxZSaVkaHRrUqEZ1eb?format=json&vocalRemoval=false&market=from_token', {
+    headers: {
+      'authorization': `Bearer ${playerInfo.accessToken}`,
+      'client-token': playerInfo.clientToken,
+      'app-platform': 'WebPlayer'
+    },
+    method: 'GET'
+  })
+
+  const lyricsEvents = []
+  data.lyrics.lines.forEach((event, index) => {
+    if (index == data.lyrics.lines.length - 1) return;
+
+    lyricsEvents.push({
+      startTime: Number(event.startTimeMs),
+      endTime: Number(data.lyrics.lines[index + 1] ? data.lyrics.lines[index + 1].startTimeMs : data.lyrics.durationMs),
+      text: event.words
+    })
+  })
+
+  return {
+    loadType: 'lyricsSingle',
+    data: {
+      name: data.lyrics.language,
+      synced: data.lyrics.syncType == 'LINE_SYNCED',
+      data: lyricsEvents,
+      rtl: false
+    }
+  }
+}
+
 export default {
   init,
   search,
-  loadFrom
+  loadFrom,
+  loadLyrics
 }

@@ -444,7 +444,7 @@ async function requestHandler(req, res) {
     sendResponse(req, res, search, 200)
   }
 
-  else if (parsedUrl.pathname == '/v4/loadcaptions') {
+  else if (parsedUrl.pathname == '/v4/loadlyrics') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     const encodedTrack = parsedUrl.searchParams.get('encodedTrack')
@@ -455,13 +455,13 @@ async function requestHandler(req, res) {
       error: 'Bad Request',
       trace: null,
       message: 'Missing encodedTrack query parameter',
-      path: '/v4/loadcaptions'
+      path: '/v4/loadlyrics'
     }, 400)
 
     const decodedTrack = decodeTrack(encodedTrack)
 
     if (!decodedTrack) {
-      debugLog('loadcaptions', 4, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
+      debugLog('loadlyrics', 4, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
 
       return sendResponse(req, res, {
         timestamp: Date.now(),
@@ -475,49 +475,74 @@ async function requestHandler(req, res) {
 
     const language = parsedUrl.searchParams.get('language')
 
-    let captions = null
+    let captions = { loadType: 'empty', data: {} }
 
     switch (decodedTrack.sourceName) {
       case 'ytmusic':
       case 'youtube': {
         if (!config.search.sources[decodedTrack.sourceName]) {
-          debugLog('encodetracks', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-          captions = { loadType: 'empty', data: {} }
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
         }
 
-        captions = await sources.youtube.loadCaptions(decodedTrack, language)
+        captions = await sources.youtube.loadLyrics(decodedTrack, language)
 
         break
       }
       case 'spotify': {
         if (!config.search.sources[config.search.defaultSearchSource] || !config.search.sources.spotify.enabled) {
-          debugLog('encodetracks', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-          captions = { loadType: 'empty', data: {} }
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
         }
 
-        const search = await sources.youtube.search(`${decodedTrack.info.title} - ${decodedTrack.info.author}`, 'youtube')
+        captions = await sources.spotify.loadLyrics(decodedTrack, language) || captions
 
-        if (search.loadType == 'error') {
-          debugLog('encodetracks', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Failed to load track.' })
-
-          captions = search
+        break
+      }
+      case 'deezer': {
+        if (!config.search.sources.deezer.enabled) {
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
         }
 
-        captions = await sources.youtube.loadCaptions(search.data.tracks[0], language)
+        captions = await sources.deezer.loadLyrics(decodedTrack, language)
+
+        break
+      }
+      default: {
+        switch (config.search.lyricsFallbackSearchSource) {
+          case 'genius': {
+            if (!config.search.sources.genius) {
+              debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+              break
+            }
+
+            captions = await sources.genius.loadLyrics(decodedTrack, language) || captions
+
+            break
+          }
+          case 'musixmatch': {
+            if (!config.search.sources.musixmatch) {
+              debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+              break
+            }
+
+            captions = await sources.musixmatch.loadLyrics(decodedTrack, language) || captions
+
+            break
+          }
+        }
 
         break
       }
     }
 
-    debugLog('loadcaptions', 1, { params: parsedUrl.pathname, headers: req.headers })
+    debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers })
 
     sendResponse(req, res, captions, 200)
   }
@@ -889,6 +914,17 @@ async function requestHandler(req, res) {
       }
     })
   }
+
+  else {
+    sendResponse(req, res, {
+      timestamp: Date.now(),
+      status: 404,
+      error: 'Not Found',
+      trace: null,
+      message: 'The requested route was not found.',
+      path: parsedUrl.pathname
+    }, 404)
+  }
 }
 
 function startSourceAPIs() {
@@ -909,6 +945,9 @@ function startSourceAPIs() {
     if (config.search.sources.deezer.enabled)
       sourcesToInitialize.push(sources.deezer)
 
+    if (config.search.sources.soundcloud.enabled)
+      sourcesToInitialize.push(sources.soundcloud)
+
     if (config.options.statsInterval)
       startStats()
 
@@ -923,6 +962,9 @@ function startSourceAPIs() {
         if (initializedAmount == sourcesToInitialize.length) resolve()
       })
     }
+
+    if (config.search.sources.musixmatch.enabled)
+      sources.musixmatch.init()
   })
 }
 
