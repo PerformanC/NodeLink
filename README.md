@@ -74,9 +74,6 @@ $ cd NodeLink
 $ npm i
 ```
 
-> [!WARNING]
-> node-crc is one of the dependencies of NodeLink, and it requires a `cargo` installation.
-
 > [!NOTE]
 > [`sodium-native`](https://npmjs.com/package/sodium-native) dependency can be replaced with alternatives like [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers).
 >

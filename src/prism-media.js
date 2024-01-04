@@ -6,14 +6,15 @@ This file is a part of prism-media, edited to assure the proper functioning of N
 It (this file) does not follow the main license of NodeLink, and is instead licensed under
 Apache, the license of prism-media.
 
-The modifications made was the support of node-crc 3, use of ES6 modules
-and indentation.
+The modifications made was the replacement of node-crc to polycrc, and the use of ES6
+indentation.
 
 */
 
 import { Transform } from 'node:stream'
 
-import { crc } from 'node-crc'
+import { crc } from 'polycrc'
+const crc32 = crc(32, 0x04c11db7, 0, 0, false)
 
 const OPUSHEAD = Buffer.from('OpusHead')
 const OggS = Buffer.from('OggS')
@@ -173,12 +174,7 @@ export class OggLogicalBitstream extends Transform {
   }
 
   calculateCRC(buffer) {
-    const value = crc(0x04c11db7, 0, 32, 0, 0, 0, 0, false, buffer)
-
-    if (typeof value === 'boolean')
-      throw new Error('Failed to compute CRC for buffer')
-
-    return value.readUInt32BE(0);
+    return crc32(buffer)
   }
 
   writePacket(packet) {
