@@ -208,7 +208,7 @@ class VoiceConnection {
 
       this.cache.url = urlInfo.url
 
-      resolve({ stream: voiceUtils.createAudioResource(streamInfo.stream) })
+      resolve({ stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format) })
     })
   }
 
