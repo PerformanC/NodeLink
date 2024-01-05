@@ -756,6 +756,7 @@ async function requestHandler(req, res) {
 
             const decodedTrack = decodeTrack(buffer.track.encoded)
 
+            if (!decodedTrack) {
               debugLog('play', 1, { track: buffer.track.encoded, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
         
               return sendResponse(req, res, {
@@ -777,6 +778,7 @@ async function requestHandler(req, res) {
           }
 
           client.players.set(guildId, player)
+
           if (buffer.track.encoded == null) debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
           else debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
         }
@@ -788,17 +790,6 @@ async function requestHandler(req, res) {
           }
 
           debugLog('userData', 1, { params: parsedUrl.pathname, params: parsedUrl.pathname, body: buffer })
-        }
-
-        if (buffer.track?.userData !== undefined) {
-          if (!player) player = new VoiceConnection(guildId, client)
-
-          player.config.track = {
-            ...(player.config.track ? player.config.track : {}),
-            userData: buffer.userData
-          }
-
-          debugLog('userData', 1, { params: parsedUrl.search, params: parsedUrl.search, body: buffer })
         }
 
         if (buffer.volume != undefined) {
