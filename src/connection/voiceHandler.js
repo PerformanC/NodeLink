@@ -123,7 +123,7 @@ class VoiceConnection {
     this.connection.on('error', (error) => {
       this._stopTrack()
 
-      debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
+      debugLog('trackException', 2, { track: this.config.track?.info, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
