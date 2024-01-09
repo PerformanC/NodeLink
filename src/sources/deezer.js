@@ -145,7 +145,7 @@ async function loadFrom(query, type) {
               selectedTrack: 0
             },
             pluginInfo: {},
-            tracks: new_tracks
+            tracks
           }
         })
 

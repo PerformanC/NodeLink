@@ -217,7 +217,20 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      buffer = JSON.parse(buffer)
+      try {
+        buffer = JSON.parse(buffer)
+      } catch {
+        debugLog('decodetracks', 1, { headers: req.headers, body: buffer, error: 'Invalid body.' })
+
+        return sendResponse(req, res, {
+          timestamp: Date.now(),
+          status: 400,
+          error: 'Bad Request',
+          trace: null,
+          message: 'Invalid body.',
+          path: '/v4/decodetracks'
+        }, 400)
+      }
 
       const tracks = []
       let shouldStop = false
@@ -260,7 +273,20 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      buffer = JSON.parse(buffer)
+      try {
+        buffer = JSON.parse(buffer)
+      } catch {
+        debugLog('encodetrack', 1, { headers: req.headers, body: buffer, error: 'Invalid body.' })
+
+        return sendResponse(req, res, {
+          timestamp: Date.now(),
+          status: 400,
+          error: 'Bad Request',
+          trace: null,
+          message: 'Invalid body.',
+          path: '/v4/encodetrack'
+        }, 400)
+      }
 
       if (!buffer.title || !buffer.author || !buffer.length || !buffer.identifier || !buffer.isSeekable || !buffer.isStream || !buffer.position) {
         debugLog('encodetrack', 1, { headers: req.headers, body: buffer, error: 'Invalid track object' })
@@ -303,7 +329,20 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      buffer = JSON.parse(buffer)
+      try {
+        buffer = JSON.parse(buffer)
+      } catch {
+        debugLog('encodetracks', 1, { headers: req.headers, body: buffer, error: 'Invalid body.' })
+
+        return sendResponse(req, res, {
+          timestamp: Date.now(),
+          status: 400,
+          error: 'Bad Request',
+          trace: null,
+          message: 'Invalid body.',
+          path: '/v4/encodetracks'
+        }, 400)
+      }
 
       const tracks = []
 
@@ -556,7 +595,19 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      buffer = JSON.parse(buffer)
+      try {
+        buffer = JSON.parse(buffer)
+      } catch {
+        debugLog('sessions', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'Invalid body.' })
+
+        return sendResponse(req, res, {
+          timestamp: new Date(),
+          status: 400,
+          trace: null,
+          message: 'Invalid body.',
+          path: parsedUrl.pathname
+        }, 400)
+      }
 
       if (!buffer.resuming) {
         debugLog('sessions', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'Invalid body.' })
@@ -618,12 +669,12 @@ async function requestHandler(req, res) {
   }
 
   else if (/^\/v4\/sessions\/\w+\/players\/\w+./.test(parsedUrl.pathname)) {
-    if (req.method != 'PATCH' && req.method != 'GET') {
+    if (![ 'DELETE', 'PATCH', 'GET' ].includes(req.method)) {
       sendResponse(req, res, {
         timestamp: Date.now(),
         status: 405,
         error: 'Method Not Allowed',
-        message: `Request method must be either PATCH or GET`,
+        message: `Request method must be DELETE, PATCH or GET`,
         path: parsedUrl.pathname
       }, 405)
       
@@ -643,35 +694,49 @@ async function requestHandler(req, res) {
         path: parsedUrl.pathname
       }, 404)
     }
+
+    const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
+    let player = client.players.get(guildId)
+
+    if (req.method == 'DELETE') {
+      if (!player) {
+        debugLog('deletePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided guildId doesn\'t exist.' })
+
+        return sendResponse(req, res, {
+          timestamp: new Date(),
+          status: 404,
+          trace: null,
+          message: 'The provided guildId doesn\'t exist.',
+          path: parsedUrl.pathname
+        }, 404)
+      }
+
+      player.destroy()
+
+      debugLog('deletePlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
+
+      return sendResponse(req, res, null, 204)
+    }
     
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', async () => {
-      buffer = JSON.parse(buffer)
+      try {
+        buffer = JSON.parse(buffer)
+      } catch {
+        debugLog('updatePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Invalid body.' })
 
-      const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
-      let player = client.players.get(guildId)
+        return sendResponse(req, res, {
+          timestamp: new Date(),
+          status: 400,
+          trace: null,
+          message: 'Invalid body.',
+          path: parsedUrl.pathname
+        }, 400)
+      }
 
-      if (req.method == 'DELETE') {
-        if (!player) {
-          debugLog('deletePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided guildId doesn\'t exist.' })
-
-          return sendResponse(req, res, {
-            timestamp: new Date(),
-            status: 404,
-            trace: null,
-            message: 'The provided guildId doesn\'t exist.',
-            path: parsedUrl.pathname
-          }, 404)
-        }
-
-        player.destroy()
-
-        debugLog('deletePlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
-
-        sendResponse(req, res, null, 204)
-      } else if (req.method == 'GET') {   
+      if (req.method == 'GET') {   
         if (!guildId) {
           debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing guildId parameter.' })
 

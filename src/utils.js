@@ -584,7 +584,7 @@ export function debugLog(name, type, options) {
         }
         case 'trackException': {
           if (config.debug.track.exception)
-            console.error(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
+            console.error(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track?.title || 'None'}\u001b[37m by \u001b[94m${options.track?.author || 'none'}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
 
             break
         }
@@ -789,17 +789,23 @@ export function debugLog(name, type, options) {
 }
 
 export function sendResponse(req, res, data, status) {
-  if (req.headers && req.headers['accept-encoding'] && req.headers['accept-encoding'].includes('br')) {
+  if (!req.headers || !req.headers['accept-encoding']) {
+    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(data))
+
+    return true
+  }
+
+  if (req.headers && req.headers['accept-encoding']) {
     res.setHeader('Content-Encoding', 'br')
     res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
+
     zlib.brotliCompress(JSON.stringify(data), (err, result) => {
       if (err) throw err
       res.end(result)
     })
+
     return true
-  } else {
-    res.writeHead(status, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(data))
   }
 }
 
@@ -830,7 +836,7 @@ export function verifyMethod(parsedUrl, req, res, expected) {
 Array.prototype.nForEach = async function(callback) {
   return new Promise(async (resolve) => {
     for (let i = 0; i < this.length; i++) {
-      const res = callback(this[i], i)
+      const res = await callback(this[i], i)
 
       if (res) return resolve()
     }
