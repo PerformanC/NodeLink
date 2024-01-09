@@ -1,6 +1,6 @@
 # NodeLink
 
-![NodeLink logo](images/Nodelink.png "NodeLink")
+![NodeLink logo](images/NodeLink.png "NodeLink")
 
 LavaLink-protocol compatible standalone audio-sending node using Node.js.
 
