@@ -128,6 +128,18 @@ async function setupConnection(ws, req) {
 async function requestHandler(req, res) {
   const parsedUrl = new URL(req.url, `http://${req.headers.host}`)
 
+  if (config.debug.request.all) {
+    const body = []
+    req.on('data', (chunk) => body.push(chunk))
+    req.on('end', () => {
+      debugLog('all', 6, { method: req.method, url: parsedUrl.pathname, headers: req.headers, body: Buffer.concat(body).toString() })
+
+      req.removeAllListeners()
+
+      req.push(Buffer.concat(body))
+    })
+  }
+
   if (!req.headers || req.headers['authorization'] != config.server.password) {
     res.writeHead(401, { 'Content-Type': 'text/plain' })
 

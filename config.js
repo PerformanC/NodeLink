@@ -59,6 +59,7 @@ export default {
       "sentDataCD": true
     },
     "request": {
+      "all": false, // Only enable for debugging purposes.
       "enabled": true,
       "error": true,
       "showBody": true,

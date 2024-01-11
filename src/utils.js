@@ -784,6 +784,20 @@ export function debugLog(name, type, options) {
           break
         }
       }
+
+      break
+    }
+    case 6: {
+      if (!config.debug.request.all) return;
+
+      if (options.headers) {
+        options.headers.authorization = 'REDACTED'
+        options.headers.host = 'REDACTED'
+      }
+
+      console.log(`[\u001b[32mALL\u001b[37m]: Received a request from client.${options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
+
+      break
     }
   }
 }
