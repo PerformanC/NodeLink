@@ -525,7 +525,7 @@ async function requestHandler(req, res) {
           break
         }
 
-        captions = await sources.youtube.loadLyrics(decodedTrack, language)
+        captions = await sources.youtube.loadLyrics(decodedTrack, language) || captions
 
         break
       }

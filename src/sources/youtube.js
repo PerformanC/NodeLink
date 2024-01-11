@@ -458,7 +458,7 @@ async function loadLyrics(decodedTrack, language) {
       let i = 0
 
       if (!video.captions)
-        return resolve({ loadType: 'empty', data: {} })
+        return resolve(null)
 
       video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
         const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
@@ -486,7 +486,7 @@ async function loadLyrics(decodedTrack, language) {
           if (captions.length == 0) {
             debugLog('loadlyrics', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
 
-            return resolve({ loadType: 'empty', data: {} })
+            return resolve(null)
           }
 
           debugLog('loadlyrics', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author } })

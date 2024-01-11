@@ -449,7 +449,15 @@ async function loadFrom(query, type) {
 }
 
 async function loadLyrics(decodedTrack, language) {
-  const { body: data } = await makeRequest('https://spclient.wg.spotify.com/color-lyrics/v2/track/3jBJbxZSaVkaHRrUqEZ1eb?format=json&vocalRemoval=false&market=from_token', {
+  const identifier = /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(decodedTrack.uri)
+
+  if (config.search.sources.spotify.sp_dc == 'DISABLED') {
+    debugLog('loadlyrics', 4, { type: 3, sourceName: 'Spotify', message: 'Spotify lyrics are disabled.' })
+
+    return null
+  }
+
+  const { body: data, statusCode } = await makeRequest(`https://spclient.wg.spotify.com/color-lyrics/v2/track/${identifier[2]}?format=json&vocalRemoval=false&market=from_token`, {
     headers: {
       'authorization': `Bearer ${playerInfo.accessToken}`,
       'client-token': playerInfo.clientToken,
@@ -457,6 +465,12 @@ async function loadLyrics(decodedTrack, language) {
     },
     method: 'GET'
   })
+
+  if (statusCode == 404) {
+    debugLog('loadlyrics', 4, { type: 3, sourceName: 'Spotify', message: 'No lyrics found.' })
+
+    return null
+  }
 
   const lyricsEvents = []
   data.lyrics.lines.forEach((event, index) => {

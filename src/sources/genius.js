@@ -22,7 +22,7 @@ async function loadLyrics(decodedTrack, language) {
   const trackInfo = JSON.parse(data.match(/JSON.parse\('(.*)'\);/)[1].replace(/\\(.)/g, '$1'))
 
   const lyricsEvents = []
-  trackInfo.songPage.lyricsData.body.children[0].children.map((text) => {
+  trackInfo.songPage.lyricsData.body.children[0].children.forEach((text) => {
     if (typeof text == 'object') {
       if (!text.children) return;
 

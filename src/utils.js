@@ -169,7 +169,7 @@ export function makeRequest(url, options) {
         resolve({
           statusCode: headers[':status'],
           headers: headers,
-          body: headers['content-type'].startsWith('application/json') ? JSON.parse(data) : data
+          body: (headers && headers['content-type'] && headers['content-type'].startsWith('application/json')) ? JSON.parse(data) : data
         })
       })
       req.on('error', (error) => {
