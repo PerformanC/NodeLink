@@ -177,8 +177,14 @@ class VoiceConnection {
   updateVoice(buffer) {
     this.config.voice = buffer
 
+    if (this.connection.voiceServer && this.connection.voiceServer.token == buffer.token && this.connection.voiceServer.endpoint == buffer.endpoint) return;
+
+    if (this.connection.ws) this.connection.destroy()
+
     this.connection.voiceStateUpdate({ guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId })
     this.connection.voiceServerUpdate({ user_id: this.client.userId, token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
+
+    this.connection.connect()
   }
 
   destroy() {
@@ -320,10 +326,17 @@ class VoiceConnection {
       this.config.volume = this.cache.volume
     }
   
-    if (!this.connection.ws && this.connection.voiceServer) this.connection.connect(() => {
-      this.connection.play(resource.stream)
-    })
-    else this.connection.play(resource.stream)
+    if (!this.connection.udpInfo) {
+      function listener(oldState, newState) {
+        if (newState.status == 'connected') {
+          this.connection.play(resource.stream)
+
+          this.connection.removeListener('stateChange', listener)
+        }
+      }
+
+      this.connection.on('stateChange', listener)
+    } else this.connection.play(resource.stream)
 
     if (this.config.paused) {
       this.cache.pauseTime[1] = Date.now()
@@ -451,10 +464,10 @@ class VoiceConnection {
       return this.config
     }
 
-    if (!this.connection?.ws && this.connection.voiceServer) this.connection.connect(() => {
-      this.connection.play(resource.stream)
-    })
-    else this.connection.play(resource.stream)
+    // if (!this.connection?.ws && this.connection.voiceServer) this.connection.connect(() => {
+    //   this.connection.play(resource.stream)
+    // })
+    // else this.connection.play(resource.stream)
 
     return this.config
   }

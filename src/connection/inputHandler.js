@@ -1,5 +1,6 @@
 import { OggLogicalBitstream, OpusHead } from '../prism-media.js'
 import { debugLog } from '../utils.js'
+import config from '../../config.js'
 
 import discordVoice from '@performanc/voice'
 
@@ -38,77 +39,138 @@ function setupConnection(ws, req) {
 function handleStartSpeaking(ssrc, userId, guildId) {
   const opusStream = discordVoice.getSpeakStream(ssrc)
 
-  const oggStream = new OggLogicalBitstream({
-    opusHead: new OpusHead({
-      channelCount: 2,
-      sampleRate: 48000
-    }),
-    pageSizeControl: {
-      maxPackets: 10
-    }
-  })
+  if (config.voiceReceive.audioType == 'ogg/opus') {
+    const oggStream = new OggLogicalBitstream({
+      opusHead: new OpusHead({
+        channelCount: 2,
+        sampleRate: 48000
+      }),
+      pageSizeControl: {
+        maxPackets: 10
+      }
+    })
 
-  let buffer = []
-  oggStream.on('data', (chunk) => {
-    if (Object.keys(Connections).length == 0) {
+    let buffer = []
+    oggStream.on('data', (chunk) => {
+      if (Object.keys(Connections).length == 0) {
+        oggStream.destroy()
+        opusStream.destroy()
+        buffer = null
+
+        return;
+      }
+
+      buffer.push(chunk)
+    })
+
+    opusStream.on('end', () => {   
       oggStream.destroy()
-      opusStream.destroy()
-      buffer = null
 
-      return;
-    }
+      let i = 0
 
-    buffer.push(chunk)
-  })
+      const connectionsArray = Object.keys(Connections)
 
-  opusStream.on('end', () => {   
-    oggStream.destroy()
+      if (connectionsArray.length == 0) {
+        buffer = []
 
-    let i = 0
+        return;
+      }
 
-    const connectionsArray = Object.keys(Connections)
+      connectionsArray.forEach((botId) => {
+        if (Connections[botId].guildId != guildId) return;
 
-    if (connectionsArray.length == 0) {
+        Connections[botId].ws.send(JSON.stringify({
+          op: 'speak',
+          type: 'endSpeakingEvent',
+          data: {
+            userId,
+            guildId,
+            data: Buffer.concat(buffer).toString('base64'),
+            type: 'ogg/opus'
+          }
+        }))
+
+        i++
+      })
+
       buffer = []
 
-      return;
-    }
+      debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
+    })
 
-    connectionsArray.forEach((botId) => {
+    opusStream.pipe(oggStream)
+
+    Object.keys(Connections).forEach((botId) => {
       if (Connections[botId].guildId != guildId) return;
 
       Connections[botId].ws.send(JSON.stringify({
         op: 'speak',
-        type: 'endSpeakingEvent',
+        type: 'startSpeakingEvent',
         data: {
           userId,
-          guildId,
-          data: Buffer.concat(buffer).toString('base64')
+          guildId
         }
       }))
+    })
+  } else {
+    let buffer = []
+    opusStream.on('data', (chunk) => {
+      if (Object.keys(Connections).length == 0) {
+        opusStream.destroy()
+        buffer = null
 
-      i++
+        return;
+      }
+
+      buffer.push(chunk)
     })
 
-    buffer = []
+    opusStream.on('end', () => {
+      let i = 0
 
-    debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
-  })
+      const connectionsArray = Object.keys(Connections)
 
-  opusStream.pipe(oggStream)
+      if (connectionsArray.length == 0) {
+        buffer = []
 
-  Object.keys(Connections).forEach((botId) => {
-    if (Connections[botId].guildId != guildId) return;
-
-    Connections[botId].ws.send(JSON.stringify({
-      op: 'speak',
-      type: 'startSpeakingEvent',
-      data: {
-        userId,
-        guildId
+        return;
       }
-    }))
-  })
+
+      connectionsArray.forEach((botId) => {
+        if (Connections[botId].guildId != guildId) return;
+
+        Connections[botId].ws.send(JSON.stringify({
+          op: 'speak',
+          type: 'endSpeakingEvent',
+          data: {
+            userId,
+            guildId,
+            data: Buffer.concat(buffer).toString('base64'),
+            type: 'pcm'
+          }
+        }))
+
+        i++
+      })
+
+      buffer = []
+
+      debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
+    })
+
+    Object.keys(Connections).forEach((botId) => {
+      if (Connections[botId].guildId != guildId) return;
+
+      Connections[botId].ws.send(JSON.stringify({
+        op: 'speak',
+        type: 'startSpeakingEvent',
+        data: {
+          userId,
+          guildId
+        }
+      }))
+    })
+  }
 }
 
 export default {
