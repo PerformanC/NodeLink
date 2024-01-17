@@ -70,8 +70,6 @@ class WebsocketConnection extends EventEmitter {
 
     socket.write(headers.join('\r\n') + '\r\n\r\n')
 
-    const cachedData = []
-
     socket.on('data', (data) => {
       const headers = parseFrameHeader(data)
 
@@ -109,6 +107,8 @@ class WebsocketConnection extends EventEmitter {
 
           socket.end()
 
+          socket.removeAllListeners()
+
           break
         }
         case 0x9: {
@@ -133,12 +133,17 @@ class WebsocketConnection extends EventEmitter {
       socket.end()
 
       this.emit('error', err)
+      this.emit('close', 1006, '')
+
+      socket.removeAllListeners()
     })
 
     socket.on('end', () => {
       socket.end()
 
       this.emit('close', 1006, '')
+
+      socket.removeAllListeners()
     })
   }
 
