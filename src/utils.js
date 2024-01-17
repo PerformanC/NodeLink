@@ -803,11 +803,16 @@ export function debugLog(name, type, options) {
 }
 
 export function sendResponse(req, res, data, status) {
+  if (!data) {
+    res.writeHead(status)
+    res.end()
+
+    return true
+  }
+
   if (!req.headers || !req.headers['accept-encoding']) {
     res.writeHead(status, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(data))
-
-    return true
   }
 
   if (req.headers && req.headers['accept-encoding']) {
@@ -818,9 +823,9 @@ export function sendResponse(req, res, data, status) {
       if (err) throw err
       res.end(result)
     })
-
-    return true
   }
+
+  return true
 }
 
 export function sendResponseNonNull(req, res, data) {
