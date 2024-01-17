@@ -64,6 +64,9 @@ if (config.search.sources.deezer.enabled && (!config.search.sources.deezer.decry
 if (config.search.sources.soundcloud.enabled && !config.search.sources.soundcloud.clientId)
   throw new Error('SoundCloud is enabled but no client ID was provided.')
 
+if (!['ogg/opus', 'opus'].includes(config.voiceReceive.audioType))
+  throw new Error('Audio type must be either "ogg/opus" or "opus".')
+
 if (config.options.autoUpdate[2]) setInterval(() => {
   checkForUpdates()
 }, config.options.autoUpdate[2])

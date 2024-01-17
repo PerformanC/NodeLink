@@ -145,5 +145,8 @@ export default {
   },
   "audio": {
     "quality": "high"
+  },
+  "voiceReceive": {
+    "audioType": "ogg/opus" // ogg/opus or opus
   }
 }
