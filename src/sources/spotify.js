@@ -201,13 +201,13 @@ async function loadFrom(query, type) {
         data = data.body
       }
 
-      if (data.error.status == 400) {
+      if (data.error?.status == 400) {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
 
-      if (data.error.message == 'Invalid playlist Id') {
+      if (data.error?.message == 'Invalid playlist Id') {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
