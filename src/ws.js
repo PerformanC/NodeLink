@@ -1,6 +1,9 @@
 import EventEmitter from 'node:events'
 import crypto from 'node:crypto'
 
+const TLS_MAX_SEND_SIZE = 2 ** 14
+const CONTINUE_HEADER_LENGTH = 2
+
 function parseFrameHeader(buffer) {
   let startIndex = 2
 
@@ -150,7 +153,32 @@ class WebsocketConnection extends EventEmitter {
   send(data) {
     const payload = Buffer.from(data, 'utf-8')
 
-    return this.sendFrame(payload, { len: payload.length, fin: true, opcode: 0x01 })
+    if (payload.length + CONTINUE_HEADER_LENGTH > TLS_MAX_SEND_SIZE) {
+      for (let i = 0; i < payload.length; i += TLS_MAX_SEND_SIZE) {
+        const buffer = payload.subarray(i, i + TLS_MAX_SEND_SIZE)
+        const length = Buffer.byteLength(buffer)
+
+        let header = null
+
+        if (i == 0) {
+          header = this.makeFHeader({ len: length, fin: false, opcode: 0x1 })
+        }
+
+        else if (i + TLS_MAX_SEND_SIZE >= payload.length) {
+          header = this.makeFHeader({ len: length, fin: true, opcode: 0x0 })
+        }
+
+        else {
+          header = this.makeFHeader({ len: length, fin: false, opcode: 0x0 })
+        }
+
+        this.socket.write(Buffer.concat([ header, buffer ]))
+      }
+
+      return true
+    } else {
+      return this.sendFrame(payload, { len: payload.length, fin: true, opcode: 0x01 })
+    }
   }
 
   destroy() {
@@ -159,7 +187,7 @@ class WebsocketConnection extends EventEmitter {
     this.req = null
   }
 
-  sendFrame(data, options) {
+  makeFHeader(options) {
     let payloadStartIndex = 2
     let payloadLength = options.len
 
@@ -182,7 +210,13 @@ class WebsocketConnection extends EventEmitter {
       header.writeUIntBE(options.len, 4, 6)
     }
 
-    if (this.socket) this.socket.write(Buffer.concat([header, data]))
+    return header
+  }
+
+  sendFrame(data, options) {
+    const header = this.makeFHeader(options)
+    
+    if (this.socket) this.socket.write(Buffer.concat([ header, data ]))
 
     return true
   }
