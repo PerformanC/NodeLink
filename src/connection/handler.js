@@ -724,6 +724,7 @@ async function requestHandler(req, res) {
       }
 
       player.destroy()
+      client.players.delete(guildId)
 
       debugLog('deletePlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
 

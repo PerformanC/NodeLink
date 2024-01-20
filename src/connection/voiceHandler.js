@@ -15,7 +15,7 @@ global.nodelinkPlayingPlayersCount = 0
  
 class VoiceConnection {
   constructor(guildId, client) {
-    this.connection
+    this.connection = null
     this.client = client
     this.cache = {
       startedAt: 0,
@@ -40,8 +40,6 @@ class VoiceConnection {
         sessionId: null
       }
     }
-
-    this.connection = null
   }
 
   _stopTrack() {
@@ -75,15 +73,24 @@ class VoiceConnection {
         case 'disconnected': {
           if (oldState.status == 'disconnected') return;
 
-          try {
-            await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'ready', config.options.threshold || undefined)
-          } catch (e) {
-            debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
+          if (newState.code != 4015) {
+              debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
-            this._stopTrack()
-            this.config.track = null
+              this.connection.destroy()
+              this._stopTrack()
+              this.config = {
+                guildId: this.config.guildId,
+                track: null,
+                volume: 100,
+                paused: false,
+                filters: {},
+                voice: {
+                  token: null,
+                  endpoint: null,
+                  sessionId: null
+                }
+              }
 
-            if (newState.reason == 'websocketClose') {
               this.client.ws.send(JSON.stringify({
                 op: 'event',
                 type: 'WebSocketClosedEvent',
@@ -92,7 +99,8 @@ class VoiceConnection {
                 reason: constants.VoiceWSCloseCodes[newState.closeCode],
                 byRemote: true
               }))
-            }
+          } else {
+            /* Should send trackException instead */
           }
           break;
         }
@@ -188,16 +196,11 @@ class VoiceConnection {
   }
 
   destroy() {
-    this.cache.startedAt = 0
-    this.cache.pauseTime = [ 0, 0 ]
     if (this.config.track) {
       this.cache.silence = true
 
       this.connection.destroy()
     }
-    this.config.track = null
-    this.config.filters = []
-    this.cache.url = null
 
     if (this.connection) this.connection.destroy()
 
@@ -326,17 +329,10 @@ class VoiceConnection {
       this.config.volume = this.cache.volume
     }
   
-    if (!this.connection.udpInfo) {
-      function listener(oldState, newState) {
-        if (newState.status == 'connected') {
-          this.connection.play(resource.stream)
-
-          this.connection.removeListener('stateChange', listener)
-        }
-      }
-
-      this.connection.on('stateChange', listener)
-    } else this.connection.play(resource.stream)
+    if (!this.connection.udpInfo?.secretKey)
+      await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
+    
+    this.connection.play(resource.stream)
 
     if (this.config.paused) {
       this.cache.pauseTime[1] = Date.now()
@@ -464,10 +460,10 @@ class VoiceConnection {
       return this.config
     }
 
-    // if (!this.connection?.ws && this.connection.voiceServer) this.connection.connect(() => {
-    //   this.connection.play(resource.stream)
-    // })
-    // else this.connection.play(resource.stream)
+    if (!this.connection.udpInfo?.secretKey)
+      await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
+    
+    this.connection.play(resource.stream)
 
     return this.config
   }
