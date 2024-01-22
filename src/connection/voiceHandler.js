@@ -322,7 +322,7 @@ class VoiceConnection {
     }
 
     this.config.track = { encoded: track, info: decodedTrack }
-   
+
     if (this.cache.volume != 100) {
       resource.stream.setVolume(this.cache.volume / 100)
      
@@ -393,15 +393,15 @@ class VoiceConnection {
   }
 
   volume(volume) {
-    if (!this.config.track) {
-      this.cache.volume = volume / 100
+    if (!this.connection.audioStream) {
+      this.cache.volume = volume
 
       return this.config
     }
 
     this.connection.audioStream.volume.setVolume(volume / 100)
 
-    this.config.volume = volume / 100
+    this.config.volume = volume
 
     return this.config
   }
