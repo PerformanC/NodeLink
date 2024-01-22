@@ -380,7 +380,7 @@ class VoiceConnection {
 
     this.cache.startedAt = 0
     this.cache.pauseTime = [ 0, 0 ]
-    if (this.config.track) {
+    if (this.connection.audioStream) {
       this.cache.silence = true
 
       this.connection.stop()
