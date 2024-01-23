@@ -64,8 +64,14 @@ if (config.search.sources.deezer.enabled && (!config.search.sources.deezer.decry
 if (config.search.sources.soundcloud.enabled && !config.search.sources.soundcloud.clientId)
   throw new Error('SoundCloud is enabled but no client ID was provided.')
 
-if (!['ogg/opus', 'opus'].includes(config.voiceReceive.audioType))
+if (![ 'ogg/opus', 'opus' ].includes(config.voiceReceive.audioType))
   throw new Error('Audio type must be either "ogg/opus" or "opus".')
+
+if (![ 'high', 'medium', 'low', 'lowest' ].includes(config.audio.quality))
+  throw new Error('Audio quality must be either "high", "medium", "low" or "lowest".')
+
+if (![ 'xsalsa20_poly1305', 'xsalsa20_poly1305_suffix', 'xsalsa20_poly1305_lite' ].includes(config.audio.encryption))
+  throw new Error('Encryption must be either "xsalsa20_poly1305", "xsalsa20_poly1305_suffix" or "xsalsa20_poly1305_lite".')
 
 if (config.options.autoUpdate[2]) setInterval(() => {
   checkForUpdates()

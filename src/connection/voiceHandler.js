@@ -65,7 +65,7 @@ class VoiceConnection {
   setup() {
     nodelinkPlayersCount++
 
-    this.connection = discordVoice.joinVoiceChannel({ channelId: "", guildId: this.config.guildId, userId: this.client.userId })
+    this.connection = discordVoice.joinVoiceChannel({ guildId: this.config.guildId, userId: this.client.userId, encryption: config.audio.encryption })
     this.connection.on('speakStart', (userId, ssrc) => inputHandler.handleStartSpeaking(ssrc, userId, this.config.guildId))
 
     this.connection.on('stateChange', async (oldState, newState) => {

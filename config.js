@@ -144,7 +144,8 @@ export default {
     }
   },
   "audio": {
-    "quality": "high"
+    "quality": "high",
+    "encryption": "xsalsa20_poly1305_lite"
   },
   "voiceReceive": {
     "audioType": "ogg/opus" // ogg/opus or opus
