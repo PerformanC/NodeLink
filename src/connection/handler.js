@@ -132,7 +132,7 @@ async function requestHandler(req, res) {
     const body = []
     req.on('data', (chunk) => body.push(chunk))
     req.on('end', () => {
-      debugLog('all', 6, { method: req.method, url: parsedUrl.pathname, headers: req.headers, body: Buffer.concat(body).toString() })
+      debugLog('all', 6, { method: req.method, path: parsedUrl.pathname, headers: req.headers, body: Buffer.concat(body).toString() })
 
       req.removeAllListeners()
 

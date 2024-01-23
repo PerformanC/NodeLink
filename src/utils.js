@@ -795,7 +795,7 @@ export function debugLog(name, type, options) {
         options.headers.host = 'REDACTED'
       }
 
-      console.log(`[\u001b[32mALL\u001b[37m]: Received a request from client.${options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
+      console.log(`[\u001b[32mALL\u001b[37m]: Received a request from client.\n Path: ${options.path}${options.params ? `\n Params: ${JSON.stringify(options.params)}` : ''}${options.headers ? `\n Headers: ${JSON.stringify(options.headers)}` : ''}${options.body ? `\n Body: ${JSON.stringify(options.body)}` : ''}`)
 
       break
     }
