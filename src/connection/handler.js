@@ -14,26 +14,45 @@ function startStats() {
   statsInterval = setInterval(() => {
     let memoryUsage = process.memoryUsage()
 
+    const statistics = {
+      sent: 0,
+      nulled: 0,
+      expected: 0,
+      deficit: 0
+    }
+
     clients.forEach((client) => {
-      client.ws.send(JSON.stringify({
-        op: 'stats',
-        players: nodelinkPlayingPlayersCount,
-        playingPlayers: nodelinkPlayingPlayersCount,
-        uptime: Math.floor(process.uptime() * 1000),
-        memory: {
-          free: memoryUsage.heapTotal - memoryUsage.heapUsed,
-          used: memoryUsage.heapUsed,
-          allocated: 0,
-          reservable: memoryUsage.rss
-        },
-        cpu: {
-          cores: os.cpus().length,
-          systemLoad: os.loadavg()[0],
-          lavalinkLoad: 0
-        },
-        frameStats: null
-      }), 200)
+      client.players.forEach((player) => {
+        if (!player.connection) return;
+
+        statistics.sent += player.connection.statistics.packetsSent
+        statistics.nulled += player.connection.statistics.packetsLost
+        statistics.expected += player.connection.statistics.packetsExpected
+      })
     })
+
+    statistics.deficit = statistics.sent - statistics.expected
+
+    const statisticsResponse = JSON.stringify({
+      op: 'stats',
+      players: nodelinkPlayingPlayersCount,
+      playingPlayers: nodelinkPlayingPlayersCount,
+      uptime: Math.floor(process.uptime() * 1000),
+      memory: {
+        free: memoryUsage.heapTotal - memoryUsage.heapUsed,
+        used: memoryUsage.heapUsed,
+        allocated: 0,
+        reservable: memoryUsage.rss
+      },
+      cpu: {
+        cores: os.cpus().length,
+        systemLoad: os.loadavg()[0],
+        lavalinkLoad: 0
+      },
+      frameStats: statistics
+    })
+
+    clients.forEach((client) => client.ws.send(statisticsResponse, 200))
   }, config.options.statsInterval)
 }
 
@@ -186,7 +205,7 @@ async function requestHandler(req, res) {
 
   else if (parsedUrl.pathname == '/v4/decodetrack') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
-    
+
     const encodedTrack = parsedUrl.searchParams.get('encodedTrack').replace(/ /, '+')
 
     if (!encodedTrack) {
@@ -401,6 +420,25 @@ async function requestHandler(req, res) {
 
     debugLog('stats', 1, { headers: req.headers })
 
+    const statistics = {
+      sent: 0,
+      nulled: 0,
+      expected: 0,
+      deficit: 0
+    }
+
+    clients.forEach((client) => {
+      client.players.forEach((player) => {
+        if (!player.connection) return;
+
+        statistics.sent += player.connection.statistics.packetsSent
+        statistics.nulled += player.connection.statistics.packetsLost
+        statistics.expected += player.connection.statistics.packetsExpected
+      })
+    })
+
+    statistics.deficit = statistics.sent - statistics.expected
+
     sendResponse(req, res, {
       players: nodelinkPlayersCount,
       playingPlayers: nodelinkPlayingPlayersCount,
@@ -480,7 +518,7 @@ async function requestHandler(req, res) {
 
     if (config.search.sources.http && (identifier.startsWith('http://') || identifier.startsWith('https://')))
       search = await sources.http.loadFrom(identifier)
-    
+
     if (sendResponseNonNull(req, res, search) == true) return;
 
     if (config.search.sources.local && identifier.startsWith('local:'))
@@ -633,8 +671,6 @@ async function requestHandler(req, res) {
         }, 400)
       }
 
-      // buffer.timeout is ignored, configuration timeout is used instead
-
       clients.set(sessionId, { ...clients.get(sessionId), resuming: buffer.resuming })
 
       debugLog('sessions', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
@@ -642,7 +678,7 @@ async function requestHandler(req, res) {
       sendResponse(req, res, { resuming: buffer.resuming, timeout: config.server.resumeTimeout }, 200)
     })
   }
-  
+
   else if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players$(?!\/)/.test(parsedUrl.pathname)) {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
@@ -689,7 +725,7 @@ async function requestHandler(req, res) {
         message: `Request method must be DELETE, PATCH or GET`,
         path: parsedUrl.pathname
       }, 405)
-      
+
       return;
     }
 
@@ -730,7 +766,7 @@ async function requestHandler(req, res) {
 
       return sendResponse(req, res, null, 204)
     }
-    
+
     let buffer = ''
 
     req.on('data', (buf) => buffer += buf)
@@ -749,7 +785,7 @@ async function requestHandler(req, res) {
         }, 400)
       }
 
-      if (req.method == 'GET') {   
+      if (req.method == 'GET') {
         if (!guildId) {
           debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing guildId parameter.' })
 
@@ -761,15 +797,15 @@ async function requestHandler(req, res) {
             path: parsedUrl.pathname
           }, 400)
         }
-    
+
         let player = client.players.get(guildId)
-    
+
         if (!player) {
           player = new VoiceConnection(guildId, client)
-    
+
           client.players.set(guildId, player)
         }
-    
+
         player.config.state = {
           time: new Date(),
           position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
@@ -778,7 +814,7 @@ async function requestHandler(req, res) {
         }
 
         debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
-    
+
         sendResponse(req, res, player.config, 200)
       } else if (req.method == 'PATCH') {
         if (!player) player = new VoiceConnection(guildId, client)
@@ -803,7 +839,7 @@ async function requestHandler(req, res) {
 
             if (!decodedTrack) {
               debugLog('play', 1, { track: player.cache.track, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
-        
+
               return sendResponse(req, res, {
                 timestamp: new Date(),
                 status: 400,
@@ -836,7 +872,7 @@ async function requestHandler(req, res) {
 
             if (!decodedTrack) {
               debugLog('play', 1, { track: buffer.track.encoded, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
-        
+
               return sendResponse(req, res, {
                 timestamp: new Date(),
                 status: 400,
@@ -850,7 +886,7 @@ async function requestHandler(req, res) {
               player.cache.track = buffer.track.encoded
             } else {
               if (!player.connection.voiceServer) player.updateVoice(player.config.voice)
-  
+
               player.play(buffer.track.encoded, decodedTrack, noReplace == true)
             }
           }
