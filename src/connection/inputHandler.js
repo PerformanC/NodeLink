@@ -76,19 +76,21 @@ function handleStartSpeaking(ssrc, userId, guildId) {
         return;
       }
 
+      const endSpeakingResponse = JSON.stringify({
+        op: 'speak',
+        type: 'endSpeakingEvent',
+        data: {
+          userId,
+          guildId,
+          data: Buffer.concat(buffer).toString('base64'),
+          type: 'ogg/opus'
+        }
+      })
+
       connectionsArray.forEach((botId) => {
         if (Connections[botId].guildId != guildId) return;
 
-        Connections[botId].ws.send(JSON.stringify({
-          op: 'speak',
-          type: 'endSpeakingEvent',
-          data: {
-            userId,
-            guildId,
-            data: Buffer.concat(buffer).toString('base64'),
-            type: 'ogg/opus'
-          }
-        }))
+        Connections[botId].ws.send(endSpeakingResponse)
 
         i++
       })
@@ -100,17 +102,19 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
     opusStream.pipe(oggStream)
 
+    const startSpeakingResponse = JSON.stringify({
+      op: 'speak',
+      type: 'startSpeakingEvent',
+      data: {
+        userId,
+        guildId
+      }
+    })
+
     Object.keys(Connections).forEach((botId) => {
       if (Connections[botId].guildId != guildId) return;
 
-      Connections[botId].ws.send(JSON.stringify({
-        op: 'speak',
-        type: 'startSpeakingEvent',
-        data: {
-          userId,
-          guildId
-        }
-      }))
+      Connections[botId].ws.send(startSpeakingResponse)
     })
   } else {
     let buffer = []
@@ -136,19 +140,21 @@ function handleStartSpeaking(ssrc, userId, guildId) {
         return;
       }
 
+      const endSpeakingResponse = JSON.stringify({
+        op: 'speak',
+        type: 'endSpeakingEvent',
+        data: {
+          userId,
+          guildId,
+          data: Buffer.concat(buffer).toString('base64'),
+          type: 'pcm'
+        }
+      })
+
       connectionsArray.forEach((botId) => {
         if (Connections[botId].guildId != guildId) return;
 
-        Connections[botId].ws.send(JSON.stringify({
-          op: 'speak',
-          type: 'endSpeakingEvent',
-          data: {
-            userId,
-            guildId,
-            data: Buffer.concat(buffer).toString('base64'),
-            type: 'pcm'
-          }
-        }))
+        Connections[botId].ws.send(endSpeakingResponse)
 
         i++
       })
@@ -158,17 +164,19 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
     })
 
+    const startSpeakingResponse = JSON.stringify({
+      op: 'speak',
+      type: 'startSpeakingEvent',
+      data: {
+        userId,
+        guildId
+      }
+    })
+
     Object.keys(Connections).forEach((botId) => {
       if (Connections[botId].guildId != guildId) return;
 
-      Connections[botId].ws.send(JSON.stringify({
-        op: 'speak',
-        type: 'startSpeakingEvent',
-        data: {
-          userId,
-          guildId
-        }
-      }))
+      Connections[botId].ws.send(startSpeakingResponse)
     })
   }
 }
