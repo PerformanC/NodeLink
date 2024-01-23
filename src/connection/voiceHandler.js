@@ -128,6 +128,8 @@ class VoiceConnection {
       }
 
       if (oldState.status != 'paused' && newState.status == 'playing') {
+        if (newState.reason != 'requested') return;
+
         this.cache.startedAt = Date.now()
 
         debugLog('trackStart', 2, { track: this.config.track.info })
