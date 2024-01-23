@@ -258,7 +258,7 @@ class VoiceConnection {
       return this.config
     }
 
-    if (oldTrack) {
+    if (oldTrack?.encoded) {
       debugLog('trackEnd', 2, { track: decodedTrack, reason: 'replaced' })
 
       this.client.ws.send(JSON.stringify({
