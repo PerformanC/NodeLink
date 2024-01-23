@@ -121,11 +121,7 @@ class VoiceConnection {
         this.config.track = null
       }
 
-      if (oldState.status != 'paused' && newState.status == 'playing') {
-        if (newState.reason != 'requested') return;
-
-        this.cache.startedAt = Date.now()
-
+      if (oldState.status != 'paused' && newState.status == 'playing' && newState.reason == 'requested') {
         debugLog('trackStart', 2, { track: this.config.track.info })
         
         nodelinkPlayingPlayersCount++
