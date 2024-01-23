@@ -330,7 +330,7 @@ class VoiceConnection {
     }
   
     if (!this.connection.udpInfo?.secretKey)
-      await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
+      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
     
     this.connection.play(resource.stream)
 
@@ -461,7 +461,7 @@ class VoiceConnection {
     }
 
     if (!this.connection.udpInfo?.secretKey)
-      await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
+      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
     
     this.connection.play(resource.stream)
 
