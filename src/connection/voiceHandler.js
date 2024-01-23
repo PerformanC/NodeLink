@@ -109,7 +109,7 @@ class VoiceConnection {
 
     this.connection.on('playerStateChange', (oldState, newState) => {
       if (newState.status == 'idle' && oldState.status != 'idle') {
-        if (this.cache.silence) return (this.cache.silence = false)
+        if (newState.reason != 'finished') return;
 
         this._stopTrack()
         this.cache.url = null
@@ -125,6 +125,34 @@ class VoiceConnection {
         }))
 
         this.config.track = null
+      }
+
+      if (oldState.status != 'paused' && newState.status == 'playing') {
+        this.cache.startedAt = Date.now()
+
+        debugLog('trackStart', 2, { track: this.config.track.info })
+        
+        nodelinkPlayingPlayersCount++
+
+        if (config.options.playerUpdateInterval) this.stateInterval = setInterval(() => {
+          this.client.ws.send(JSON.stringify({
+            op: 'playerUpdate',
+            guildId: this.config.guildId,
+            state: {
+              time: Date.now(),
+              position: this.connection.playerState.status == 'playing' ? this._getRealTime() : 0,
+              connected: this.connection.state.status == 'ready',
+              ping: this.connection.state.status == 'ready' ? this.connection.ping || -1 : -1
+            }
+          }))
+        }, config.options.playerUpdateInterval)
+
+        this.client.ws.send(JSON.stringify({
+          op: 'event',
+          type: 'TrackStartEvent',
+          guildId: this.config.guildId,
+          track: this.config.track
+    }))
       }
     })
 
@@ -154,54 +182,19 @@ class VoiceConnection {
       }))
 
       this.config.track = null
-      this.cache.silence = true
     })
-  }
-
-  trackStarted() {
-    nodelinkPlayingPlayersCount++
-          
-    if (config.options.playerUpdateInterval) this.stateInterval = setInterval(() => {
-      this.client.ws.send(JSON.stringify({
-        op: 'playerUpdate',
-        guildId: this.config.guildId,
-        state: {
-          time: Date.now(),
-          position: this.connection.playerState.status == 'playing' ? this._getRealTime() : 0,
-          connected: this.connection.state.status == 'ready',
-          ping: this.connection.state.status == 'ready' ? this.connection.ping || -1 : -1
-        }
-      }))
-    }, config.options.playerUpdateInterval)
-
-    this.client.ws.send(JSON.stringify({
-      op: 'event',
-      type: 'TrackStartEvent',
-      guildId: this.config.guildId,
-      track: this.config.track
-    }))
   }
 
   updateVoice(buffer) {
     this.config.voice = buffer
 
-    if (this.connection.voiceServer && this.connection.voiceServer.token == buffer.token && this.connection.voiceServer.endpoint == buffer.endpoint) return;
-
-    if (this.connection.ws) this.connection.destroy()
-
     this.connection.voiceStateUpdate({ guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId })
     this.connection.voiceServerUpdate({ user_id: this.client.userId, token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
 
-    this.connection.connect()
+    if (!this.connection.ws) this.connection.connect()
   }
 
   destroy() {
-    if (this.config.track) {
-      this.cache.silence = true
-
-      this.connection.destroy()
-    }
-
     if (this.connection) this.connection.destroy()
 
     this._stopTrack()
@@ -342,26 +335,6 @@ class VoiceConnection {
 
     this.cache.protocol = urlInfo.protocol
 
-    try {
-      await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status == 'playing', config.options.threshold || undefined)
-
-      this.cache.startedAt = Date.now()
-
-      debugLog('trackStart', 2, { track: decodedTrack })
-      this.trackStarted()
-    } catch (e) {
-      this._stopTrack()
-
-      debugLog('trackStuck', 2, { track: decodedTrack })
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackStuckEvent',
-        guildId: this.config.guildId,
-        track: decodedTrack,
-        thresholdMs: config.options.threshold
-      }))
-    }
-
     return this.config
   }
 
@@ -380,11 +353,7 @@ class VoiceConnection {
 
     this.cache.startedAt = 0
     this.cache.pauseTime = [ 0, 0 ]
-    if (this.connection.audioStream) {
-      this.cache.silence = true
-
-      this.connection.stop()
-    }
+    if (this.connection.audioStream) this.connection.stop()
     this.config.track = null
     this.config.filters = []
     this.cache.url = null
