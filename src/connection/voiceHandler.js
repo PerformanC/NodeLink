@@ -18,9 +18,6 @@ class VoiceConnection {
     this.connection = null
     this.client = client
     this.cache = {
-      startedAt: 0,
-      pauseTime: [ 0, 0 ],
-      silence: false,
       url: null,
       protocol: null,
       track: null,
@@ -53,13 +50,10 @@ class VoiceConnection {
       connected: false,
       ping: -1
     }
-
-    this.cache.startedAt = 0
-    this.cache.pauseTime = [ 0, 0 ]
   }
 
   _getRealTime() {
-    return (new Date() - this.cache.startedAt) - this.cache.pauseTime[1]
+    return this.connection.statistics.packetsExpected * 20
   }
 
   setup() {
@@ -142,9 +136,9 @@ class VoiceConnection {
             guildId: this.config.guildId,
             state: {
               time: Date.now(),
-              position: this.connection.playerState.status == 'playing' ? this._getRealTime() : 0,
-              connected: this.connection.state.status == 'ready',
-              ping: this.connection.state.status == 'ready' ? this.connection.ping || -1 : -1
+              position: [ 'playing', 'paused' ].includes(this.connection.playerState.status) ? this._getRealTime() : 0,
+              connected: this.connection.state.status == 'connected',
+              ping: this.connection.ping
             }
           }))
         }, config.options.playerUpdateInterval)
@@ -329,12 +323,6 @@ class VoiceConnection {
     
     this.connection.play(resource.stream)
 
-    if (this.config.paused) {
-      this.cache.pauseTime[1] = Date.now()
-
-      this.cache.startedAt += this.cache.pauseTime[1] - this.cache.pauseTime[0]
-    }
-
     this.cache.protocol = urlInfo.protocol
 
     return this.config
@@ -353,8 +341,6 @@ class VoiceConnection {
       reason: 'stopped'
     }))
 
-    this.cache.startedAt = 0
-    this.cache.pauseTime = [ 0, 0 ]
     if (this.connection.audioStream) this.connection.stop()
     this.config.track = null
     this.config.filters = []
@@ -378,17 +364,8 @@ class VoiceConnection {
   }
 
   pause(pause) {
-    if (pause) {
-      this.cache.pauseTime[0] = Date.now()
-
-      this.connection.pause()
-    }
-    else {
-      if (this.config.paused)
-        this.cache.pauseTime[1] = Date.now() - this.cache.pauseTime[0]
-
-      this.connection.unpause()
-    }
+    if (pause) this.connection.pause()
+    else this.connection.unpause()
 
     this.config.paused = pause
     
