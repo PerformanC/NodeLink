@@ -155,12 +155,8 @@ class Filters {
     this.result = {}
   }
 
-  configure(filters) {
+  configure(filters, decodedTrack) {
     const result = {}
-
-    if (filters.volume && config.filters.list.volume) {
-      result.volume = filters.volume
-    }
 
 		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
       for (const equalizedBand of filters.equalizer) {
@@ -181,6 +177,7 @@ class Filters {
 
       this.command.push(`stereotools=mlev=${result.karaoke.monoLevel}:mwid=${result.karaoke.filterWidth}:k=${result.karaoke.level}:kc=${result.karaoke.filterBand}`)
     }
+
     if (filters.timescale && filters.timescale.speed && filters.timescale.pitch && filters.timescale.rate && config.filters.list.timescale) {
       result.timescale = {
         speed: Math.max(filters.timescale.speed, 0.0),
@@ -250,12 +247,16 @@ class Filters {
       this.command.push(`lowpass=f=${filters.lowPass.smoothing / 500}`)
     }
 
+    if (filters.seek) {
+      result.startTime = Math.min(filters.seek, decodedTrack.length)
+    }
+
     this.result = result
 
     return result
   }
 
-  getResource(guildId, decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
+  getResource(decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
     return new Promise(async (resolve) => {
       if (decodedTrack.sourceName == 'deezer') {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
@@ -274,7 +275,7 @@ class Filters {
           '-threads', config.filters.threads,
           '-filter_threads', config.filters.threads,
           '-filter_complex_threads', config.filters.threads,
-          ...(startTime ? ['-ss', `${startTime}ms`] : []),
+          ...(this.result.startime || startTime ? ['-ss', `${this.result.startTime || startTime}ms`] : []),
           '-i', encodeURI(url),
           ...(this.command.length != 0 ? [ '-af', this.command.join(',') ] : [] ),
           ...(endTime ? ['-t', `${endTime}ms`] : []),
@@ -335,7 +336,7 @@ class Filters {
           })
         )
 
-        resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines, this.result.volume) })
+        resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines) })
       })
     })
   }

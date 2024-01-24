@@ -262,7 +262,7 @@ class VoiceConnection {
 
       this.config.filters = filter.configure(this.config.filters)
 
-      resource = await filter.getResource(this.config.guildId, decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg, urlInfo.additionalData)  
+      resource = await filter.getResource(decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg, urlInfo.additionalData)  
 
       if (oldTrack) this._stopTrack()
     } else {
@@ -308,11 +308,8 @@ class VoiceConnection {
 
     this.config.track = { encoded: track, info: decodedTrack }
 
-    if (this.cache.volume != 100) {
-      resource.stream.setVolume(this.cache.volume / 100)
-     
-      this.config.volume = this.cache.volume
-    }
+    if (this.config.volume != 100) 
+      resource.stream.setVolume(this.config.volume / 100)
   
     if (!this.connection.udpInfo?.secretKey)
       await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
@@ -346,13 +343,8 @@ class VoiceConnection {
   }
 
   volume(volume) {
-    if (!this.connection.audioStream) {
-      this.cache.volume = volume
-
-      return this.config
-    }
-
-    this.connection.audioStream.volume.setVolume(volume / 100)
+    if (this.connection.audioStream)
+      this.connection.audioStream.volume.setVolume(volume / 100)
 
     this.config.volume = volume
 
@@ -373,12 +365,12 @@ class VoiceConnection {
 
     const filter = new Filters()
 
-    this.config.filters = filter.configure(filters)
+    this.config.filters = filter.configure(filters, this.config.track.info)
 
     if (!this.config.track) return this.config
 
     const protocol = this.cache.protocol
-    const resource = await filter.getResource(this.config.guildId, this.config.track.info, protocol, this.cache.url, this._getRealTime(), filters.endTime, this.cache.ffmpeg, null)
+    const resource = await filter.getResource(this.config.track.info, protocol, this.cache.url, this._getRealTime(), filters.endTime, this.cache.ffmpeg, null)
 
     if (resource.exception) {
       this.config.track = null
@@ -403,6 +395,9 @@ class VoiceConnection {
 
       return this.config
     }
+
+    resource.stream.setVolume(filters.volume || (this.config.volume / 100))
+    this.config.volume = (filters.volume * 100) || this.config.volume
 
     if (!this.connection.udpInfo?.secretKey)
       await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
