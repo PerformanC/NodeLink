@@ -41,6 +41,10 @@ export function http1makeRequest(url, options) {
 
       const statusCode = res.statusCode
       const headers = res.headers
+
+      if (headers.location)
+        return resolve(http1makeRequest(headers.location, options))
+
       let isJson = res.headers['content-type'] ? res.headers['content-type'].startsWith('application/json') : null
 
       switch (res.headers['content-encoding']) {
@@ -76,11 +80,6 @@ export function http1makeRequest(url, options) {
       res.on('end', () => {
         if (isJson == null) isJson = (data.startsWith('{') && data.endsWith('}')) || (data.startsWith('[') && data.endsWith(']'))
 
-        res.destroy()
-        req.destroy()
-        res = null
-        req = null
-
         resolve({
           statusCode,
           headers,
@@ -107,7 +106,7 @@ export function http1makeRequest(url, options) {
 }
 
 export function makeRequest(url, options) {
-  return new Promise(async (resolve, reject) => {
+  return new Promise(async (resolve) => {
     let compression, data = '', parsedUrl = new URL(url)
     const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol, rejectUnauthorized: false })
 
@@ -134,6 +133,12 @@ export function makeRequest(url, options) {
     })
 
     req.on('response', (headers) => {
+      if (headers.location) {
+        client.close()
+
+        return resolve(makeRequest(headers.location, options))
+      }
+
       switch (headers['content-encoding']) {
         case 'deflate': {
           compression = zlib.createInflate()
