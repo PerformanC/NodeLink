@@ -196,7 +196,7 @@ async function requestHandler(req, res) {
       lavaplayer: '0.0.0',
       sourceManagers: Object.keys(config.search.sources).filter((source) => {
         if (typeof config.search.sources[source] == 'boolean') return source
-        return source.enabled
+        return config.search.sources[source].enabled
       }),
       filters: Object.keys(config.filters.list).filter((filter) => config.filters.list[filter]),
       plugins: []
