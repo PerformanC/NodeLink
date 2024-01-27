@@ -62,7 +62,7 @@ async function setupConnection(ws, req) {
   let sessionId = null
   let client = null
 
-  function disconnect(code, reason) {
+  ws.on('close', (code, reason) => {
     debugLog('disconnect', 3, { code, reason })
 
     if (!client) return;
@@ -85,12 +85,7 @@ async function setupConnection(ws, req) {
       clients.delete(sessionId)
       client = null
     }
-
-    ws.destroy()
-  }
-
-  ws.on('error', (err) => disconnect(1006, `Error: ${err.message}`))
-  ws.on('close', (code, reason) => disconnect(code, reason))
+  })
 
   function initializeClient() {
     sessionId = randomLetters(16)
@@ -824,12 +819,14 @@ async function requestHandler(req, res) {
               timestamp: new Date(),
               status: 400,
               trace: null,
-              message: `Invalid voice object.`,
+              message: 'Invalid voice object.',
               path: parsedUrl.pathname
             }, 400)
           }
 
           if (!player.connection) player.setup()
+
+          player.updateVoice(buffer.voice)
 
           if (player.cache.track) {
             const decodedTrack = decodeTrack(player.cache.track)
@@ -850,8 +847,6 @@ async function requestHandler(req, res) {
 
             player.cache.track = null
           }
-
-          player.updateVoice(buffer.voice)
 
           client.players.set(guildId, player)
 
@@ -879,13 +874,8 @@ async function requestHandler(req, res) {
               }, 400)
             }
 
-            if (!player.config.voice.endpoint) {
-              player.cache.track = buffer.track.encoded
-            } else {
-              if (!player.connection.voiceServer) player.updateVoice(player.config.voice)
-
-              player.play(buffer.track.encoded, decodedTrack, noReplace == true)
-            }
+            if (!player.connection.voiceServer) player.cache.track = buffer.track.encoded
+            else player.play(buffer.track.encoded, decodedTrack, noReplace == true)
           }
 
           client.players.set(guildId, player)
