@@ -101,9 +101,8 @@ class VoiceConnection {
       }
     })
 
-    this.connection.on('playerStateChange', (oldState, newState) => {
-      if (newState.status == 'idle' && oldState.status != 'idle') {
-        if (newState.reason != 'finished') return;
+    this.connection.on('playerStateChange', (_oldState, newState) => {
+      if (newState.status == 'idle' && newState.reason == 'finished') {
 
         this._stopTrack()
         this.cache.url = null
@@ -121,7 +120,7 @@ class VoiceConnection {
         this.config.track = null
       }
 
-      if (oldState.status != 'paused' && newState.status == 'playing' && newState.reason == 'requested') {
+      if (newState.status == 'playing' && newState.reason == 'requested') {
         debugLog('trackStart', 2, { track: this.config.track.info })
         
         nodelinkPlayingPlayersCount++
@@ -144,7 +143,7 @@ class VoiceConnection {
           type: 'TrackStartEvent',
           guildId: this.config.guildId,
           track: this.config.track
-    }))
+        }))
       }
     })
 
@@ -187,11 +186,14 @@ class VoiceConnection {
   }
 
   destroy() {
-    if (this.connection) this.connection.destroy()
+    if (this.connection) {
+      this.connection.destroy()
+      this.connection = null
+    }
 
     this._stopTrack()
 
-    this.client.players.delete(this.config.guildId)
+    if (this.stateInterval) clearInterval(this.stateInterval)
   }
 
   async getResource(decodedTrack, urlInfo) {
@@ -324,16 +326,6 @@ class VoiceConnection {
   stop() {
     if (!this.config.track) return this.config
 
-    debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'stopped' })
-
-    this.client.ws.send(JSON.stringify({
-      op: 'event',
-      type: 'TrackEndEvent',
-      guildId: this.config.guildId,
-      track: this.config.track,
-      reason: 'stopped'
-    }))
-
     if (this.connection.audioStream) this.connection.stop()
     this.config.track = null
     this.config.filters = []
@@ -370,7 +362,7 @@ class VoiceConnection {
     if (!this.config.track) return this.config
 
     const protocol = this.cache.protocol
-    const resource = await filter.getResource(this.config.track.info, protocol, this.cache.url, this._getRealTime(), filters.endTime, this.cache.ffmpeg, null)
+    const resource = await filter.getResource(this.config.track.info, protocol, this.cache.url, this._getRealTime(), filters.endTime, null, null)
 
     if (resource.exception) {
       this.config.track = null
