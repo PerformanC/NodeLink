@@ -22,9 +22,25 @@ export function randomLetters(size) {
   return result
 }
 
+function _http1Events(request, headers, statusCode) {
+  return new Promise((resolve) => {
+    let data = ''
+
+    request.setEncoding('utf8')
+    request.on('data', (chunk) => data += chunk)
+    request.on('end', () => {
+      resolve({
+        statusCode: statusCode,
+        headers: headers,
+        body: (headers && headers['content-type'] && headers['content-type'].startsWith('application/json')) ? JSON.parse(data) : data
+      })
+    })
+  })
+}
+
 export function http1makeRequest(url, options) { 
   return new Promise(async (resolve, reject) => {
-    let compression, data = ''
+    let compression = null
 
     let req = (url.startsWith('https') ? https : http).request(url, {
       method: options.method,
@@ -36,16 +52,17 @@ export function http1makeRequest(url, options) {
         ...(options.body ? { 'Content-Type': 'application/json' } : {})
       },
       rejectUnauthorized: false
-    }, (res) => {
+    }, async (res) => {
       if (res.statusCode == 401) throw new Error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Received 401 in url: ${url}.`)
 
       const statusCode = res.statusCode
       const headers = res.headers
 
-      if (headers.location)
-        return resolve(http1makeRequest(headers.location, options))
+      if (headers.location) {
+        resolve(http1makeRequest(headers.location, options))
 
-      let isJson = res.headers['content-type'] ? res.headers['content-type'].startsWith('application/json') : null
+        return res.destroy()
+      }
 
       switch (res.headers['content-encoding']) {
         case 'deflate': {
@@ -64,28 +81,27 @@ export function http1makeRequest(url, options) {
 
       if (compression) {
         res.pipe(compression)
-        res = compression
+
+        if (options.streamOnly) {
+          return resolve({
+            statusCode,
+            headers,
+            stream: compression
+          })
+        }
+        
+        resolve(await _http1Events(compression, headers, statusCode))
+      } else {
+        if (options.streamOnly) {
+          return resolve({
+            statusCode,
+            headers,
+            stream: compression
+          })
+        }
+
+        resolve(await _http1Events(res, headers, statusCode))
       }
-
-      if (options.streamOnly)
-        return resolve({
-          statusCode,
-          headers,
-          stream: res
-        })
-
-      res.setEncoding('utf8')
-      res.on('data', (chunk) => data += chunk)
-      res.on('error', () => reject())
-      res.on('end', () => {
-        if (isJson == null) isJson = (data.startsWith('{') && data.endsWith('}')) || (data.startsWith('[') && data.endsWith(']'))
-
-        resolve({
-          statusCode,
-          headers,
-          body: isJson ? JSON.parse(data) : data
-        })
-      })
     })
 
     if (options.body) {
@@ -105,19 +121,34 @@ export function http1makeRequest(url, options) {
   })
 }
 
+function _http2Events(request, headers) {
+  return new Promise((resolve) => {
+    let data = ''
+
+    request.setEncoding('utf8')
+    request.on('data', (chunk) => data += chunk)
+    request.on('end', () => {
+      resolve({
+        statusCode: headers[':status'],
+        headers: headers,
+        body: (headers && headers['content-type'] && headers['content-type'].startsWith('application/json')) ? JSON.parse(data) : data
+      })
+    })
+  })
+}
+
 export function makeRequest(url, options) {
   return new Promise(async (resolve) => {
-    let compression, data = '', parsedUrl = new URL(url)
-    const client = http2.connect(parsedUrl.origin, { protocol: parsedUrl.protocol, rejectUnauthorized: false })
+    let compression = null
+    const client = http2.connect(url, { rejectUnauthorized: false })
 
     let reqOptions = {
-      ':method': options.method,
-      ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'br, gzip, deflate',
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
       'DNT': '1',
       ...(options.headers || {})
     }
+
     if (options.body) {
       if (!options.disableBodyCompression) reqOptions['Content-Encoding'] = 'gzip'
 
@@ -129,12 +160,13 @@ export function makeRequest(url, options) {
     req.on('error', (error) => {
       console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
 
-      client.close()
+      resolve({ error })
     })
 
-    req.on('response', (headers) => {
+    req.on('response', async (headers) => {
       if (headers.location) {
         client.close()
+        req.destroy()
 
         return resolve(makeRequest(headers.location, options))
       }
@@ -156,32 +188,35 @@ export function makeRequest(url, options) {
 
       if (compression) {
         req.pipe(compression)
-        req = compression
+
+        if (options.streamOnly) {
+          req.on('end', () => client.close())
+
+          return resolve({
+            statusCode: headers[':status'],
+            headers: headers,
+            stream: compression
+          })
+        }
+
+        resolve(await _http2Events(compression, headers))
+
+        client.close()
+      } else {
+        if (options.streamOnly) {
+          req.on('end', () => client.close())
+
+          return resolve({
+            statusCode: headers[':status'],
+            headers: headers,
+            stream: req
+          })
+        }
+
+        resolve(await _http2Events(req, headers))
+
+        client.close()
       }
-
-      if (options.streamOnly)
-        return resolve({
-          statusCode: headers[':status'],
-          headers: headers,
-          stream: req
-        })
-
-      req.setEncoding('utf8')
-      req.on('data', (chunk) => data += chunk)
-      req.on('end', () => {
-        client.close()
-
-        resolve({
-          statusCode: headers[':status'],
-          headers: headers,
-          body: (headers && headers['content-type'] && headers['content-type'].startsWith('application/json')) ? JSON.parse(data) : data
-        })
-      })
-      req.on('error', (error) => {
-        console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed receiving HTTP response from ${url}: \u001b[31m${error}\u001b[37m`)
-
-        client.close()
-      })
     })
 
     if (options.body) {
