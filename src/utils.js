@@ -773,15 +773,6 @@ export function debugLog(name, type, options) {
     }
     case 5: {
       switch (name) {
-        case 'innertube': {
-          if (options.type == 1 && config.debug.innertube.success)
-            console.log(`[\u001b[32minnertube\u001b[37m]: ${options.message}`)
-
-          if (options.type == 2 && config.debug.innertube.error)
-            console.error(`[\u001b[31minnertube\u001b[37m]: ${options.message}`)
-
-          break
-        }
         case 'pandora': {
           if (options.type == 1 && config.debug.pandora.success)
             console.log(`[\u001b[32mpandora\u001b[37m]: ${options.message}`)

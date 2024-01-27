@@ -1,9 +1,7 @@
-import { URLSearchParams } from 'node:url'
-
 import config from '../../config.js'
-import { debugLog, makeRequest, encodeTrack, randomLetters } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
-let playerInfo = {
+const sourceInfo = {
   innertube: {
     thirdParty: {
       embedUrl: 'https://google.com'
@@ -17,63 +15,7 @@ let playerInfo = {
       screenPixelDensity: 1,
       screenWidthPoints: 1920
     }
-  },
-  innertubeInterval: null,
-  signatureTimestamp: null,
-  functions: [],
-  cache: {
-    cpn: randomLetters(16),
-    t: randomLetters(12)
   }
-}
-
-function setIntervalNow(func, interval) {
-  func()
-  return setInterval(func, interval)
-}
-
-async function init() {
-  playerInfo.innertubeInterval = setIntervalNow(async () => {
-    debugLog('innertube', 5, { type: 1, message: 'Fetching deciphering functions...' })
- 
-    const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      debugLog('innertube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
-    })
-
-    const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
-      debugLog('innertube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
-    })
-
-    playerInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
-
-    let functionName = player.match(/a.set\("alr","yes"\);c&&\(c=(.*?)\(/)[1]
-    const decipherFunctionName = functionName
-
-    const sigFunction = player.match(new RegExp(`${functionName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}=function\\(a\\){(.*)\\)};`, 'g'))[0]
-
-    functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
-    const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
-
-    playerInfo.functions[0] = `const ${functionName}={${sigWrapper}};${sigFunction}${decipherFunctionName}(sig);`
-
-    functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
-
-    if (functionName && functionName.includes('['))
-      functionName = player.match(new RegExp(`${functionName.match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
-    
-    const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
-    playerInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
-
-    debugLog('innertube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
-  }, 3600000)
-}
-
-function free() {
-  clearInterval(playerInfo.innertubeInterval)
-  playerInfo.innertubeInterval = null
-
-  playerInfo.signatureTimestamp = null
-  playerInfo.functions = []
 }
 
 function checkURLType(url, type) {
@@ -101,13 +43,22 @@ async function search(query, type, shouldLog) {
     if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
     const { body: search } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
-      method: 'POST',
+      headers: {
+        'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+      },
       body: {
-        context: playerInfo.innertube,
+        context: sourceInfo.innertube,
         query,
         params: 'EgIQAQ%3D%3D'
-      }
+      },
+      method: 'POST'
     })
+
+    if (typeof search != 'object') {
+      debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'Failed to load results.' })
+
+      return resolve({ loadType: 'error', data: { message: 'Failed to load results.', severity: 'common', cause: 'Unknown' } })
+    }
 
     if (search.error) {
       debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
@@ -168,15 +119,12 @@ async function loadFrom(query, type) {
         const identifier = /v=([^&]+)/.exec(query)[1]
 
         const { body: video } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+          headers: {
+            'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+          },
           body: {
-            context: playerInfo.innertube,
+            context: sourceInfo.innertube,
             videoId: identifier,
-            playbackContext: {
-              contentPlaybackContext: {
-                signatureTimestamp: playerInfo.signatureTimestamp
-              },
-            },
-            cpn: playerInfo.cache.cpn,
             contentCheckOk: true,
             racyCheckOk: true,
             params: 'CgIQBg'
@@ -219,15 +167,17 @@ async function loadFrom(query, type) {
         debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
 
         const { body: playlist } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-          method: 'POST',
+          headers: {
+            'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+          },
           body: {
-            context: playerInfo.innertube,
+            context: sourceInfo.innertube,
             playlistId: /(?<=list=)[\w-]+/.exec(query)[0],
-            cpn: playerInfo.cache.cpn,
             contentCheckOk: true,
             racyCheckOk: true,
             params: 'CgIQBg'
-          }
+          },
+          method: 'POST'
         })
 
         if (!playlist.contents.singleColumnWatchNextResults.playlist) {
@@ -294,15 +244,17 @@ async function loadFrom(query, type) {
         debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
 
         const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
-          method: 'POST',
+          headers: {
+            'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+          },
           body: {
-            context: playerInfo.innertube,
+            context: sourceInfo.innertube,
             videoId: /shorts\/([a-zA-Z0-9_-]+)/.exec(query)[1],
-            cpn: playerInfo.cache.cpn,
             contentCheckOk: true,
             racyCheckOk: true,
             params: 'CgIQBg'
-          }
+          },
+          method: 'POST'
         })
 
         if (short.playabilityStatus.status != 'OK') {
@@ -349,21 +301,15 @@ async function loadFrom(query, type) {
 async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
     const { body: videos } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+      headers: {
+        'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+      },
       body: {
-        context: playerInfo.innertube,
+        context: sourceInfo.innertube,
         videoId: identifier,
-        playbackContext: {
-          contentPlaybackContext: {
-            signatureTimestamp: playerInfo.signatureTimestamp
-          }
-        },
-        cpn: playerInfo.cache.cpn,
         contentCheckOk: true,
         racyCheckOk: true,
         params: 'CgIQBg'
-      },
-      headers: {
-        'User-Agent': 'com.google.android.youtube/17.29.34 (Linux; U; Android 13) gzip'
       },
       method: 'POST'
     })
@@ -384,17 +330,8 @@ async function retrieveStream(identifier, type, title) {
     }
 
     const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag == itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
-
-    const args = new URLSearchParams(audio.url || audio.signatureCipher || audio.cipher)
-    let url = decodeURIComponent(audio.url || args.get('url'))
-
-    url += '&ratebypass=yes&range=0-'
-
-    if (audio.signatureCipher || audio.cipher)
-      url += `&${args.get('sp')}=${eval(`const sig = ${args.get('s')};` + playerInfo.functions[0])}`
-
-    if (args.get('n'))
-      url += `&${args.get('n')}=${eval(`const ncode = ${args.get('s')};` + playerInfo.functions[1])}`
+    /* range query is necessary to bypass throttling */
+    const url = decodeURIComponent(audio.url || args.get('url')) + '&ratebypass=yes&range=0-'
 
     resolve({ url, protocol: 'https', format: audio.mimeType == 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
   })
@@ -403,15 +340,12 @@ async function retrieveStream(identifier, type, title) {
 async function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
     const { body: video } = await makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+      headers: {
+        'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+      },
       body: {
-        context: playerInfo.innertube,
+        context: sourceInfo.innertube,
         videoId: decodedTrack.identifier,
-        playbackContext: {
-          contentPlaybackContext: {
-            signatureTimestamp: playerInfo.signatureTimestamp
-          }
-        },
-        cpn: playerInfo.cache.cpn,
         contentCheckOk: true,
         racyCheckOk: true,
         params: 'CgIQBg'
@@ -502,8 +436,6 @@ async function loadLyrics(decodedTrack, language) {
 }
 
 export default {
-  init,
-  free,
   search,
   loadFrom,
   retrieveStream,

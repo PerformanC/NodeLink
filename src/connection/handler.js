@@ -68,9 +68,6 @@ async function setupConnection(ws, req) {
     if (!client) return;
 
     if (clients.size == 1) {
-      if (config.search.sources.youtube || config.search.sources.youtubeMusic)
-        sources.youtube.free()
-
       clearInterval(statsInterval)
       statsInterval = null
     }
@@ -1037,9 +1034,6 @@ function startSourceAPIs() {
 
   return new Promise((resolve) => {
     const sourcesToInitialize = []
-
-    if (config.search.sources.youtube || config.search.sources.youtubeMusic)
-      sourcesToInitialize.push(sources.youtube)
 
     if (config.search.sources.spotify.enabled)
       sourcesToInitialize.push(sources.spotify)

@@ -30,10 +30,6 @@ export default {
       "success": true,
       "error": true
     },
-    "innertube": {
-      "success": true,
-      "error": true
-    },
     "deezer": {
       "success": true,
       "error": true
