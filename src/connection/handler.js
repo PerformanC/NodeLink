@@ -8,6 +8,7 @@ import VoiceConnection from './voiceHandler.js'
 
 const clients = {}
 let statsInterval = null
+let playerUpdateInterval = null
 
 function startStats() {
   statsInterval = setInterval(() => {
@@ -20,7 +21,9 @@ function startStats() {
       deficit: 0
     }
 
-    clients.forEach((client) => {
+    Object.keys(clients).forEach((key) => {
+      const client = clients[key]
+
       client.players.forEach((player) => {
         if (!player.connection) return;
 
@@ -51,8 +54,35 @@ function startStats() {
       frameStats: statistics
     })
 
-    clients.forEach((client) => client.ws.send(statisticsResponse, 200))
+    Object.keys(clients).forEach((key) => clients[key].ws.send(statisticsResponse, 200))
   }, config.options.statsInterval)
+}
+
+function startPlayerUpdate() {
+  playerUpdateInterval = setInterval(() => {
+    if (Object.keys(clients).length === 0) return;
+
+    Object.keys(clients).forEach((key) => {
+      const client = clients[key]
+
+      client.players.forEach((player) => {
+        if (!player.connection) return;
+
+        player.config.state = {
+          time: Date.now(),
+          position: player.connection.playerState.status === 'playing' ? player._getRealTime() : 0,
+          connected: player.connection.state.status === 'connected',
+          ping: player.connection.ping || -1
+        }
+
+        client.ws.send(JSON.stringify({
+          op: 'playerUpdate',
+          guildId: player.guildId,
+          state: player.config.state
+        }))
+      })
+    })
+  }, config.options.playerUpdateInterval)
 }
 
 async function configureConnection(ws, req) {
@@ -66,13 +96,16 @@ async function configureConnection(ws, req) {
 
     if (!client) return;
 
-    if (clients.size === 1) {
+    if (clients.length === 1) {
       clearInterval(statsInterval)
       statsInterval = null
+
+      clearInterval(playerUpdateInterval)
+      playerUpdateInterval = null
     }
 
     client.players.forEach((player) => player.destroy())
-    clients.delete(sessionId)
+    delete clients[sessionId]
   })
 
   await startSourceAPIs()
@@ -84,7 +117,7 @@ async function configureConnection(ws, req) {
     players: new Map()
   }
 
-  clients.set(sessionId, client)
+  clients[sessionId] = client
 
   ws.send(
     JSON.stringify({
@@ -299,7 +332,9 @@ async function requestHandler(req, res) {
       deficit: 0
     }
 
-    clients.forEach((client) => {
+    clients.forEach((key) => {
+      const client = clients[key]
+
       client.players.forEach((player) => {
         if (!player.connection) return;
 
@@ -503,7 +538,7 @@ async function requestHandler(req, res) {
   else if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players$(?!\/)/.test(parsedUrl.pathname)) {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
-    const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players$/.exec(parsedUrl.pathname)[1])
+    const client = clients[/^\/v4\/sessions\/([A-Za-z0-9]+)\/players$/.exec(parsedUrl.pathname)[1]]
 
     if (!client) {
       debugLog('getPlayers', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided session Id doesn\'t exist.' })
@@ -548,7 +583,7 @@ async function requestHandler(req, res) {
       return;
     }
 
-    const client = clients.get(/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1])
+    const client = clients[/^\/v4\/sessions\/([A-Za-z0-9]+)\/players\/\d+$/.exec(parsedUrl.pathname)[1]]
 
     if (!client) {
       debugLog('updatePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided session Id doesn\'t exist.' })
@@ -641,8 +676,6 @@ async function requestHandler(req, res) {
             }, 400)
           }
 
-          if (!player.connection) player.setup()
-
           player.updateVoice(buffer.voice)
 
           if (player.cache.track) {
@@ -666,8 +699,6 @@ async function requestHandler(req, res) {
               debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
             }
           } else {
-            if (!player.connection) player.setup()
-
             const decodedTrack = decodeTrack(buffer.track.encoded)
 
             if (!decodedTrack) {
@@ -839,7 +870,7 @@ async function requestHandler(req, res) {
 }
 
 function startSourceAPIs() {
-  if (clients.size !== 0) return;
+  if (Object.keys(clients).length !== 0) return;
 
   return new Promise((resolve) => {
     const sourcesToInitialize = []
@@ -858,6 +889,9 @@ function startSourceAPIs() {
 
     if (config.options.statsInterval)
       startStats()
+
+    if (config.options.playerUpdateInterval)
+      startPlayerUpdate()
 
     if (config.search.sources.musixmatch.enabled)
       sources.musixmatch.init()

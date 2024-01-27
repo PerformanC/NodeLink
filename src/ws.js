@@ -135,7 +135,6 @@ class WebsocketConnection extends EventEmitter {
     req.on('error', (err) => {
       socket.destroy()
 
-      this.emit('error', err)
       this.emit('close', 1006, `Error: ${err.message}`)
 
       socket.removeAllListeners()
@@ -144,7 +143,6 @@ class WebsocketConnection extends EventEmitter {
     socket.on('error', (err) => {
       socket.destroy()
 
-      this.emit('error', err)
       this.emit('close', 1006, `Error: ${err.message}`)
 
       socket.removeAllListeners()

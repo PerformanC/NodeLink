@@ -13,9 +13,6 @@ if (typeof config.server.port !== 'number')
 if (typeof config.server.password !== 'string')
   throw new Error('Password must be a string.')
 
-if (typeof config.server.resumeTimeout !== 'number')
-  throw new Error('Resume timeout must be a number.')
-
 if (typeof config.options.threshold !== 'boolean' && typeof config.options.threshold !== 'number')
   throw new Error('Threshold must be a boolean or a number.')
 

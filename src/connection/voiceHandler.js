@@ -15,15 +15,12 @@ global.nodelinkPlayingPlayersCount = 0
  
 class VoiceConnection {
   constructor(guildId, client) {
-    this.connection = null
     this.client = client
     this.cache = {
       url: null,
       protocol: null,
-      track: null,
-      volume: 100
+      track: null
     }
-    this.stateInterval
   
     this.config = {
       guildId,
@@ -37,29 +34,11 @@ class VoiceConnection {
         sessionId: null
       }
     }
-  }
 
-  _stopTrack() {
-    nodelinkPlayingPlayersCount--
-
-    if (this.stateInterval) clearInterval(this.stateInterval)
-
-    this.config.state = {
-      time: null,
-      position: 0,
-      connected: false,
-      ping: -1
-    }
-  }
-
-  _getRealTime() {
-    return this.connection.statistics.packetsExpected * 20
-  }
-
-  setup() {
     nodelinkPlayersCount++
 
     this.connection = discordVoice.joinVoiceChannel({ guildId: this.config.guildId, userId: this.client.userId, encryption: config.audio.encryption })
+
     this.connection.on('speakStart', (userId, ssrc) => inputHandler.handleStartSpeaking(ssrc, userId, this.config.guildId))
 
     this.connection.on('stateChange', async (oldState, newState) => {
@@ -125,19 +104,6 @@ class VoiceConnection {
         
         nodelinkPlayingPlayersCount++
 
-        if (config.options.playerUpdateInterval) this.stateInterval = setInterval(() => {
-          this.client.ws.send(JSON.stringify({
-            op: 'playerUpdate',
-            guildId: this.config.guildId,
-            state: {
-              time: Date.now(),
-              position: [ 'playing', 'paused' ].includes(this.connection.playerState.status) ? this._getRealTime() : 0,
-              connected: this.connection.state.status === 'connected',
-              ping: this.connection.ping
-            }
-          }))
-        }, config.options.playerUpdateInterval)
-
         this.client.ws.send(JSON.stringify({
           op: 'event',
           type: 'TrackStartEvent',
@@ -150,7 +116,7 @@ class VoiceConnection {
     this.connection.on('error', (error) => {
       this._stopTrack()
 
-      debugLog('trackException', 2, { track: this.config.track?.info, exception: error.message })
+      debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -176,6 +142,21 @@ class VoiceConnection {
     })
   }
 
+  _stopTrack() {
+    nodelinkPlayingPlayersCount--
+
+    this.config.state = {
+      time: null,
+      position: 0,
+      connected: false,
+      ping: -1
+    }
+  }
+
+  _getRealTime() {
+    return this.connection.statistics.packetsExpected * 20
+  }
+
   updateVoice(buffer) {
     this.config.voice = buffer
 
@@ -192,8 +173,6 @@ class VoiceConnection {
     }
 
     this._stopTrack()
-
-    if (this.stateInterval) clearInterval(this.stateInterval)
   }
 
   async getResource(decodedTrack, urlInfo) {
