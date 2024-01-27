@@ -851,16 +851,73 @@ export function sendResponse(req, res, data, status) {
   }
 
   if (req.headers && req.headers['accept-encoding']) {
-    res.setHeader('Content-Encoding', 'br')
-    res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
+    if (req.headers['accept-encoding'].includes('br')) {
+      res.setHeader('Content-Encoding', 'br')
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
 
-    zlib.brotliCompress(JSON.stringify(data), (err, result) => {
-      if (err) throw err
-      res.end(result)
-    })
+      zlib.brotliCompress(JSON.stringify(data), (err, result) => {
+        if (err) {
+          res.writeHead(500)
+          res.end()
+
+          return;
+        }
+
+        res.end(result)
+      })
+    }
+
+    else if (req.headers['accept-encoding'].includes('gzip')) {
+      res.setHeader('Content-Encoding', 'gzip')
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' })
+  
+      zlib.gzip(JSON.stringify(data), (err, result) => {
+        if (err) {
+          res.writeHead(500)
+          res.end()
+
+          return;
+        }
+
+        res.end(result)
+      })
+    }
+
+    else if (req.headers['accept-encoding'].includes('deflate')) {
+      res.setHeader('Content-Encoding', 'deflate')
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'deflate' })
+  
+      zlib.deflate(JSON.stringify(data), (err, result) => {
+        if (err) {
+          res.writeHead(500)
+          res.end()
+
+          return;
+        }
+
+        res.end(result)
+      })
+    }
   }
 
   return true
+}
+
+export function tryParseBody(req, res, body) {
+  try {
+    return JSON.parse(body)
+  } catch {
+    sendResponse(req, res, {
+      timestamp: Date.now(),
+      status: 400,
+      trace: new Error().stack,
+      error: 'Bad Request',
+      message: 'Invalid JSON body',
+      path: parsedUrl.pathname
+    }, 400)
+
+    return null
+  }
 }
 
 export function sendResponseNonNull(req, res, data) {

@@ -6,15 +6,14 @@ autoUpdate: [ beta?, autoUpdate?, interval, [tar, zip] ]
 
 export default {
   "version": {
-    "major": "1",
-    "minor": "15",
+    "major": "2",
+    "minor": "0",
     "patch": "0",
     "preRelease": null
   },
   "server": {
     "port": 2333,
-    "password": "youshallnotpass",
-    "resumeTimeout": 10000,
+    "password": "youshallnotpass"
   },
   "options": {
     "threshold": false,
@@ -99,7 +98,7 @@ export default {
       "local": true,
       "pandora": false,
       "spotify": {
-        "enabled": true,
+        "enabled": false,
         "market": "BR",
         "sp_dc": "DISABLED" // Necessary for direct Spotify loadLyrics. Available in Spotify website cookies in "sp_dc" parameter.
       },
@@ -110,7 +109,7 @@ export default {
         "arl": "DISABLED" // Necessary for direct Deezer Lyrics. Available in Deezer website cookies in "arl" parameter.
       },
       "soundcloud": {
-        "enabled": true,
+        "enabled": false,
         "clientId": "AUTOMATIC", // Available in SoundCloud website API requests in "client_id" parameter.
         "fallbackIfSnipped": true
       },

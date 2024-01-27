@@ -1,13 +1,12 @@
 import os from 'node:os'
 import { URL } from 'node:url'
 
-import { randomLetters, debugLog, sendResponse, sendResponseNonNull, verifyMethod, encodeTrack, decodeTrack } from '../utils.js'
+import { randomLetters, debugLog, sendResponse, sendResponseNonNull, verifyMethod, encodeTrack, decodeTrack, tryParseBody } from '../utils.js'
 import config from '../../config.js'
 import sources from '../sources.js'
 import VoiceConnection from './voiceHandler.js'
 
-const clients = new Map()
-// TODO: Use object
+const clients = {}
 let statsInterval = null
 
 function startStats() {
@@ -56,7 +55,7 @@ function startStats() {
   }, config.options.statsInterval)
 }
 
-async function setupConnection(ws, req) {
+async function configureConnection(ws, req) {
   debugLog('connect', 3, { headers: req.headers })
 
   let sessionId = null
@@ -72,68 +71,28 @@ async function setupConnection(ws, req) {
       statsInterval = null
     }
 
-    if (client.resuming) {
-      client.timeout = setTimeout(() => {
-        debugLog('resumeTimeout', 3, { headers: req.headers })
-
-        client.players.forEach((player) => player.destroy())
-        clients.delete(sessionId)
-        client = null
-      }, config.server.resumeTimeout)
-    } else {
-      client.players.forEach((player) => player.destroy())
-      clients.delete(sessionId)
-      client = null
-    }
+    client.players.forEach((player) => player.destroy())
+    clients.delete(sessionId)
   })
-
-  function initializeClient() {
-    sessionId = randomLetters(16)
-    client = {
-      userId: req.headers['user-id'],
-      ws,
-      players: new Map()
-    }
-
-    clients.set(sessionId, client)
-
-    ws.send(JSON.stringify({
-      op: 'ready',
-      resumed: false,
-      sessionId,
-    }))
-  }
 
   await startSourceAPIs()
 
-  if (req.headers['session-id']) {
-    sessionId = req.headers['session-id']
-
-    const resumedClient = clients.get(sessionId)
-
-    if (!resumedClient) {
-      debugLog('failedResume', 3, { headers: req.headers })
-
-      initializeClient()
-    } else {
-      debugLog('resume', 3, { headers: req.headers })
-
-      clearTimeout(resumedClient.timeout)
-      delete resumedClient.timeout
-      clients.set(sessionId, resumedClient)
-
-      sessionId = req.headers['session-id']
-      client = resumedClient
-    }
-
-    ws.send(JSON.stringify({
-      op: 'ready',
-      resumed: !!resumedClient,
-      sessionId: !!resumedClient ? sessionId : randomLetters(16)
-    }))
-  } else {
-    initializeClient()
+  sessionId = randomLetters(16)
+  client = {
+    userId: req.headers['user-id'],
+    ws,
+    players: new Map()
   }
+
+  clients.set(sessionId, client)
+
+  ws.send(
+    JSON.stringify({
+      op: 'ready',
+      resumed: false,
+      sessionId
+    })
+  )
 }
 
 async function requestHandler(req, res) {
@@ -151,7 +110,7 @@ async function requestHandler(req, res) {
     })
   }
 
-  if (!req.headers || req.headers['authorization'] != config.server.password) {
+  if (!req.headers || req.headers.authorization != config.server.password) {
     res.writeHead(401, { 'Content-Type': 'text/plain' })
 
     res.end('Unauthorized')
@@ -199,30 +158,16 @@ async function requestHandler(req, res) {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     const encodedTrack = parsedUrl.searchParams.get('encodedTrack').replace(/ /, '+')
+    let decodedTrack = null
 
-    if (!encodedTrack) {
-      debugLog('decodetrack', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing encodedTrack query parameter' })
-
-      return sendResponse(req, res, {
-        timestamp: Date.now(),
-        status: 400,
-        error: 'Bad Request',
-        trace: null,
-        message: 'Missing encodedTrack query parameter',
-        path: '/v4/decodetrack'
-      }, 400)
-    }
-
-    const decodedTrack = decodeTrack(encodedTrack)
-
-    if (!decodedTrack) {
+    if (!encodedTrack || !(decodedTrack = decodeTrack(encodedTrack))) {
       debugLog('decodetrack', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
 
       return sendResponse(req, res, {
         timestamp: Date.now(),
         status: 400,
-        error: 'Bad request',
-        trace: null,
+        error: 'Bad Request',
+        trace: new Error().stack,
         message: 'The provided track is invalid.',
         path: parsedUrl.pathname
       }, 400)
@@ -240,31 +185,16 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      try {
-        buffer = JSON.parse(buffer)
-      } catch {
-        debugLog('decodetracks', 1, { headers: req.headers, body: buffer, error: 'Invalid body.' })
-
-        return sendResponse(req, res, {
-          timestamp: Date.now(),
-          status: 400,
-          error: 'Bad Request',
-          trace: null,
-          message: 'Invalid body.',
-          path: '/v4/decodetracks'
-        }, 400)
-      }
+      if (!(buffer = tryParseBody(req, res, buffer))) return;
 
       const tracks = []
-      let shouldStop = false
+      let failed = false
 
-      buffer.forEach((encodedTrack) => {
-        if (shouldStop) return;
-
+      buffer.nForEach((encodedTrack) => {
         const decodedTrack = decodeTrack(encodedTrack)
 
         if (!decodedTrack) {
-          shouldStop = true
+          failed = true
 
           debugLog('decodetracks', 1, { headers: req.headers, body: encodedTrack, error: 'The provided track is invalid.' })
 
@@ -272,16 +202,18 @@ async function requestHandler(req, res) {
             timestamp: Date.now(),
             status: 400,
             error: 'Bad request',
-            trace: null,
+            trace: new Error().stack,
             message: 'The provided track is invalid.',
             path: parsedUrl.pathname
           }, 400)
+
+          return true
         }
 
         tracks.push({ encoded: encodedTrack, info: decodedTrack })
       })
 
-      if (shouldStop) return;
+      if (failed) return;
 
       debugLog('decodetracks', 1, { headers: req.headers, body: buffer })
 
@@ -296,44 +228,18 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      try {
-        buffer = JSON.parse(buffer)
-      } catch {
-        debugLog('encodetrack', 1, { headers: req.headers, body: buffer, error: 'Invalid body.' })
+      if (!(buffer = tryParseBody(req, res, buffer))) return;
 
-        return sendResponse(req, res, {
-          timestamp: Date.now(),
-          status: 400,
-          error: 'Bad Request',
-          trace: null,
-          message: 'Invalid body.',
-          path: '/v4/encodetrack'
-        }, 400)
-      }
+      let encodedTrack = null
 
-      if (!buffer.title || !buffer.author || !buffer.length || !buffer.identifier || !buffer.isSeekable || !buffer.isStream || !buffer.position) {
+      if (!(encodedTrack = encodeTrack(buffer))) {
         debugLog('encodetrack', 1, { headers: req.headers, body: buffer, error: 'Invalid track object' })
 
         return sendResponse(req, res, {
           timestamp: Date.now(),
           status: 400,
           error: 'Bad Request',
-          trace: null,
-          message: 'Invalid track object',
-          path: '/v4/encodetrack'
-        }, 400)
-      }
-
-      const encodedTrack = encodeTrack(buffer)
-
-      if (!encodedTrack) {
-        debugLog('encodetrack', 1, { headers: req.headers, body: buffer, error: e.message })
-
-        return sendResponse(req, res, {
-          timestamp: Date.now(),
-          status: 400,
-          error: 'Bad Request',
-          trace: null,
+          trace: new Error().stack,
           message: 'Invalid track object',
           path: '/v4/encodetrack'
         }, 400)
@@ -352,47 +258,21 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', () => {
-      try {
-        buffer = JSON.parse(buffer)
-      } catch {
-        debugLog('encodetracks', 1, { headers: req.headers, body: buffer, error: 'Invalid body.' })
-
-        return sendResponse(req, res, {
-          timestamp: Date.now(),
-          status: 400,
-          error: 'Bad Request',
-          trace: null,
-          message: 'Invalid body.',
-          path: '/v4/encodetracks'
-        }, 400)
-      }
+      if (!(buffer = tryParseBody(req, res, buffer))) return;
 
       const tracks = []
 
       buffer.forEach((track) => {
-        if (!track.title || !track.author || !track.length || !track.identifier || !track.isSeekable || !track.isStream || !track.position) {
+        let encodedTrack = null
+
+        if (!(encodedTrack = encodeTrack(track))) {
           debugLog('encodetracks', 1, { headers: req.headers, body: buffer, error: 'Invalid track object' })
 
           return sendResponse(req, res, {
             timestamp: Date.now(),
             status: 400,
             error: 'Bad Request',
-            trace: null,
-            message: 'Invalid track object',
-            path: '/v4/encodetracks'
-          }, 400)
-        }
-
-        const encodedTrack = encodeTrack(track)
-
-        if (!encodedTrack) {
-          debugLog('encodetracks', 1, { headers: req.headers, body: buffer, error: e.message })
-
-          return sendResponse(req, res, {
-            timestamp: Date.now(),
-            status: 400,
-            error: 'Bad Request',
-            trace: null,
+            trace: new Error().stack,
             message: 'Invalid track object',
             path: '/v4/encodetracks'
           }, 400)
@@ -523,34 +403,26 @@ async function requestHandler(req, res) {
     }
 
     sendResponse(req, res, search, 200)
+
+    return;
   }
 
   else if (parsedUrl.pathname == '/v4/loadlyrics') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     const encodedTrack = parsedUrl.searchParams.get('encodedTrack')
+    let decodedTrack = null
 
-    if (!encodedTrack) return sendResponse(req, res, {
-      timestamp: Date.now(),
-      status: 400,
-      error: 'Bad Request',
-      trace: null,
-      message: 'Missing encodedTrack query parameter',
-      path: '/v4/loadlyrics'
-    }, 400)
-
-    const decodedTrack = decodeTrack(encodedTrack)
-
-    if (!decodedTrack) {
-      debugLog('loadlyrics', 4, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
+    if (!encodedTrack || !(decodedTrack = decodeTrack(encodedTrack))) {
+      debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
 
       return sendResponse(req, res, {
         timestamp: Date.now(),
         status: 400,
-        error: 'Bad request',
-        trace: null,
+        error: 'Bad Request',
+        trace: new Error().stack,
         message: 'The provided track is invalid.',
-        path: parsedUrl.pathname
+        path: '/v4/loadlyrics'
       }, 400)
     }
 
@@ -628,49 +500,6 @@ async function requestHandler(req, res) {
     sendResponse(req, res, captions, 200)
   }
 
-  else if (/^\/v4\/sessions\/[A-Za-z0-9]+$/.test(parsedUrl.pathname)) {
-    if (verifyMethod(parsedUrl, req, res, 'PATCH')) return;
-
-    const sessionId = /^\/v4\/sessions\/[A-Za-z0-9]+/.exec(parsedUrl.pathname)[1]
-
-    let buffer = ''
-
-    req.on('data', (buf) => buffer += buf)
-    req.on('end', () => {
-      try {
-        buffer = JSON.parse(buffer)
-      } catch {
-        debugLog('sessions', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'Invalid body.' })
-
-        return sendResponse(req, res, {
-          timestamp: new Date(),
-          status: 400,
-          trace: null,
-          message: 'Invalid body.',
-          path: parsedUrl.pathname
-        }, 400)
-      }
-
-      if (!buffer.resuming) {
-        debugLog('sessions', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'Invalid body.' })
-
-        return sendResponse(req, res, {
-          timestamp: new Date(),
-          status: 400,
-          trace: null,
-          message: 'Invalid body.',
-          path: parsedUrl.pathname
-        }, 400)
-      }
-
-      clients.set(sessionId, { ...clients.get(sessionId), resuming: buffer.resuming })
-
-      debugLog('sessions', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-
-      sendResponse(req, res, { resuming: buffer.resuming, timeout: config.server.resumeTimeout }, 200)
-    })
-  }
-
   else if (/^\/v4\/sessions\/[A-Za-z0-9]+\/players$(?!\/)/.test(parsedUrl.pathname)) {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
@@ -682,7 +511,7 @@ async function requestHandler(req, res) {
       return sendResponse(req, res, {
         timestamp: new Date(),
         status: 404,
-        trace: null,
+        trace: new Error().stack,
         message: 'The provided session Id doesn\'t exist.',
         path: parsedUrl.pathname
       }, 404)
@@ -695,7 +524,7 @@ async function requestHandler(req, res) {
         time: new Date(),
         position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
         connected: player.connection ? player.connection.state.status == 'ready' : false,
-        ping: player.connection ? player.connection.state.status == 'ready' ? player.connection.ping : -1 : -1
+        ping: player.connection?.ping || -1
       }
 
       players.push(player.config)
@@ -704,8 +533,6 @@ async function requestHandler(req, res) {
     debugLog('getPlayers', 1, { headers: req.headers })
 
     sendResponse(req, res, players, 200)
-
-    return;
   }
 
   else if (/^\/v4\/sessions\/\w+\/players\/\w+./.test(parsedUrl.pathname)) {
@@ -729,7 +556,7 @@ async function requestHandler(req, res) {
       return sendResponse(req, res, {
         timestamp: new Date(),
         status: 404,
-        trace: null,
+        trace: new Error().stack,
         message: 'The provided session Id doesn\'t exist.',
         path: parsedUrl.pathname
       }, 404)
@@ -745,7 +572,7 @@ async function requestHandler(req, res) {
         return sendResponse(req, res, {
           timestamp: new Date(),
           status: 404,
-          trace: null,
+          trace: new Error().stack,
           message: 'The provided guildId doesn\'t exist.',
           path: parsedUrl.pathname
         }, 404)
@@ -763,19 +590,7 @@ async function requestHandler(req, res) {
 
     req.on('data', (buf) => buffer += buf)
     req.on('end', async () => {
-      try {
-        buffer = JSON.parse(buffer)
-      } catch {
-        debugLog('updatePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Invalid body.' })
-
-        return sendResponse(req, res, {
-          timestamp: new Date(),
-          status: 400,
-          trace: null,
-          message: 'Invalid body.',
-          path: parsedUrl.pathname
-        }, 400)
-      }
+      if (!(buffer = tryParseBody(req, res, buffer))) return;
 
       if (req.method == 'GET') {
         if (!guildId) {
@@ -784,7 +599,7 @@ async function requestHandler(req, res) {
           return sendResponse(req, res, {
             timestamp: new Date(),
             status: 400,
-            trace: null,
+            trace: new Error().stack,
             message: 'Missing guildId parameter.',
             path: parsedUrl.pathname
           }, 400)
@@ -802,13 +617,15 @@ async function requestHandler(req, res) {
           time: new Date(),
           position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
           connected: player.connection ? player.connection.state.status == 'ready' : false,
-          ping: player.connection ? player.connection.state.status == 'ready' ? player.connection.ping : -1 : -1
+          ping: player.connection?.ping || -1
         }
 
         debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
 
         sendResponse(req, res, player.config, 200)
-      } else if (req.method == 'PATCH') {
+      }
+      
+      else if (req.method == 'PATCH') {
         if (!player) player = new VoiceConnection(guildId, client)
 
         if (buffer.voice != undefined) {
@@ -818,7 +635,7 @@ async function requestHandler(req, res) {
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
-              trace: null,
+              trace: new Error().stack,
               message: 'Invalid voice object.',
               path: parsedUrl.pathname
             }, 400)
@@ -829,21 +646,7 @@ async function requestHandler(req, res) {
           player.updateVoice(buffer.voice)
 
           if (player.cache.track) {
-            const decodedTrack = decodeTrack(player.cache.track)
-
-            if (!decodedTrack) {
-              debugLog('play', 1, { track: player.cache.track, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
-
-              return sendResponse(req, res, {
-                timestamp: new Date(),
-                status: 400,
-                trace: null,
-                message: 'The cached track is invalid.',
-                path: parsedUrl.pathname
-              }, 400)
-            }
-
-            player.play(player.cache.track.encoded, decodedTrack, false)
+            player.play(player.cache.track.encoded, decodeTrack(player.cache.track), false)
 
             player.cache.track = null
           }
@@ -856,8 +659,13 @@ async function requestHandler(req, res) {
         if (buffer.track?.encoded !== undefined || buffer.track?.encoded === null) {
           const noReplace = parsedUrl.searchParams.get('noReplace')
 
-          if (buffer.track.encoded == null) player.config.track ? player.stop() : null
-          else {
+          if (buffer.track.encoded == null) {
+            if (player.config.track) {
+              player.stop()
+
+              debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
+            }
+          } else {
             if (!player.connection) player.setup()
 
             const decodedTrack = decodeTrack(buffer.track.encoded)
@@ -868,7 +676,7 @@ async function requestHandler(req, res) {
               return sendResponse(req, res, {
                 timestamp: new Date(),
                 status: 400,
-                trace: null,
+                trace: new Error().stack,
                 message: 'The provided track is invalid.',
                 path: parsedUrl.pathname
               }, 400)
@@ -876,12 +684,11 @@ async function requestHandler(req, res) {
 
             if (!player.connection.voiceServer) player.cache.track = buffer.track.encoded
             else player.play(buffer.track.encoded, decodedTrack, noReplace == true)
+
+            debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
           }
 
           client.players.set(guildId, player)
-
-          if (buffer.track.encoded == null) debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-          else debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
         }
 
         if (buffer.track?.userData !== undefined) {
@@ -900,7 +707,7 @@ async function requestHandler(req, res) {
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
-              trace: null,
+              trace: new Error().stack,
               message: 'The volume must be between 0 and 1000.',
               path: parsedUrl.pathname
             }, 400)
@@ -920,13 +727,25 @@ async function requestHandler(req, res) {
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
-              trace: null,
+              trace: new Error().stack,
               message: 'The paused value must be a boolean.',
               path: parsedUrl.pathname
             }, 400)
           }
 
-          if (player.connection.ws) player.pause(buffer.paused)
+          if (!player.connection.ws) {
+            debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The player is not connected to a voice server.' })
+
+            return sendResponse(req, res, {
+              timestamp: new Date(),
+              status: 400,
+              trace: new Error().stack,
+              message: 'The player is not connected to a voice server.',
+              path: parsedUrl.pathname
+            }, 400)
+          }
+
+          player.pause(buffer.paused)
 
           client.players.set(guildId, player)
 
@@ -942,7 +761,7 @@ async function requestHandler(req, res) {
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
-              trace: null,
+              trace: new Error().stack,
               message: 'The filters value must be an object.',
               path: parsedUrl.pathname
             }, 400)
@@ -960,7 +779,7 @@ async function requestHandler(req, res) {
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
-              trace: null,
+              trace: new Error().stack,
               message: 'The position value must be a number.',
               path: parsedUrl.pathname
             }, 400)
@@ -978,7 +797,7 @@ async function requestHandler(req, res) {
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
-              trace: null,
+              trace: new Error().stack,
               message: 'The endTime value must be a number.',
               path: parsedUrl.pathname
             }, 400)
@@ -999,7 +818,7 @@ async function requestHandler(req, res) {
           time: new Date(),
           position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
           connected: player.connection ? player.connection.state.status == 'ready' : false,
-          ping: player.connection ? player.connection.state.status == 'ready' ? player.connection.ping : -1 : -1
+          ping: player.connection?.ping || -1 
         }
 
         sendResponse(req, res, player.config, 200)
@@ -1012,7 +831,7 @@ async function requestHandler(req, res) {
       timestamp: Date.now(),
       status: 404,
       error: 'Not Found',
-      trace: null,
+      trace: new Error().stack,
       message: 'The requested route was not found.',
       path: parsedUrl.pathname
     }, 404)
@@ -1040,27 +859,22 @@ function startSourceAPIs() {
     if (config.options.statsInterval)
       startStats()
 
-    let initializedAmount = 0
+    if (config.search.sources.musixmatch.enabled)
+      sources.musixmatch.init()
 
     if (sourcesToInitialize.length == 0) resolve()
 
-    for (let i = 0;i < sourcesToInitialize.length;i++) {
-      const source = sourcesToInitialize[i]
+    let i = 0
+    sourcesToInitialize.forEach(async (source) => {
+      await source.init()
 
-      source.init().then(() => {
-        initializedAmount++
-
-        if (initializedAmount == sourcesToInitialize.length) resolve()
-      })
-    }
-
-    if (config.search.sources.musixmatch.enabled)
-      sources.musixmatch.init()
+      if (++i == sourcesToInitialize.length) resolve()
+    })
   })
 }
 
 export default {
-  setupConnection,
+  configureConnection,
   requestHandler,
   startSourceAPIs
 }
