@@ -132,11 +132,20 @@ class WebsocketConnection extends EventEmitter {
         this.socket.unshift(headers.buffer)
     })
 
-    socket.on('error', (err) => {
-      socket.end()
+    req.on('error', (err) => {
+      socket.destroy()
 
       this.emit('error', err)
-      this.emit('close', 1006, '')
+      this.emit('close', 1006, `Error: ${err.message}`)
+
+      socket.removeAllListeners()
+    })
+
+    socket.on('error', (err) => {
+      socket.destroy()
+
+      this.emit('error', err)
+      this.emit('close', 1006, `Error: ${err.message}`)
 
       socket.removeAllListeners()
     })
