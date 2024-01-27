@@ -35,8 +35,8 @@ export class OpusHead {
   constructor(data) {
     this.channelCount = data.channelCount
     this.sampleRate = data.sampleRate
-    this.preskip = data.preskip != null ? data.preskip : data.sampleRate * (80 / 1000)
-    this.outputGain = data.outputGain != null ? data.outputGain : 0
+    this.preskip = data.preskip !== null ? data.preskip : data.sampleRate * (80 / 1000)
+    this.outputGain = data.outputGain !== null ? data.outputGain : 0
   }
 
   toBuffer() {
@@ -56,8 +56,8 @@ export class OpusHead {
 
 class OpusTags {
   constructor(data = {}) {
-    this.vendor = data.vendor != null ? data.vendor : 'prism-media'
-    this.tags = data.tags != null ? data.tags : {}
+    this.vendor = data.vendor !== null ? data.vendor : 'prism-media'
+    this.tags = data.tags !== null ? data.tags : {}
   }
 
   toBuffer() {
@@ -142,7 +142,7 @@ export class OggLogicalBitstream extends Transform {
       this.pageSizeController = () => this.packets.length + 1 > maxPackets
     }
     this.opusHead = options.opusHead
-    this.opusTags = options.opusTags != null ? options.opusTags : new OpusTags()
+    this.opusTags = options.opusTags !== null ? options.opusTags : new OpusTags()
     this.writeHeaderPages([ [ options.opusHead.toBuffer() ], [ this.opusTags.toBuffer() ] ])
   }
 

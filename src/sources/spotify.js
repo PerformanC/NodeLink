@@ -11,12 +11,12 @@ async function init() {
 
   const { body: token } = await makeRequest('https://open.spotify.com/get_access_token', {
     headers: {
-      ...(config.search.sources.spotify.sp_dc != 'DISABLED' ? { Cookie: `sp_dc=${config.search.sources.spotify.sp_dc}` } : {})
+      ...(config.search.sources.spotify.sp_dc !== 'DISABLED' ? { Cookie: `sp_dc=${config.search.sources.spotify.sp_dc}` } : {})
     },
     method: 'GET'
   })
 
-  if (typeof token != 'object') {
+  if (typeof token !== 'object') {
     debugLog('spotify', 5, { type: 2, message: 'Failed to fetch Spotify token.' })
 
     return;
@@ -44,13 +44,13 @@ async function init() {
     disableBodyCompression: true
   })
 
-  if (typeof data != 'object') {
+  if (typeof data !== 'object') {
     debugLog('spotify', 5, { type: 2, message: 'Failed to fetch client token.' })
 
     return;
   }
 
-  if (data.response_type != 'RESPONSE_GRANTED_TOKEN_RESPONSE') {
+  if (data.response_type !== 'RESPONSE_GRANTED_TOKEN_RESPONSE') {
     debugLog('spotify', 5, { type: 2, message: 'Failed to fetch client token.' })
 
     return;
@@ -77,7 +77,7 @@ async function search(query) {
       }
     })
 
-    if (data.tracks.total == 0) {
+    if (data.tracks.total === 0) {
       debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
       return resolve({ loadType: 'empty', data: {} })
@@ -92,7 +92,7 @@ async function search(query) {
     data.tracks.items.forEach(async (items) => {
       const search = await searchWithDefault(`${items.name} ${items.artists[0].name}`)
 
-      if (search.loadType == 'search') {
+      if (search.loadType === 'search') {
         const track = {
           identifier: search.data[0].info.identifier,
           isSeekable: true,
@@ -114,9 +114,9 @@ async function search(query) {
         })
       }
 
-      if (index != data.tracks.items.length - 1) return index++
+      if (index !== data.tracks.items.length - 1) return index++
 
-      if (tracks.length == 0) {
+      if (tracks.length === 0) {
         debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
@@ -125,7 +125,7 @@ async function search(query) {
       const new_tracks = []
       data.tracks.items.nForEach((items2, index2) => {
         tracks.nForEach((track) => {
-          if (track.info.title != items2.name || track.info.author != items2.artists.map((artist) => artist.name).join(', ')) return false
+          if (track.info.title !== items2.name || track.info.author !== items2.artists.map((artist) => artist.name).join(', ')) return false
 
           track.info.position = index2
           track.encoded = encodeTrack(track.info)
@@ -134,7 +134,7 @@ async function search(query) {
           return true
         })
 
-        if (new_tracks.length != tracks.length) return false
+        if (new_tracks.length !== tracks.length) return false
 
         debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', tracksLen: new_tracks.length, query })
 
@@ -189,7 +189,7 @@ async function loadFrom(query, type) {
     })
 
     if (data.error) {
-      if (data.error.status == 401) {
+      if (data.error.status === 401) {
         await init()
 
         data = await makeRequest(`https://api.spotify.com/v1${endpoint}`, {
@@ -201,13 +201,13 @@ async function loadFrom(query, type) {
         data = data.body
       }
 
-      if (data.error?.status == 400) {
+      if (data.error?.status === 400) {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
 
-      if (data.error?.message == 'Invalid playlist Id') {
+      if (data.error?.message === 'Invalid playlist Id') {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
@@ -224,7 +224,7 @@ async function loadFrom(query, type) {
       case 'track': {
         const search = await searchWithDefault(`"${data.name} ${data.artists[0].name}"`)
 
-        if (search.loadType != 'search')
+        if (search.loadType !== 'search')
           return resolve(search)
 
         const track = {
@@ -257,7 +257,7 @@ async function loadFrom(query, type) {
       case 'episode': {
         const search = await searchWithDefault(`"${data.name} ${data.show.publisher}"`)
 
-        if (search.loadType != 'search')
+        if (search.loadType !== 'search')
           return resolve(search)
 
         const track = {
@@ -296,12 +296,12 @@ async function loadFrom(query, type) {
           data.tracks.items = data.tracks.items.splice(0, config.options.maxAlbumPlaylistLength)
 
         data.tracks.items.forEach(async (item) => {
-          item = type[1] == 'playlist' ? item.track : item
+          item = type[1] === 'playlist' ? item.track : item
 
           if (item) {
             const search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
 
-            if (search.loadType == 'search') {
+            if (search.loadType === 'search') {
               const track = {
                 identifier: search.data[0].info.identifier,
                 isSeekable: true,
@@ -324,9 +324,9 @@ async function loadFrom(query, type) {
             }
           }
 
-          if (index != data.tracks.items.length - 1) return index++
+          if (index !== data.tracks.items.length - 1) return index++
 
-          if (tracks.length == 0) {
+          if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
             return resolve({ loadType: 'empty', data: {} })
@@ -336,10 +336,10 @@ async function loadFrom(query, type) {
           data.tracks.items.nForEach(async (item2, index2) => {
             if (!item2.track) return false
 
-            item2 = type[1] == 'playlist' ? item2.track : item2
+            item2 = type[1] === 'playlist' ? item2.track : item2
 
             await tracks.nForEach((track) => {
-              if (track.info.title != item2.name || track.info.author != item2.artists[0].name) return false
+              if (track.info.title !== item2.name || track.info.author !== item2.artists[0].name) return false
 
               track.info.position = index2
               track.encoded = encodeTrack(track.info)
@@ -348,7 +348,7 @@ async function loadFrom(query, type) {
               return true
             })
 
-            if (new_tracks.length != tracks.length) return false
+            if (new_tracks.length !== tracks.length) return false
 
             debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
 
@@ -380,7 +380,7 @@ async function loadFrom(query, type) {
         data.episodes.items.forEach(async (episode) => {
           const search = await searchWithDefault(`${episode.name} ${episode.show.publisher}`)
 
-          if (search.loadType == 'search') {
+          if (search.loadType === 'search') {
             const track = {
               identifier: search.data[0].info.identifier,
               isSeekable: true,
@@ -402,9 +402,9 @@ async function loadFrom(query, type) {
             })
           }
 
-          if (index != data.episodes.items.length - 1) return index++
+          if (index !== data.episodes.items.length - 1) return index++
 
-          if (tracks.length == 0) {
+          if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
             return resolve({ loadType: 'empty', data: {} })
@@ -413,7 +413,7 @@ async function loadFrom(query, type) {
           const new_tracks = []
           data.episodes.items.nForEach(async (episode2, index2) => {
             await tracks.nForEach((track) => {
-              if (track.info.title != episode2.name || track.info.author != episode2.publisher) return false
+              if (track.info.title !== episode2.name || track.info.author !== episode2.publisher) return false
 
               track.info.position = index2
               track.encoded = encodeTrack(track.info)
@@ -422,7 +422,7 @@ async function loadFrom(query, type) {
               return true
             })
             
-            if (new_tracks.length != tracks.length) return false
+            if (new_tracks.length !== tracks.length) return false
 
             debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
 
@@ -451,7 +451,7 @@ async function loadFrom(query, type) {
 async function loadLyrics(decodedTrack, language) {
   const identifier = /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(decodedTrack.uri)
 
-  if (config.search.sources.spotify.sp_dc == 'DISABLED') {
+  if (config.search.sources.spotify.sp_dc === 'DISABLED') {
     debugLog('loadlyrics', 4, { type: 3, sourceName: 'Spotify', message: 'Spotify lyrics are disabled.' })
 
     return null
@@ -466,7 +466,7 @@ async function loadLyrics(decodedTrack, language) {
     method: 'GET'
   })
 
-  if (statusCode == 404) {
+  if (statusCode === 404) {
     debugLog('loadlyrics', 4, { type: 3, sourceName: 'Spotify', message: 'No lyrics found.' })
 
     return null
@@ -474,7 +474,7 @@ async function loadLyrics(decodedTrack, language) {
 
   const lyricsEvents = []
   data.lyrics.lines.forEach((event, index) => {
-    if (index == data.lyrics.lines.length - 1) return;
+    if (index === data.lyrics.lines.length - 1) return;
 
     lyricsEvents.push({
       startTime: Number(event.startTimeMs),
@@ -487,7 +487,7 @@ async function loadLyrics(decodedTrack, language) {
     loadType: 'lyricsSingle',
     data: {
       name: data.lyrics.language,
-      synced: data.lyrics.syncType == 'LINE_SYNCED',
+      synced: data.lyrics.syncType === 'LINE_SYNCED',
       data: lyricsEvents,
       rtl: false
     }

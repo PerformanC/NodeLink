@@ -19,7 +19,7 @@ const sourceInfo = {
 }
 
 function checkURLType(url, type) {
-  if (type == 'ytmusic') {
+  if (type === 'ytmusic') {
     const videoRegex = /^https?:\/\/music\.youtube\.com\/watch\?v=[\w-]+/
     const playlistRegex = /^https?:\/\/music\.youtube\.com\/playlist\?list=[\w-]+/
     
@@ -42,7 +42,7 @@ async function search(query, type, shouldLog) {
   return new Promise(async (resolve) => {
     if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
-    const { body: search } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
+    const { body: search } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
       headers: {
         'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
       },
@@ -54,7 +54,7 @@ async function search(query, type, shouldLog) {
       method: 'POST'
     })
 
-    if (typeof search != 'object') {
+    if (typeof search !== 'object') {
       debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'Failed to load results.' })
 
       return resolve({ loadType: 'error', data: { message: 'Failed to load results.', severity: 'common', cause: 'Unknown' } })
@@ -95,8 +95,8 @@ async function search(query, type, shouldLog) {
         })
       }
 
-      if (index == videos.length - 1 || tracks.length == config.options.maxResultsLength - 1) {
-        if (tracks.length == 0) {
+      if (index === videos.length - 1 || tracks.length === config.options.maxResultsLength - 1) {
+        if (tracks.length === 0) {
           debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
     
           return resolve({ loadType: 'empty', data: {} })
@@ -118,7 +118,7 @@ async function loadFrom(query, type) {
         
         const identifier = /v=([^&]+)/.exec(query)[1]
 
-        const { body: video } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const { body: video } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
             'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
           },
@@ -132,7 +132,7 @@ async function loadFrom(query, type) {
           method: 'POST'
         })
 
-        if (video.playabilityStatus.status != 'OK') {
+        if (video.playabilityStatus.status !== 'OK') {
           debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
           
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
@@ -166,7 +166,7 @@ async function loadFrom(query, type) {
       case 3: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
 
-        const { body: playlist } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
             'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
           },
@@ -220,7 +220,7 @@ async function loadFrom(query, type) {
           }
         })
 
-        if (tracks.length == 0) {
+        if (tracks.length === 0) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
@@ -257,7 +257,7 @@ async function loadFrom(query, type) {
           method: 'POST'
         })
 
-        if (short.playabilityStatus.status != 'OK') {
+        if (short.playabilityStatus.status !== 'OK') {
           debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.playabilityStatus.reason || short.playabilityStatus.messages[0] })
 
           return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason || short.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
@@ -300,7 +300,7 @@ async function loadFrom(query, type) {
 
 async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
-    const { body: videos } = await makeRequest(`https://${type == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const { body: videos } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
         'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
       },
@@ -314,7 +314,7 @@ async function retrieveStream(identifier, type, title) {
       method: 'POST'
     })
 
-    if (videos.playabilityStatus.status != 'OK') {
+    if (videos.playabilityStatus.status !== 'OK') {
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: title, message: videos.playabilityStatus.reason })
 
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
@@ -329,17 +329,17 @@ async function retrieveStream(identifier, type, title) {
       default: itag = 251; break
     }
 
-    const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag == itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
+    const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag === itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
     /* range query is necessary to bypass throttling */
     const url = decodeURIComponent(audio.url || args.get('url')) + '&ratebypass=yes&range=0-'
 
-    resolve({ url, protocol: 'https', format: audio.mimeType == 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
+    resolve({ url, protocol: 'https', format: audio.mimeType === 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
   })
 }
 
 async function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
-    const { body: video } = await makeRequest(`https://${decodedTrack.sourceName == 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const { body: video } = await makeRequest(`https://${decodedTrack.sourceName === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
         'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
       },
@@ -353,14 +353,14 @@ async function loadLyrics(decodedTrack, language) {
       method: 'POST'
     })
 
-    if (video.playabilityStatus.status != 'OK') {
+    if (video.playabilityStatus.status !== 'OK') {
       debugLog('loadlyrics', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
 
       return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
 
     const selectedCaption = video.captions.playerCaptionsTracklistRenderer.captionTracks.find((caption) => {
-      return caption.languageCode == language
+      return caption.languageCode === language
     })
 
     if (selectedCaption) {
@@ -416,8 +416,8 @@ async function loadLyrics(decodedTrack, language) {
           rtl: !!caption.rtl
         })
 
-        if (i == video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
-          if (captions.length == 0) {
+        if (i === video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
+          if (captions.length === 0) {
             debugLog('loadlyrics', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
 
             return resolve(null)

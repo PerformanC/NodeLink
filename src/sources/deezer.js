@@ -28,7 +28,7 @@ async function init() {
 
   sourceInfo.Cookie = res.headers['set-cookie'].join('; ')
   
-  if (config.search.sources.deezer.arl != 'DISABLED') {
+  if (config.search.sources.deezer.arl !== 'DISABLED') {
     sourceInfo.Cookie += `; arl=${config.search.sources.deezer.arl}`
 
     const { body: jwtInfo } = await makeRequest('https://auth.deezer.com/login/arl?jo=p&rto=c&i=c', {
@@ -71,7 +71,7 @@ async function loadFrom(query, type) {
     const { body: data } = await makeRequest(`https://api.deezer.com/2.0/${endpoint}`, { method: 'GET' })
 
     if (data.error) {
-      if (data.error.code == 800) 
+      if (data.error.code === 800) 
         return resolve({ loadType: 'empty', data: {} })
 
       return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'fault', cause: 'Unknown' } })
@@ -123,7 +123,7 @@ async function loadFrom(query, type) {
             position: index++,
             title: item.title,
             uri: item.link,
-            artworkUrl: type[1] == 'album' ? data.cover_xl : data.picture_xl,
+            artworkUrl: type[1] === 'album' ? data.cover_xl : data.picture_xl,
             isrc: null,
             sourceName: 'deezer'
           }
@@ -170,7 +170,7 @@ function search(query, shouldLog) {
     let index = 0
 
     data.data.forEach(async (item) => {
-      if (index >= config.options.maxResultsLength || item.type != 'track') return;
+      if (index >= config.options.maxResultsLength || item.type !== 'track') return;
 
       const track = {
         identifier: item.id.toString(),
@@ -193,7 +193,7 @@ function search(query, shouldLog) {
       })
     })
 
-    if (tracks.length == 0) resolve({ loadType: 'empty', data: {} })
+    if (tracks.length === 0) resolve({ loadType: 'empty', data: {} })
 
     if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'deezer', tracksLen: tracks.length, query })
 
@@ -217,7 +217,7 @@ function retrieveStream(identifier, title) {
       disableBodyCompression: true
     })
 
-    if (data.error.length != 0) {
+    if (data.error.length !== 0) {
       const errorMessage = Object.keys(data.error).map((err) => data.error[err]).join('; ')
 
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: errorMessage })
@@ -353,7 +353,7 @@ function loadTrack(title, url, trackInfos) {
         while (buf.length >= bufferSize) {
           const bufferSized = buf.subarray(0, bufferSize)
 
-          if (i % 3 == 0) {
+          if (i % 3 === 0) {
             const decipher = crypto.createDecipheriv('bf-cbc', trackKey, IV).setAutoPadding(false)
     
             stream.push(decipher.update(bufferSized))

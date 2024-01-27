@@ -85,7 +85,7 @@ class NodeLinkStream {
 function createAudioResource(stream, type) {
   if ([ 'webm/opus', 'ogg/opus' ].includes(type)) {
     return new NodeLinkStream(stream, [
-      new prism.opus[type == 'webm/opus' ? 'WebmDemuxer' : 'OggDemuxer'](),
+      new prism.opus[type === 'webm/opus' ? 'WebmDemuxer' : 'OggDemuxer'](),
       new prism.opus.Decoder({ frameSize: 960, channels: 2, rate: 48000 }),
       new prism.VolumeTransformer({ type: 's16le' }),
       new prism.opus.Encoder({

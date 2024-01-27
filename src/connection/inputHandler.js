@@ -39,7 +39,7 @@ function setupConnection(ws, req) {
 function handleStartSpeaking(ssrc, userId, guildId) {
   const opusStream = discordVoice.getSpeakStream(ssrc)
 
-  if (config.voiceReceive.audioType == 'ogg/opus') {
+  if (config.voiceReceive.audioType === 'ogg/opus') {
     const oggStream = new OggLogicalBitstream({
       opusHead: new OpusHead({
         channelCount: 2,
@@ -52,7 +52,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
     let buffer = []
     oggStream.on('data', (chunk) => {
-      if (Object.keys(Connections).length == 0) {
+      if (Object.keys(Connections).length === 0) {
         oggStream.destroy()
         opusStream.destroy()
         buffer = null
@@ -70,7 +70,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
       const connectionsArray = Object.keys(Connections)
 
-      if (connectionsArray.length == 0) {
+      if (connectionsArray.length === 0) {
         buffer = []
 
         return;
@@ -88,7 +88,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       })
 
       connectionsArray.forEach((botId) => {
-        if (Connections[botId].guildId != guildId) return;
+        if (Connections[botId].guildId !== guildId) return;
 
         Connections[botId].ws.send(endSpeakingResponse)
 
@@ -112,14 +112,14 @@ function handleStartSpeaking(ssrc, userId, guildId) {
     })
 
     Object.keys(Connections).forEach((botId) => {
-      if (Connections[botId].guildId != guildId) return;
+      if (Connections[botId].guildId !== guildId) return;
 
       Connections[botId].ws.send(startSpeakingResponse)
     })
   } else {
     let buffer = []
     opusStream.on('data', (chunk) => {
-      if (Object.keys(Connections).length == 0) {
+      if (Object.keys(Connections).length === 0) {
         opusStream.destroy()
         buffer = null
 
@@ -134,7 +134,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
       const connectionsArray = Object.keys(Connections)
 
-      if (connectionsArray.length == 0) {
+      if (connectionsArray.length === 0) {
         buffer = []
 
         return;
@@ -152,7 +152,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       })
 
       connectionsArray.forEach((botId) => {
-        if (Connections[botId].guildId != guildId) return;
+        if (Connections[botId].guildId !== guildId) return;
 
         Connections[botId].ws.send(endSpeakingResponse)
 
@@ -174,7 +174,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
     })
 
     Object.keys(Connections).forEach((botId) => {
-      if (Connections[botId].guildId != guildId) return;
+      if (Connections[botId].guildId !== guildId) return;
 
       Connections[botId].ws.send(startSpeakingResponse)
     })

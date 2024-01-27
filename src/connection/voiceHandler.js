@@ -65,9 +65,9 @@ class VoiceConnection {
     this.connection.on('stateChange', async (oldState, newState) => {
       switch (newState.status) {
         case 'disconnected': {
-          if (oldState.status == 'disconnected') return;
+          if (oldState.status === 'disconnected') return;
 
-          if (newState.code != 4015) {
+          if (newState.code !== 4015) {
               debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
               this.connection.destroy()
@@ -102,7 +102,7 @@ class VoiceConnection {
     })
 
     this.connection.on('playerStateChange', (_oldState, newState) => {
-      if (newState.status == 'idle' && newState.reason == 'finished') {
+      if (newState.status === 'idle' && newState.reason === 'finished') {
 
         this._stopTrack()
         this.cache.url = null
@@ -120,7 +120,7 @@ class VoiceConnection {
         this.config.track = null
       }
 
-      if (newState.status == 'playing' && newState.reason == 'requested') {
+      if (newState.status === 'playing' && newState.reason === 'requested') {
         debugLog('trackStart', 2, { track: this.config.track.info })
         
         nodelinkPlayingPlayersCount++
@@ -132,7 +132,7 @@ class VoiceConnection {
             state: {
               time: Date.now(),
               position: [ 'playing', 'paused' ].includes(this.connection.playerState.status) ? this._getRealTime() : 0,
-              connected: this.connection.state.status == 'connected',
+              connected: this.connection.state.status === 'connected',
               ping: this.connection.ping
             }
           }))
@@ -310,11 +310,11 @@ class VoiceConnection {
 
     this.config.track = { encoded: track, info: decodedTrack }
 
-    if (this.config.volume != 100) 
+    if (this.config.volume !== 100) 
       resource.stream.setVolume(this.config.volume / 100)
   
     if (!this.connection.udpInfo?.secretKey)
-      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
+      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected', config.options.threshold || undefined)
     
     this.connection.play(resource.stream)
 
@@ -353,7 +353,7 @@ class VoiceConnection {
   }
 
   async filters(filters) {
-    if (this.connection.playerState.status != 'playing' || !config.filters.enabled) return this.config
+    if (this.connection.playerState.status !== 'playing' || !config.filters.enabled) return this.config
 
     const filter = new Filters()
 
@@ -392,7 +392,7 @@ class VoiceConnection {
     this.config.volume = (filters.volume * 100) || this.config.volume
 
     if (!this.connection.udpInfo?.secretKey)
-      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status == 'connected', config.options.threshold || undefined)
+      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected', config.options.threshold || undefined)
     
     this.connection.play(resource.stream)
 

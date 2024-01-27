@@ -7,7 +7,7 @@ import { debugLog, makeRequest } from '../utils.js'
 function _getGuid() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
     const random = 16 * Math.random() | 0
-    const value = character == 'x' ? random : 3 & random | 8
+    const value = character === 'x' ? random : 3 & random | 8
 
     return value.toString(16)
   })
@@ -128,16 +128,16 @@ async function loadLyrics(decodedTrack, language) {
     return { text }
   })
 
-  if (language && language != searchResults.lyrics_language && searchResults.track_lyrics_translation_status.find((status) => _normalizeLanguage(status.to) == language)) {
+  if (language && language !== searchResults.lyrics_language && searchResults.track_lyrics_translation_status.find((status) => _normalizeLanguage(status.to) === language)) {
     const { body: data } = await makeRequest(_signUrl(`https://www.musixmatch.com/ws/1.1/crowd.track.translations.get?page_size=1&selected_language=${language}&track_id=${searchResults.track_id}&format=json&app_id=community-app-v1.0&guid=${sourceInfo.guid}`), {
       method: 'GET'
     })
 
     lyricsEvents.forEach((text, i) => {
-      if (text.text == '') return;
+      if (text.text === '') return;
 
       data.message.body.translations_list.forEach((translation) => {
-        if (text.text && text.text.replace(/′/, '\'') == translation.translation.matched_line) {
+        if (text.text && text.text.replace(/′/, '\'') === translation.translation.matched_line) {
           lyricsEvents[i].text = translation.translation.description
         }
       })

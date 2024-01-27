@@ -10,7 +10,7 @@ const sourceInfo = {
 }
 
 async function init() {
-  if (config.search.sources.soundcloud.clientId != 'AUTOMATIC') {
+  if (config.search.sources.soundcloud.clientId !== 'AUTOMATIC') {
     sourceInfo.clientId = config.search.sources.soundcloud.clientId
 
     return;
@@ -43,7 +43,7 @@ async function loadFrom(url) {
 
     debugLog('loadtracks', 4, { type: 1, loadType: data.kind || 'unknown', sourceName: 'SoundCloud', query: url })
 
-    if (Object.keys(data).length == 0) {
+    if (Object.keys(data).length === 0) {
       debugLog('loadtracks', 4, { type: 3, loadType: data.kind || 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
 
       return resolve({ loadType: 'empty', data: {} })
@@ -142,7 +142,7 @@ async function loadFrom(url) {
 
             notLoaded.splice(0, 50)
 
-            if (notLoaded.length == 0)
+            if (notLoaded.length === 0)
               stop = true
           }
         }
@@ -178,7 +178,7 @@ async function search(query, shouldLog) {
       method: 'GET'
     })
 
-    if (data.total_results == 0)
+    if (data.total_results === 0)
       return resolve({ loadType: 'empty', data: {} })
 
     const tracks = []
@@ -186,7 +186,7 @@ async function search(query, shouldLog) {
 
     data.collection.forEach((item, i) => {
       if (tracks.length > config.options.maxSearchResults) return
-      if (item.kind != 'track') return;
+      if (item.kind !== 'track') return;
 
       const track = {
         identifier: item.id.toString(),
@@ -228,7 +228,7 @@ async function retrieveStream(identifier, title) {
       return resolve({ exception: { message: data.errors[0].error_message, severity: 'fault', cause: 'Unknown' } })
     }
 
-    const oggOpus = data.media.transcodings.find((transcoding) => transcoding.format.mime_type == 'audio/ogg; codecs="opus"')
+    const oggOpus = data.media.transcodings.find((transcoding) => transcoding.format.mime_type === 'audio/ogg; codecs="opus"')
     const transcoding = oggOpus || data.media.transcodings[0]
 
     if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
@@ -236,7 +236,7 @@ async function retrieveStream(identifier, title) {
 
       const search = await searchWithDefault(title, true)
 
-      if (search.loadType == 'search') {
+      if (search.loadType === 'search') {
         const urlInfo = await sources.getTrackURL(search.data[0].info)
 
         return resolve({ url: urlInfo.url, protocol: urlInfo.protocol, format: urlInfo.format, additionalData: true })
@@ -251,7 +251,7 @@ async function loadStream(title, url, protocol) {
   return new Promise(async (resolve) => {
     const stream = new PassThrough()
 
-    if (protocol == 'hls') {
+    if (protocol === 'hls') {
       const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
       const streamHls = await http1makeRequest(streamHlsRedirect.body.url, { method: 'GET' })
       const streams = streamHls.body.split('\n').filter((line) => line.startsWith('https://'))
@@ -309,7 +309,7 @@ async function loadStream(title, url, protocol) {
 
 function loadFilters(url, protocol) {
   return new Promise(async (resolve) => {
-    if (protocol == 'hls') {
+    if (protocol === 'hls') {
       const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
 
       resolve(streamHlsRedirect.body.url)

@@ -8,14 +8,14 @@ function parseFrameHeader(buffer) {
   let startIndex = 2
 
   const opcode = buffer[0] & 0b00001111
-  const fin = (buffer[0] & 0b10000000) == 0b10000000
-  const isMasked = (buffer[1] & 0x80) == 0x80
+  const fin = (buffer[0] & 0b10000000) === 0b10000000
+  const isMasked = (buffer[1] & 0x80) === 0x80
   let payloadLength = buffer[1] & 0b01111111
 
-  if (payloadLength == 126) {
+  if (payloadLength === 126) {
     startIndex += 2
     payloadLength = buffer.readUInt16BE(2)
-  } else if (payloadLength == 127) {
+  } else if (payloadLength === 127) {
     const buf = buffer.subarray(startIndex, startIndex + 8)
 
     payloadLength = buf.readUInt32BE(0) * Math.pow(2, 32) + buf.readUInt32BE(4)
@@ -55,7 +55,7 @@ class WebsocketConnection extends EventEmitter {
     socket.setNoDelay()
     socket.setKeepAlive(true)
 
-    if (head.length != 0) socket.unshift(head)
+    if (head.length !== 0) socket.unshift(head)
 
     const headers = [
       'HTTP/1.1 101 Switching Protocols',
@@ -99,7 +99,7 @@ class WebsocketConnection extends EventEmitter {
           break
         }
         case 0x8: {
-          if (headers.buffer.length == 0) {
+          if (headers.buffer.length === 0) {
             this.emit('close', 1006, '')
           } else {
             const code = headers.buffer.readUInt16BE(0)
@@ -169,7 +169,7 @@ class WebsocketConnection extends EventEmitter {
 
         let header = null
 
-        if (i == 0) {
+        if (i === 0) {
           header = this.makeFHeader({ len: length, fin: false, opcode: 0x1 })
         }
 
@@ -212,9 +212,9 @@ class WebsocketConnection extends EventEmitter {
     header[0] = options.fin ? options.opcode | 0x80 : options.opcode
     header[1] = payloadLength
 
-    if (payloadLength == 126) {
+    if (payloadLength === 126) {
       header.writeUInt16BE(options.len, 2)
-    } else if (payloadLength == 127) {
+    } else if (payloadLength === 127) {
       header[2] = header[3] = 0
       header.writeUIntBE(options.len, 4, 6)
     }

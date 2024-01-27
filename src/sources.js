@@ -61,7 +61,7 @@ async function getTrackURL(track) {
 
 function getTrackStream(decodedTrack, url, protocol, additionalData) {
   return new Promise(async (resolve) => {
-    if (protocol == 'file') {
+    if (protocol === 'file') {
       const file = fs.createReadStream(url)
 
       file.on('error', () => {
@@ -74,11 +74,11 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
     } else {
       let trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
-      if (trueSource == 'deezer')
+      if (trueSource === 'deezer')
         return resolve({ stream: await deezer.loadTrack(decodedTrack.title, url, additionalData) })
 
-      if (trueSource == 'soundcloud') {
-        if (additionalData != true) {
+      if (trueSource === 'soundcloud') {
+        if (additionalData !== true) {
           const stream = await soundcloud.loadStream(decodedTrack.title, url, protocol)
 
           return resolve({ stream })
@@ -87,7 +87,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         }
       }
 
-      const res = await ((trueSource == 'youtube' || trueSource == 'ytmusic') ? http1makeRequest : makeRequest)(url, {
+      const res = await ((trueSource === 'youtube' || trueSource === 'ytmusic') ? http1makeRequest : makeRequest)(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
           'Range': 'bytes=0-'
@@ -103,9 +103,9 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       if (![ 200, 206, 302 ].includes(res.statusCode)) {
         res.stream.destroy()
 
-        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)` })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} !== 200, 206 or 302)` })
 
-        return resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} != 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
+        return resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} !== 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
       }
 
       const stream = new PassThrough()

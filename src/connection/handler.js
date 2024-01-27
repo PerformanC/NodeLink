@@ -66,7 +66,7 @@ async function configureConnection(ws, req) {
 
     if (!client) return;
 
-    if (clients.size == 1) {
+    if (clients.size === 1) {
       clearInterval(statsInterval)
       statsInterval = null
     }
@@ -110,13 +110,13 @@ async function requestHandler(req, res) {
     })
   }
 
-  if (!req.headers || req.headers.authorization != config.server.password) {
+  if (!req.headers || req.headers.authorization !== config.server.password) {
     res.writeHead(401, { 'Content-Type': 'text/plain' })
 
     res.end('Unauthorized')
   }
 
-  else if (parsedUrl.pathname == '/version') {
+  else if (parsedUrl.pathname === '/version') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     debugLog('version', 1, { headers: req.headers })
@@ -125,7 +125,7 @@ async function requestHandler(req, res) {
     res.end(`${config.version.major}.${config.version.minor}.${config.version.patch}${config.version.preRelease ? `-${config.version.preRelease}` : ''}`)
   }
 
-  else if (parsedUrl.pathname == '/v4/info') {
+  else if (parsedUrl.pathname === '/v4/info') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     debugLog('info', 1, { headers: req.headers })
@@ -146,7 +146,7 @@ async function requestHandler(req, res) {
       jvm: '0.0.0',
       lavaplayer: '0.0.0',
       sourceManagers: Object.keys(config.search.sources).filter((source) => {
-        if (typeof config.search.sources[source] == 'boolean') return source
+        if (typeof config.search.sources[source] === 'boolean') return source
         return config.search.sources[source].enabled
       }),
       filters: Object.keys(config.filters.list).filter((filter) => config.filters.list[filter]),
@@ -154,7 +154,7 @@ async function requestHandler(req, res) {
     }, 200)
   }
 
-  else if (parsedUrl.pathname == '/v4/decodetrack') {
+  else if (parsedUrl.pathname === '/v4/decodetrack') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     const encodedTrack = parsedUrl.searchParams.get('encodedTrack').replace(/ /, '+')
@@ -178,7 +178,7 @@ async function requestHandler(req, res) {
     sendResponse(req, res, { encoded: encodedTrack, info: decodedTrack }, 200)
   }
 
-  else if (parsedUrl.pathname == '/v4/decodetracks') {
+  else if (parsedUrl.pathname === '/v4/decodetracks') {
     if (verifyMethod(parsedUrl, req, res, 'POST')) return;
 
     let buffer = ''
@@ -221,7 +221,7 @@ async function requestHandler(req, res) {
     })
   }
 
-  else if (parsedUrl.pathname == '/v4/encodetrack') {
+  else if (parsedUrl.pathname === '/v4/encodetrack') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     let buffer = ''
@@ -251,7 +251,7 @@ async function requestHandler(req, res) {
     })
   }
 
-  else if (parsedUrl.pathname == '/v4/encodetracks') {
+  else if (parsedUrl.pathname === '/v4/encodetracks') {
     if (verifyMethod(parsedUrl, req, res, 'POST')) return;
 
     let buffer = ''
@@ -287,7 +287,7 @@ async function requestHandler(req, res) {
     })
   }
 
-  else if (parsedUrl.pathname == '/v4/stats') {
+  else if (parsedUrl.pathname === '/v4/stats') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     debugLog('stats', 1, { headers: req.headers })
@@ -330,7 +330,7 @@ async function requestHandler(req, res) {
     }, 200)
   }
 
-  else if (parsedUrl.pathname == '/v4/loadtracks') {
+  else if (parsedUrl.pathname === '/v4/loadtracks') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     debugLog('loadtracks', 1, { params: parsedUrl.pathname, headers: req.headers })
@@ -344,54 +344,54 @@ async function requestHandler(req, res) {
     if (config.search.sources.youtube && (ytSearch || ytRegex))
       search = ytSearch ? await sources.youtube.search(identifier.replace('ytsearch:', ''), 'youtube', true) : await sources.youtube.loadFrom(identifier, 'youtube')
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     const ytMusicSearch = config.search.sources.youtubeMusic ? identifier.startsWith('ytmsearch:') : null
     const ytMusicRegex = config.search.sources.youtubeMusic && !ytMusicSearch ? /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier) : null
     if (config.search.sources.youtubeMusic && (ytMusicSearch || ytMusicRegex))
       search = ytMusicSearch ? await sources.youtube.search(identifier.replace('ytmsearch:', ''), 'ytmusic', true) : await sources.youtube.loadFrom(identifier, 'ytmusic')
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     const spSearch = config.search.sources.spotify.enabled ? identifier.startsWith('spsearch:') : null
     const spRegex = config.search.sources.spotify.enabled && !spSearch ? /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(identifier) : null
     if (config.search.sources[config.search.defaultSearchSource] && (spSearch || spRegex))
        search = spSearch ? await sources.spotify.search(identifier.replace('spsearch:', '')) : await sources.spotify.loadFrom(identifier, spRegex)
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     const dzSearch = config.search.sources.deezer.enabled ? identifier.startsWith('dzsearch:') : null
     const dzRegex = config.search.sources.deezer.enabled && !dzSearch ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)$/.exec(identifier) : null
     if (config.search.sources.deezer.enabled && (dzSearch || dzRegex))
       search = dzSearch ? await sources.deezer.search(identifier.replace('dzsearch:', ''), true) : await sources.deezer.loadFrom(identifier, dzRegex)
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
     const scRegex = config.search.sources.soundcloud.enabled && !scSearch ? /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/?(?:sets\/)?[a-zA-Z0-9-_]+(?:\?.*)?$/ : null
     if (config.search.sources.soundcloud.enabled && (scSearch || scRegex))
       search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', ''), true) : await sources.soundcloud.loadFrom(identifier)
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     const bcSearch = config.search.sources.bandcamp ? identifier.startsWith('bcsearch:') : null
     const bcRegex = config.search.sources.bandcamp && !bcSearch ? /^https?:\/\/[\w-]+\.bandcamp\.com(\/(track|album)\/[\w-]+)?/.test(identifier) : null
     if (config.search.sources.bandcamp && (bcSearch || bcRegex))
       search = bcSearch ? await sources.bandcamp.search(identifier.replace('bcsearch:', ''), true) : await sources.bandcamp.loadFrom(identifier)
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     const pdSearch = config.search.sources.pandora ? identifier.startsWith('pdsearch:') : null
     const pdRegex = config.search.sources.pandora && !pdRegex ? /^https:\/\/www\.pandora\.com\/(?:playlist|station|podcast|artist)\/.+/.exec(identifier) : null
     if (config.search.sources.pandora && (pdSearch || pdRegex))
       search = pdSearch ? await sources.pandora.search(identifier.replace('pdsearch:', '')) : await sources.pandora.loadFrom(identifier)
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     if (config.search.sources.http && (identifier.startsWith('http://') || identifier.startsWith('https://')))
       search = await sources.http.loadFrom(identifier)
 
-    if (sendResponseNonNull(req, res, search) == true) return;
+    if (sendResponseNonNull(req, res, search) === true) return;
 
     if (config.search.sources.local && identifier.startsWith('local:'))
       search = await sources.local.loadFrom(identifier.replace('local:', ''))
@@ -407,7 +407,7 @@ async function requestHandler(req, res) {
     return;
   }
 
-  else if (parsedUrl.pathname == '/v4/loadlyrics') {
+  else if (parsedUrl.pathname === '/v4/loadlyrics') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     const encodedTrack = parsedUrl.searchParams.get('encodedTrack')
@@ -522,8 +522,8 @@ async function requestHandler(req, res) {
     client.players.forEach((player) => {
       player.config.state = {
         time: new Date(),
-        position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
-        connected: player.connection ? player.connection.state.status == 'ready' : false,
+        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'ready' : false,
         ping: player.connection?.ping || -1
       }
 
@@ -565,7 +565,7 @@ async function requestHandler(req, res) {
     const guildId = /\/players\/(\d+)$/.exec(parsedUrl.pathname)[1]
     let player = client.players.get(guildId)
 
-    if (req.method == 'DELETE') {
+    if (req.method === 'DELETE') {
       if (!player) {
         debugLog('deletePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided guildId doesn\'t exist.' })
 
@@ -592,7 +592,7 @@ async function requestHandler(req, res) {
     req.on('end', async () => {
       if (!(buffer = tryParseBody(req, res, buffer))) return;
 
-      if (req.method == 'GET') {
+      if (req.method === 'GET') {
         if (!guildId) {
           debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing guildId parameter.' })
 
@@ -615,8 +615,8 @@ async function requestHandler(req, res) {
 
         player.config.state = {
           time: new Date(),
-          position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
-          connected: player.connection ? player.connection.state.status == 'ready' : false,
+          position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
+          connected: player.connection ? player.connection.state.status === 'ready' : false,
           ping: player.connection?.ping || -1
         }
 
@@ -625,10 +625,10 @@ async function requestHandler(req, res) {
         sendResponse(req, res, player.config, 200)
       }
       
-      else if (req.method == 'PATCH') {
+      else if (req.method === 'PATCH') {
         if (!player) player = new VoiceConnection(guildId, client)
 
-        if (buffer.voice != undefined) {
+        if (buffer.voice !== undefined) {
           if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
             debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: `Invalid voice object.` })
 
@@ -659,7 +659,7 @@ async function requestHandler(req, res) {
         if (buffer.track?.encoded !== undefined || buffer.track?.encoded === null) {
           const noReplace = parsedUrl.searchParams.get('noReplace')
 
-          if (buffer.track.encoded == null) {
+          if (buffer.track.encoded === null) {
             if (player.config.track) {
               player.stop()
 
@@ -683,7 +683,7 @@ async function requestHandler(req, res) {
             }
 
             if (!player.connection.voiceServer) player.cache.track = buffer.track.encoded
-            else player.play(buffer.track.encoded, decodedTrack, noReplace == true)
+            else player.play(buffer.track.encoded, decodedTrack, noReplace === true)
 
             debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
           }
@@ -700,7 +700,7 @@ async function requestHandler(req, res) {
           debugLog('userData', 1, { params: parsedUrl.pathname, params: parsedUrl.pathname, body: buffer })
         }
 
-        if (buffer.volume != undefined) {
+        if (buffer.volume !== undefined) {
           if (buffer.volume < 0 || buffer.volume > 1000) {
             debugLog('volume', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The volume must be between 0 and 1000.' })
 
@@ -720,8 +720,8 @@ async function requestHandler(req, res) {
           debugLog('volume', 1, { params: parsedUrl.pathname, params: parsedUrl.pathname, body: buffer })
         }
 
-        if (buffer.paused != undefined) {
-          if (typeof buffer.paused != 'boolean') {
+        if (buffer.paused !== undefined) {
+          if (typeof buffer.paused !== 'boolean') {
             debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The paused value must be a boolean.' })
 
             return sendResponse(req, res, {
@@ -754,8 +754,8 @@ async function requestHandler(req, res) {
 
         let filters = {}
 
-        if (buffer.filters != undefined) {
-          if (typeof buffer.filters != 'object') {
+        if (buffer.filters !== undefined) {
+          if (typeof buffer.filters !== 'object') {
             debugLog('filters', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The filters value must be an object.' })
 
             return sendResponse(req, res, {
@@ -772,8 +772,8 @@ async function requestHandler(req, res) {
           debugLog('filters', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
         }
 
-        if (buffer.position != undefined) {
-          if (typeof buffer.position != 'number') {
+        if (buffer.position !== undefined) {
+          if (typeof buffer.position !== 'number') {
             debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The position value must be a number.' })
 
             return sendResponse(req, res, {
@@ -790,8 +790,8 @@ async function requestHandler(req, res) {
           debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
         }
 
-        if (buffer.endTime != undefined) {
-          if (typeof buffer.endTime != 'number') {
+        if (buffer.endTime !== undefined) {
+          if (typeof buffer.endTime !== 'number') {
             debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The endTime value must be a number.' })
 
             return sendResponse(req, res, {
@@ -808,7 +808,7 @@ async function requestHandler(req, res) {
           debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
         }
 
-        if (Object.keys(filters).length != 0) {
+        if (Object.keys(filters).length !== 0) {
           player.filters(filters)
 
           client.players.set(guildId, player)
@@ -816,8 +816,8 @@ async function requestHandler(req, res) {
 
         player.config.state = {
           time: new Date(),
-          position: player.connection ? player.connection.playerState.status == 'playing' ? player._getRealTime() : 0 : 0,
-          connected: player.connection ? player.connection.state.status == 'ready' : false,
+          position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
+          connected: player.connection ? player.connection.state.status === 'ready' : false,
           ping: player.connection?.ping || -1 
         }
 
@@ -839,7 +839,7 @@ async function requestHandler(req, res) {
 }
 
 function startSourceAPIs() {
-  if (clients.size != 0) return;
+  if (clients.size !== 0) return;
 
   return new Promise((resolve) => {
     const sourcesToInitialize = []
@@ -862,13 +862,13 @@ function startSourceAPIs() {
     if (config.search.sources.musixmatch.enabled)
       sources.musixmatch.init()
 
-    if (sourcesToInitialize.length == 0) resolve()
+    if (sourcesToInitialize.length === 0) resolve()
 
     let i = 0
     sourcesToInitialize.forEach(async (source) => {
       await source.init()
 
-      if (++i == sourcesToInitialize.length) resolve()
+      if (++i === sourcesToInitialize.length) resolve()
     })
   })
 }

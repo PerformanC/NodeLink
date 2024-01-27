@@ -96,9 +96,9 @@ class ChannelProcessor {
         case constants.filtering.types.equalizer: {
           result = this.processEqualizer(sample)
 
-          if (++this.current == 3) this.current = 0
-          if (++this.minus1 == 3) this.minus1 = 0
-          if (++this.minus2 == 3) this.minus2 = 0
+          if (++this.current === 3) this.current = 0
+          if (++this.minus1 === 3) this.minus1 = 0
+          if (++this.minus2 === 3) this.minus2 = 0
 
           samples.writeInt16LE(clamp16Bit(result), i)
 
@@ -160,7 +160,7 @@ class Filters {
 
 		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
       for (const equalizedBand of filters.equalizer) {
-        const band = this.equalizer.find(i => i.band == equalizedBand.band)
+        const band = this.equalizer.find(i => i.band === equalizedBand.band)
         if (band) band.gain = Math.min(Math.max(equalizedBand.gain, -0.25), 1.0)
       }
 
@@ -258,13 +258,13 @@ class Filters {
 
   getResource(decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
     return new Promise(async (resolve) => {
-      if (decodedTrack.sourceName == 'deezer') {
+      if (decodedTrack.sourceName === 'deezer') {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
 
         resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Filtering does not support Deezer platform.' } })
       }
 
-      if (decodedTrack.sourceName == 'soundcloud')
+      if (decodedTrack.sourceName === 'soundcloud')
         url = await soundcloud.loadFilters(url, protocol)
 
       const ffmpeg = new prism.FFmpeg({
@@ -277,7 +277,7 @@ class Filters {
           '-filter_complex_threads', config.filters.threads,
           ...(this.result.startime || startTime ? ['-ss', `${this.result.startTime || startTime}ms`] : []),
           '-i', encodeURI(url),
-          ...(this.command.length != 0 ? [ '-af', this.command.join(',') ] : [] ),
+          ...(this.command.length !== 0 ? [ '-af', this.command.join(',') ] : [] ),
           ...(endTime ? ['-t', `${endTime}ms`] : []),
           '-f', 's16le',
           '-ar', constants.opus.samplingRate,
@@ -301,7 +301,7 @@ class Filters {
           new prism.VolumeTransformer({ type: 's16le' })
         ]
 
-        if (this.equalizer.some((band) => band.gain != 0)) {
+        if (this.equalizer.some((band) => band.gain !== 0)) {
           pipelines.push(
             new Filtering(
               this.equalizer.map((band) => band.gain),

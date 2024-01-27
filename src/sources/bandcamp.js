@@ -14,7 +14,7 @@ async function loadFrom(url) {
 
     const trackInfo = JSON.parse(matches[1])
 
-    debugLog('loadtracks', 4, { type: 1, loadType: trackInfo['@type'] == 'MusicRecording' ? 'track' : 'album', sourceName: 'BandCamp', query: url })
+    debugLog('loadtracks', 4, { type: 1, loadType: trackInfo['@type'] === 'MusicRecording' ? 'track' : 'album', sourceName: 'BandCamp', query: url })
 
     switch (trackInfo['@type']) {
       case 'MusicRecording': {
