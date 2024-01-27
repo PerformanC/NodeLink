@@ -96,7 +96,7 @@ export function http1makeRequest(url, options) {
           return resolve({
             statusCode,
             headers,
-            stream: compression
+            stream: res
           })
         }
 
@@ -139,10 +139,14 @@ function _http2Events(request, headers) {
 
 export function makeRequest(url, options) {
   return new Promise(async (resolve) => {
+    const parsedUrl = new URL(url)
     let compression = null
-    const client = http2.connect(url, { rejectUnauthorized: false })
+
+    const client = http2.connect(parsedUrl.origin, { rejectUnauthorized: false })
 
     let reqOptions = {
+      ':method': options.method,
+      ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'br, gzip, deflate',
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
       'DNT': '1',
