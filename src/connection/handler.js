@@ -1052,6 +1052,8 @@ function startSourceAPIs() {
 
     let initializedAmount = 0
 
+    if (sourcesToInitialize.length == 0) resolve()
+
     for (let i = 0;i < sourcesToInitialize.length;i++) {
       const source = sourcesToInitialize[i]
 
