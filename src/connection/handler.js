@@ -403,7 +403,7 @@ async function requestHandler(req, res) {
     if (sendResponseNonNull(req, res, search) === true) return;
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    const scRegex = config.search.sources.soundcloud.enabled && !scSearch ? /^https?:\/\/soundcloud\.com\/[a-zA-Z0-9-_]+\/?(?:sets\/)?[a-zA-Z0-9-_]+(?:\?.*)?$/ : null
+    const scRegex = config.search.sources.soundcloud.enabled && !scSearch ? /^(https?:\/\/)?(www.)?(m\.)?soundcloud\.com\/[\w\-\.]+(\/)+[\w\-\.]+?$/.test(identifier) : null
     if (config.search.sources.soundcloud.enabled && (scSearch || scRegex))
       search = scSearch ? await sources.soundcloud.search(identifier.replace('scsearch:', ''), true) : await sources.soundcloud.loadFrom(identifier)
 
