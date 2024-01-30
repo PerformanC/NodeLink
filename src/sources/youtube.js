@@ -1,4 +1,5 @@
 import config from '../../config.js'
+import constants from '../../constants.js'
 import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
 const ytContext = {
@@ -20,18 +21,20 @@ function checkURLType(url, type) {
   if (type === 'ytmusic') {
     const videoRegex = /^https?:\/\/music\.youtube\.com\/watch\?v=[\w-]+/
     const playlistRegex = /^https?:\/\/music\.youtube\.com\/playlist\?list=[\w-]+/
+    const selectedVideoRegex = /^https?:\/\/music\.youtube\.com\/watch\?v=[\w-]+&list=[\w-]+/
     
-    if (playlistRegex.test(url)) return 3
-    else if (videoRegex.test(url)) return 2
+    if (selectedVideoRegex.test(url) || playlistRegex.test(url)) return constants.YouTube.playlist
+    else if (videoRegex.test(url)) return constants.YouTube.video
     else return -1
   } else {
     const videoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+/
     const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/
+    const selectedVideoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+&list=[\w-]+/
     const shortsRegex = /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/
   
-    if (playlistRegex.test(url)) return 3
-    else if (shortsRegex.test(url)) return 4
-    else if (videoRegex.test(url)) return 2
+    if (selectedVideoRegex.test(url) || playlistRegex.test(url)) return constants.YouTube.playlist
+    else if (shortsRegex.test(url)) return constants.YouTube.shorts
+    else if (videoRegex.test(url)) return constants.YouTube.video
     else return -1
   }
 }
@@ -129,7 +132,7 @@ async function search(query, type, shouldLog) {
 async function loadFrom(query, type) {
   return new Promise(async (resolve) => {
     switch (checkURLType(query, type)) {
-      case 2: {
+      case constants.YouTube.video: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
         
         const identifier = /v=([^&]+)/.exec(query)[1]
@@ -179,8 +182,10 @@ async function loadFrom(query, type) {
           }
         })
       }
-      case 3: {
+      case constants.YouTube.playlist: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
+
+        const identifier = /v=([^&]+)/.exec(query)[1]
 
         const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
@@ -204,6 +209,7 @@ async function loadFrom(query, type) {
       
         const tracks = []
         let i = 0
+        let selectedTrack = 0
 
         let playlistContent = playlist.contents.singleColumnWatchNextResults.playlist.playlist.contents
 
@@ -233,6 +239,9 @@ async function loadFrom(query, type) {
               info: track,
               pluginInfo: {}
             })
+
+            if (identifier && track.identifier === identifier)
+              selectedTrack = i
           }
         })
 
@@ -249,14 +258,14 @@ async function loadFrom(query, type) {
           data: {
             info: {
               name: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title,
-              selectedTrack: 0
+              selectedTrack: selectedTrack
             },
             pluginInfo: {},
             tracks
           }
         })
       }
-      case 4: {
+      case constants.YouTube.shorts: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
 
         const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
@@ -304,7 +313,6 @@ async function loadFrom(query, type) {
           }
         })
       }
-
       default: {
         debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'YouTube', query, message: 'No matches found.' })
 

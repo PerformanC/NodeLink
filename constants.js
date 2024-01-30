@@ -1,4 +1,9 @@
 export default {
+  YouTube: {
+    video: 1,
+    playlist: 2,
+    shorts: 3,
+  },
   VoiceWSCloseCodes: {
     4000: 'Unknown error',
     4001: 'Unknown opcode',
