@@ -129,19 +129,6 @@ class VoiceConnection {
   }
 
   _stopTrack() {
-    this.config = {
-      guildId: this.config.guildId,
-      track: null,
-      volume: 100,
-      paused: false,
-      filters: {},
-      voice: {
-        token: null,
-        endpoint: null,
-        sessionId: null
-      }
-    }
-
     this.cache = {
       url: null,
       protocol: null,
