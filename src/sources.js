@@ -89,23 +89,25 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
 
       const res = await ((trueSource === 'youtube' || trueSource === 'ytmusic') ? http1makeRequest : makeRequest)(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-          'Range': 'bytes=0-'
+          'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
         },
         method: 'GET',
         streamOnly: true
-      }).catch((error) => {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
-
-        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
       })
 
-      if (![ 200, 206, 302 ].includes(res.statusCode)) {
-        res.stream.destroy()
+      if (![ 200, 302 ].includes(res.statusCode)) {
+        res.stream.emit('end') /* (http1)makeRequest will handle this automatically */
 
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} !== 200, 206 or 302)` })
 
-        return resolve({ status: 1, exception: { message: `Failed to retrieve stream from source. (${res.statusCode} !== 200, 206 or 302)`, severity: 'suspicious', cause: 'Wrong status code' } })
+        return resolve({
+          status: 1,
+          exception: {
+            message: `Failed to retrieve stream from source. (${res.statusCode} !== 200 or 302)`,
+            severity: 'suspicious',
+            cause: 'Wrong status code'
+          }
+        })
       }
 
       const stream = new PassThrough()
@@ -115,13 +117,89 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       res.stream.on('error', (error) => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
 
-        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+        resolve({
+          status: 1,
+          exception: {
+            message: error.message,
+            severity: 'fault',
+            cause: 'Unknown'
+          }
+        })
       })
 
-      res.stream.once('readable', () => {
-        resolve({ stream })
-      })
+      resolve({ stream })
     }
+  })
+}
+
+function loadLyrics(decodedTrack, language, generic) {
+  return new Promise(async (resolve) => {
+    let captions = { loadType: 'empty', data: {} }
+
+    switch (generic ? config.search.defaultSearchSource : decodedTrack.sourceName) {
+      case 'ytmusic':
+      case 'youtube': {
+        if (!config.search.sources[decodedTrack.sourceName]) {
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+          break
+        }
+
+        captions = await sources.youtube.loadLyrics(decodedTrack, language) || captions
+
+        if (captions.loadType == 'error')
+          captions = await loadLyrics(decodedTrack, language, true)
+
+        break
+      }
+      case 'spotify': {
+        if (!config.search.sources[config.search.defaultSearchSource] || !config.search.sources.spotify.enabled) {
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+          break
+        }
+
+        if (config.search.sources.spotify.sp_dc == 'DISABLED')
+          return resolve(loadLyrics(decodedTrack, language, true))
+
+        captions = await sources.spotify.loadLyrics(decodedTrack, language) || captions
+
+        if (captions.loadType == 'error')
+          captions = await loadLyrics(decodedTrack, language, true)
+
+        break
+      }
+      case 'deezer': {
+        if (!config.search.sources.deezer.enabled) {
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+          break
+        }
+
+        if (config.search.sources.deezer.arl == 'DISABLED')
+          return resolve(loadLyrics(decodedTrack, language, true))
+
+        captions = await sources.deezer.loadLyrics(decodedTrack, language) || captions
+
+        if (captions.loadType == 'error')
+          captions = await loadLyrics(decodedTrack, language, true)
+
+        break
+      }
+      default: {
+        if (!config.search.sources[config.search.lyricsFallbackSearchSource]) {
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+          break
+        }
+
+        captions = await sources[config.search.lyricsFallbackSearchSource].loadLyrics(decodedTrack, language) || captions
+
+        break
+      }
+    }
+
+    resolve(captions)
   })
 }
 

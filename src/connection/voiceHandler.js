@@ -15,7 +15,13 @@ global.nodelinkPlayingPlayersCount = 0
  
 class VoiceConnection {
   constructor(guildId, client) {
-    this.client = client
+    nodelinkPlayersCount++
+
+    this.client = {
+      userId: client.userId,
+      ws: client.ws
+    }
+
     this.cache = {
       url: null,
       protocol: null,
@@ -35,8 +41,6 @@ class VoiceConnection {
       }
     }
 
-    nodelinkPlayersCount++
-
     this.connection = discordVoice.joinVoiceChannel({ guildId: this.config.guildId, userId: this.client.userId, encryption: config.audio.encryption })
 
     this.connection.on('speakStart', (userId, ssrc) => inputHandler.handleStartSpeaking(ssrc, userId, this.config.guildId))
@@ -44,47 +48,31 @@ class VoiceConnection {
     this.connection.on('stateChange', async (oldState, newState) => {
       switch (newState.status) {
         case 'disconnected': {
-          if (oldState.status === 'disconnected') return;
+          if (oldState.status === 'disconnected' || newState.code !== 4014) return;
 
-          if (newState.code !== 4015) {
-              debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
+          debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
-              this.connection.destroy()
-              this._stopTrack()
-              this.config = {
-                guildId: this.config.guildId,
-                track: null,
-                volume: 100,
-                paused: false,
-                filters: {},
-                voice: {
-                  token: null,
-                  endpoint: null,
-                  sessionId: null
-                }
-              }
+          this.connection.destroy()
+          this.connection = null
+          this._stopTrack()
 
-              this.client.ws.send(JSON.stringify({
-                op: 'event',
-                type: 'WebSocketClosedEvent',
-                guildId: this.config.guildId,
-                code: newState.closeCode,
-                reason: constants.VoiceWSCloseCodes[newState.closeCode],
-                byRemote: true
-              }))
-          } else {
-            /* Should send trackException instead */
-          }
-          break;
+          this.client.ws.send(JSON.stringify({
+            op: 'event',
+            type: 'WebSocketClosedEvent',
+            guildId: this.config.guildId,
+            code: newState.closeCode,
+            reason: constants.VoiceWSCloseCodes[newState.closeCode],
+            byRemote: true
+          }))
+
+          break
         }
       }
     })
 
     this.connection.on('playerStateChange', (_oldState, newState) => {
       if (newState.status === 'idle' && newState.reason === 'finished') {
-
-        this._stopTrack()
-        this.cache.url = null
+        nodelinkPlayingPlayersCount--
 
         debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'finished' })
 
@@ -96,13 +84,13 @@ class VoiceConnection {
           reason: 'finished'
         }))
 
-        this.config.track = null
+        this._stopTrack()
       }
 
       if (newState.status === 'playing' && newState.reason === 'requested') {
-        debugLog('trackStart', 2, { track: this.config.track.info })
-        
         nodelinkPlayingPlayersCount++
+
+        debugLog('trackStart', 2, { track: this.config.track.info })
 
         this.client.ws.send(JSON.stringify({
           op: 'event',
@@ -114,8 +102,6 @@ class VoiceConnection {
     })
 
     this.connection.on('error', (error) => {
-      this._stopTrack()
-
       debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
@@ -138,18 +124,28 @@ class VoiceConnection {
         reason: 'loadFailed'
       }))
 
-      this.config.track = null
+      this._stopTrack()
     })
   }
 
   _stopTrack() {
-    nodelinkPlayingPlayersCount--
+    this.config = {
+      guildId: this.config.guildId,
+      track: null,
+      volume: 100,
+      paused: false,
+      filters: {},
+      voice: {
+        token: null,
+        endpoint: null,
+        sessionId: null
+      }
+    }
 
-    this.config.state = {
-      time: null,
-      position: 0,
-      connected: false,
-      ping: -1
+    this.cache = {
+      url: null,
+      protocol: null,
+      track: null
     }
   }
 
@@ -181,8 +177,6 @@ class VoiceConnection {
 
       if (streamInfo.exception) return resolve(streamInfo)
 
-      this.cache.url = urlInfo.url
-
       resolve({ stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format) })
     })
   }
@@ -190,13 +184,10 @@ class VoiceConnection {
   async play(track, decodedTrack, noReplace) {
     if (noReplace && this.config.track) return this.config
 
-    const oldTrack = this.config.track
-
     const urlInfo = await sources.getTrackURL(decodedTrack)
 
     if (urlInfo.exception) {
-      this.config.track = null
-      this.cache.url = null
+      this._stopTrack()
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -224,39 +215,30 @@ class VoiceConnection {
       return this.config
     }
 
-    if (oldTrack?.encoded) {
+    if (this.config.track?.encoded) {
       debugLog('trackEnd', 2, { track: decodedTrack, reason: 'replaced' })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
         type: 'TrackEndEvent',
         guildId: this.config.guildId,
-        track: oldTrack,
+        track: this.config.track,
         reason: 'replaced'
       }))
     }
 
     let resource = null
-
     if (Object.keys(this.config.filters).length > 0) {
       const filter = new Filters()
-
       this.config.filters = filter.configure(this.config.filters)
 
       resource = await filter.getResource(decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg, urlInfo.additionalData)  
-
-      if (oldTrack) this._stopTrack()
     } else {
-      this.cache.url = urlInfo.url
       resource = await this.getResource(decodedTrack, urlInfo)
-
-      if (oldTrack) this._stopTrack()
     }
   
     if (resource.exception) {
-      this.config.track = null
-      this.config.filters = []
-      this.cache.url = null
+      this._stopTrack()
 
       debugLog('trackException', 2, { track: decodedTrack, exception: resource.exception.message })
 
@@ -287,6 +269,8 @@ class VoiceConnection {
       return this.config
     }
 
+    this.cache.url = urlInfo.url
+    this.cache.protocol = urlInfo.protocol
     this.config.track = { encoded: track, info: decodedTrack }
 
     if (this.config.volume !== 100) 
@@ -297,8 +281,6 @@ class VoiceConnection {
     
     this.connection.play(resource.stream)
 
-    this.cache.protocol = urlInfo.protocol
-
     return this.config
   }
 
@@ -306,9 +288,6 @@ class VoiceConnection {
     if (!this.config.track) return this.config
 
     if (this.connection.audioStream) this.connection.stop()
-    this.config.track = null
-    this.config.filters = []
-    this.cache.url = null
 
     this._stopTrack()
   }
@@ -332,21 +311,17 @@ class VoiceConnection {
   }
 
   async filters(filters) {
-    if (this.connection.playerState.status !== 'playing' || !config.filters.enabled) return this.config
+    if (!this.config.track?.encoded || !config.filters.enabled) return this.config
 
     const filter = new Filters()
-
     this.config.filters = filter.configure(filters, this.config.track.info)
 
     if (!this.config.track) return this.config
 
-    const protocol = this.cache.protocol
-    const resource = await filter.getResource(this.config.track.info, protocol, this.cache.url, this._getRealTime(), filters.endTime, null, null)
+    const resource = await filter.getResource(this.config.track.info, this.cache.protocol, this.cache.url, this._getRealTime(), filters.endTime, null, null)
 
     if (resource.exception) {
-      this.config.track = null
-      this.config.filters = []
-      this.cache.url = null
+      this._stopTrack()
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -360,7 +335,7 @@ class VoiceConnection {
         op: 'event',
         type: 'TrackEndEvent',
         guildId: this.config.guildId,
-        track: this.config.track.info,
+        track: this.config.track,
         reason: 'loadFailed'
       }))
 

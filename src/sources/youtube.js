@@ -1,20 +1,18 @@
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
-const sourceInfo = {
-  innertube: {
-    thirdParty: {
-      embedUrl: 'https://google.com'
-    },
-    client: {
-      clientName: 'ANDROID',
-      clientVersion: '17.29.34',
-      androidSdkVersion: '34',
-      screenDensityFloat: 1,
-      screenHeightPoints: 1080,
-      screenPixelDensity: 1,
-      screenWidthPoints: 1920
-    }
+const ytContext = {
+  thirdParty: {
+    embedUrl: 'https://google.com'
+  },
+  client: {
+    clientName: 'ANDROID',
+    clientVersion: '19.04.33',
+    androidSdkVersion: '34',
+    screenDensityFloat: 1,
+    screenHeightPoints: 1080,
+    screenPixelDensity: 1,
+    screenWidthPoints: 1920
   }
 }
 
@@ -39,75 +37,93 @@ function checkURLType(url, type) {
 }
 
 async function search(query, type, shouldLog) {
-  return new Promise(async (resolve) => {
-    if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
+  if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
 
-    const { body: search } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
-      headers: {
-        'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
-      },
-      body: {
-        context: sourceInfo.innertube,
-        query,
-        params: 'EgIQAQ%3D%3D'
-      },
-      method: 'POST'
-    })
-
-    if (typeof search !== 'object') {
-      debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'Failed to load results.' })
-
-      return resolve({ loadType: 'error', data: { message: 'Failed to load results.', severity: 'common', cause: 'Unknown' } })
-    }
-
-    if (search.error) {
-      debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
-
-      return resolve({ loadType: 'error', data: { message: search.error.message, severity: 'fault', cause: 'Unknown' } })
-    }
-
-    const tracks = []
-    let i = 0
-
-    const videos = search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
-
-    videos.forEach((video, index) => {
-      video = video.compactVideoRenderer
-
-      if (video) {
-        const track = {
-          identifier: video.videoId,
-          isSeekable: true,
-          author: video.longBylineText.runs[0].text,
-          length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
-          isStream: video.lengthText ? false : true,
-          position: i++,
-          title: video.title.runs[0].text,
-          uri: `https://www.youtube.com/watch?v=${video.videoId}`,
-          artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
-          isrc: null,
-          sourceName: type
-        }
-
-        tracks.push({
-          encoded: encodeTrack(track),
-          info: track
-        })
-      }
-
-      if (index === videos.length - 1 || tracks.length === config.options.maxResultsLength - 1) {
-        if (tracks.length === 0) {
-          debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
-    
-          return resolve({ loadType: 'empty', data: {} })
-        }
-    
-        if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
-    
-        return resolve({ loadType: 'search', data: tracks })
-      }
-    })
+  const { body: search } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
+    headers: {
+      'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
+    },
+    body: {
+      context: ytContext,
+      query,
+      params: 'EgIQAQ%3D%3D'
+    },
+    method: 'POST',
+    disableBodyCompression: true
   })
+
+  if (typeof search !== 'object') {
+    debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'Failed to load results.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'Failed to load results.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  if (search.error) {
+    debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: search.error.message,
+        severity: 'fault',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  const tracks = []
+  let i = 0
+
+  const videos = search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+
+  if (videos.length > config.options.maxSearchResults)
+    videos = videos.slice(0, config.options.maxSearchResults)
+
+  videos.forEach((video) => {
+    video = video.compactVideoRenderer
+
+    if (video) {
+      const track = {
+        identifier: video.videoId,
+        isSeekable: true,
+        author: video.longBylineText.runs[0].text,
+        length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
+        isStream: video.lengthText ? false : true,
+        position: i++,
+        title: video.title.runs[0].text,
+        uri: `https://www.youtube.com/watch?v=${video.videoId}`,
+        artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
+        isrc: null,
+        sourceName: type
+      }
+
+      tracks.push({
+        encoded: encodeTrack(track),
+        info: track
+      })
+    }
+  })
+
+  if (tracks.length === 0) {
+    debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
+
+    return { loadType: 'empty', data: {} }
+  }
+
+  if (shouldLog)
+    debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
+
+  return {
+    loadType: 'search',
+    data: tracks
+  }
 }
 
 async function loadFrom(query, type) {
@@ -120,10 +136,10 @@ async function loadFrom(query, type) {
 
         const { body: video } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
           },
           body: {
-            context: sourceInfo.innertube,
+            context: ytContext,
             videoId: identifier,
             contentCheckOk: true,
             racyCheckOk: true,
@@ -168,10 +184,10 @@ async function loadFrom(query, type) {
 
         const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
           },
           body: {
-            context: sourceInfo.innertube,
+            context: ytContext,
             playlistId: /(?<=list=)[\w-]+/.exec(query)[0],
             contentCheckOk: true,
             racyCheckOk: true,
@@ -245,10 +261,10 @@ async function loadFrom(query, type) {
 
         const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           headers: {
-            'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
           },
           body: {
-            context: sourceInfo.innertube,
+            context: ytContext,
             videoId: /shorts\/([a-zA-Z0-9_-]+)/.exec(query)[1],
             contentCheckOk: true,
             racyCheckOk: true,
@@ -302,16 +318,17 @@ async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
     const { body: videos } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
-        'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
       },
       body: {
-        context: sourceInfo.innertube,
+        context: ytContext,
         videoId: identifier,
         contentCheckOk: true,
         racyCheckOk: true,
         params: 'CgIQBg'
       },
-      method: 'POST'
+      method: 'POST',
+      disableBodyCompression: true
     })
 
     if (videos.playabilityStatus.status !== 'OK') {
@@ -341,10 +358,10 @@ async function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
     const { body: video } = await makeRequest(`https://${decodedTrack.sourceName === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
-        'User-Agent': `com.google.android.youtube/${sourceInfo.innertube.client.clientVersion} (Linux; U; Android ${sourceInfo.innertube.client.androidSdkVersion} gzip`
+        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
       },
       body: {
-        context: sourceInfo.innertube,
+        context: ytContext,
         videoId: decodedTrack.identifier,
         contentCheckOk: true,
         racyCheckOk: true,

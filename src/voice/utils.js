@@ -27,11 +27,10 @@ class NodeLinkStream {
 
     this.listeners = []
     this.pipes = pipes
-
-    this.stream.on('close', () => this._end())
   }
 
   _end() {
+    console.log('destroyed.', new Error().stack)
     this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
     this.listeners = []
   
@@ -44,9 +43,18 @@ class NodeLinkStream {
       this.stream.destroy()
       this.stream = null
     }
-    this.ffmpeg = null
-    this.volume = null
-    this.encoder = null
+    if (this.ffmpeg) {
+      this.ffmpeg.destroy()
+      this.ffmpeg = null
+    }
+    if (this.volume) {
+      this.volume.destroy()
+      this.volume = null
+    }
+    if (this.encoder) {
+      this.encoder.destroy()
+      this.encoder = null
+    }
   }
 
   on(event, listener) {

@@ -50,11 +50,8 @@ export function http1makeRequest(url, options) {
         'DNT': '1',
         ...(options.headers || {}),
         ...(options.body ? { 'Content-Type': 'application/json' } : {})
-      },
-      rejectUnauthorized: false
+      }
     }, async (res) => {
-      if (res.statusCode === 401) throw new Error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Received 401 in url: ${url}.`)
-
       const statusCode = res.statusCode
       const headers = res.headers
 
@@ -846,13 +843,16 @@ export function sendResponse(req, res, data, status) {
   }
 
   if (!req.headers || !req.headers['accept-encoding']) {
+    res.setHeader('Connection', 'close')
     res.writeHead(status, { 'Content-Type': 'application/json' })
+
     res.end(JSON.stringify(data))
   }
 
   if (req.headers && req.headers['accept-encoding']) {
     if (req.headers['accept-encoding'].includes('br')) {
       res.setHeader('Content-Encoding', 'br')
+      res.setHeader('Connection', 'close')
       res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
 
       zlib.brotliCompress(JSON.stringify(data), (err, result) => {
@@ -869,6 +869,7 @@ export function sendResponse(req, res, data, status) {
 
     else if (req.headers['accept-encoding'].includes('gzip')) {
       res.setHeader('Content-Encoding', 'gzip')
+      res.setHeader('Connection', 'close')
       res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' })
   
       zlib.gzip(JSON.stringify(data), (err, result) => {
@@ -885,6 +886,7 @@ export function sendResponse(req, res, data, status) {
 
     else if (req.headers['accept-encoding'].includes('deflate')) {
       res.setHeader('Content-Encoding', 'deflate')
+      res.setHeader('Connection', 'close')
       res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'deflate' })
   
       zlib.deflate(JSON.stringify(data), (err, result) => {
@@ -904,20 +906,27 @@ export function sendResponse(req, res, data, status) {
 }
 
 export function tryParseBody(req, res, body) {
-  try {
-    return JSON.parse(body)
-  } catch {
-    sendResponse(req, res, {
-      timestamp: Date.now(),
-      status: 400,
-      trace: new Error().stack,
-      error: 'Bad Request',
-      message: 'Invalid JSON body',
-      path: parsedUrl.pathname
-    }, 400)
+  return new Promise((resolve) => {
+    let buffer = ''
 
-    return null
-  }
+    req.on('data', (chunk) => buffer += chunk)
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(buffer))
+      } catch {
+        sendResponse(req, res, {
+          timestamp: Date.now(),
+          status: 400,
+          trace: new Error().stack,
+          error: 'Bad Request',
+          message: 'Invalid JSON body',
+          path: req.url
+        }, 400)
+
+        resolve(null)
+      }
+    })
+  })
 }
 
 export function sendResponseNonNull(req, res, data) {

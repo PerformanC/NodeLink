@@ -1,5 +1,5 @@
-import { createServer } from 'node:http'
-import { parse } from 'node:url'
+import http from 'node:http'
+import { URL } from 'node:url'
 
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
@@ -74,7 +74,7 @@ if (config.options.autoUpdate[2]) setInterval(() => {
   checkForUpdates()
 }, config.options.autoUpdate[2])
 
-const server = createServer(connectionHandler.requestHandler)
+const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()
 
 v4.on('/v4/websocket', (ws, req) => {
@@ -97,8 +97,20 @@ v4.on('/connection/data', (ws, req) => {
   inputHandler.setupConnection(ws, req)
 })
 
+server.on('connect', (socket) => {
+  socket.on('error', (err) => {
+    debugLog('connect', 1, { error: err.message })
+  })
+})
+
+server.on('secureConnect', (socket) => {
+  socket.on('error', (err) => {
+    debugLog('connect', 1, { error: err.message })
+  })
+})
+
 server.on('upgrade', (req, socket, head) => {
-  const { pathname } = parse(req.url)
+  const { pathname } = new URL(req.url, `http://${req.headers.host}`)
 
   if (pathname === '/v4/websocket')
     v4.handleUpgrade(req, socket, head, { 'isNodeLink': true }, (ws) => v4.emit('/v4/websocket', ws, req))

@@ -215,58 +215,80 @@ async function requestHandler(req, res) {
     if (verifyMethod(parsedUrl, req, res, 'POST')) return;
 
     let buffer = ''
+    if (!(buffer = await tryParseBody(req, res, buffer))) return;
 
-    req.on('data', (buf) => buffer += buf)
-    req.on('end', () => {
-      if (!(buffer = tryParseBody(req, res, buffer))) return;
+    const tracks = []
+    let failed = false
 
-      const tracks = []
-      let failed = false
+    buffer.nForEach((encodedTrack) => {
+      const decodedTrack = decodeTrack(encodedTrack)
 
-      buffer.nForEach((encodedTrack) => {
-        const decodedTrack = decodeTrack(encodedTrack)
+      if (!decodedTrack) {
+        failed = true
 
-        if (!decodedTrack) {
-          failed = true
+        debugLog('decodetracks', 1, { headers: req.headers, body: encodedTrack, error: 'The provided track is invalid.' })
 
-          debugLog('decodetracks', 1, { headers: req.headers, body: encodedTrack, error: 'The provided track is invalid.' })
+        sendResponse(req, res, {
+          timestamp: Date.now(),
+          status: 400,
+          error: 'Bad request',
+          trace: new Error().stack,
+          message: 'The provided track is invalid.',
+          path: parsedUrl.pathname
+        }, 400)
 
-          sendResponse(req, res, {
-            timestamp: Date.now(),
-            status: 400,
-            error: 'Bad request',
-            trace: new Error().stack,
-            message: 'The provided track is invalid.',
-            path: parsedUrl.pathname
-          }, 400)
+        return true
+      }
 
-          return true
-        }
-
-        tracks.push({ encoded: encodedTrack, info: decodedTrack })
-      })
-
-      if (failed) return;
-
-      debugLog('decodetracks', 1, { headers: req.headers, body: buffer })
-
-      sendResponse(req, res, tracks, 200)
+      tracks.push({ encoded: encodedTrack, info: decodedTrack })
     })
+
+    if (failed) return;
+
+    debugLog('decodetracks', 1, { headers: req.headers, body: buffer })
+
+    sendResponse(req, res, tracks, 200)
   }
 
   else if (parsedUrl.pathname === '/v4/encodetrack') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     let buffer = ''
+    if (!(buffer = await tryParseBody(req, res, buffer))) return;
 
-    req.on('data', (buf) => buffer += buf)
-    req.on('end', () => {
-      if (!(buffer = tryParseBody(req, res, buffer))) return;
+    let encodedTrack = null
 
+    if (!(encodedTrack = encodeTrack(buffer))) {
+      debugLog('encodetrack', 1, { headers: req.headers, body: buffer, error: 'Invalid track object' })
+
+      return sendResponse(req, res, {
+        timestamp: Date.now(),
+        status: 400,
+        error: 'Bad Request',
+        trace: new Error().stack,
+        message: 'Invalid track object',
+        path: '/v4/encodetrack'
+      }, 400)
+    }
+
+    debugLog('encodetrack', 1, { headers: req.headers, body: buffer })
+
+    sendResponse(req, res, encodedTrack, 200)
+  }
+
+  else if (parsedUrl.pathname === '/v4/encodetracks') {
+    if (verifyMethod(parsedUrl, req, res, 'POST')) return;
+
+    let buffer = ''
+    if (!(buffer = await tryParseBody(req, res, buffer))) return;
+
+    const tracks = []
+
+    buffer.forEach((track) => {
       let encodedTrack = null
 
-      if (!(encodedTrack = encodeTrack(buffer))) {
-        debugLog('encodetrack', 1, { headers: req.headers, body: buffer, error: 'Invalid track object' })
+      if (!(encodedTrack = encodeTrack(track))) {
+        debugLog('encodetracks', 1, { headers: req.headers, body: buffer, error: 'Invalid track object' })
 
         return sendResponse(req, res, {
           timestamp: Date.now(),
@@ -274,50 +296,16 @@ async function requestHandler(req, res) {
           error: 'Bad Request',
           trace: new Error().stack,
           message: 'Invalid track object',
-          path: '/v4/encodetrack'
+          path: '/v4/encodetracks'
         }, 400)
       }
 
-      debugLog('encodetrack', 1, { headers: req.headers, body: buffer })
-
-      sendResponse(req, res, encodedTrack, 200)
+      tracks.push(encodedTrack)
     })
-  }
 
-  else if (parsedUrl.pathname === '/v4/encodetracks') {
-    if (verifyMethod(parsedUrl, req, res, 'POST')) return;
+    debugLog('encodetracks', 1, { headers: req.headers, body: buffer })
 
-    let buffer = ''
-
-    req.on('data', (buf) => buffer += buf)
-    req.on('end', () => {
-      if (!(buffer = tryParseBody(req, res, buffer))) return;
-
-      const tracks = []
-
-      buffer.forEach((track) => {
-        let encodedTrack = null
-
-        if (!(encodedTrack = encodeTrack(track))) {
-          debugLog('encodetracks', 1, { headers: req.headers, body: buffer, error: 'Invalid track object' })
-
-          return sendResponse(req, res, {
-            timestamp: Date.now(),
-            status: 400,
-            error: 'Bad Request',
-            trace: new Error().stack,
-            message: 'Invalid track object',
-            path: '/v4/encodetracks'
-          }, 400)
-        }
-
-        tracks.push(encodedTrack)
-      })
-
-      debugLog('encodetracks', 1, { headers: req.headers, body: buffer })
-
-      sendResponse(req, res, tracks, 200)
-    })
+    sendResponse(req, res, tracks, 200)
   }
 
   else if (parsedUrl.pathname === '/v4/stats') {
@@ -622,239 +610,251 @@ async function requestHandler(req, res) {
     }
 
     let buffer = ''
+    if (!(buffer = await tryParseBody(req, res, buffer))) return;
 
-    req.on('data', (buf) => buffer += buf)
-    req.on('end', async () => {
-      if (!(buffer = tryParseBody(req, res, buffer))) return;
+    if (req.method === 'GET') {
+      if (!guildId) {
+        debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing guildId parameter.' })
 
-      if (req.method === 'GET') {
-        if (!guildId) {
-          debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing guildId parameter.' })
+        return sendResponse(req, res, {
+          timestamp: new Date(),
+          status: 400,
+          trace: new Error().stack,
+          message: 'Missing guildId parameter.',
+          path: parsedUrl.pathname
+        }, 400)
+      }
+
+      let player = client.players.get(guildId)
+
+      if (!player) {
+        player = new VoiceConnection(guildId, client)
+
+        client.players.set(guildId, player)
+      }
+
+      player.config.state = {
+        time: new Date(),
+        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        ping: player.connection?.ping || -1
+      }
+
+      debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
+
+      sendResponse(req, res, player.config, 200)
+    }
+    
+    else if (req.method === 'PATCH') {
+      if (!player) player = new VoiceConnection(guildId, client)
+
+      if (buffer.voice !== undefined) {
+        if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
+          debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: `Invalid voice object.` })
 
           return sendResponse(req, res, {
             timestamp: new Date(),
             status: 400,
             trace: new Error().stack,
-            message: 'Missing guildId parameter.',
+            message: 'Invalid voice object.',
             path: parsedUrl.pathname
           }, 400)
         }
 
-        let player = client.players.get(guildId)
+        player.updateVoice(buffer.voice)
 
-        if (!player) {
-          player = new VoiceConnection(guildId, client)
+        if (player.cache.track) {
+          player.play(player.cache.track.encoded, decodeTrack(player.cache.track), false)
 
-          client.players.set(guildId, player)
+          player.cache.track = null
         }
 
-        player.config.state = {
-          time: new Date(),
-          position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-          connected: player.connection ? player.connection.state.status === 'ready' : false,
-          ping: player.connection?.ping || -1
-        }
+        client.players.set(guildId, player)
 
-        debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
-
-        sendResponse(req, res, player.config, 200)
+        debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
       }
-      
-      else if (req.method === 'PATCH') {
-        if (!player) player = new VoiceConnection(guildId, client)
 
-        if (buffer.voice !== undefined) {
-          if (!buffer.voice.endpoint || !buffer.voice.token || !buffer.voice.sessionId) {
-            debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: `Invalid voice object.` })
+                                                     /* Deprecated */
+      const encodedTrack = buffer.track?.encoded || buffer.encodedTrack
+
+      if (encodedTrack !== undefined) {
+        if (buffer.encodedTrack !== undefined) /* Deprecated */
+          debugLog('encodedTrack', 2, { params: parsedUrl.pathname, headers: req.headers, body: buffer, warning: 'The client is using a deprecated method of play (encodedTrack), deprecated by LavaLink. Report to the client GitHub.' })
+
+        if (encodedTrack === null) {
+          if (!player.config.track) {
+            debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The player is not playing.' })
 
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
               trace: new Error().stack,
-              message: 'Invalid voice object.',
+              message: 'The player is not playing.',
               path: parsedUrl.pathname
             }, 400)
           }
 
-          player.updateVoice(buffer.voice)
+          player.stop()
 
-          if (player.cache.track) {
-            player.play(player.cache.track.encoded, decodeTrack(player.cache.track), false)
-
-            player.cache.track = null
-          }
-
-          client.players.set(guildId, player)
-
-          debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-        }
-
-        if (buffer.track?.encoded !== undefined || buffer.track?.encoded === null) {
+          debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
+        } else {
           const noReplace = parsedUrl.searchParams.get('noReplace')
+          const decodedTrack = decodeTrack(encodedTrack)
 
-          if (buffer.track.encoded === null) {
-            if (player.config.track) {
-              player.stop()
-
-              debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-            }
-          } else {
-            const decodedTrack = decodeTrack(buffer.track.encoded)
-
-            if (!decodedTrack) {
-              debugLog('play', 1, { track: buffer.track.encoded, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
-
-              return sendResponse(req, res, {
-                timestamp: new Date(),
-                status: 400,
-                trace: new Error().stack,
-                message: 'The provided track is invalid.',
-                path: parsedUrl.pathname
-              }, 400)
-            }
-
-            if (!player.connection.voiceServer) player.cache.track = buffer.track.encoded
-            else player.play(buffer.track.encoded, decodedTrack, noReplace === true)
-
-            debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-          }
-
-          client.players.set(guildId, player)
-        }
-
-        if (buffer.track?.userData !== undefined) {
-          player.config.track = {
-            ...(player.config.track ? player.config.track : {}),
-            userData: buffer.userData
-          }
-
-          debugLog('userData', 1, { params: parsedUrl.pathname, params: parsedUrl.pathname, body: buffer })
-        }
-
-        if (buffer.volume !== undefined) {
-          if (buffer.volume < 0 || buffer.volume > 1000) {
-            debugLog('volume', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The volume must be between 0 and 1000.' })
+          if (!decodedTrack) {
+            debugLog('play', 1, { track: encodedTrack, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
 
             return sendResponse(req, res, {
               timestamp: new Date(),
               status: 400,
               trace: new Error().stack,
-              message: 'The volume must be between 0 and 1000.',
+              message: 'The provided track is invalid.',
               path: parsedUrl.pathname
             }, 400)
           }
 
-          player.volume(buffer.volume)
+          if (!player.connection.voiceServer) player.cache.track = encodedTrack
+          else player.play(encodedTrack, decodedTrack, noReplace === true)
 
-          client.players.set(guildId, player)
-
-          debugLog('volume', 1, { params: parsedUrl.pathname, params: parsedUrl.pathname, body: buffer })
+          debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
         }
 
-        if (buffer.paused !== undefined) {
-          if (typeof buffer.paused !== 'boolean') {
-            debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The paused value must be a boolean.' })
-
-            return sendResponse(req, res, {
-              timestamp: new Date(),
-              status: 400,
-              trace: new Error().stack,
-              message: 'The paused value must be a boolean.',
-              path: parsedUrl.pathname
-            }, 400)
-          }
-
-          if (!player.connection.ws) {
-            debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The player is not connected to a voice server.' })
-
-            return sendResponse(req, res, {
-              timestamp: new Date(),
-              status: 400,
-              trace: new Error().stack,
-              message: 'The player is not connected to a voice server.',
-              path: parsedUrl.pathname
-            }, 400)
-          }
-
-          player.pause(buffer.paused)
-
-          client.players.set(guildId, player)
-
-          debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-        }
-
-        let filters = {}
-
-        if (buffer.filters !== undefined) {
-          if (typeof buffer.filters !== 'object') {
-            debugLog('filters', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The filters value must be an object.' })
-
-            return sendResponse(req, res, {
-              timestamp: new Date(),
-              status: 400,
-              trace: new Error().stack,
-              message: 'The filters value must be an object.',
-              path: parsedUrl.pathname
-            }, 400)
-          }
-
-          filters = buffer.filters
-
-          debugLog('filters', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-        }
-
-        if (buffer.position !== undefined) {
-          if (typeof buffer.position !== 'number') {
-            debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The position value must be a number.' })
-
-            return sendResponse(req, res, {
-              timestamp: new Date(),
-              status: 400,
-              trace: new Error().stack,
-              message: 'The position value must be a number.',
-              path: parsedUrl.pathname
-            }, 400)
-          }
-
-          filters.seek = buffer.position
-
-          debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-        }
-
-        if (buffer.endTime !== undefined) {
-          if (typeof buffer.endTime !== 'number') {
-            debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The endTime value must be a number.' })
-
-            return sendResponse(req, res, {
-              timestamp: new Date(),
-              status: 400,
-              trace: new Error().stack,
-              message: 'The endTime value must be a number.',
-              path: parsedUrl.pathname
-            }, 400)
-          }
-
-          filters.endTime = buffer.endTime
-
-          debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
-        }
-
-        if (Object.keys(filters).length !== 0) {
-          player.filters(filters)
-
-          client.players.set(guildId, player)
-        }
-
-        player.config.state = {
-          time: new Date(),
-          position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-          connected: player.connection ? player.connection.state.status === 'ready' : false,
-          ping: player.connection?.ping || -1 
-        }
-
-        sendResponse(req, res, player.config, 200)
+        client.players.set(guildId, player)
       }
-    })
+
+      if (buffer.track?.userData !== undefined) {
+        player.config.track = {
+          ...(player.config.track ? player.config.track : {}),
+          userData: buffer.userData
+        }
+
+        debugLog('userData', 1, { params: parsedUrl.pathname, params: parsedUrl.pathname, body: buffer })
+      }
+
+      if (buffer.volume !== undefined) {
+        if (buffer.volume < 0 || buffer.volume > 1000) {
+          debugLog('volume', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The volume must be between 0 and 1000.' })
+
+          return sendResponse(req, res, {
+            timestamp: new Date(),
+            status: 400,
+            trace: new Error().stack,
+            message: 'The volume must be between 0 and 1000.',
+            path: parsedUrl.pathname
+          }, 400)
+        }
+
+        player.volume(buffer.volume)
+
+        client.players.set(guildId, player)
+
+        debugLog('volume', 1, { params: parsedUrl.pathname, params: parsedUrl.pathname, body: buffer })
+      }
+
+      if (buffer.paused !== undefined) {
+        if (typeof buffer.paused !== 'boolean') {
+          debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The paused value must be a boolean.' })
+
+          return sendResponse(req, res, {
+            timestamp: new Date(),
+            status: 400,
+            trace: new Error().stack,
+            message: 'The paused value must be a boolean.',
+            path: parsedUrl.pathname
+          }, 400)
+        }
+
+        if (!player.connection.ws) {
+          debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The player is not connected to a voice server.' })
+
+          return sendResponse(req, res, {
+            timestamp: new Date(),
+            status: 400,
+            trace: new Error().stack,
+            message: 'The player is not connected to a voice server.',
+            path: parsedUrl.pathname
+          }, 400)
+        }
+
+        player.pause(buffer.paused)
+
+        client.players.set(guildId, player)
+
+        debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
+      }
+
+      let filters = {}
+
+      if (buffer.filters !== undefined) {
+        if (typeof buffer.filters !== 'object') {
+          debugLog('filters', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The filters value must be an object.' })
+
+          return sendResponse(req, res, {
+            timestamp: new Date(),
+            status: 400,
+            trace: new Error().stack,
+            message: 'The filters value must be an object.',
+            path: parsedUrl.pathname
+          }, 400)
+        }
+
+        filters = buffer.filters
+
+        debugLog('filters', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
+      }
+
+      if (buffer.position !== undefined) {
+        if (typeof buffer.position !== 'number') {
+          debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The position value must be a number.' })
+
+          return sendResponse(req, res, {
+            timestamp: new Date(),
+            status: 400,
+            trace: new Error().stack,
+            message: 'The position value must be a number.',
+            path: parsedUrl.pathname
+          }, 400)
+        }
+
+        filters.seek = buffer.position
+
+        debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
+      }
+
+      if (buffer.endTime !== undefined) {
+        if (typeof buffer.endTime !== 'number') {
+          debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The endTime value must be a number.' })
+
+          return sendResponse(req, res, {
+            timestamp: new Date(),
+            status: 400,
+            trace: new Error().stack,
+            message: 'The endTime value must be a number.',
+            path: parsedUrl.pathname
+          }, 400)
+        }
+
+        filters.endTime = buffer.endTime
+
+        debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
+      }
+
+      if (Object.keys(filters).length !== 0) {
+        player.filters(filters)
+
+        client.players.set(guildId, player)
+      }
+
+      /* Updating player state to ensure it's sending up-to-date data */
+      player.config.state = {
+        time: new Date(),
+        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        ping: player.connection?.ping || -1 
+      }
+
+      sendResponse(req, res, player.config, 200)
+    }
   }
 
   else {
