@@ -674,8 +674,8 @@ async function requestHandler(req, res) {
         debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
       }
 
-                                                     /* Deprecated */
-      const encodedTrack = buffer.track?.encoded || buffer.encodedTrack
+                                                                   /* Deprecated */
+      const encodedTrack = buffer.track?.encoded === undefined ? buffer.encodedTrack : buffer.track?.encoded
 
       if (encodedTrack !== undefined) {
         if (buffer.encodedTrack !== undefined) /* Deprecated */
