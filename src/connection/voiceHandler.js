@@ -41,6 +41,10 @@ class VoiceConnection {
       }
     }
 
+    this._setupVoice()
+  }
+
+  _setupVoice() {
     this.connection = discordVoice.joinVoiceChannel({ guildId: this.config.guildId, userId: this.client.userId, encryption: config.audio.encryption })
 
     this.connection.on('speakStart', (userId, ssrc) => inputHandler.handleStartSpeaking(ssrc, userId, this.config.guildId))
@@ -134,6 +138,12 @@ class VoiceConnection {
       protocol: null,
       track: null
     }
+
+    this.config = {
+      ...this.config,
+      track: null,
+      paused: false
+    }
   }
 
   _getRealTime() {
@@ -142,6 +152,8 @@ class VoiceConnection {
 
   updateVoice(buffer) {
     this.config.voice = buffer
+
+    if (!this.connection) this._setupVoice()
 
     this.connection.voiceStateUpdate({ guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId })
     this.connection.voiceServerUpdate({ user_id: this.client.userId, token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
