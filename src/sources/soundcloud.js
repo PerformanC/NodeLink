@@ -180,7 +180,7 @@ async function search(query, shouldLog) {
   if (req.error || req.statusCode !== 200) {
     const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
 
-    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: errorMessage })
+    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: errorMessage })
 
     return {
       exception: {
