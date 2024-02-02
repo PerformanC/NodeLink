@@ -30,7 +30,6 @@ class NodeLinkStream {
   }
 
   _end() {
-    console.log('destroyed.', new Error().stack)
     this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
     this.listeners = []
   
