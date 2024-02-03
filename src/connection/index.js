@@ -97,18 +97,6 @@ v4.on('/connection/data', (ws, req) => {
   inputHandler.setupConnection(ws, req)
 })
 
-server.on('connect', (socket) => {
-  socket.on('error', (err) => {
-    debugLog('connect', 1, { error: err.message })
-  })
-})
-
-server.on('secureConnect', (socket) => {
-  socket.on('error', (err) => {
-    debugLog('connect', 1, { error: err.message })
-  })
-})
-
 server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`)
 
