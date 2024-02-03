@@ -108,8 +108,6 @@ async function configureConnection(ws, req) {
     delete clients[sessionId]
   })
 
-  await startSourceAPIs()
-
   sessionId = randomLetters(16)
   client = {
     userId: req.headers['user-id'],
@@ -118,6 +116,8 @@ async function configureConnection(ws, req) {
   }
 
   clients[sessionId] = client
+
+  await startSourceAPIs()
 
   ws.send(
     JSON.stringify({
@@ -870,7 +870,7 @@ async function requestHandler(req, res) {
 }
 
 function startSourceAPIs() {
-  if (Object.keys(clients).length !== 0) return;
+  if (Object.keys(clients).length !== 1) return;
 
   return new Promise((resolve) => {
     const sourcesToInitialize = []
