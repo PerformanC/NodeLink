@@ -68,7 +68,9 @@ async function search(query) {
   return new Promise(async (resolve) => {
     debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
-    const { body: data } = await makeRequest(`https://api.spotify.com/v1/search?q=${encodeURI(query)}&type=track&limit=${config.options.maxResultsLength}&market=${config.search.sources.spotify.market}`, {
+    const limit = config.options.maxResultsLength >= 50 ? 50 : config.options.maxResultsLength
+
+    const { body: data } = await makeRequest(`https://api.spotify.com/v1/search?q=${encodeURI(query)}&type=track&limit=${limit}&market=${config.search.sources.spotify.market}`, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${playerInfo.accessToken}`,
