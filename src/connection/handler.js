@@ -217,6 +217,19 @@ async function requestHandler(req, res) {
     let buffer = ''
     if (!(buffer = await tryParseBody(req, res, buffer))) return;
 
+    if (typeof buffer !== 'object' || !Array.isArray(buffer)) {
+      debugLog('decodetracks', 1, { headers: req.headers, body: buffer, error: 'The provided body is invalid.' })
+
+      return sendResponse(req, res, {
+        timestamp: Date.now(),
+        status: 400,
+        error: 'Bad request',
+        trace: new Error().stack,
+        message: 'The provided body is invalid.',
+        path: parsedUrl.pathname
+      }, 400)
+    }
+
     const tracks = []
     let failed = false
 
@@ -281,6 +294,19 @@ async function requestHandler(req, res) {
 
     let buffer = ''
     if (!(buffer = await tryParseBody(req, res, buffer))) return;
+
+    if (typeof buffer !== 'object' || !Array.isArray(buffer)) {
+      debugLog('decodetracks', 1, { headers: req.headers, body: buffer, error: 'The provided body is invalid.' })
+
+      return sendResponse(req, res, {
+        timestamp: Date.now(),
+        status: 400,
+        error: 'Bad request',
+        trace: new Error().stack,
+        message: 'The provided body is invalid.',
+        path: parsedUrl.pathname
+      }, 400)
+    }
 
     const tracks = []
 
