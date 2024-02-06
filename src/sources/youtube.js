@@ -1,15 +1,16 @@
 import config from '../../config.js'
 import constants from '../../constants.js'
-import { debugLog, makeRequest, encodeTrack } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, randomLetters } from '../utils.js'
 
 const ytContext = {
   thirdParty: {
-    embedUrl: 'https://google.com'
+    embedUrl: 'https://www.youtube.com'
   },
   client: {
     clientName: 'ANDROID',
     clientVersion: '19.04.33',
     androidSdkVersion: '34',
+    osName: 'Android 14',
     screenDensityFloat: 1,
     screenHeightPoints: 1080,
     screenPixelDensity: 1,
@@ -44,7 +45,7 @@ async function search(query, type, shouldLog) {
 
   const { body: search } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
     headers: {
-      'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
+      'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
     },
     body: {
       context: ytContext,
@@ -139,7 +140,7 @@ async function loadFrom(query, type) {
 
         const { body: video } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
+            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
           },
           body: {
             context: ytContext,
@@ -189,7 +190,7 @@ async function loadFrom(query, type) {
 
         const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
+            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
           },
           body: {
             context: ytContext,
@@ -270,7 +271,7 @@ async function loadFrom(query, type) {
 
         const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           headers: {
-            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
+            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
           },
           body: {
             context: ytContext,
@@ -324,12 +325,13 @@ async function loadFrom(query, type) {
 
 async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
-    const { body: videos } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const { body: videos } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
       headers: {
-        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
+        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
       },
       body: {
         context: ytContext,
+        cpn: randomLetters(16),
         videoId: identifier,
         contentCheckOk: true,
         racyCheckOk: true,
@@ -366,7 +368,7 @@ async function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
     const { body: video } = await makeRequest(`https://${decodedTrack.sourceName === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
-        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; Android ${ytContext.client.androidSdkVersion} gzip`
+        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
       },
       body: {
         context: ytContext,
