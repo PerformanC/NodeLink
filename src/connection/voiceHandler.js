@@ -206,7 +206,7 @@ class VoiceConnection {
         track: {
           encoded: track,
           info: decodedTrack,
-          userData: this.config.track.userData
+          userData: this.config.track?.userData
         },
         reason: 'loadFailed'
       }))
@@ -248,7 +248,7 @@ class VoiceConnection {
         track: {
           encoded: track,
           info: decodedTrack,
-          userData: this.config.track.userData
+          userData: this.config.track?.userData
         },
         exception: resource.exception
       }))
@@ -260,7 +260,7 @@ class VoiceConnection {
         track: {
           encoded: track,
           info: decodedTrack,
-          userData: this.config.track.userData
+          userData: this.config.track?.userData
         },
         reason: 'loadFailed'
       }))
