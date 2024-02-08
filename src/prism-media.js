@@ -6,8 +6,8 @@ This file is a part of prism-media, edited to assure the proper functioning of N
 It (this file) does not follow the main license of NodeLink, and is instead licensed under
 Apache, the license of prism-media.
 
-The modifications made was the replacement of node-crc to polycrc, and the use of ES6
-indentation.
+The modifications made was the replacement of node-crc to polycrc, the use of ES6
+indentation, and fixes to the set of "this.opusTags"
 
 */
 
@@ -142,7 +142,7 @@ export class OggLogicalBitstream extends Transform {
       this.pageSizeController = () => this.packets.length + 1 > maxPackets
     }
     this.opusHead = options.opusHead
-    this.opusTags = options.opusTags !== null ? options.opusTags : new OpusTags()
+    this.opusTags = options.opusTags ? options.opusTags : new OpusTags()
     this.writeHeaderPages([ [ options.opusHead.toBuffer() ], [ this.opusTags.toBuffer() ] ])
   }
 
