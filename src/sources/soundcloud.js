@@ -18,7 +18,15 @@ async function init() {
 
   debugLog('soundcloud', 5, { type: 1, message: 'clientId not provided. Fetching clientId...' })
 
-  const { body: data } = await http1makeRequest(`https://a-v2.sndcdn.com/assets/2-f17f825c.js`, {
+  const { body: mainpage } = await http1makeRequest('https://soundcloud.com', {
+    method: 'GET'
+  }).catch(() => {
+    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+  })
+
+  const assetId = mainpage.match(/https:\/\/a-v2.sndcdn.com\/assets\/([a-zA-Z0-9-]+).js/gs)[5]
+
+  const { body: data } = await http1makeRequest(assetId, {
     method: 'GET'
   }).catch(() => {
     debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
@@ -40,6 +48,12 @@ async function init() {
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
     let { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
+
+    if (typeof data !== 'object') {
+      debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: 'Invalid response from SoundCloud.' })
+
+      return resolve({ loadType: 'error', data: { message: 'Invalid response from SoundCloud.', severity: 'common', cause: 'Unknown' } })
+    }
 
     debugLog('loadtracks', 4, { type: 1, loadType: data.kind || 'unknown', sourceName: 'SoundCloud', query: url })
 
@@ -252,20 +266,20 @@ async function retrieveStream(identifier, title) {
       }
     }
 
-    if (req.data.errors) {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: data.errors[0].error_message })
+    if (req.body.errors) {
+      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: req.body.errors[0].error_message })
 
       return {
         exception: {
-          message: data.errors[0].error_message,
+          message: req.body.errors[0].error_message,
           severity: 'fault',
           cause: 'Unknown'
         }
       }
     }
 
-    const oggOpus = data.media.transcodings.find((transcoding) => transcoding.format.mime_type === 'audio/ogg; codecs="opus"')
-    const transcoding = oggOpus || data.media.transcodings[0]
+    const oggOpus = req.body.media.transcodings.find((transcoding) => transcoding.format.mime_type === 'audio/ogg; codecs="opus"')
+    const transcoding = oggOpus || req.body.media.transcodings[0]
 
     if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: `Track is snipped, falling back to: ${config.search.fallbackSearchSource}.` })
