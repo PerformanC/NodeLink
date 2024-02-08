@@ -149,7 +149,7 @@ async function search(query, type, shouldLog) {
   const tracks = []
   let i = 0
 
-  const videos = search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+  let videos = search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
 
   if (videos.length > config.options.maxSearchResults)
     videos = videos.slice(0, config.options.maxSearchResults)
