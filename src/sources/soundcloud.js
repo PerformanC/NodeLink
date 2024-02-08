@@ -47,35 +47,62 @@ async function init() {
 
 async function loadFrom(url) {
   return new Promise(async (resolve) => {
-    let { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
+    let req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
 
-    if (typeof data !== 'object') {
+    if (req.error || req.statusCode !== 200) {
+      const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
+
+      debugLog('loadtracks', 4, { type: 2, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: errorMessage })
+
+      return resolve({
+        loadType: 'error',
+        data: {
+          message: errorMessage,
+          severity: 'fault',
+          cause: 'Unknown'
+        }
+      })
+    }
+
+    const body = req.body
+
+    if (typeof body !== 'object') {
       debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: 'Invalid response from SoundCloud.' })
 
-      return resolve({ loadType: 'error', data: { message: 'Invalid response from SoundCloud.', severity: 'common', cause: 'Unknown' } })
+      return resolve({
+        loadType: 'error',
+        data: {
+          message: 'Invalid response from SoundCloud.',
+          severity: 'common',
+          cause: 'Unknown'
+        }
+      })
     }
 
-    debugLog('loadtracks', 4, { type: 1, loadType: data.kind || 'unknown', sourceName: 'SoundCloud', query: url })
+    debugLog('loadtracks', 4, { type: 1, loadType: body.kind || 'unknown', sourceName: 'SoundCloud', query: url })
 
-    if (Object.keys(data).length === 0) {
-      debugLog('loadtracks', 4, { type: 3, loadType: data.kind || 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
+    if (Object.keys(body).length === 0) {
+      debugLog('loadtracks', 4, { type: 3, loadType: body.kind || 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
 
-      return resolve({ loadType: 'empty', data: {} })
+      return resolve({
+        loadType: 'empty',
+        data: {}
+      })
     }
 
-    switch (data.kind) {
+    switch (body.kind) {
       case 'track': {
         const track = {
-          identifier: data.id.toString(),
+          identifier: body.id.toString(),
           isSeekable: true,
-          author: data.user.username,
-          length: data.duration,
+          author: body.user.username,
+          length: body.duration,
           isStream: false,
           position: 0,
-          title: data.title,
-          uri: data.permalink_url,
-          artworkUrl: data.artwork_url,
-          isrc: data.publisher_metadata ? data.publisher_metadata.isrc : null,
+          title: body.title,
+          uri: body.permalink_url,
+          artworkUrl: body.artwork_url,
+          isrc: body.publisher_metadata ? body.publisher_metadata.isrc : null,
           sourceName: 'soundcloud'
         }
 
@@ -94,10 +121,10 @@ async function loadFrom(url) {
         const tracks = []
         const notLoaded = []
 
-        if (data.tracks.length > config.options.maxAlbumPlaylistLength)
-          data.tracks = data.tracks.slice(0, config.options.maxAlbumPlaylistLength)
+        if (body.tracks.length > config.options.maxAlbumPlaylistLength)
+          data.tracks = body.tracks.slice(0, config.options.maxAlbumPlaylistLength)
 
-        data.tracks.forEach((item, index) => {
+          body.tracks.forEach((item, index) => {
           if (!item.title) {
             notLoaded.push(item.id.toString())
             return;
@@ -187,9 +214,8 @@ async function loadFrom(url) {
 async function search(query, shouldLog) {
   if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
 
-  const req = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=${config.options.maxResultsLength}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, {
-    method: 'GET'
-  })
+  const req = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=${config.options.maxResultsLength}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, { method: 'GET' })
+  const body = req.body
 
   if (req.error || req.statusCode !== 200) {
     const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
@@ -205,7 +231,7 @@ async function search(query, shouldLog) {
     }
   }
 
-  if (data.body.total_results === 0) {
+  if (body.total_results === 0) {
     return {
       loadType: 'empty',
       data: {}
@@ -215,7 +241,7 @@ async function search(query, shouldLog) {
   const tracks = []
   let index = 0
 
-  data.body.collection.forEach((item, i) => {
+  body.collection.forEach((item, i) => {
     if (tracks.length > config.options.maxSearchResults) return
     if (item.kind !== 'track') return;
 
@@ -250,53 +276,54 @@ async function search(query, shouldLog) {
 }
 
 async function retrieveStream(identifier, title) {
-    const req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
+  const req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
+  const body = req.body
 
-    if (req.error || req.statusCode !== 200) {
-      const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
+  if (req.error || req.statusCode !== 200) {
+    const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
 
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: errorMessage })
+    debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: errorMessage })
+
+    return {
+      exception: {
+        message: errorMessage,
+        severity: 'fault',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  if (body.errors) {
+    debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: body.errors[0].error_message })
+
+    return {
+      exception: {
+        message: body.errors[0].error_message,
+        severity: 'fault',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  const oggOpus = body.media.transcodings.find((transcoding) => transcoding.format.mime_type === 'audio/ogg; codecs="opus"')
+  const transcoding = oggOpus || body.media.transcodings[0]
+
+  if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
+    debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: `Track is snipped, falling back to: ${config.search.fallbackSearchSource}.` })
+
+    const search = await searchWithDefault(title, true)
+
+    if (search.loadType === 'search') {
+      const urlInfo = await sources.getTrackURL(search.data[0].info)
 
       return {
-        exception: {
-          message: errorMessage,
-          severity: 'fault',
-          cause: 'Unknown'
-        }
+        url: urlInfo.url,
+        protocol: urlInfo.protocol,
+        format: urlInfo.format,
+        additionalData: true
       }
     }
-
-    if (req.body.errors) {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: req.body.errors[0].error_message })
-
-      return {
-        exception: {
-          message: req.body.errors[0].error_message,
-          severity: 'fault',
-          cause: 'Unknown'
-        }
-      }
-    }
-
-    const oggOpus = req.body.media.transcodings.find((transcoding) => transcoding.format.mime_type === 'audio/ogg; codecs="opus"')
-    const transcoding = oggOpus || req.body.media.transcodings[0]
-
-    if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: `Track is snipped, falling back to: ${config.search.fallbackSearchSource}.` })
-
-      const search = await searchWithDefault(title, true)
-
-      if (search.loadType === 'search') {
-        const urlInfo = await sources.getTrackURL(search.data[0].info)
-
-        return {
-          url: urlInfo.url,
-          protocol: urlInfo.protocol,
-          format: urlInfo.format,
-          additionalData: true
-        }
-      }
-    }
+  }
 
   return {
     url: `${transcoding.url}?client_id=${sourceInfo.clientId}`,
