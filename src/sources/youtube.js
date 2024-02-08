@@ -7,15 +7,79 @@ const ytContext = {
     embedUrl: 'https://www.youtube.com'
   },
   client: {
-    clientName: 'ANDROID',
-    clientVersion: '19.04.33',
-    androidSdkVersion: '34',
-    osName: 'Android 14',
-    screenDensityFloat: 1,
-    screenHeightPoints: 1080,
-    screenPixelDensity: 1,
-    screenWidthPoints: 1920
+    clientName: config.options.bypassAgeRestriction ? 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' : 'ANDROID',
+    clientVersion: config.options.bypassAgeRestriction ? '2.0' : '19.04.33',
+    ...(!config.options.bypassAgeRestriction ? {
+      androidSdkVersion: '34',
+      osName: 'Android 14',
+      userAgent: 'com.google.android.youtube/19.04.33 (Linux; U; Android 14 gzip)'
+    } : {
+      screenDensityFloat: 1,
+      screenHeightPoints: 1080,
+      screenPixelDensity: 1,
+      screenWidthPoints: 1920,
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
+    })
   }
+}
+
+const sourceInfo = {
+  innertubeInterval: null,
+  signatureTimestamp: null,
+  functions: []
+}
+
+function setIntervalNow(func, interval) {
+  func()
+  return setInterval(func, interval)
+}
+
+async function init() {
+  if (!config.options.bypassAgeRestriction) return;
+
+  debugLog('youtube', 5, { type: 1, message: 'Unrecommended option "bypass age-restricted" is enabled.' })
+
+  sourceInfo.innertubeInterval = setIntervalNow(async () => {
+    debugLog('youtube', 5, { type: 1, message: 'Fetching deciphering functions...' })
+ 
+    const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
+      debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
+    })
+
+    const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
+      debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
+    })
+
+    sourceInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
+
+    let functionName = player.match(/a.set\("alr","yes"\);c&&\(c=(.*?)\(/)[1]
+    const decipherFunctionName = functionName
+
+    const sigFunction = player.match(new RegExp(`${functionName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}=function\\(a\\){(.*)\\)};`, 'g'))[0]
+
+    functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
+    const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
+
+    sourceInfo.functions[0] = `const ${functionName}={${sigWrapper}};const ${sigFunction}${decipherFunctionName}(sig);`
+
+    functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
+
+    if (functionName && functionName.includes('['))
+      functionName = player.match(new RegExp(`${functionName.match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
+    
+    const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
+    sourceInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
+
+    debugLog('youtube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
+  }, 3600000)
+}
+
+function free() {
+  clearInterval(sourceInfo.innertubeInterval)
+  sourceInfo.innertubeInterval = null
+
+  sourceInfo.signatureTimestamp = null
+  sourceInfo.functions = []
 }
 
 function checkURLType(url, type) {
@@ -45,7 +109,7 @@ async function search(query, type, shouldLog) {
 
   const { body: search } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
     headers: {
-      'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
+      'User-Agent': ytContext.client.userAgent
     },
     body: {
       context: ytContext,
@@ -140,7 +204,7 @@ async function loadFrom(query, type) {
 
         const { body: video } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
+            'User-Agent': ytContext.client.userAgent
           },
           body: {
             context: ytContext,
@@ -190,7 +254,7 @@ async function loadFrom(query, type) {
 
         const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
+            'User-Agent': ytContext.client.userAgent
           },
           body: {
             context: ytContext,
@@ -271,7 +335,7 @@ async function loadFrom(query, type) {
 
         const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           headers: {
-            'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
+            'User-Agent': ytContext.client.userAgent
           },
           body: {
             context: ytContext,
@@ -327,11 +391,18 @@ async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
     const { body: videos } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
       headers: {
-        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
+        'User-Agent': ytContext.client.userAgent
       },
       body: {
         context: ytContext,
         cpn: randomLetters(16),
+        ...(config.options.bypassAgeRestriction ? {
+          playbackContext: {
+            contentPlaybackContext: {
+              signatureTimestamp: sourceInfo.signatureTimestamp
+            }
+          }
+        } : {}),
         videoId: identifier,
         contentCheckOk: true,
         racyCheckOk: true,
@@ -357,8 +428,17 @@ async function retrieveStream(identifier, type, title) {
     }
 
     const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag === itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
-    /* range query is necessary to bypass throttling */
-    const url = decodeURIComponent(audio.url || args.get('url')) + '&ratebypass=yes&range=0-'
+    let url = decodeURIComponent(audio.url)
+
+    if (config.options.bypassAgeRestriction) { /* ANDROID clientName won't ask for deciphering */
+      const args = new URLSearchParams(audio.url || audio.signatureCipher || audio.cipher)
+      url = audio.url || args.get('url')
+
+      if (audio.signatureCipher || audio.cipher)
+        url += `&${args.get('sp')}=${eval(`const sig = "${args.get('s')}";` + sourceInfo.functions[0])}`
+    }
+
+    url += '&ratebypass=yes&range=0-' /* range query is necessary to bypass throttling */
 
     resolve({ url, protocol: 'https', format: audio.mimeType === 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
   })
@@ -368,7 +448,7 @@ async function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
     const { body: video } = await makeRequest(`https://${decodedTrack.sourceName === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
-        'User-Agent': `com.google.android.youtube/${ytContext.client.clientVersion} (Linux; U; ${ytContext.client.osName} gzip)`
+        'User-Agent': ytContext.client.userAgent
       },
       body: {
         context: ytContext,
@@ -463,6 +543,8 @@ async function loadLyrics(decodedTrack, language) {
 }
 
 export default {
+  init,
+  free,
   search,
   loadFrom,
   retrieveStream,

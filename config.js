@@ -22,9 +22,14 @@ export default {
     "autoUpdate": [ false, true, 3600000, "tar" ],
     "maxResultsLength": 200,
     "maxAlbumPlaylistLength": 200,
-    "maxCaptionsLength": 3
+    "maxCaptionsLength": 3,
+    "bypassAgeRestriction": false // Bypasses age-restricted videos. Enable at your own risk.
   },
   "debug": {
+    "youtube": {
+      "success": true,
+      "error": true
+    },
     "pandora": {
       "success": true,
       "error": true
@@ -98,7 +103,7 @@ export default {
       "local": true,
       "pandora": false,
       "spotify": {
-        "enabled": false,
+        "enabled": true,
         "market": "BR",
         "sp_dc": "DISABLED" // Necessary for direct Spotify loadLyrics. Available in Spotify website cookies in "sp_dc" parameter.
       },
@@ -109,7 +114,7 @@ export default {
         "arl": "DISABLED" // Necessary for direct Deezer Lyrics. Available in Deezer website cookies in "arl" parameter.
       },
       "soundcloud": {
-        "enabled": false,
+        "enabled": true,
         "clientId": "AUTOMATIC", // Available in SoundCloud website API requests in "client_id" parameter.
         "fallbackIfSnipped": true
       },

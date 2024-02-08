@@ -774,6 +774,16 @@ export function debugLog(name, type, options) {
     }
     case 5: {
       switch (name) {
+        case 'youtube': {
+          if (options.type === 1 && config.debug.youtube.success)
+            console.log(`[\u001b[32myoutube\u001b[37m]: ${options.message}`)
+
+          if (options.type === 2 && config.debug.youtube.error)
+            console.error(`[\u001b[31myoutube\u001b[37m]: ${options.message}`)
+
+          break
+        }
+
         case 'pandora': {
           if (options.type === 1 && config.debug.pandora.success)
             console.log(`[\u001b[32mpandora\u001b[37m]: ${options.message}`)

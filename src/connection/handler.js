@@ -102,6 +102,9 @@ async function configureConnection(ws, req) {
 
       clearInterval(playerUpdateInterval)
       playerUpdateInterval = null
+
+      if ((config.search.sources.youtube || config.search.sources.youtubeMusic) && config.options.bypassAgeRestriction)
+        sources.youtube.free()
     }
 
     client.players.forEach((player) => player.destroy())
@@ -900,6 +903,9 @@ function startSourceAPIs() {
 
   return new Promise((resolve) => {
     const sourcesToInitialize = []
+
+    if ((config.search.sources.youtube || config.search.sources.youtubeMusic) && config.options.bypassAgeRestriction)
+      sourcesToInitialize.push(sources.youtube)
 
     if (config.search.sources.spotify.enabled)
       sourcesToInitialize.push(sources.spotify)
