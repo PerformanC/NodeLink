@@ -115,7 +115,7 @@ class ChannelProcessor {
           break
         }
         case constants.filtering.types.rotationHz: {
-          const { left, right } = this.processRotationHz(sample, rightSample)
+          const { left, right } = this.processRotationHz(sample, samples.readInt16LE(i + 2))
 
           samples.writeInt16LE(clamp16Bit(left), i)
           samples.writeInt16LE(clamp16Bit(right), i + 2)
