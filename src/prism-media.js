@@ -1,17 +1,18 @@
 /*
+  File source: https://github.com/amishshah/prism-media
 
-File source: https://github.com/amishshah/prism-media
+  This file is a part of prism-media, edited to assure the proper functioning of NodeLink.
+  It (this file) is licensed under Apache, the license of prism-media.
 
-This file is a part of prism-media, edited to assure the proper functioning of NodeLink.
-It (this file) does not follow the main license of NodeLink, and is instead licensed under
-Apache, the license of prism-media.
-
-The modifications made was the replacement of node-crc to polycrc, the use of ES6
-indentation, and fixes to the set of "this.opusTags"
-
+  The modifications made were:
+    - Replace node-crc to polycrc
+    - Use ES6 instead of CommonJS
+    - Fix set of "this.opusTags"
+    - Add Deno support
 */
 
 import { Transform } from 'node:stream'
+import { Buffer } from 'node:buffer'
 
 import { crc } from 'polycrc'
 const crc32 = crc(32, 0x04c11db7, 0, 0, false)

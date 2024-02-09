@@ -4,6 +4,8 @@ import http2 from 'node:http2'
 import zlib from 'node:zlib'
 import cp from 'node:child_process'
 import fs from 'node:fs'
+import process from 'node:process'
+import { Buffer } from 'node:buffer'
 import { URL } from 'node:url'
 
 import config from '../config.js'
@@ -135,6 +137,8 @@ function _http2Events(request, headers) {
 }
 
 export function makeRequest(url, options) {
+  if (process.versions.deno) return http1makeRequest(url, options)
+
   return new Promise(async (resolve) => {
     const parsedUrl = new URL(url)
     let compression = null

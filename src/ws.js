@@ -1,5 +1,6 @@
 import EventEmitter from 'node:events'
 import crypto from 'node:crypto'
+import { Buffer } from 'node:buffer'
 
 const TLS_MAX_SEND_SIZE = 2 ** 14
 const CONTINUE_HEADER_LENGTH = 2

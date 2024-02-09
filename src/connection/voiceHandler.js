@@ -10,8 +10,8 @@ import voiceUtils from '../voice/utils.js'
 
 import discordVoice from '@performanc/voice'
 
-global.nodelinkPlayersCount = 0
-global.nodelinkPlayingPlayersCount = 0
+globalThis.nodelinkPlayersCount = 0
+globalThis.nodelinkPlayingPlayersCount = 0
  
 class VoiceConnection {
   constructor(guildId, client) {

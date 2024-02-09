@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { Buffer } from 'node:buffer'
 import { PassThrough } from 'node:stream'
 
 import config from '../../config.js'
