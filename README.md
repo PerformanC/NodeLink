@@ -1,8 +1,6 @@
 # NodeLink
 
-![NodeLink logo](images/NodeLink.png "NodeLink")
-
-LavaLink-protocol compatible standalone audio-sending node using Node.js.
+Performant LavaLink replacement, written in Node.js.
 
 ## LavaLink API coverage
 
@@ -11,46 +9,83 @@ LavaLink-protocol compatible standalone audio-sending node using Node.js.
 - [x] Endpoints, except route planner
 - [x] LoadTracks endpoint, without Vimeo and Twitch.
 - [x] Track(s) encoding & loadCaptions (NodeLink-only endpoint)
-- [x] Resume system
+- [ ] Resume system
+
+> [!NOTE]
+> It's decided that resume support won't be added back to NodeLink. If you want to use resume system, use [the last commit containg it](https://github.com/PerformanC/NodeLink/commit/1f6ddc779253fbdcd1d5576d38402cb98d6d5afa). Be aware that it's an unmaintained version.
 
 ## Sources
 
-- [x] BandCamp: Master
-- [x] Deezer: Master
-- [x] HTTP: Master
-- [x] Local: Master
-- [x] Pandora: Master dependant
-- [x] SoundCloud: Master
-- [x] Spotify: Master dependant
-- [x] YouTube: Master
-- [x] YouTube Music: Master
+- [x] BandCamp   *
+- [x] Deezer     *
+- [x] HTTP       *
+- [x] Local      *
+- [x] Pandora
+- [x] SoundCloud *
+- [x] Spotify
+- [x] YouTube    *
+- [x] YTMusic    *
 
 > [!NOTE]
-> Master means that it can directly play from the source, without using other source to get its stream.
+> \* means that it's a master source, which directly plays from the source, without using other source to get its stream (master dependant).
+
+## LoadLyrics sources
+
+- [x] Genius     *
+- [x] MusixMatch *
+- [x] Deezer (requires `arl`)
+- [x] Spotify (requires `sp_dc`)
+- [x] YouTube
+- [x] YouTube Music
+
+> [!NOTE]
+> \* means that it's a generic source, which is used when the source is not supported by master sources.
 
 ## NodeLink vs Lavalink
 
 ### Performance
 
-Because of how NodeLink works, handling audio in real-time and directly accessing services, without using any external packages, NodeLink is faster than LavaLink in both filtering and track loading.
+Due to NodeLink's design, executing audio processing in real-time and directly accessing sources with its built-in sources, NodeLink is faster than LavaLink in any aspect, especially for filtering.
+
+> [!NOTE]
+> It's recommended to do your benchmarks. The statement above is based on our benchmarks and all the feedback sent by the community.
 
 ### Stability
 
-LavaLink, as a modular project, is more stable than NodeLink. We're working on making NodeLink more stable, but this is a fact.
+LavaLink as a modular project, using matured libraries and dependencies like LavaPlayer, is more stable than NodeLink, which is a new project, and it's not as mature as LavaLink.
+
+> [!NOTE]
+> While NodeLink is less stable than LavaLink, it's still stable enough to be used in production. If you find any bugs, create an issue on our GitHub repository.
 
 ### Resource usage
 
-JVM itself requires a lot of resources, but not only that, LavaLink caches a lot of data, and it's not very resource-friendly.
+While it's true that JVM is faster than Node.js, JVM consumes more resources than Node.js. LavaLink, as a project written in Kotlin, uses JVM.
 
-NodeLink is written in Node.js, using low-level libraries, which allows NodeLink to be more resource-friendly than LavaLink.
+> [!NOTE]
+> LavaPlayer has bindings using C, but it's limited for audio processing/transcoding. It's not used for networking, and other things that LavaLink does.
 
-CPU usage is not a factor, because both NodeLink and LavaLink use the same amount of CPU.
+Here's a comparison between LavaLink and NodeLink resource usage with one player connected playing a YouTube track.
+
+| Project                 | CPU usage | Memory usage | Comments       |
+| ----------------------- | --------- | ------------ | -------------- |
+| LavaLink v4.0.3         | 0,6 - 1%  | 300MB        | OpenJDK 17.0.9 |
+| NodeLink v2.0.0 9448f4f | 1 - 1,3%  | 35MB         | Node.js 21.6.1 |
+
+> [!IMPORTANT]
+> Those informations are based on the total RAM & CPU usage of the system as it's based on the entire process.
+
+> [!NOTE]
+> Resource usage can be improved by using different JS runtime, like Bun or Deno, or by using different JVM runtime, like GraalVM.
+
+> [!WARNING]
+> Bun isn't supported by NodeLink as as it [leaks `node:dgram` support](https://github.com/oven-sh/bun/issues/1630)
 
 ### Features
 
-As a new project, but already old enough to have all the features LavaLink has, NodeLink has all the features LavaLink has, and more.
+NodeLink implements [most LavaLink API](#lavalink-api-coverage) and includes more sources and endpoints/systems, like `/v4/loadLyrics` and `/connection/data` (voice receive) endpoints.
 
-LavaLink on the other hand, has plugins, which allows it to have more features than NodeLink, but NodeLink is more customizable than LavaLink, and it's easier to add features to NodeLink than LavaLink as everything is written in one place.
+> [!NOTE]
+> This is considering the base LavaLink, not its forks or plugins.
 
 ## Usage
 
@@ -71,15 +106,14 @@ To install NodeLink, you must clone the repository and install the dependencies.
 ```bash
 $ git clone https://github.com/PerformanC/NodeLink
 $ cd NodeLink
-$ npm i
+$ npm i -f
 ```
 
+> [!WARNING]
+> You must use `-f` flag to force the installation of the dependencies. `prism-media` uses an outdated `opusscript` version. This will not affect the usage of NodeLink.
+
 > [!NOTE]
-> [`sodium-native`](https://npmjs.com/package/sodium-native) dependency can be replaced with alternatives like [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers).
->
-> [`opusscript`](https://npmjs.com/package/opusscript) dependency can be replaced with alternatives like [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus).
->
-> [`ffmpeg`](https://ffmpeg.org/) is required. [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static) is also supported.
+> If you to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
 
 ### Running
 
@@ -89,7 +123,10 @@ To run NodeLink, you need to run the following command in the root directory of 
 $ npm start
 ```
 
-And done, you have successfully started NodeLink, and you will be able to connect to it using any Lavalink wrapper.
+Now you can connect to NodeLink using the LavaLink API, using a `v4` LavaLink client.
+
+> [!WARNING]
+> Never run NodeLink outside its root directory with auto-updater enabled. It will nuke the directory it's running on while updating.
 
 ## Support & Feedback
 
@@ -98,8 +135,3 @@ If you have any questions, or only want to give a feedback, about NodeLink or an
 ## License
 
 NodeLink is licensed under PerformanC's License, which is a modified version of the MIT License, focusing on the protection of the source code and the rights of the PerformanC team over the source code.
-
-## Contributors
-
-* [ThePedroo](https://github.com/ThePedroo) - PerformanC lead developer
-* [TehPig](https://github.com/TehPig) - Tester and contributor
