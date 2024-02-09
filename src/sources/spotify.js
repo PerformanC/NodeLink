@@ -313,7 +313,7 @@ async function loadFrom(query, type) {
                 position: 0,
                 title: item.name,
                 uri: item.external_urls.spotify,
-                artworkUrl: item.album.images[0].url,
+                artworkUrl: item.album ? item.album.images[0].url : null,
                 isrc: null,
                 sourceName: 'spotify'
               }
@@ -336,7 +336,7 @@ async function loadFrom(query, type) {
 
           const new_tracks = []
           data.tracks.items.nForEach(async (item2, index2) => {
-            if (!item2.track) return false
+            if (type[1] === 'playlist' && !item2.track) return false
 
             item2 = type[1] === 'playlist' ? item2.track : item2
 
