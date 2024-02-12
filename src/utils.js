@@ -143,7 +143,7 @@ export function makeRequest(url, options) {
     const parsedUrl = new URL(url)
     let compression = null
 
-    const client = http2.connect(parsedUrl.origin, { rejectUnauthorized: false })
+    const client = http2.connect(parsedUrl.origin)
 
     let reqOptions = {
       ':method': options.method,
