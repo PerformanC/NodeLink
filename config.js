@@ -8,7 +8,7 @@ export default {
   "version": {
     "major": "1",
     "minor": "15",
-    "patch": "0",
+    "patch": "1",
     "preRelease": null
   },
   "server": {

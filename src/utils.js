@@ -50,8 +50,7 @@ export function http1makeRequest(url, options) {
         'DNT': '1',
         ...(options.headers || {}),
         ...(options.body ? { 'Content-Type': 'application/json' } : {})
-      },
-      rejectUnauthorized: false
+      }
     }, async (res) => {
       if (res.statusCode == 401) throw new Error(`[\u001b[31mhttp1makeRequest\u001b[37m]: Received 401 in url: ${url}.`)
 
@@ -142,7 +141,7 @@ export function makeRequest(url, options) {
     const parsedUrl = new URL(url)
     let compression = null
 
-    const client = http2.connect(parsedUrl.origin, { rejectUnauthorized: false })
+    const client = http2.connect(parsedUrl.origin,)
 
     let reqOptions = {
       ':method': options.method,
