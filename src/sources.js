@@ -147,7 +147,7 @@ function loadLyrics(decodedTrack, language, generic) {
 
         captions = await sources.youtube.loadLyrics(decodedTrack, language) || captions
 
-        if (captions.loadType == 'error')
+        if (captions.loadType === 'error')
           captions = await loadLyrics(decodedTrack, language, true)
 
         break
@@ -159,12 +159,12 @@ function loadLyrics(decodedTrack, language, generic) {
           break
         }
 
-        if (config.search.sources.spotify.sp_dc == 'DISABLED')
+        if (config.search.sources.spotify.sp_dc === 'DISABLED')
           return resolve(loadLyrics(decodedTrack, language, true))
 
         captions = await sources.spotify.loadLyrics(decodedTrack, language) || captions
 
-        if (captions.loadType == 'error')
+        if (captions.loadType === 'error')
           captions = await loadLyrics(decodedTrack, language, true)
 
         break
@@ -176,12 +176,12 @@ function loadLyrics(decodedTrack, language, generic) {
           break
         }
 
-        if (config.search.sources.deezer.arl == 'DISABLED')
+        if (config.search.sources.deezer.arl === 'DISABLED')
           return resolve(loadLyrics(decodedTrack, language, true))
 
         captions = await sources.deezer.loadLyrics(decodedTrack, language) || captions
 
-        if (captions.loadType == 'error')
+        if (captions.loadType === 'error')
           captions = await loadLyrics(decodedTrack, language, true)
 
         break
