@@ -75,17 +75,17 @@ class VoiceConnection {
     })
 
     this.connection.on('playerStateChange', (_oldState, newState) => {
-      if (newState.status === 'idle' && newState.reason === 'finished') {
+      if (newState.status === 'idle' && [ 'stopped', 'finished' ].includes(newState.reason)) {
         nodelinkPlayingPlayersCount--
 
-        debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'finished' })
+        debugLog('trackEnd', 2, { track: this.config.track.info, reason: newState.reason })
 
         this.client.ws.send(JSON.stringify({
           op: 'event',
           type: 'TrackEndEvent',
           guildId: this.config.guildId,
           track: this.config.track,
-          reason: 'finished'
+          reason: newState.reason
         }))
 
         this._stopTrack()
@@ -287,8 +287,7 @@ class VoiceConnection {
     if (!this.config.track) return this.config
 
     if (this.connection.audioStream) this.connection.stop()
-
-    this._stopTrack()
+    else this._stopTrack()
   }
 
   volume(volume) {
