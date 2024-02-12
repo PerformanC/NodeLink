@@ -159,15 +159,15 @@ class Filters {
     const result = {}
 
 		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
-      for (const equalizedBand of filters.equalizer) {
-        const band = this.equalizer.find(i => i.band === equalizedBand.band)
+      filters.equalizer.forEach((equalizedBand) => {
+        const band = this.equalizer.find((i) => i.band === equalizedBand.band)
         if (band) band.gain = Math.min(Math.max(equalizedBand.gain, -0.25), 1.0)
-      }
+      })
 
       result.equalizer = this.equalizer
 		}
 
-    if (filters.karaoke && filters.karaoke.level && filters.karaoke.monoLevel && filters.karaoke.filterBand && filters.karaoke.filterWidth && config.filters.list.karaoke) {
+    if (filters.karaoke && filters.karaoke.level !== undefined && filters.karaoke.monoLevel !== undefined && filters.karaoke.filterBand !== undefined && filters.karaoke.filterWidth !== undefined && config.filters.list.karaoke) {
       result.karaoke = {
         level: Math.min(Math.max(filters.karaoke.level, 0.0), 1.0),
         monoLevel: Math.min(Math.max(filters.karaoke.monoLevel, 0.0), 1.0),
@@ -178,7 +178,7 @@ class Filters {
       this.command.push(`stereotools=mlev=${result.karaoke.monoLevel}:mwid=${result.karaoke.filterWidth}:k=${result.karaoke.level}:kc=${result.karaoke.filterBand}`)
     }
 
-    if (filters.timescale && filters.timescale.speed && filters.timescale.pitch && filters.timescale.rate && config.filters.list.timescale) {
+    if (filters.timescale && filters.timescale.speed !== undefined && filters.timescale.pitch !== undefined && filters.timescale.rate !== undefined && config.filters.list.timescale) {
       result.timescale = {
         speed: Math.max(filters.timescale.speed, 0.0),
         pitch: Math.max(filters.timescale.pitch, 0.0),
@@ -191,14 +191,14 @@ class Filters {
       this.command.push(`asetrate=${constants.opus.samplingRate}*${result.timescale.pitch + ratedif},atempo=${finalspeed},aresample=${constants.opus.samplingRate}`)
 		}
 
-    if (filters.tremolo && filters.tremolo.frequency && filters.tremolo.depth && config.filters.list.tremolo) {
+    if (filters.tremolo && filters.tremolo.frequency !== undefined && filters.tremolo.depth !== undefined && config.filters.list.tremolo) {
       result.tremolo = {
         frequency: Math.min(Math.max(filters.tremolo.frequency, 0.0), 14.0),
         depth: Math.min(Math.max(filters.tremolo.depth, 0.0), 1.0)
       }
     }
 
-    if (filters.vibrato && filters.vibrato.frequency && filters.vibrato.depth && config.filters.list.vibrato) {
+    if (filters.vibrato && filters.vibrato.frequency !== undefined && filters.vibrato.depth !== undefined && config.filters.list.vibrato) {
       result.vibrato = {
         frequency: Math.min(Math.max(filters.vibrato.frequency, 0.0), 14.0),
         depth: Math.min(Math.max(filters.vibrato.depth, 0.0), 1.0)
@@ -207,13 +207,13 @@ class Filters {
       this.command.push(`vibrato=f=${result.vibrato.frequency}:d=${result.vibrato.depth}`)
     }
 
-    if (filters.rotation && filters.rotation.rotationHz && config.filters.list.rotation) {
+    if (filters.rotation?.rotationHz !== undefined && config.filters.list.rotation) {
       result.rotation = { 
         rotationHz: filters.rotation.rotationHz
       }
     }
 
-    if (filters.distortion && filters.distortion.sinOffset && filters.distortion.sinScale && filters.distortion.cosOffset && filters.distortion.cosScale && filters.distortion.tanOffset && filters.distortion.tanScale && filters.distortion.offset && filters.distortion.scale && config.filters.list.distortion) {
+    if (filters.distortion && filters.distortion.sinOffset !== undefined && filters.distortion.sinScale !== undefined && filters.distortion.cosOffset !== undefined && filters.distortion.cosScale !== undefined && filters.distortion.tanOffset !== undefined && filters.distortion.tanScale !== undefined && filters.distortion.offset !== undefined && filters.distortion.scale !== undefined && config.filters.list.distortion) {
       result.distortion = {
         sinOffset: filters.distortion.sinOffset,
         sinScale: filters.distortion.sinScale,
@@ -228,7 +228,7 @@ class Filters {
       this.command.push(`afftfilt=real='hypot(re,im)*sin(0.1*${filters.distortion.sinOffset}*PI*t)*${filters.distortion.sinScale}+hypot(re,im)*cos(0.1*${filters.distortion.cosOffset}*PI*t)*${filters.distortion.cosScale}+hypot(re,im)*tan(0.1*${filters.distortion.tanOffset}*PI*t)*${filters.distortion.tanScale}+${filters.distortion.offset}':imag='hypot(re,im)*sin(0.1*${filters.distortion.sinOffset}*PI*t)*${filters.distortion.sinScale}+hypot(re,im)*cos(0.1*${filters.distortion.cosOffset}*PI*t)*${filters.distortion.cosScale}+hypot(re,im)*tan(0.1*${filters.distortion.tanOffset}*PI*t)*${filters.distortion.tanScale}+${filters.distortion.offset}':win_size=512:overlap=0.75:scale=${filters.distortion.scale}`)
     }
 
-    if (filters.channelMix && filters.channelMix.leftToLeft && filters.channelMix.leftToRight && filters.channelMix.rightToLeft && filters.channelMix.rightToRight && config.filters.list.channelMix) {
+    if (filters.channelMix && filters.channelMix.leftToLeft !== undefined && filters.channelMix.leftToRight !== undefined && filters.channelMix.rightToLeft !== undefined && filters.channelMix.rightToRight !== undefined && config.filters.list.channelMix) {
       result.channelMix = {
         leftToLeft: Math.min(Math.max(filters.channelMix.leftToLeft, 0.0), 1.0),
         leftToRight: Math.min(Math.max(filters.channelMix.leftToRight, 0.0), 1.0),
@@ -239,7 +239,7 @@ class Filters {
       this.command.push(`pan=stereo|c0<c0*${result.channelMix.leftToLeft}+c1*${result.channelMix.rightToLeft}|c1<c0*${result.channelMix.leftToRight}+c1*${result.channelMix.rightToRight}`)
     }
 
-    if (filters.lowPass && filters.lowPass.smoothing && config.filters.list.lowPass) {
+    if (filters.lowPass?.smoothing !== undefined && config.filters.list.lowPass) {
       result.lowPass = {
         smoothing: Math.max(filters.lowPass.smoothing, 1.0)
       }
@@ -247,7 +247,7 @@ class Filters {
       this.command.push(`lowpass=f=${filters.lowPass.smoothing / 500}`)
     }
 
-    if (filters.seek) {
+    if (filters.seek !== undefined) {
       result.startTime = Math.min(filters.seek, decodedTrack.length)
     }
 
@@ -275,8 +275,8 @@ class Filters {
           '-threads', config.filters.threads,
           '-filter_threads', config.filters.threads,
           '-filter_complex_threads', config.filters.threads,
-          ...(this.result.startime || startTime ? ['-ss', `${this.result.startTime || startTime}ms`] : []),
-          '-i', encodeURI(url),
+          ...(this.result.startTime !== undefined || startTime ? ['-ss', `${this.result.startTime !== undefined ? this.result.startTime : startTime}ms`] : []),
+          '-i', url,
           ...(this.command.length !== 0 ? [ '-af', this.command.join(',') ] : [] ),
           ...(endTime ? ['-t', `${endTime}ms`] : []),
           '-f', 's16le',
