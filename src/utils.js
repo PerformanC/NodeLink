@@ -616,28 +616,32 @@ export function debugLog(name, type, options) {
     case 2: {
       switch (name) {
         case 'trackStart': {
-          if (config.debug.track.start)
-            console.log(`[\u001b[32mtrackStart\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m.`)
+          if (!config.debug.track.start) return;
+
+          console.log(`[\u001b[32mtrackStart\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m.`)
 
             break
         }
         case 'trackEnd': {
-          if (config.debug.track.end)
-            console.log(`[\u001b[32mtrackEnd\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m because was \u001b[94m${options.reason}\u001b[37m.`)
+          if (!config.debug.track.end) return;
 
-            break
+          console.log(`[\u001b[32mtrackEnd\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m because was \u001b[94m${options.reason}\u001b[37m.`)
+
+          break
         }
         case 'trackException': {
-          if (config.debug.track.exception)
-            console.error(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track?.title || 'None'}\u001b[37m by \u001b[94m${options.track?.author || 'none'}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
+          if (!config.debug.track.exception) return;
 
-            break
+          console.error(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track?.title || 'None'}\u001b[37m by \u001b[94m${options.track?.author || 'none'}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
+
+          break
         }
         case 'trackStuck': {
-          if (config.debug.track.stuck)
-            console.warn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[33m${config.options.threshold}ms have passed.\u001b[37m`)
+          if (!config.debug.track.stuck) return;
 
-            break
+          console.warn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[33m${config.options.threshold}ms have passed.\u001b[37m`)
+
+          break
         }
       }
 
@@ -648,7 +652,10 @@ export function debugLog(name, type, options) {
         case 'connect': {
           if (!config.debug.websocket.connect) return;
 
-          console.log(`[\u001b[32mwebsocket\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m client connected to NodeLink.`)
+          if (options.error)
+            return console.error(`[\u001b[31mwebsocket\u001b[37m]: \u001b[31m${options.error}\u001b[37m\n Name: \u001b[94m${options.name}\u001b[37m`)
+
+          console.log(`[\u001b[32mwebsocket\u001b[37m]: \u001b[94m${options.name}\u001b[37m@\u001b[94m${options.version}\u001b[37m client connected to NodeLink.`)
 
           break
         }
@@ -659,45 +666,24 @@ export function debugLog(name, type, options) {
         
           break
         }
-        case 'resume': {
-          if (!config.debug.websocket.resume) return;
-
-          console.log(`[\u001b[32mwebsocket\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m client resumed a connection to NodeLink.`)
-
-          break
-        }
-        case 'failedResume': {
-          if (!config.debug.websocket.failedResume) return;
-
-          console.error(`[\u001b[31mfailedResume[\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}"\u001b[37m failed to resume.`)
-
-          break
-        }
-        case 'resumeTimeout': {
-          if (!config.debug.websocket.resumeTimeout) return;
-
-          console.log(`[\u001b[31mresumeTimeout\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m failed to resume in time.`)
-
-          break
-        }
         case 'error': {
           if (!config.debug.websocket.error) return;
 
-          console.error(`[\u001b[31mwebsocketError\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m: \u001b[31m${options.error}\u001b[37m`)
+          console.error(`[\u001b[31mwebsocketError\u001b[37m]: \u001b[94m${options.name}\u001b[37m@\u001b[94m${options.version}\u001b[37m ran into an error: \u001b[31m${options.error}\u001b[37m`)
 
           break
         }
         case 'connectCD': {
           if (!config.debug.websocket.connectCD) return;
 
-          console.log(`[\u001b[32mwebsocketCD\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m client connected to NodeLink.\n Guild: \u001b[94m${options.guildId}\u001b[37m`)
+          console.log(`[\u001b[32mwebsocketCD\u001b[37m]: \u001b[94m${options.name}\u001b[37m client connected to NodeLink.\n Guild: \u001b[94m${options.guildId}\u001b[37m`)
 
           break
         }
         case 'disconnectCD': {
           if (!config.debug.websocket.disconnectCD) return;
 
-          console.error(`[\u001b[32mwebsocketCD\u001b[37m]: A connection was closed with a client.\n Guild: \u001b[94m${options.guildId}\u001b[37m\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason === '' ? 'No reason provided' : options.reason}\u001b[37m`)
+          console.error(`[\u001b[32mwebsocketCD\u001b[37m]: Connection with \u001b[94m${options.name}\u001b[37m@\u001b[94m${options.version}\u001b[37m was closed.\n Guild: \u001b[94m${options.guildId}\u001b[37m\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason === '' ? 'No reason provided' : options.reason}\u001b[37m`)
 
           break
         }
@@ -998,4 +984,15 @@ export function waitForEvent(emitter, eventName, func, timeoutMs) {
 
 export function clamp16Bit(sample) {
   return Math.max(constants.pcm.minimumRate, Math.min(sample, constants.pcm.maximumRate))
+}
+
+export function parseClientName(clientName) {
+  const nameAndVersion = clientName.split(' ')[0]
+  const split = nameAndVersion.split('/')
+  const name = split[0]
+  const version = split[1]
+
+  if (!name || !version || split.length != 2) return null
+
+  return { name, version }
 }

@@ -6,6 +6,7 @@ import inputHandler from './inputHandler.js'
 import config from '../../config.js'
 import { checkForUpdates, debugLog } from '../utils.js'
 import { WebSocketServer } from '../ws.js'
+import { parseClientName } from '../utils.js'
 
 if (typeof config.server.port !== 'number')
   throw new Error('Port must be a number.')
@@ -77,34 +78,44 @@ if (config.options.autoUpdate[2]) setInterval(() => {
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()
 
-v4.on('/v4/websocket', (ws, req) => {
-  if (req.headers.authorization !== config.server.password) {
-    debugLog('disconnect', 3, { code: 4001, reason: 'Invalid password' })
+v4.on('/v4/websocket', connectionHandler.configureConnection)
 
-    return ws.close(4001, 'Invalid password')
-  }
-
-  connectionHandler.configureConnection(ws, req)
-})
-
-v4.on('/connection/data', (ws, req) => {
-  if (req.headers.authorization !== config.server.password) {
-    debugLog('disconnectCD', 3, { code: 4001, reason: 'Invalid password' })
-
-    return ws.close(4001, 'Invalid password')
-  }
-
-  inputHandler.setupConnection(ws, req)
-})
+v4.on('/connection/data', inputHandler.setupConnection)
 
 server.on('upgrade', (req, socket, head) => {
   const { pathname } = new URL(req.url, `http://${req.headers.host}`)
 
-  if (pathname === '/v4/websocket')
-    v4.handleUpgrade(req, socket, head, { 'isNodeLink': true }, (ws) => v4.emit('/v4/websocket', ws, req))
+  if (req.headers.authorization !== config.server.password) {
+    debugLog('disconnect', 3, { name: 'Unknown', version: '0.0.0', code: 401, reason: 'Invalid password' })
 
-  if (pathname === '/connection/data')
+    req.socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+
+    return req.socket.destroy()
+  }
+
+  const parsedClientName = parseClientName(req.headers['client-name'])
+
+  if (!parsedClientName) {
+    debugLog('connect', 1, { name: req.headers['client-name'], error: 'Client-name doesn\'t conform to NAME/VERSION format.' })
+
+    req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+
+    return req.socket.destroy()
+  }
+
+  req.clientInfo = parsedClientName
+
+  if (pathname === '/v4/websocket') {
+    debugLog('connect', 3, parsedClientName)
+
+    v4.handleUpgrade(req, socket, head, { 'isNodeLink': true }, (ws) => v4.emit('/v4/websocket', ws, req))
+  }
+
+  if (pathname === '/connection/data') {
+    debugLog('connectCD', 3, { headers: req.headers, guildId })
+
     v4.handleUpgrade(req, socket, head, {}, (ws) => v4.emit('/connection/data', ws, req))
+  }
 })
 
 v4.on('error', (err) => {

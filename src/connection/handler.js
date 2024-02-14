@@ -86,13 +86,11 @@ function startPlayerUpdate() {
 }
 
 async function configureConnection(ws, req) {
-  debugLog('connect', 3, { headers: req.headers })
-
   let sessionId = null
   let client = null
 
   ws.on('close', (code, reason) => {
-    debugLog('disconnect', 3, { code, reason })
+    debugLog('disconnect', 3, { ...req.clientInfo, code, reason })
 
     if (!client) return;
 

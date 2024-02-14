@@ -32,8 +32,6 @@ function setupConnection(ws, req) {
     ws,
     guildId
   }
-
-  debugLog('connectCD', 3, { headers: req.headers, guildId })
 }
 
 function handleStartSpeaking(ssrc, userId, guildId) {
