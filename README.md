@@ -128,6 +128,35 @@ Now you can connect to NodeLink using the LavaLink API, using a `v4` LavaLink cl
 > [!WARNING]
 > Never run NodeLink outside its root directory with auto-updater enabled. It will nuke the directory it's running on while updating.
 
+## Supported clients
+
+NodeLink is compatible with most LavaLink clients, as it implements most of the LavaLink API. However, some clients may not be compatible with NodeLink, as it implements changes some behaviors and endpoints.
+
+| Client                                                              | Platform     | v2 supported?   | NodeLink Features?  | NodeLink major version |
+| --------------------------------------------------------------------|--------------|-----------------|---------------------|------------------------|
+| [Lavalink-Client](https://github.com/lavalink-devs/Lavalink-Client) | JVM          | Yes             | No                  | v1 and v2              |
+| [Lavalink.kt](https://github.com/DRSchlaubi/Lavalink.kt)            | Kotlin       | No              | No                  | v1                     |
+| [DisGoLink](https://github.com/disgoorg/disgolink)                  | Go           | Yes             | No                  | v1 and v2              |
+| [Lavalink.py](https://github.com/devoxin/lavalink.py)               | Python       | Yes             | No                  | v1 and v2              |
+| [Mafic](https://github.com/ooliver1/mafic)                          | Python       | Yes             | No                  | v1 and v2              |
+| [Wavelink](https://github.com/PythonistaGuild/Wavelink)             | Python       | Yes             | No                  | v1 and v2              |
+| [Moonlink.js](https://github.com/1Lucas1apk/moonlink.js)            | Node.js      | Yes             | No                  | v1 and v2              |
+| [Magmastream](https://github.com/Blackfort-Hosting/magmastream)     | Node.js      | No              | No                  | v1                     |
+| [Lavacord](https://github.com/lavacord/Lavacord)                    | Node.js      | Yes             | No                  | v1 and v2              |
+| [Shoukaku](https://github.com/Deivu/Shoukaku)                       | Node.js      | Yes             | No                  | v1 and v2              |
+| [Lavalink-Client](https://github.com/tomato6966/Lavalink-Client)    | Node.js      | No              | No                  | v1                     |
+| [FastLink](https://github.com/PerformanC/FastLink)                  | Node.js      | Yes             | Yes                 | v1 and v2              |
+| [Riffy](https://github.com/riffy-team/riffy)                        | Node.js      | Yes             | No                  | v1 and v2              |
+| [DisCatSharp](https://github.com/Aiko-IT-Systems/DisCatSharp)       | .NET         | Yes             | No                  | v1 and v2              |
+| [Lavalink4NET](https://github.com/angelobreuer/Lavalink4NET)        | .NET         | Yes             | No                  | v1 and v2              |
+| [Nomia](https://github.com/DHCPCD9/Nomia)                           | .NET         | Yes             | No                  | v1 and v2              |
+| [CogLink](https://github.com/PerformanC/Coglink)                    | C            | Yes             | No                  | v1 and v2              |
+| [Lavalink-rs](https://gitlab.com/vicky5124/lavalink-rs)             | Rust, Python | Yes             | No                  | v1 and v2              |
+| [nyxx_lavalink](https://github.com/nyxx-discord/nyxx_lavalink)      | Dart         | No              | No                  | v1                     |
+
+> [!NOTE]
+> The data is gotten from [LavaLink documentation](https://lavalink.dev/clients#client-libraries), updated with manual checks.
+
 ## Support & Feedback
 
 If you have any questions, or only want to give a feedback, about NodeLink or any other PerformanC project, join [our Discord server](https://discord.gg/uPveNfTuCJ).
