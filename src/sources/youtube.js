@@ -174,7 +174,8 @@ async function search(query, type, shouldLog) {
 
       tracks.push({
         encoded: encodeTrack(track),
-        info: track
+        info: track,
+        pluginInfo: {}
       })
     }
   })

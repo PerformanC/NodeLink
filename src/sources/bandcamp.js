@@ -123,7 +123,8 @@ async function search(query, shouldLog) {
           artworkUrl: null,
           isrc: null,
           sourceName: 'bandcamp'
-        }
+        },
+        pluginInfo: {}
       })
     })
 
