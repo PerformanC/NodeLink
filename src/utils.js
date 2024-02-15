@@ -996,3 +996,7 @@ export function parseClientName(clientName) {
 
   return { name, version }
 }
+
+export function isEmpty(value) {
+  return value === undefined || value === null || false
+}

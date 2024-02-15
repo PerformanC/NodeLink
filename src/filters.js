@@ -1,7 +1,7 @@
 import { PassThrough, Transform } from 'node:stream'
 
 import config from '../config.js'
-import { debugLog, clamp16Bit } from './utils.js'
+import { debugLog, clamp16Bit, isEmpty } from './utils.js'
 import soundcloud from './sources/soundcloud.js'
 import voiceUtils from './voice/utils.js'
 import constants from '../constants.js'
@@ -167,7 +167,7 @@ class Filters {
       result.equalizer = this.equalizer
 		}
 
-    if (filters.karaoke && filters.karaoke.level !== undefined && filters.karaoke.monoLevel !== undefined && filters.karaoke.filterBand !== undefined && filters.karaoke.filterWidth !== undefined && config.filters.list.karaoke) {
+    if (!isEmpty(filters.karaoke) && config.filters.list.karaoke) {
       result.karaoke = {
         level: Math.min(Math.max(filters.karaoke.level, 0.0), 1.0),
         monoLevel: Math.min(Math.max(filters.karaoke.monoLevel, 0.0), 1.0),
@@ -178,7 +178,7 @@ class Filters {
       this.command.push(`stereotools=mlev=${result.karaoke.monoLevel}:mwid=${result.karaoke.filterWidth}:k=${result.karaoke.level}:kc=${result.karaoke.filterBand}`)
     }
 
-    if (filters.timescale && filters.timescale.speed !== undefined && filters.timescale.pitch !== undefined && filters.timescale.rate !== undefined && config.filters.list.timescale) {
+    if (!isEmpty(filters.timescale) && config.filters.list.timescale) {
       result.timescale = {
         speed: Math.max(filters.timescale.speed, 0.0),
         pitch: Math.max(filters.timescale.pitch, 0.0),
@@ -191,14 +191,14 @@ class Filters {
       this.command.push(`asetrate=${constants.opus.samplingRate}*${result.timescale.pitch + ratedif},atempo=${finalspeed},aresample=${constants.opus.samplingRate}`)
 		}
 
-    if (filters.tremolo && filters.tremolo.frequency !== undefined && filters.tremolo.depth !== undefined && config.filters.list.tremolo) {
+    if (!isEmpty(filters.tremolo) && config.filters.list.tremolo) {
       result.tremolo = {
         frequency: Math.min(Math.max(filters.tremolo.frequency, 0.0), 14.0),
         depth: Math.min(Math.max(filters.tremolo.depth, 0.0), 1.0)
       }
     }
 
-    if (filters.vibrato && filters.vibrato.frequency !== undefined && filters.vibrato.depth !== undefined && config.filters.list.vibrato) {
+    if (!isEmpty(filters.vibrato) && config.filters.list.vibrato) {
       result.vibrato = {
         frequency: Math.min(Math.max(filters.vibrato.frequency, 0.0), 14.0),
         depth: Math.min(Math.max(filters.vibrato.depth, 0.0), 1.0)
@@ -207,13 +207,13 @@ class Filters {
       this.command.push(`vibrato=f=${result.vibrato.frequency}:d=${result.vibrato.depth}`)
     }
 
-    if (filters.rotation?.rotationHz !== undefined && config.filters.list.rotation) {
+    if (!isEmpty(filters.rotation?.rotationHz) && config.filters.list.rotation) {
       result.rotation = { 
         rotationHz: filters.rotation.rotationHz
       }
     }
 
-    if (filters.distortion && filters.distortion.sinOffset !== undefined && filters.distortion.sinScale !== undefined && filters.distortion.cosOffset !== undefined && filters.distortion.cosScale !== undefined && filters.distortion.tanOffset !== undefined && filters.distortion.tanScale !== undefined && filters.distortion.offset !== undefined && filters.distortion.scale !== undefined && config.filters.list.distortion) {
+    if (!isEmpty(filters.distortion) && config.filters.list.distortion) {
       result.distortion = {
         sinOffset: filters.distortion.sinOffset,
         sinScale: filters.distortion.sinScale,

@@ -831,7 +831,7 @@ async function requestHandler(req, res) {
       }
 
       if (buffer.position !== undefined) {
-        if (typeof buffer.position !== 'number') {
+        if (typeof buffer.position !== 'number' && buffer.endTime !== null) {
           debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The position value must be a number.' })
 
           return sendResponse(req, res, {
@@ -849,7 +849,7 @@ async function requestHandler(req, res) {
       }
 
       if (buffer.endTime !== undefined) {
-        if (typeof buffer.endTime !== 'number') {
+        if (typeof buffer.endTime !== 'number' && buffer.endTime !== null) {
           debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The endTime value must be a number.' })
 
           return sendResponse(req, res, {

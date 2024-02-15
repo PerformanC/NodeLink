@@ -106,7 +106,7 @@ class VoiceConnection {
     })
 
     this.connection.on('error', (error) => {
-      debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
+      debugLog('trackException', 2, { track: this.config.track?.info, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -271,6 +271,7 @@ class VoiceConnection {
     this.cache.url = urlInfo.url
     this.cache.protocol = urlInfo.protocol
     this.config.track = { encoded: track, info: decodedTrack }
+    this.config.paused = false
 
     if (this.config.volume !== 100) 
       resource.stream.setVolume(this.config.volume / 100)
@@ -300,8 +301,10 @@ class VoiceConnection {
   }
 
   pause(pause) {
-    if (pause) this.connection.pause()
-    else this.connection.unpause()
+    if (this.connection.audioStream) {
+      if (pause) this.connection.pause()
+      else this.connection.unpause()
+    }
 
     this.config.paused = pause
     
