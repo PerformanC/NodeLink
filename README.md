@@ -140,6 +140,7 @@ NodeLink is compatible with most LavaLink clients, as it implements most of the 
 | [Lavalink.py](https://github.com/devoxin/lavalink.py)               | Python       | Yes             | No                  | v1 and v2              |
 | [Mafic](https://github.com/ooliver1/mafic)                          | Python       | Yes             | No                  | v1 and v2              |
 | [Wavelink](https://github.com/PythonistaGuild/Wavelink)             | Python       | Yes             | No                  | v1 and v2              |
+| [Pomice](https://github.com/cloudwithax/pomice)                     | Python       | Yes             | No                  | v1 and v2              |
 | [Moonlink.js](https://github.com/1Lucas1apk/moonlink.js)            | Node.js      | Yes             | No                  | v1 and v2              |
 | [Magmastream](https://github.com/Blackfort-Hosting/magmastream)     | Node.js      | No              | No                  | v1                     |
 | [Lavacord](https://github.com/lavacord/Lavacord)                    | Node.js      | Yes             | No                  | v1 and v2              |
