@@ -3,23 +3,24 @@ import constants from '../../constants.js'
 import { debugLog, makeRequest, encodeTrack, randomLetters } from '../utils.js'
 
 const ytContext = {
-  thirdParty: {
-    embedUrl: 'https://www.youtube.com'
-  },
+  ...(config.options.bypassAgeRestriction ? {
+    thirdParty: {
+      embedUrl: 'https://www.youtube.com'
+    },
+  } : {}),
   client: {
     clientName: config.options.bypassAgeRestriction ? 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' : 'ANDROID',
     clientVersion: config.options.bypassAgeRestriction ? '2.0' : '19.04.33',
     ...(!config.options.bypassAgeRestriction ? {
       androidSdkVersion: '34',
-      osName: 'Android 14',
       userAgent: 'com.google.android.youtube/19.04.33 (Linux; U; Android 14 gzip)'
     } : {
-      screenDensityFloat: 1,
-      screenHeightPoints: 1080,
-      screenPixelDensity: 1,
-      screenWidthPoints: 1920,
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
-    })
+    }),
+    screenDensityFloat: 1,
+    screenHeightPoints: 1080,
+    screenPixelDensity: 1,
+    screenWidthPoints: 1920,
   }
 }
 
@@ -29,49 +30,46 @@ const sourceInfo = {
   functions: []
 }
 
-function setIntervalNow(func, interval) {
-  func()
-  return setInterval(func, interval)
+async function _init() {
+  debugLog('youtube', 5, { type: 1, message: 'Fetching deciphering functions...' })
+ 
+  const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
+    debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
+  })
+
+  const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
+    debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
+  })
+
+  sourceInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
+
+  let functionName = player.match(/a.set\("alr","yes"\);c&&\(c=(.*?)\(/)[1]
+  const decipherFunctionName = functionName
+
+  const sigFunction = player.match(new RegExp(`${functionName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}=function\\(a\\){(.*)\\)};`, 'g'))[0]
+
+  functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
+  const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
+
+  sourceInfo.functions[0] = `const ${functionName}={${sigWrapper}};const ${sigFunction}${decipherFunctionName}(sig);`
+
+  functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
+
+  if (functionName && functionName.includes('['))
+    functionName = player.match(new RegExp(`${functionName.match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
+  
+  const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
+  sourceInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
+
+  debugLog('youtube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
 }
 
 async function init() {
-  if (!config.options.bypassAgeRestriction) return;
-
   debugLog('youtube', 5, { type: 1, message: 'Unrecommended option "bypass age-restricted" is enabled.' })
 
-  sourceInfo.innertubeInterval = setIntervalNow(async () => {
-    debugLog('youtube', 5, { type: 1, message: 'Fetching deciphering functions...' })
- 
-    const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-      debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
-    })
+  await _init()
 
-    const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
-      debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
-    })
-
-    sourceInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
-
-    let functionName = player.match(/a.set\("alr","yes"\);c&&\(c=(.*?)\(/)[1]
-    const decipherFunctionName = functionName
-
-    const sigFunction = player.match(new RegExp(`${functionName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}=function\\(a\\){(.*)\\)};`, 'g'))[0]
-
-    functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
-    const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
-
-    sourceInfo.functions[0] = `const ${functionName}={${sigWrapper}};const ${sigFunction}${decipherFunctionName}(sig);`
-
-    functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
-
-    if (functionName && functionName.includes('['))
-      functionName = player.match(new RegExp(`${functionName.match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
-    
-    const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
-    sourceInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
-
-    debugLog('youtube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
-  }, 3600000)
+  sourceInfo.innertubeInterval = setInterval(async () => _init(), 3600000)
 }
 
 function free() {
