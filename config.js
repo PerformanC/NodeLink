@@ -96,7 +96,17 @@ export default {
     "fallbackSearchSource": "bandcamp",
     "lyricsFallbackSearchSource": "genius",
     "sources": {
-      "youtube": true,
+      "youtube": {
+        "enabled": true,
+        "authentication": {
+          "enabled": false, // Authentication using accounts outside EU helps bypass 403 errors. Enable at your own risk.
+          "cookies": { // Available in YouTube website cookies.
+            "SID": "DISABLED",
+            "LOGIN_INFO": "DISABLED"
+          },
+          "authorization": "DISABLED" // Available in YouTube website in "Authorization" header.
+        }
+      },
       "youtubeMusic": true,
       "bandcamp": true,
       "http": true,

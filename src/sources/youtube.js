@@ -107,7 +107,11 @@ async function search(query, type, shouldLog) {
 
   const { body: search } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
     headers: {
-      'User-Agent': ytContext.client.userAgent
+      'User-Agent': ytContext.client.userAgent,
+      ...(config.search.sources.youtube.authentication.enabled ? {
+        Authorization: config.search.sources.youtube.authentication.authorization,
+        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+      } : {})
     },
     body: {
       context: ytContext,
@@ -203,7 +207,11 @@ async function loadFrom(query, type) {
 
         const { body: video } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': ytContext.client.userAgent
+            'User-Agent': ytContext.client.userAgent,
+            ...(config.search.sources.youtube.authentication.enabled ? {
+              Authorization: config.search.sources.youtube.authentication.authorization,
+              Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+            } : {})
           },
           body: {
             context: ytContext,
@@ -253,7 +261,11 @@ async function loadFrom(query, type) {
 
         const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
-            'User-Agent': ytContext.client.userAgent
+            'User-Agent': ytContext.client.userAgent,
+            ...(config.search.sources.youtube.authentication.enabled ? {
+              Authorization: config.search.sources.youtube.authentication.authorization,
+              Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+            } : {})
           },
           body: {
             context: ytContext,
@@ -334,7 +346,11 @@ async function loadFrom(query, type) {
 
         const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
           headers: {
-            'User-Agent': ytContext.client.userAgent
+            'User-Agent': ytContext.client.userAgent,
+            ...(config.search.sources.youtube.authentication.enabled ? {
+              Authorization: config.search.sources.youtube.authentication.authorization,
+              Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+            } : {})
           },
           body: {
             context: ytContext,
@@ -390,7 +406,11 @@ async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
     const { body: videos } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
       headers: {
-        'User-Agent': ytContext.client.userAgent
+        'User-Agent': ytContext.client.userAgent,
+        ...(config.search.sources.youtube.authentication.enabled ? {
+          Authorization: config.search.sources.youtube.authentication.authorization,
+          Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+        } : {})
       },
       body: {
         context: ytContext,
@@ -427,17 +447,19 @@ async function retrieveStream(identifier, type, title) {
     }
 
     const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag === itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
-    let url = decodeURIComponent(audio.url)
+    let url = audio.url || audio.signatureCipher || audio.cipher
 
-    if (config.options.bypassAgeRestriction) { /* ANDROID clientName won't ask for deciphering */
-      const args = new URLSearchParams(audio.url || audio.signatureCipher || audio.cipher)
-      url = audio.url || args.get('url')
+    if (config.options.bypassAgeRestriction) { /* ANDROID client won't ask for deciphering */
+      const args = new URLSearchParams(url)
+      url = decodeURIComponent(args.get('url'))
 
       if (audio.signatureCipher || audio.cipher)
         url += `&${args.get('sp')}=${eval(`const sig = "${args.get('s')}";` + sourceInfo.functions[0])}`
+    } else {
+      url = decodeURIComponent(url)
     }
 
-    url += '&ratebypass=yes&range=0-' /* range query is necessary to bypass throttling */
+    url += `&rn=1&cpn=${randomLetters(16)}&ratebypass=yes&range=0-` /* range query is necessary to bypass throttling */
 
     resolve({ url, protocol: 'https', format: audio.mimeType === 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
   })
@@ -447,7 +469,11 @@ async function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
     const { body: video } = await makeRequest(`https://${decodedTrack.sourceName === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
-        'User-Agent': ytContext.client.userAgent
+        'User-Agent': ytContext.client.userAgent,
+        ...(config.search.sources.youtube.authentication.enabled ? {
+          Authorization: config.search.sources.youtube.authentication.authorization,
+          Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+        } : {})
       },
       body: {
         context: ytContext,
