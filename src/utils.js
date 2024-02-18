@@ -204,6 +204,12 @@ export function makeRequest(url, options) {
           })
         }
 
+        compression.on('error', (error) => {
+          console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed decompressing HTTP response: \u001b[31m${error}\u001b[37m`)
+
+          resolve({ error })
+        })
+
         resolve(await _http2Events(compression, headers))
 
         client.close()

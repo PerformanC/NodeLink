@@ -95,15 +95,15 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         streamOnly: true
       })
 
-      if (![ 200, 302 ].includes(res.statusCode)) {
+      if (res.statusCode !== 200) {
         res.stream.emit('end') /* (http1)makeRequest will handle this automatically */
 
-        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Failed to retrieve stream from source. (${res.statusCode} !== 200, 206 or 302)` })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: `Expected 200, received ${res.statusCode}.` })
 
         return resolve({
           status: 1,
           exception: {
-            message: `Failed to retrieve stream from source. (${res.statusCode} !== 200 or 302)`,
+            message: `Failed to retrieve stream from source. Expected 200, received ${res.statusCode}.`,
             severity: 'suspicious',
             cause: 'Wrong status code'
           }
