@@ -390,7 +390,7 @@ async function requestHandler(req, res) {
     let search = null
 
     const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
-    const ytRegex = config.search.sources.youtube && !ytSearch ? /^(https?:\/\/)?(www\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier) : null
+    const ytRegex = config.search.sources.youtube && !ytSearch ? /^(https?:\/\/)?(www\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)/.test(identifier) : null
     if (config.search.sources.youtube && (ytSearch || ytRegex))
       search = ytSearch ? await sources.youtube.search(identifier.replace('ytsearch:', ''), 'youtube', true) : await sources.youtube.loadFrom(identifier, 'youtube')
 

@@ -257,7 +257,8 @@ async function loadFrom(query, type) {
       case constants.YouTube.playlist: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
 
-        const identifier = /v=([^&]+)/.exec(query)[1]
+        let identifier = /v=([^&]+)/.exec(query)
+        if (identifier) identifier = identifier[1]
 
         const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
