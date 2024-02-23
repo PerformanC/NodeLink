@@ -30,6 +30,33 @@ const sourceInfo = {
   functions: []
 }
 
+function _getBaseHostRequest(type) {
+  if (ytContext.client.clientName.startsWith('ANDROID'))
+    return 'youtubei.googleapis.com'
+
+  return `${type === 'ytmusic' ? 'music' : 'www'}.youtube.com`
+}
+
+function _getBaseHost(type) {
+  return `${type === 'ytmusic' ? 'music' : 'www'}.youtube.com`
+}
+
+function _switchClient(newClient) {
+  if (newClient === 'ANDROID') {
+    ytContext.client.clientName = 'ANDROID'
+    ytContext.client.clientVersion = '19.04.33'
+    ytContext.client.userAgent = 'com.google.android.youtube/19.04.33 (Linux; U; Android 14 gzip)'
+  } else if (newClient === 'ANDROID_MUSIC') {
+    ytContext.client.clientName = 'ANDROID_MUSIC'
+    ytContext.client.clientVersion = '6.37.50'
+    ytContext.client.userAgent = 'com.google.android.apps.youtube.music/6.37.50 (Linux; U; Android 14 gzip)'
+  }
+}
+
+function _getSourceName(type) {
+  return type === 'ytmusic' ? 'YouTube Music' : 'YouTube'
+}
+
 async function _init() {
   debugLog('youtube', 5, { type: 1, message: 'Fetching deciphering functions...' })
  
@@ -103,9 +130,12 @@ function checkURLType(url, type) {
 }
 
 async function search(query, type, shouldLog) {
-  if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'YouTube', query })
+  if (shouldLog) debugLog('search', 4, { type: 1, sourceName: _getSourceName(type), query })
 
-  const { body: search } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/search`, {
+  if (!config.options.bypassAgeRestriction)
+    _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+
+  const { body: search } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/search`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
       ...(config.search.sources.youtube.authentication.enabled ? {
@@ -123,7 +153,7 @@ async function search(query, type, shouldLog) {
   })
 
   if (typeof search !== 'object') {
-    debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'Failed to load results.' })
+    debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'Failed to load results.' })
 
     return {
       loadType: 'error',
@@ -136,7 +166,7 @@ async function search(query, type, shouldLog) {
   }
 
   if (search.error) {
-    debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: search.error.message })
+    debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: search.error.message })
 
     return {
       loadType: 'error',
@@ -168,7 +198,7 @@ async function search(query, type, shouldLog) {
         isStream: video.lengthText ? false : true,
         position: i++,
         title: video.title.runs[0].text,
-        uri: `https://www.youtube.com/watch?v=${video.videoId}`,
+        uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
         artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
         isrc: null,
         sourceName: type
@@ -183,13 +213,13 @@ async function search(query, type, shouldLog) {
   })
 
   if (tracks.length === 0) {
-    debugLog('search', 4, { type: 3, sourceName: 'YouTube', query, message: 'No matches found.' })
+    debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'No matches found.' })
 
     return { loadType: 'empty', data: {} }
   }
 
   if (shouldLog)
-    debugLog('search', 4, { type: 2, sourceName: 'YouTube', tracksLen: tracks.length, query })
+    debugLog('search', 4, { type: 2, sourceName: _getSourceName(type), tracksLen: tracks.length, query })
 
   return {
     loadType: 'search',
@@ -199,13 +229,16 @@ async function search(query, type, shouldLog) {
 
 async function loadFrom(query, type) {
   return new Promise(async (resolve) => {
+    if (!config.options.bypassAgeRestriction)
+      _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+
     switch (checkURLType(query, type)) {
       case constants.YouTube.video: {
-        debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube', query })
+        debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
         
         const identifier = /v=([^&]+)/.exec(query)[1]
 
-        const { body: video } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
             'User-Agent': ytContext.client.userAgent,
             ...(config.search.sources.youtube.authentication.enabled ? {
@@ -224,7 +257,7 @@ async function loadFrom(query, type) {
         })
 
         if (video.playabilityStatus.status !== 'OK') {
-          debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube', query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
+          debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: _getSourceName(type), query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
           
           return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
         }
@@ -237,13 +270,13 @@ async function loadFrom(query, type) {
           isStream: video.videoDetails.isLive,
           position: 0,
           title: video.videoDetails.title,
-          uri: `https://www.youtube.com/watch?v=${video.videoDetails.videoId}`,
+          uri: `https://${_getBaseHost(type)}/watch?v=${video.videoDetails.videoId}`,
           artworkUrl: `https://i.ytimg.com/vi/${video.videoDetails.videoId}/maxresdefault.jpg`,
           isrc: null,
           sourceName: type
         }
 
-        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube', track, query })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: _getSourceName(type), track, query })
 
         return resolve({
           loadType: 'track',
@@ -255,12 +288,12 @@ async function loadFrom(query, type) {
         })
       }
       case constants.YouTube.playlist: {
-        debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: 'YouTube', query })
+        debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: _getSourceName(type), query })
 
         let identifier = /v=([^&]+)/.exec(query)
         if (identifier) identifier = identifier[1]
 
-        const { body: playlist } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
             'User-Agent': ytContext.client.userAgent,
             ...(config.search.sources.youtube.authentication.enabled ? {
@@ -279,7 +312,7 @@ async function loadFrom(query, type) {
         })
 
         if (!playlist.contents.singleColumnWatchNextResults.playlist) {
-          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'Failed to load playlist.' })
+          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'Failed to load playlist.' })
         
           return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'common', cause: 'Unknown' } })
         }
@@ -305,7 +338,7 @@ async function loadFrom(query, type) {
               isStream: false,
               position: i++,
               title: video.title.runs[0].text,
-              uri: `https://www.youtube.com/watch?v=${video.videoId}`,
+              uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
               artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
               isrc: null,
               sourceName: 'youtube'
@@ -323,12 +356,12 @@ async function loadFrom(query, type) {
         })
 
         if (tracks.length === 0) {
-          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'YouTube', query, message: 'No matches found.' })
+          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
 
           return resolve({ loadType: 'empty', data: {} })
         }
 
-        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'YouTube', playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title })
+        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: _getSourceName(type), playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title })
 
         return resolve({
           loadType: 'playlist',
@@ -345,7 +378,7 @@ async function loadFrom(query, type) {
       case constants.YouTube.shorts: {
         debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
 
-        const { body: short } = await makeRequest('https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false', {
+        const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
           headers: {
             'User-Agent': ytContext.client.userAgent,
             ...(config.search.sources.youtube.authentication.enabled ? {
@@ -377,7 +410,7 @@ async function loadFrom(query, type) {
           isStream: false,
           position: 0,
           title: short.videoDetails.title,
-          uri: `https://www.youtube.com/watch?v=${short.videoDetails.videoId}`,
+          uri: `https://${_getBaseHost(type)}/watch?v=${short.videoDetails.videoId}`,
           artworkUrl: `https://i.ytimg.com/vi/${short.videoDetails.videoId}/maxresdefault.jpg`,
           isrc: null,
           sourceName: 'youtube'
@@ -395,7 +428,7 @@ async function loadFrom(query, type) {
         })
       }
       default: {
-        debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'YouTube', query, message: 'No matches found.' })
+        debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: _getSourceName(type), query, message: 'No matches found.' })
 
         return resolve({ loadType: 'empty', data: {} })
       }
@@ -405,7 +438,10 @@ async function loadFrom(query, type) {
 
 async function retrieveStream(identifier, type, title) {
   return new Promise(async (resolve) => {
-    const { body: videos } = await makeRequest(`https://${type === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
+    if (!config.options.bypassAgeRestriction)
+      _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+
+    const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
       headers: {
         'User-Agent': ytContext.client.userAgent,
         ...(config.search.sources.youtube.authentication.enabled ? {
@@ -433,7 +469,7 @@ async function retrieveStream(identifier, type, title) {
     })
 
     if (videos.playabilityStatus.status !== 'OK') {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: 'YouTube', query: title, message: videos.playabilityStatus.reason })
+      debugLog('retrieveStream', 4, { type: 2, sourceName: _getSourceName(type), query: title, message: videos.playabilityStatus.reason })
 
       return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
@@ -468,7 +504,10 @@ async function retrieveStream(identifier, type, title) {
 
 async function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
-    const { body: video } = await makeRequest(`https://${decodedTrack.sourceName === 'ytmusic' ? 'music' : 'www'}.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    if (!config.options.bypassAgeRestriction)
+      _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+
+    const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
         'User-Agent': ytContext.client.userAgent,
         ...(config.search.sources.youtube.authentication.enabled ? {
@@ -487,7 +526,7 @@ async function loadLyrics(decodedTrack, language) {
     })
 
     if (video.playabilityStatus.status !== 'OK') {
-      debugLog('loadlyrics', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
+      debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
 
       return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
     }
@@ -498,7 +537,7 @@ async function loadLyrics(decodedTrack, language) {
 
     if (selectedCaption) {
       const { body: captionData } = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-        debugLog('loadlyrics', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+        debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
         return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
       })
@@ -529,7 +568,7 @@ async function loadLyrics(decodedTrack, language) {
 
       video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
         const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-          debugLog('loadlyrics', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
           return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
         })
@@ -551,12 +590,12 @@ async function loadLyrics(decodedTrack, language) {
 
         if (i === video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
           if (captions.length === 0) {
-            debugLog('loadlyrics', 4, { type: 3, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
+            debugLog('loadlyrics', 4, { type: 3, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
 
             return resolve(null)
           }
 
-          debugLog('loadlyrics', 4, { type: 2, sourceName: 'YouTube', track: { title: decodedTrack.title, author: decodedTrack.author } })
+          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author } })
 
           return resolve({
             loadType: 'lyricsMultiple',

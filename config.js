@@ -107,7 +107,6 @@ export default {
           "authorization": "DISABLED" // Available in YouTube website in "Authorization" header.
         }
       },
-      "youtubeMusic": true,
       "bandcamp": true,
       "http": true,
       "local": true,

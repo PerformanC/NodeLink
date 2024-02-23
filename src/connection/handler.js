@@ -101,7 +101,7 @@ async function configureConnection(ws, req) {
       clearInterval(playerUpdateInterval)
       playerUpdateInterval = null
 
-      if ((config.search.sources.youtube || config.search.sources.youtubeMusic) && config.options.bypassAgeRestriction)
+      if (config.search.sources.youtube && config.options.bypassAgeRestriction)
         sources.youtube.free()
     }
 
@@ -396,9 +396,9 @@ async function requestHandler(req, res) {
 
     if (sendResponseNonNull(req, res, search) === true) return;
 
-    const ytMusicSearch = config.search.sources.youtubeMusic ? identifier.startsWith('ytmsearch:') : null
-    const ytMusicRegex = config.search.sources.youtubeMusic && !ytMusicSearch ? /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier) : null
-    if (config.search.sources.youtubeMusic && (ytMusicSearch || ytMusicRegex))
+    const ytMusicSearch = config.search.sources.youtube ? identifier.startsWith('ytmsearch:') : null
+    const ytMusicRegex = config.search.sources.youtube && !ytMusicSearch ? /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier) : null
+    if (config.search.sources.youtube && (ytMusicSearch || ytMusicRegex))
       search = ytMusicSearch ? await sources.youtube.search(identifier.replace('ytmsearch:', ''), 'ytmusic', true) : await sources.youtube.loadFrom(identifier, 'ytmusic')
 
     if (sendResponseNonNull(req, res, search) === true) return;
@@ -902,7 +902,7 @@ function startSourceAPIs() {
   return new Promise((resolve) => {
     const sourcesToInitialize = []
 
-    if ((config.search.sources.youtube || config.search.sources.youtubeMusic) && config.options.bypassAgeRestriction)
+    if (config.search.sources.youtube && config.options.bypassAgeRestriction)
       sourcesToInitialize.push(sources.youtube)
 
     if (config.search.sources.spotify.enabled)
