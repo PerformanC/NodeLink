@@ -64,7 +64,9 @@ async function setupConnection(ws, req) {
 
   ws.on('close', (code, reason) => {
     debugLog('disconnect', 3, { code, reason })
-
+    
+    client = clients.get(sessionId)
+    
     if (!client) return;
 
     if (clients.size == 1) {
@@ -124,13 +126,13 @@ async function setupConnection(ws, req) {
 
       sessionId = req.headers['session-id']
       client = resumedClient
-    }
 
-    ws.send(JSON.stringify({
-      op: 'ready',
-      resumed: !!resumedClient,
-      sessionId: !!resumedClient ? sessionId : randomLetters(16)
-    }))
+      ws.send(JSON.stringify({
+        op: 'ready',
+        resumed: true,
+        sessionId,
+      }))
+    }
   } else {
     initializeClient()
   }
