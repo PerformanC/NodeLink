@@ -129,8 +129,8 @@ async function setupConnection(ws, req) {
 
       ws.send(JSON.stringify({
         op: 'ready',
-        resumed: !!resumedClient,
-        sessionId: !!resumedClient ? sessionId : randomLetters(16)
+        resumed: true,
+        sessionId,
       }))
     }
   } else {
