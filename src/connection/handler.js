@@ -64,7 +64,9 @@ async function setupConnection(ws, req) {
 
   ws.on('close', (code, reason) => {
     debugLog('disconnect', 3, { code, reason })
+    
     client = clients.get(sessionId)
+    
     if (!client) return;
 
     if (clients.size == 1) {
