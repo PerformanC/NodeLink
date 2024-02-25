@@ -667,14 +667,14 @@ export function debugLog(name, type, options) {
         case 'failedResume': {
           if (!config.debug.websocket.failedResume) return;
 
-          console.error(`[\u001b[31mfailedResume[\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}"\u001b[37m failed to resume.`)
+          console.error(`[\u001b[31mfailedResume\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m sent an invalid session id to resume.`)
 
           break
         }
         case 'resumeTimeout': {
           if (!config.debug.websocket.resumeTimeout) return;
 
-          console.log(`[\u001b[31mresumeTimeout\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m failed to resume in time.`)
+          console.log(`[\u001b[31mresumeTimeout\u001b[37m]: \u001b[94m${options.headers['client-name'] || 'Unknown'}\u001b[37m didn't resume in time.`)
 
           break
         }
