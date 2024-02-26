@@ -4,7 +4,7 @@ import { URL } from 'node:url'
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
 import config from '../../config.js'
-import { checkForUpdates, debugLog } from '../utils.js'
+import { debugLog } from '../utils.js'
 import { WebSocketServer } from '../ws.js'
 import { parseClientName } from '../utils.js'
 
@@ -23,29 +23,17 @@ if (typeof config.options.playerUpdateInterval !== 'boolean' && typeof config.op
 if (typeof config.options.statsInterval !== 'boolean' && typeof config.options.statsInterval !== 'number')
   throw new Error('Stats interval must be a boolean or a number.')
 
-if (typeof config.options.autoUpdate !== 'object')
-  throw new Error('Auto update must be an array.')
-
-if (typeof config.options.autoUpdate[0] !== 'boolean')
-  throw new Error('Auto update[0] must be a boolean.')
-
-if (typeof config.options.autoUpdate[1] !== 'boolean')
-  throw new Error('Auto update[1] must be a boolean.')
-
-if (typeof config.options.autoUpdate[2] !== 'boolean' && typeof config.options.autoUpdate[2] !== 'number')
-  throw new Error('Auto update[2] must be a boolean or a number.')
-
-if (typeof config.options.autoUpdate[3] !== 'string')
-  throw new Error('Auto update[3] must be a string.')
-
-if (!['tar', 'zip', '7zip'].includes(config.options.autoUpdate[3]))
-  throw new Error('Auto update[3] must be either "tar", "zip" or "7zip".')
-
 if (typeof config.options.maxResultsLength !== 'number')
   throw new Error('Max results length must be a number.')
 
 if (typeof config.options.maxAlbumPlaylistLength !== 'number')
   throw new Error('Max album playlist length must be a number.')
+
+if (typeof config.options.maxCaptionsLength !== 'number')
+  throw new Error('Max captions length must be a number.')
+
+if (typeof config.options.bypassAgeRestriction !== 'boolean')
+  throw new Error('Bypass age restriction must be a boolean.')
 
 if (!['bandcamp', 'deezer', 'soundcloud', 'youtube', 'ytmusic'].includes(config.search.defaultSearchSource))
   throw new Error('Default search source must be either "bandcamp", "deezer", "soundcloud", "youtube" or "ytmusic".')
@@ -62,18 +50,14 @@ if (config.search.sources.deezer.enabled && (!config.search.sources.deezer.decry
 if (config.search.sources.soundcloud.enabled && !config.search.sources.soundcloud.clientId)
   throw new Error('SoundCloud is enabled but no client ID was provided.')
 
-if (![ 'ogg/opus', 'opus' ].includes(config.voiceReceive.audioType))
-  throw new Error('Audio type must be either "ogg/opus" or "opus".')
-
 if (![ 'high', 'medium', 'low', 'lowest' ].includes(config.audio.quality))
   throw new Error('Audio quality must be either "high", "medium", "low" or "lowest".')
 
 if (![ 'xsalsa20_poly1305', 'xsalsa20_poly1305_suffix', 'xsalsa20_poly1305_lite' ].includes(config.audio.encryption))
   throw new Error('Encryption must be either "xsalsa20_poly1305", "xsalsa20_poly1305_suffix" or "xsalsa20_poly1305_lite".')
 
-if (config.options.autoUpdate[2]) setInterval(() => {
-  checkForUpdates()
-}, config.options.autoUpdate[2])
+if (![ 'ogg/opus', 'opus' ].includes(config.voiceReceive.audioType))
+  throw new Error('Audio type must be either "ogg/opus" or "opus".')
 
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()

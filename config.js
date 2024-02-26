@@ -1,162 +1,155 @@
-/*
-Any of the settings below can be disabled by setting them to false, times are in milliseconds.
-
-autoUpdate: [ beta?, autoUpdate?, interval, [tar, zip] ]
-*/
-
 export default {
-  "version": {
-    "major": "2",
-    "minor": "0",
-    "patch": "0",
-    "preRelease": null
+  version: {
+    major: '2',
+    minor: '0',
+    patch: '0',
+    preRelease: null
   },
-  "server": {
-    "port": 2333,
-    "password": "youshallnotpass"
+  server: {
+    port: 2333,
+    password: 'youshallnotpass'
   },
-  "options": {
-    "threshold": false,
-    "playerUpdateInterval": false,
-    "statsInterval": false,
-    "autoUpdate": [ false, true, 3600000, "tar" ],
-    "maxResultsLength": 200,
-    "maxAlbumPlaylistLength": 200,
-    "maxCaptionsLength": 3,
-    "bypassAgeRestriction": false // Bypasses age-restricted videos. Enable at your own risk.
+  options: {
+    threshold: false,
+    playerUpdateInterval: false,
+    statsInterval: false,
+    maxResultsLength: 200,
+    maxAlbumPlaylistLength: 200,
+    maxCaptionsLength: 3,
+    bypassAgeRestriction: false // Bypasses age-restricted videos. Enable at your own risk.
   },
-  "debug": {
-    "youtube": {
-      "success": true,
-      "error": true
+  debug: {
+    youtube: {
+      success: true,
+      error: true
     },
-    "pandora": {
-      "success": true,
-      "error": true
+    pandora: {
+      success: true,
+      error: true
     },
-    "deezer": {
-      "success": true,
-      "error": true
+    deezer: {
+      success: true,
+      error: true
     },
-    "spotify": {
-      "success": true,
-      "error": true
+    spotify: {
+      success: true,
+      error: true
     },
-    "soundcloud": {
-      "success": true,
-      "error": true
+    soundcloud: {
+      success: true,
+      error: true
     },
-    "musixmatch": true,
-    "websocket": {
-      "connect": true,
-      "disconnect": true,
-      "resume": true,
-      "failedResume": true,
-      "resumeTimeout": true,
-      "error": true,
-      "connectCD": true,
-      "disconnectCD": true,
-      "sentDataCD": true
+    musixmatch: true,
+    websocket: {
+      connect: true,
+      disconnect: true,
+      resume: true,
+      failedResume: true,
+      resumeTimeout: true,
+      error: true,
+      connectCD: true,
+      disconnectCD: true,
+      sentDataCD: true
     },
-    "request": {
-      "all": false, // Only enable for debugging purposes.
-      "enabled": true,
-      "error": true,
-      "showBody": true,
-      "showHeaders": true,
-      "showParams": true
+    request: {
+      all: false, // Only enable for debugging purposes.
+      enabled: true,
+      error: true,
+      showBody: true,
+      showHeaders: true,
+      showParams: true
     },
-    "track": {
-      "start": true,
-      "end": true,
-      "exception": true,
-      "stuck": true
+    track: {
+      start: true,
+      end: true,
+      exception: true,
+      stuck: true
     },
-    "sources": {
-      "retrieveStream": true,
-      "loadtrack": {
-        "request": true,
-        "results": true,
-        "exception": true
+    sources: {
+      retrieveStream: true,
+      loadtrack: {
+        request: true,
+        results: true,
+        exception: true
       },
-      "search": {
-        "request": true,
-        "results": true,
-        "exception": true
+      search: {
+        request: true,
+        results: true,
+        exception: true
       },
-      "loadlyrics": {
-        "request": true,
-        "results": true,
-        "exception": true
+      loadlyrics: {
+        request: true,
+        results: true,
+        exception: true
       }
     }
   },
-  "search": {
-    "defaultSearchSource": "youtube",
-    "fallbackSearchSource": "bandcamp",
-    "lyricsFallbackSearchSource": "genius",
-    "sources": {
-      "youtube": {
-        "enabled": true,
-        "authentication": {
-          "enabled": false, // Authentication using accounts outside EU helps bypass 403 errors. Enable at your own risk.
-          "cookies": { // Available in YouTube website cookies.
-            "SID": "DISABLED",
-            "LOGIN_INFO": "DISABLED"
+  search: {
+    defaultSearchSource: 'youtube',
+    fallbackSearchSource: 'bandcamp',
+    lyricsFallbackSearchSource: 'genius',
+    sources: {
+      youtube: {
+        enabled: true,
+        authentication: {
+          enabled: false, // Authentication using accounts outside EU helps bypass 403 errors. Enable at your own risk.
+          cookies: { // Available in YouTube website cookies.
+            SID: 'DISABLED',
+            LOGIN_INFO: 'DISABLED'
           },
-          "authorization": "DISABLED" // Available in YouTube website in "Authorization" header.
+          authorization: 'DISABLED' // Available in YouTube website in Authorization header.
         }
       },
-      "bandcamp": true,
-      "http": true,
-      "local": true,
-      "pandora": false,
-      "spotify": {
-        "enabled": true,
-        "market": "BR",
-        "sp_dc": "DISABLED" // Necessary for direct Spotify loadLyrics. Available in Spotify website cookies in "sp_dc" parameter.
+      bandcamp: true,
+      http: true,
+      local: true,
+      pandora: false,
+      spotify: {
+        enabled: true,
+        market: 'BR',
+        sp_dc: 'DISABLED' // Necessary for direct Spotify loadLyrics. Available in Spotify website cookies in sp_dc parameter.
       },
-      "deezer": {
-        "enabled": false,
-        "decryptionKey": "DISABLED", // For legal reasons, this key is not provided.
-        "apiKey": "DISABLED", // Available in Deezer website API requests in "api_token" parameter.
-        "arl": "DISABLED" // Necessary for direct Deezer Lyrics. Available in Deezer website cookies in "arl" parameter.
+      deezer: {
+        enabled: false,
+        decryptionKey: 'DISABLED', // For legal reasons, this key is not provided.
+        apiKey: 'DISABLED', // Available in Deezer website API requests in api_token parameter.
+        arl: 'DISABLED' // Necessary for direct Deezer Lyrics. Available in Deezer website cookies in arl parameter.
       },
-      "soundcloud": {
-        "enabled": true,
-        "clientId": "AUTOMATIC", // Available in SoundCloud website API requests in "client_id" parameter.
-        "fallbackIfSnipped": true
+      soundcloud: {
+        enabled: true,
+        clientId: 'AUTOMATIC', // Available in SoundCloud website API requests in client_id parameter.
+        fallbackIfSnipped: true
       },
-      "musixmatch": {
-        "enabled": false,
-        "signatureSecret": "DISABLED" // For legal reasons, this key is not provided.
+      musixmatch: {
+        enabled: false,
+        signatureSecret: 'DISABLED' // For legal reasons, this key is not provided.
       },
-      "genius": {
-        "enabled": true
+      genius: {
+        enabled: true
       }
     }
   },
-  "filters": {
-    "enabled": true,
-    "threads": 4,
-    "list": {
-      "volume": true,
-      "equalizer": true,
-      "karaoke": true,
-      "timescale": true,
-      "tremolo": true,
-      "vibrato": true,
-      "rotation": true,
-      "distortion": true,
-      "channelMix": true,
-      "lowPass": true
+  filters: {
+    enabled: true,
+    threads: 4,
+    list: {
+      volume: true,
+      equalizer: true,
+      karaoke: true,
+      timescale: true,
+      tremolo: true,
+      vibrato: true,
+      rotation: true,
+      distortion: true,
+      channelMix: true,
+      lowPass: true
     }
   },
-  "audio": {
-    "quality": "high",
-    "encryption": "xsalsa20_poly1305_lite"
+  audio: {
+    quality: 'high',
+    encryption: 'xsalsa20_poly1305_lite'
   },
-  "voiceReceive": {
-    "audioType": "ogg/opus" // ogg/opus or opus
+  voiceReceive: {
+    audioType: 'ogg/opus' // ogg/opus or opus
   }
 }
