@@ -15,48 +15,38 @@ import musixmatch from './sources/musixmatch.js'
 import { debugLog, http1makeRequest, makeRequest } from './utils.js'
 
 async function getTrackURL(track) {
-  return new Promise(async (resolve) => {
-    switch ([ 'pandora', 'spotify' ].includes(track.sourceName) ? config.search.defaultSearchSource : track.sourceName) {
-      case 'ytmusic':
-      case 'youtube': {
-        resolve(youtube.retrieveStream(track.identifier, track.sourceName, track.title))
-  
-        break
-      }
-      case 'local': {
-        resolve({ url: track.uri, protocol: 'file', format: 'arbitrary' })
+  switch ([ 'pandora', 'spotify' ].includes(track.sourceName) ? config.search.defaultSearchSource : track.sourceName) {
+    case 'ytmusic':
+    case 'youtube': {
+      return youtube.retrieveStream(track.identifier, track.sourceName, track.title)
+    }
+    case 'local': {
+      return { url: track.uri, protocol: 'file', format: 'arbitrary' }
+    }
 
-        break
-      }
-
-      case 'http':
-      case 'https': {
-        resolve({ url: track.uri, protocol: track.sourceName, format: 'arbitrary' })
-        
-        break
-      }
-      case 'soundcloud': {
-        resolve(soundcloud.retrieveStream(track.identifier, track.title))
-
-        break
-      }
-      case 'bandcamp': {
-        resolve(bandcamp.retrieveStream(track.uri, track.title))
-
-        break
-      }
-      case 'deezer': {
-        resolve(deezer.retrieveStream(track.identifier, track.title))
-
-        break
-      }
-      default: {
-        resolve({ exception: { message: 'Unknown source', severity: 'common', cause: 'Not supported source.' } })
-
-        break
+    case 'http':
+    case 'https': {
+      return { url: track.uri, protocol: track.sourceName, format: 'arbitrary' }
+    }
+    case 'soundcloud': {
+      return soundcloud.retrieveStream(track.identifier, track.title)
+    }
+    case 'bandcamp': {
+      return bandcamp.retrieveStream(track.uri, track.title)
+    }
+    case 'deezer': {
+      return deezer.retrieveStream(track.identifier, track.title)
+    }
+    default: {
+      return {
+        exception: {
+          message: 'Unknown source',
+          severity: 'common',
+          cause: 'Not supported source.'
+        }
       }
     }
-  })
+  }
 }
 
 function getTrackStream(decodedTrack, url, protocol, additionalData) {
@@ -67,21 +57,38 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       file.on('error', () => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
 
-        resolve({ status: 1, exception: { message: 'Failed to retrieve stream from source. (File not found or not accessible)', severity: 'common', cause: 'No permission to access file or doesn\'t exist' } })
+        return resolve({
+          status: 1,
+          exception: {
+            message: 'Failed to retrieve stream from source. (File not found or not accessible)',
+            severity: 'common',
+            cause: 'No permission to access file or doesn\'t exist'
+          }
+        })
       })
 
-      resolve({ stream: file, type: 'arbitrary' })
+      file.on('open', () => {
+        resolve({
+          stream: file,
+          type: 'arbitrary'
+        })
+      })
     } else {
       let trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
-      if (trueSource === 'deezer')
-        return resolve({ stream: await deezer.loadTrack(decodedTrack.title, url, additionalData) })
+      if (trueSource === 'deezer') {
+        return resolve({
+          stream: await deezer.loadTrack(decodedTrack.title, url, additionalData)
+        })
+      }
 
       if (trueSource === 'soundcloud') {
         if (additionalData !== true) {
           const stream = await soundcloud.loadStream(decodedTrack.title, url, protocol)
 
-          return resolve({ stream })
+          return resolve({
+            stream
+          })
         } else {
           trueSource = config.search.fallbackSearchSource
         }
@@ -127,7 +134,9 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         })
       })
 
-      resolve({ stream })
+      resolve({
+        stream
+      })
     }
   })
 }
@@ -206,6 +215,7 @@ function loadLyrics(decodedTrack, language, generic) {
 export default {
   getTrackURL,
   getTrackStream,
+  loadLyrics,
   bandcamp,
   deezer,
   http: httpSource,

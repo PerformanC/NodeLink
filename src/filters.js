@@ -158,14 +158,14 @@ class Filters {
   configure(filters, decodedTrack) {
     const result = {}
 
-		if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
+    if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
       filters.equalizer.forEach((equalizedBand) => {
         const band = this.equalizer.find((i) => i.band === equalizedBand.band)
         if (band) band.gain = Math.min(Math.max(equalizedBand.gain, -0.25), 1.0)
       })
 
       result.equalizer = this.equalizer
-		}
+    }
 
     if (!isEmpty(filters.karaoke) && config.filters.list.karaoke) {
       result.karaoke = {
@@ -189,7 +189,7 @@ class Filters {
       const ratedif = 1.0 - result.timescale.rate
 
       this.command.push(`asetrate=${constants.opus.samplingRate}*${result.timescale.pitch + ratedif},atempo=${finalspeed},aresample=${constants.opus.samplingRate}`)
-		}
+    }
 
     if (!isEmpty(filters.tremolo) && config.filters.list.tremolo) {
       result.tremolo = {

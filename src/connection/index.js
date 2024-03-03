@@ -4,9 +4,8 @@ import { URL } from 'node:url'
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
 import config from '../../config.js'
-import { debugLog } from '../utils.js'
+import { debugLog, parseClientName } from '../utils.js'
 import { WebSocketServer } from '../ws.js'
-import { parseClientName } from '../utils.js'
 
 if (typeof config.server.port !== 'number')
   throw new Error('Port must be a number.')
@@ -96,7 +95,15 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   if (pathname === '/connection/data') {
-    debugLog('connectCD', 3, { headers: req.headers, guildId })
+    if (!req.headers['guild-id'] || !req.headers['user-id']) {
+      debugLog('connectCD', 1, { ...parsedClientName, error: `"${!req.headers['guild-id'] ? 'guild-id' : 'user-id'}" header not provided.` })
+
+      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+  
+      return req.socket.destroy()
+    }
+
+    debugLog('connectCD', 3, { ...parsedClientName, guildId: req.headers['guild-id'] })
 
     v4.handleUpgrade(req, socket, head, {}, (ws) => v4.emit('/connection/data', ws, req))
   }

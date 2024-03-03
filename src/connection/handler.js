@@ -477,73 +477,7 @@ async function requestHandler(req, res) {
     }
 
     const language = parsedUrl.searchParams.get('language')
-
-    let captions = { loadType: 'empty', data: {} }
-
-    switch (decodedTrack.sourceName) {
-      case 'ytmusic':
-      case 'youtube': {
-        if (!config.search.sources[decodedTrack.sourceName]) {
-          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-          break
-        }
-
-        captions = await sources.youtube.loadLyrics(decodedTrack, language) || captions
-
-        break
-      }
-      case 'spotify': {
-        if (!config.search.sources[config.search.defaultSearchSource] || !config.search.sources.spotify.enabled) {
-          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-          break
-        }
-
-        captions = await sources.spotify.loadLyrics(decodedTrack, language) || captions
-
-        break
-      }
-      case 'deezer': {
-        if (!config.search.sources.deezer.enabled) {
-          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-          break
-        }
-
-        captions = await sources.deezer.loadLyrics(decodedTrack, language)
-
-        break
-      }
-      default: {
-        switch (config.search.lyricsFallbackSearchSource) {
-          case 'genius': {
-            if (!config.search.sources.genius) {
-              debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-              break
-            }
-
-            captions = await sources.genius.loadLyrics(decodedTrack, language) || captions
-
-            break
-          }
-          case 'musixmatch': {
-            if (!config.search.sources.musixmatch) {
-              debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
-
-              break
-            }
-
-            captions = await sources.musixmatch.loadLyrics(decodedTrack, language) || captions
-
-            break
-          }
-        }
-
-        break
-      }
-    }
+    const captions = await sources.loadLyrics(decodedTrack, language)
 
     debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers })
 

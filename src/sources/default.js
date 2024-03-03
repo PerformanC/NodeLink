@@ -20,8 +20,9 @@ async function searchWithDefault(query, fallback) {
       return deezer.search(query, false)
     }
     default: {
-      console.warn('[\u001b[33msources\u001b[37m]: Default search source: unknown, falling back to YouTube...')
-      return youtube.search(query, 1, false)
+      console.warn(`[\u001b[33msources\u001b[37m]: Default search source: unknown, falling back to: ${config.search.fallbackSearchSource}`)
+
+      return searchWithDefault(query, true)
     }
   }
 }

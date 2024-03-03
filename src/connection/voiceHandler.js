@@ -155,8 +155,17 @@ class VoiceConnection {
 
     if (!this.connection) this._setupVoice()
 
-    this.connection.voiceStateUpdate({ guild_id: this.config.guildId, user_id: this.client.userId, session_id: buffer.sessionId })
-    this.connection.voiceServerUpdate({ user_id: this.client.userId, token: buffer.token, guild_id: this.config.guildId, endpoint: buffer.endpoint })
+    this.connection.voiceStateUpdate({
+      guild_id: this.config.guildId,
+      user_id: this.client.userId,
+      session_id: buffer.sessionId
+    })
+    this.connection.voiceServerUpdate({
+      user_id: this.client.userId,
+      token: buffer.token,
+      guild_id: this.config.guildId,
+      endpoint: buffer.endpoint
+    })
 
     if (!this.connection.ws) this.connection.connect()
   }
@@ -171,13 +180,11 @@ class VoiceConnection {
   }
 
   async getResource(decodedTrack, urlInfo) {
-    return new Promise(async (resolve) => {
-      const streamInfo = await sources.getTrackStream(decodedTrack, urlInfo.url, urlInfo.protocol, urlInfo.additionalData)
+    const streamInfo = await sources.getTrackStream(decodedTrack, urlInfo.url, urlInfo.protocol, urlInfo.additionalData)
 
-      if (streamInfo.exception) return resolve(streamInfo)
+    if (streamInfo.exception) return streamInfo
 
-      resolve({ stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format) })
-    })
+    return { stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format) }
   }
 
   async play(track, decodedTrack, noReplace) {

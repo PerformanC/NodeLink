@@ -32,7 +32,7 @@ function parseFrameHeader(buffer) {
     buffer = buffer.subarray(startIndex, startIndex + payloadLength)
     
     for (let i = 0; i < buffer.length; i++) {
-      buffer[i] ^= mask[i & 3];
+      buffer[i] ^= mask[i & 3]
     }
   } else {
     buffer = buffer.subarray(startIndex, startIndex + payloadLength)

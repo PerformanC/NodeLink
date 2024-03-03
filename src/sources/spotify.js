@@ -82,7 +82,10 @@ async function search(query) {
     if (data.tracks.total === 0) {
       debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
-      return resolve({ loadType: 'empty', data: {} })
+      return resolve({
+        loadType: 'empty',
+        data: {}
+      })
     }
       
     const tracks = []
@@ -121,7 +124,10 @@ async function search(query) {
       if (tracks.length === 0) {
         debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
-        return resolve({ loadType: 'empty', data: {} })
+        return resolve({
+          loadType: 'empty',
+          data: {}
+        })
       }
 
       const new_tracks = []
@@ -140,12 +146,10 @@ async function search(query) {
 
         debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', tracksLen: new_tracks.length, query })
 
-        resolve({
+        return resolve({
           loadType: 'search',
           data: new_tracks
         })
-
-        return true
       })
     })
   })   
@@ -177,7 +181,10 @@ async function loadFrom(query, type) {
         break
       }
       default: {
-        return resolve({ loadType: 'empty', data: {} })
+        return resolve({
+          loadType: 'empty',
+          data: {}
+        })
       }
     }
 
@@ -206,19 +213,32 @@ async function loadFrom(query, type) {
       if (data.error?.status === 400) {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
 
-        return resolve({ loadType: 'empty', data: {} })
+        return resolve({
+          loadType: 'empty',
+          data: {}
+        })
       }
 
       if (data.error?.message === 'Invalid playlist Id') {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
 
-        return resolve({ loadType: 'empty', data: {} })
+        return resolve({
+          loadType: 'empty',
+          data: {}
+        })
       }
     
       if (data.error) {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: data.error.message })
 
-        return resolve({ loadType: 'error', data: { message: data.error.message, severity: 'fault', cause: 'Unknown' } })
+        return resolve({
+          loadType: 'error',
+          data: {
+            message: data.error.message,
+            severity: 'fault',
+            cause: 'Unknown'
+          }
+        })
       }
     }
 
@@ -245,7 +265,7 @@ async function loadFrom(query, type) {
 
         debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
 
-        resolve({
+        return resolve({
           loadType: 'track',
           data: {
             encoded: encodeTrack(track),
@@ -253,8 +273,6 @@ async function loadFrom(query, type) {
             pluginInfo: {}
           }
         })
-
-        break
       }
       case 'episode': {
         const search = await searchWithDefault(`"${data.name} ${data.show.publisher}"`)
@@ -278,7 +296,7 @@ async function loadFrom(query, type) {
 
         debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', track, query })
 
-        resolve({
+        return resolve({
           loadType: 'track',
           data: {
             encoded: encodeTrack(track),
@@ -286,8 +304,6 @@ async function loadFrom(query, type) {
             pluginInfo: {}
           }
         })
-
-        break
       }
       case 'playlist':
       case 'album': {
@@ -331,7 +347,10 @@ async function loadFrom(query, type) {
           if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
-            return resolve({ loadType: 'empty', data: {} })
+            return resolve({
+              loadType: 'empty',
+              data: {}
+            })
           }
 
           const new_tracks = []
@@ -354,7 +373,7 @@ async function loadFrom(query, type) {
 
             debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
 
-            resolve({
+            return resolve({
               loadType: type[1],
               data: {
                 info: {
@@ -365,8 +384,6 @@ async function loadFrom(query, type) {
                 tracks: new_tracks
               }
             })
-
-            return true
           })
         })
 
@@ -409,7 +426,10 @@ async function loadFrom(query, type) {
           if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
 
-            return resolve({ loadType: 'empty', data: {} })
+            return resolve({
+              loadType: 'empty',
+              data: {}
+            })
           }
 
           const new_tracks = []
@@ -428,7 +448,7 @@ async function loadFrom(query, type) {
 
             debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
 
-            resolve({
+            return resolve({
               loadType: 'show',
               data: {
                 info: {
@@ -439,8 +459,6 @@ async function loadFrom(query, type) {
                 tracks: new_tracks
               }
             })
-
-            return true
           })
         })
 
@@ -450,7 +468,7 @@ async function loadFrom(query, type) {
   })
 }
 
-async function loadLyrics(decodedTrack, language) {
+async function loadLyrics(decodedTrack, _language) {
   const identifier = /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(decodedTrack.uri)
 
   if (config.search.sources.spotify.sp_dc === 'DISABLED') {

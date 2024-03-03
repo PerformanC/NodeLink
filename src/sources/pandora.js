@@ -58,8 +58,12 @@ async function search(query) {
       disableBodyCompression: true
     })
 
-    if (data.results.length === 0)
-      return resolve({ loadType: 'empty', data: {} })
+    if (data.results.length === 0) {
+      return {
+        loadType: 'empty',
+        data: {}
+      }
+    }
 
     const tracks = []
     let index = 0
@@ -131,11 +135,23 @@ async function loadFrom(query) {
 
     debugLog('loadtracks', 4, { type: 1, loadType: type[2], sourceName: 'Pandora', query })
 
-    if (!type)
-      return resolve({ loadType: 'error', data: { message: 'Not a valid pandora URL.', severity: 'common', cause: 'Invalid URL' } })
+    if (!type) {
+      return resolve({
+        loadType: 'empty',
+        data: {}
+      })
+    }
 
-    if (!csrfToken)
-      return resolve({ loadType: 'error', data: { message: 'Pandora not available in current country.', severity: 'common', cause: 'Pandora availability' } })
+    if (!csrfToken) {
+      return resolve({
+        loadType: 'error',
+        data: {
+          message: 'Pandora not available in current country.',
+          severity: 'common',
+          cause: 'Pandora availability'
+        }
+      })
+    }
 
     let lastPart = query.split('/')
     lastPart = lastPart[lastPart.length - 1]
@@ -169,13 +185,23 @@ async function loadFrom(query) {
         if (keysTrackData.length === 0) {
           debugLog('loadtracks', 4, { type: 3, loadType: trackType, sourceName: 'Pandora', query, message: 'No matches found.' })
 
-          return resolve({ loadType: 'empty', data: {} })
+          return resolve({
+            loadType: 'empty',
+            data: {}
+          })
         }
 
         if (trackData.message) {
           debugLog('loadtracks', 4, { type: 3, loadType: trackType, sourceName: 'Pandora', query, message: trackData.message })
       
-          return resolve({ loadType: 'error', data: { message: trackData.message, severity: 'common', cause: 'Unknown' } })
+          return resolve({
+            loadType: 'error',
+            data: {
+              message: trackData.message,
+              severity: 'common',
+              cause: 'Unknown'
+            }
+          })
         }
 
         const trackId = trackData[keysTrackData[0]].pandoraId
@@ -235,7 +261,14 @@ async function loadFrom(query) {
   
               debugLog('loadtracks', 4, { type: 3, loadType: 'album', sourceName: 'Pandora', query, message: errorMessage })
           
-              return resolve({ loadType: 'error', data: { message: errorMessage, severity: 'common', cause: 'Unknown' } })
+              return resolve({
+                loadType: 'error',
+                data: {
+                  message: errorMessage,
+                  severity: 'common',
+                  cause: 'Unknown'
+                }
+              })
             }
   
             const tracks = []
@@ -276,7 +309,10 @@ async function loadFrom(query) {
               if (tracks.length === 0) {
                 debugLog('loadtracks', 4, { type: 3, loadType: 'album', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-                return resolve({ loadType: 'empty', data: {} })
+                return resolve({
+                  loadType: 'empty',
+                  data: {}
+                })
               }
 
               const new_tracks = []
@@ -336,7 +372,14 @@ async function loadFrom(query) {
   
               debugLog('loadtracks', 4, { type: 3, loadType: 'artist', sourceName: 'Pandora', query, message: errorMessage })
           
-              return resolve({ loadType: 'error', data: { message: errorMessage, severity: 'common', cause: 'Unknown' } })
+              return resolve({
+                loadType: 'error',
+                data: {
+                  message: errorMessage,
+                  severity: 'common',
+                  cause: 'Unknown'
+                }
+              })
             }
   
             const tracks = []
@@ -377,7 +420,10 @@ async function loadFrom(query) {
               if (tracks.length === 0) {
                 debugLog('loadtracks', 4, { type: 3, loadType: 'artist', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-                return resolve({ loadType: 'empty', data: {} })
+                return resolve({
+                  loadType: 'empty',
+                  data: {}
+                })
               }
 
               const new_tracks = []
@@ -483,7 +529,10 @@ async function loadFrom(query) {
           if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-            return resolve({ loadType: 'empty', data: {} })
+            return resolve({
+              loadType: 'empty',
+              data: {}
+            })
           }
 
           const new_tracks = []
@@ -537,13 +586,23 @@ async function loadFrom(query) {
         if (stationData.length === 0) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'station', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-          return resolve({ loadType: 'empty', data: {} })
+          return resolve({
+            loadType: 'empty',
+            data: {}
+          })
         }
 
         if (stationData.message) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'station', sourceName: 'Pandora', query, message: stationData.message })
       
-          return resolve({ loadType: 'error', data: { message: stationData.message, severity: 'common', cause: 'Unknown' } })
+          return resolve({
+            loadType: 'error',
+            data: {
+              message: stationData.message,
+              severity: 'common',
+              cause: 'Unknown'
+            }
+          })
         }
 
         const tracks = []
@@ -584,7 +643,10 @@ async function loadFrom(query) {
           if (tracks.length === 0) {
             debugLog('loadtracks', 4, { type: 3, loadType: 'station', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-            return resolve({ loadType: 'empty', data: {} })
+            return resolve({
+              loadType: 'empty',
+              data: {}
+            })
           }
 
           const new_tracks = []
@@ -639,13 +701,23 @@ async function loadFrom(query) {
         if (podcastData.length === 0) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-          return resolve({ loadType: 'empty', data: {} })
+          return resolve({
+            loadType: 'empty',
+            data: {}
+          })
         }
 
         if (podcastData.message) {
           debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: podcastData.message })
       
-          return resolve({ loadType: 'error', data: { message: podcastData.message, severity: 'common', cause: 'Unknown' } })
+          return resolve({
+            loadType: 'error',
+            data: {
+              message: podcastData.message,
+              severity: 'common',
+              cause: 'Unknown'
+            }
+          })
         }
 
         const tracks = []
@@ -705,13 +777,23 @@ async function loadFrom(query) {
             if (allEpisodesIdsData.length === 0) {
               debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-              return resolve({ loadType: 'empty', data: {} })
+              return resolve({
+                loadType: 'empty',
+                data: {}
+              })
             }
 
             if (allEpisodesIdsData.message) {
               debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: allEpisodesIdsData.message })
 
-              return resolve({ loadType: 'error', data: { message: allEpisodesIdsData.message, severity: 'common', cause: 'Unknown' } })
+              return resolve({
+                loadType: 'error',
+                data: {
+                  message: allEpisodesIdsData.message,
+                  severity: 'common',
+                  cause: 'Unknown'
+                }
+              })
             }
 
             let allEpisodesIds = []
@@ -739,13 +821,23 @@ async function loadFrom(query) {
             if (allEpisodesData.length === 0) {
               debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-              return resolve({ loadType: 'empty', data: {} })
+              return resolve({
+                loadType: 'empty',
+                data: {}
+              })
             }
 
             if (allEpisodesData.message) {
               debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: allEpisodesData.message })
 
-              return resolve({ loadType: 'error', data: { message: allEpisodesData.message, severity: 'common', cause: 'Unknown' } })
+              return resolve({
+                loadType: 'error',
+                data: {
+                  message: allEpisodesData.message,
+                  severity: 'common',
+                  cause: 'Unknown'
+                }
+              })
             }
 
             let episodes = Object.keys(allEpisodesData.annotations)
@@ -782,7 +874,10 @@ async function loadFrom(query) {
               if (tracks.length === 0) {
                 debugLog('loadtracks', 4, { type: 3, loadType: 'podcast', sourceName: 'Pandora', query, message: 'No matches found.' })
 
-                return resolve({ loadType: 'empty', data: {} })
+                return resolve({
+                  loadType: 'empty',
+                  data: {}
+                })
               }
 
               const new_tracks = []

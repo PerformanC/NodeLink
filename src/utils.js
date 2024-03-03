@@ -497,7 +497,7 @@ export function debugLog(name, type, options) {
         case 'connectCD': {
           if (!config.debug.websocket.connectCD) return;
 
-          console.log(`[\u001b[32mwebsocketCD\u001b[37m]: \u001b[94m${options.name}\u001b[37m client connected to NodeLink.\n Guild: \u001b[94m${options.guildId}\u001b[37m`)
+          console.log(`[\u001b[32mwebsocketCD\u001b[37m]: \u001b[94m${options.name}\u001b[37m@\u001b[94m${options.version}\u001b[37m client connected to NodeLink.\n Guild: \u001b[94m${options.guildId}\u001b[37m`)
 
           break
         }
@@ -808,6 +808,9 @@ export function clamp16Bit(sample) {
 }
 
 export function parseClientName(clientName) {
+  if (!clientName)
+    return null
+
   const nameAndVersion = clientName.split(' ')[0]
   const split = nameAndVersion.split('/')
   const name = split[0]

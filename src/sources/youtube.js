@@ -215,7 +215,10 @@ async function search(query, type, shouldLog) {
   if (tracks.length === 0) {
     debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'No matches found.' })
 
-    return { loadType: 'empty', data: {} }
+    return {
+      loadType: 'empty',
+      data: {}
+    }
   }
 
   if (shouldLog)
@@ -228,318 +231,405 @@ async function search(query, type, shouldLog) {
 }
 
 async function loadFrom(query, type) {
-  return new Promise(async (resolve) => {
-    if (!config.options.bypassAgeRestriction)
-      _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+  if (!config.options.bypassAgeRestriction)
+    _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
-    switch (checkURLType(query, type)) {
-      case constants.YouTube.video: {
-        debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
-        
-        const identifier = /v=([^&]+)/.exec(query)[1]
-
-        const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-          headers: {
-            'User-Agent': ytContext.client.userAgent,
-            ...(config.search.sources.youtube.authentication.enabled ? {
-              Authorization: config.search.sources.youtube.authentication.authorization,
-              Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-            } : {})
-          },
-          body: {
-            context: ytContext,
-            videoId: identifier,
-            contentCheckOk: true,
-            racyCheckOk: true,
-            params: 'CgIQBg'
-          },
-          method: 'POST'
-        })
-
-        if (video.playabilityStatus.status !== 'OK') {
-          debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: _getSourceName(type), query, message: video.playabilityStatus.reason || video.playabilityStatus.messages[0] })
-          
-          return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason || video.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
-        }
-
-        const track = {
-          identifier: video.videoDetails.videoId,
-          isSeekable: true,
-          author: video.videoDetails.author,
-          length: parseInt(video.videoDetails.lengthSeconds) * 1000,
-          isStream: video.videoDetails.isLive,
-          position: 0,
-          title: video.videoDetails.title,
-          uri: `https://${_getBaseHost(type)}/watch?v=${video.videoDetails.videoId}`,
-          artworkUrl: `https://i.ytimg.com/vi/${video.videoDetails.videoId}/maxresdefault.jpg`,
-          isrc: null,
-          sourceName: type
-        }
-
-        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: _getSourceName(type), track, query })
-
-        return resolve({
-          loadType: 'track',
-          data: {
-            encoded: encodeTrack(track),
-            info: track,
-            pluginInfo: {}
-          }
-        })
-      }
-      case constants.YouTube.playlist: {
-        debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: _getSourceName(type), query })
-
-        let identifier = /v=([^&]+)/.exec(query)
-        if (identifier) identifier = identifier[1]
-
-        const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-          headers: {
-            'User-Agent': ytContext.client.userAgent,
-            ...(config.search.sources.youtube.authentication.enabled ? {
-              Authorization: config.search.sources.youtube.authentication.authorization,
-              Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-            } : {})
-          },
-          body: {
-            context: ytContext,
-            playlistId: /(?<=list=)[\w-]+/.exec(query)[0],
-            contentCheckOk: true,
-            racyCheckOk: true,
-            params: 'CgIQBg'
-          },
-          method: 'POST'
-        })
-
-        if (!playlist.contents.singleColumnWatchNextResults.playlist) {
-          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'Failed to load playlist.' })
-        
-          return resolve({ loadType: 'error', data: { message: 'Failed to load playlist.', severity: 'common', cause: 'Unknown' } })
-        }
+  switch (checkURLType(query, type)) {
+    case constants.YouTube.video: {
+      debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
       
-        const tracks = []
-        let i = 0
-        let selectedTrack = 0
+      const identifier = /v=([^&]+)/.exec(query)[1]
 
-        let playlistContent = playlist.contents.singleColumnWatchNextResults.playlist.playlist.contents
+      const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        headers: {
+          'User-Agent': ytContext.client.userAgent,
+          ...(config.search.sources.youtube.authentication.enabled ? {
+            Authorization: config.search.sources.youtube.authentication.authorization,
+            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+          } : {})
+        },
+        body: {
+          context: ytContext,
+          videoId: identifier,
+          contentCheckOk: true,
+          racyCheckOk: true,
+          params: 'CgIQBg'
+        },
+        method: 'POST'
+      })
 
-        if (playlistContent.length > config.options.maxAlbumPlaylistLength)
-          playlistContent = playlistContent.slice(0, config.options.maxAlbumPlaylistLength)
+      if (video.playabilityStatus.status !== 'OK') {
+        const errorMessage = video.playabilityStatus.reason || video.playabilityStatus.messages[0]
 
-        playlistContent.forEach((video) => {
-          video = video.playlistPanelVideoRenderer
-
-          if (video) {
-            const track = {
-              identifier: video.videoId,
-              isSeekable: true,
-              author: video.shortBylineText.runs ? video.shortBylineText.runs[0].text : 'Unknown author',
-              length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
-              isStream: false,
-              position: i++,
-              title: video.title.runs[0].text,
-              uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
-              artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
-              isrc: null,
-              sourceName: 'youtube'
-            }
-
-            tracks.push({
-              encoded: encodeTrack(track),
-              info: track,
-              pluginInfo: {}
-            })
-
-            if (identifier && track.identifier === identifier)
-              selectedTrack = i
-          }
-        })
-
-        if (tracks.length === 0) {
-          debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
-
-          return resolve({ loadType: 'empty', data: {} })
-        }
-
-        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: _getSourceName(type), playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title })
-
-        return resolve({
-          loadType: 'playlist',
+        debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: _getSourceName(type), query, message: errorMessage })
+        
+        return {
+          loadType: 'error',
           data: {
-            info: {
-              name: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title,
-              selectedTrack: selectedTrack
-            },
-            pluginInfo: {},
-            tracks
+            message: errorMessage,
+            severity: 'common',
+            cause: 'Unknown'
           }
-        })
-      }
-      case constants.YouTube.shorts: {
-        debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
-
-        const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-          headers: {
-            'User-Agent': ytContext.client.userAgent,
-            ...(config.search.sources.youtube.authentication.enabled ? {
-              Authorization: config.search.sources.youtube.authentication.authorization,
-              Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-            } : {})
-          },
-          body: {
-            context: ytContext,
-            videoId: /shorts\/([a-zA-Z0-9_-]+)/.exec(query)[1],
-            contentCheckOk: true,
-            racyCheckOk: true,
-            params: 'CgIQBg'
-          },
-          method: 'POST'
-        })
-
-        if (short.playabilityStatus.status !== 'OK') {
-          debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.playabilityStatus.reason || short.playabilityStatus.messages[0] })
-
-          return resolve({ loadType: 'error', data: { message: short.playabilityStatus.reason || short.playabilityStatus.messages[0], severity: 'common', cause: 'Unknown' } })
         }
-
-        const track = {
-          identifier: short.videoDetails.videoId,
-          isSeekable: true,
-          author: short.videoDetails.author,
-          length: parseInt(short.videoDetails.lengthSeconds) * 1000,
-          isStream: false,
-          position: 0,
-          title: short.videoDetails.title,
-          uri: `https://${_getBaseHost(type)}/watch?v=${short.videoDetails.videoId}`,
-          artworkUrl: `https://i.ytimg.com/vi/${short.videoDetails.videoId}/maxresdefault.jpg`,
-          isrc: null,
-          sourceName: 'youtube'
-        }
-
-        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube Shorts', track, query })
-
-        return resolve({
-          loadType: 'short',
-          data: {
-            encoded: encodeTrack(track),
-            info: track,
-            pluginInfo: {}
-          }
-        })
       }
-      default: {
-        debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: _getSourceName(type), query, message: 'No matches found.' })
 
-        return resolve({ loadType: 'empty', data: {} })
+      const track = {
+        identifier: video.videoDetails.videoId,
+        isSeekable: true,
+        author: video.videoDetails.author,
+        length: parseInt(video.videoDetails.lengthSeconds) * 1000,
+        isStream: video.videoDetails.isLive,
+        position: 0,
+        title: video.videoDetails.title,
+        uri: `https://${_getBaseHost(type)}/watch?v=${video.videoDetails.videoId}`,
+        artworkUrl: `https://i.ytimg.com/vi/${video.videoDetails.videoId}/maxresdefault.jpg`,
+        isrc: null,
+        sourceName: type
+      }
+
+      debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: _getSourceName(type), track, query })
+
+      return {
+        loadType: 'track',
+        data: {
+          encoded: encodeTrack(track),
+          info: track,
+          pluginInfo: {}
+        }
       }
     }
-  })
+    case constants.YouTube.playlist: {
+      debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: _getSourceName(type), query })
+
+      let identifier = /v=([^&]+)/.exec(query)
+      if (identifier) identifier = identifier[1]
+
+      const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        headers: {
+          'User-Agent': ytContext.client.userAgent,
+          ...(config.search.sources.youtube.authentication.enabled ? {
+            Authorization: config.search.sources.youtube.authentication.authorization,
+            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+          } : {})
+        },
+        body: {
+          context: ytContext,
+          playlistId: /(?<=list=)[\w-]+/.exec(query)[0],
+          contentCheckOk: true,
+          racyCheckOk: true,
+          params: 'CgIQBg'
+        },
+        method: 'POST'
+      })
+
+      if (!playlist.contents.singleColumnWatchNextResults.playlist) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'Failed to load playlist.' })
+      
+        return {
+          loadType: 'error',
+          data: {
+            message: 'Failed to load playlist.',
+            severity: 'common',
+            cause: 'Unknown'
+          }
+        }
+      }
+    
+      const tracks = []
+      let i = 0
+      let selectedTrack = 0
+
+      let playlistContent = playlist.contents.singleColumnWatchNextResults.playlist.playlist.contents
+
+      if (playlistContent.length > config.options.maxAlbumPlaylistLength)
+        playlistContent = playlistContent.slice(0, config.options.maxAlbumPlaylistLength)
+
+      playlistContent.forEach((video) => {
+        video = video.playlistPanelVideoRenderer
+
+        if (video) {
+          const track = {
+            identifier: video.videoId,
+            isSeekable: true,
+            author: video.shortBylineText.runs ? video.shortBylineText.runs[0].text : 'Unknown author',
+            length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
+            isStream: false,
+            position: i++,
+            title: video.title.runs[0].text,
+            uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
+            artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
+            isrc: null,
+            sourceName: 'youtube'
+          }
+
+          tracks.push({
+            encoded: encodeTrack(track),
+            info: track,
+            pluginInfo: {}
+          })
+
+          if (identifier && track.identifier === identifier)
+            selectedTrack = i
+        }
+      })
+
+      if (tracks.length === 0) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
+
+        return {
+          loadType: 'empty',
+          data: {}
+        }
+      }
+
+      debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: _getSourceName(type), playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title })
+
+      return {
+        loadType: 'playlist',
+        data: {
+          info: {
+            name: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title,
+            selectedTrack: selectedTrack
+          },
+          pluginInfo: {},
+          tracks
+        }
+      }
+    }
+    case constants.YouTube.shorts: {
+      debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
+
+      const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+        headers: {
+          'User-Agent': ytContext.client.userAgent,
+          ...(config.search.sources.youtube.authentication.enabled ? {
+            Authorization: config.search.sources.youtube.authentication.authorization,
+            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+          } : {})
+        },
+        body: {
+          context: ytContext,
+          videoId: /shorts\/([a-zA-Z0-9_-]+)/.exec(query)[1],
+          contentCheckOk: true,
+          racyCheckOk: true,
+          params: 'CgIQBg'
+        },
+        method: 'POST'
+      })
+
+      if (short.playabilityStatus.status !== 'OK') {
+        const errorMessage = short.playabilityStatus.reason || short.playabilityStatus.messages[0]
+
+        debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: errorMessage })
+
+        return {
+          loadType: 'error',
+          data: { message: errorMessage,
+            severity: 'common',
+            cause: 'Unknown'
+          }
+        }
+      }
+
+      const track = {
+        identifier: short.videoDetails.videoId,
+        isSeekable: true,
+        author: short.videoDetails.author,
+        length: parseInt(short.videoDetails.lengthSeconds) * 1000,
+        isStream: false,
+        position: 0,
+        title: short.videoDetails.title,
+        uri: `https://${_getBaseHost(type)}/watch?v=${short.videoDetails.videoId}`,
+        artworkUrl: `https://i.ytimg.com/vi/${short.videoDetails.videoId}/maxresdefault.jpg`,
+        isrc: null,
+        sourceName: 'youtube'
+      }
+
+      debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'YouTube Shorts', track, query })
+
+      return {
+        loadType: 'short',
+        data: {
+          encoded: encodeTrack(track),
+          info: track,
+          pluginInfo: {}
+        }
+      }
+    }
+    default: {
+      debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: _getSourceName(type), query, message: 'No matches found.' })
+
+      return {
+        loadType: 'empty',
+        data: {}
+      }
+    }
+  }
 }
 
 async function retrieveStream(identifier, type, title) {
-  return new Promise(async (resolve) => {
-    if (!config.options.bypassAgeRestriction)
-      _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+  if (!config.options.bypassAgeRestriction)
+    _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
-    const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
-      headers: {
-        'User-Agent': ytContext.client.userAgent,
-        ...(config.search.sources.youtube.authentication.enabled ? {
-          Authorization: config.search.sources.youtube.authentication.authorization,
-          Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-        } : {})
-      },
-      body: {
-        context: ytContext,
-        cpn: randomLetters(16),
-        ...(config.options.bypassAgeRestriction ? {
-          playbackContext: {
-            contentPlaybackContext: {
-              signatureTimestamp: sourceInfo.signatureTimestamp
-            }
+  const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
+    headers: {
+      'User-Agent': ytContext.client.userAgent,
+      ...(config.search.sources.youtube.authentication.enabled ? {
+        Authorization: config.search.sources.youtube.authentication.authorization,
+        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+      } : {})
+    },
+    body: {
+      context: ytContext,
+      cpn: randomLetters(16),
+      ...(config.options.bypassAgeRestriction ? {
+        playbackContext: {
+          contentPlaybackContext: {
+            signatureTimestamp: sourceInfo.signatureTimestamp
           }
-        } : {}),
-        videoId: identifier,
-        contentCheckOk: true,
-        racyCheckOk: true,
-        params: 'CgIQBg'
-      },
-      method: 'POST',
-      disableBodyCompression: true
-    })
-
-    if (videos.playabilityStatus.status !== 'OK') {
-      debugLog('retrieveStream', 4, { type: 2, sourceName: _getSourceName(type), query: title, message: videos.playabilityStatus.reason })
-
-      return resolve({ exception: { message: videos.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
-    }
-
-    let itag = null
-    switch (config.audio.quality) {
-      case 'high': itag = 251; break
-      case 'medium': itag = 250; break
-      case 'low': itag = 249; break
-      case 'lowest': itag = 599; break
-      default: itag = 251; break
-    }
-
-    const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag === itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
-    let url = audio.url || audio.signatureCipher || audio.cipher
-
-    if (config.options.bypassAgeRestriction) { /* ANDROID client won't ask for deciphering */
-      const args = new URLSearchParams(url)
-      url = decodeURIComponent(args.get('url'))
-
-      if (audio.signatureCipher || audio.cipher)
-        url += `&${args.get('sp')}=${eval(`const sig = "${args.get('s')}";` + sourceInfo.functions[0])}`
-    } else {
-      url = decodeURIComponent(url)
-    }
-
-    url += `&rn=1&cpn=${randomLetters(16)}&ratebypass=yes&range=0-` /* range query is necessary to bypass throttling */
-
-    resolve({ url, protocol: 'https', format: audio.mimeType === 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary' })
+        }
+      } : {}),
+      videoId: identifier,
+      contentCheckOk: true,
+      racyCheckOk: true,
+      params: 'CgIQBg'
+    },
+    method: 'POST',
+    disableBodyCompression: true
   })
+
+  if (videos.playabilityStatus.status !== 'OK') {
+    debugLog('retrieveStream', 4, { type: 2, sourceName: _getSourceName(type), query: title, message: videos.playabilityStatus.reason })
+
+    return {
+      exception: {
+        message: videos.playabilityStatus.reason,
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  let itag = null
+  switch (config.audio.quality) {
+    case 'high': itag = 251; break
+    case 'medium': itag = 250; break
+    case 'low': itag = 249; break
+    case 'lowest': itag = 599; break
+    default: itag = 251; break
+  }
+
+  const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag === itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
+  let url = audio.url || audio.signatureCipher || audio.cipher
+
+  if (config.options.bypassAgeRestriction) { /* ANDROID client won't ask for deciphering */
+    const args = new URLSearchParams(url)
+    url = decodeURIComponent(args.get('url'))
+
+    if (audio.signatureCipher || audio.cipher)
+      url += `&${args.get('sp')}=${eval(`const sig = "${args.get('s')}";` + sourceInfo.functions[0])}`
+  } else {
+    url = decodeURIComponent(url)
+  }
+
+  url += `&rn=1&cpn=${randomLetters(16)}&ratebypass=yes&range=0-` /* range query is necessary to bypass throttling */
+
+  return {
+    url,
+    protocol: 'https',
+    format: audio.mimeType === 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary'
+  }
 }
 
 async function loadLyrics(decodedTrack, language) {
-  return new Promise(async (resolve) => {
-    if (!config.options.bypassAgeRestriction)
-      _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+  if (!config.options.bypassAgeRestriction)
+    _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
-    const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-      headers: {
-        'User-Agent': ytContext.client.userAgent,
-        ...(config.search.sources.youtube.authentication.enabled ? {
-          Authorization: config.search.sources.youtube.authentication.authorization,
-          Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-        } : {})
-      },
-      body: {
-        context: ytContext,
-        videoId: decodedTrack.identifier,
-        contentCheckOk: true,
-        racyCheckOk: true,
-        params: 'CgIQBg'
-      },
-      method: 'POST'
-    })
+  const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    headers: {
+      'User-Agent': ytContext.client.userAgent,
+      ...(config.search.sources.youtube.authentication.enabled ? {
+        Authorization: config.search.sources.youtube.authentication.authorization,
+        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+      } : {})
+    },
+    body: {
+      context: ytContext,
+      videoId: decodedTrack.identifier,
+      contentCheckOk: true,
+      racyCheckOk: true,
+      params: 'CgIQBg'
+    },
+    method: 'POST'
+  })
 
-    if (video.playabilityStatus.status !== 'OK') {
-      debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
+  if (video.playabilityStatus.status !== 'OK') {
+    debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
 
-      return resolve({ loadType: 'error', data: { message: video.playabilityStatus.reason, severity: 'common', cause: 'Unknown' } })
+    return {
+      loadType: 'error',
+      data: {
+        message: video.playabilityStatus.reason,
+        severity: 'common',
+        cause: 'Unknown'
+      }
     }
+  }
 
-    const selectedCaption = video.captions.playerCaptionsTracklistRenderer.captionTracks.find((caption) => {
-      return caption.languageCode === language
+  const selectedCaption = video.captions.playerCaptionsTracklistRenderer.captionTracks.find((caption) => {
+    return caption.languageCode === language
+  })
+
+  if (selectedCaption) {
+    const { body: captionData } = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+      debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+
+      return {
+        loadType: 'error',
+        data: {
+          message: err.message,
+          severity: 'common',
+          cause: 'Unknown'
+        }
+      }
     })
 
-    if (selectedCaption) {
-      const { body: captionData } = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+    const captionEvents = captionData.events.map((event) => {
+      return {
+        startTime: event.tStartMs,
+        endTime: event.tStartMs + event.dDurationMs,
+        text: event.segs ? event.segs.map((seg) => seg.utf8).join('') : null
+      }
+    })
+
+    return {
+      loadType: 'lyricsSingle',
+      data: {
+        name: selectedCaption.languageCode,
+        synced: true,
+        data: captionEvents,
+        rtl: !!selectedCaption.rtl
+      }
+    }
+  } else {
+    const captions = []
+    let i = 0
+
+    if (!video.captions)
+      return null
+
+    video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
+      const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
         debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
-        return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
+        return {
+          loadType: 'error',
+          data: {
+            message: err.message,
+            severity: 'common',
+            cause: 'Unknown'
+          }
+        }
       })
 
       const captionEvents = captionData.events.map((event) => {
@@ -550,61 +640,29 @@ async function loadLyrics(decodedTrack, language) {
         }
       })
 
-      resolve({
-        loadType: 'lyricsSingle',
-        data: {
-          name: selectedCaption.languageCode,
-          synced: true,
-          data: captionEvents,
-          rtl: !!selectedCaption.rtl
-        }
+      captions.push({
+        name: caption.languageCode,
+        synced: true,
+        data: captionEvents,
+        rtl: !!caption.rtl
       })
-    } else {
-      const captions = []
-      let i = 0
 
-      if (!video.captions)
-        return resolve(null)
+      if (i === video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
+        if (captions.length === 0) {
+          debugLog('loadlyrics', 4, { type: 3, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
 
-      video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
-        const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
-
-          return resolve({ loadType: 'error', data: { message: err.message, severity: 'common', cause: 'Unknown' } })
-        })
-
-        const captionEvents = captionData.events.map((event) => {
-          return {
-            startTime: event.tStartMs,
-            endTime: event.tStartMs + event.dDurationMs,
-            text: event.segs ? event.segs.map((seg) => seg.utf8).join('') : null
-          }
-        })
-
-        captions.push({
-          name: caption.languageCode,
-          synced: true,
-          data: captionEvents,
-          rtl: !!caption.rtl
-        })
-
-        if (i === video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
-          if (captions.length === 0) {
-            debugLog('loadlyrics', 4, { type: 3, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
-
-            return resolve(null)
-          }
-
-          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author } })
-
-          return resolve({
-            loadType: 'lyricsMultiple',
-            data: captions
-          })
+          return null
         }
-      })
-    }
-  })
+
+        debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author } })
+
+        return {
+          loadType: 'lyricsMultiple',
+          data: captions
+        }
+      }
+    })
+  }
 }
 
 export default {

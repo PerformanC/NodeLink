@@ -10,12 +10,6 @@ function setupConnection(ws, req) {
   let userId = req.headers['user-id']
   let guildId = req.headers['guild-id']
 
-  if (!userId || !guildId) {
-    debugLog('disconnectCD', 3, { code: 4001, reason: 'Invalid request.', guildId: 'unknown' })
-
-    return ws.close(4001, 'Invalid request')
-  }
-
   ws.on('close', (code, reason) => {
     debugLog('disconnectCD', 3, { code, reason, guildId })
 

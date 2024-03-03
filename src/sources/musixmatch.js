@@ -1,5 +1,4 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
 
 import config from '../../config.js'
 import { debugLog, makeRequest } from '../utils.js'
@@ -125,7 +124,9 @@ async function loadLyrics(decodedTrack, language) {
   })
 
   const lyricsEvents = data.message.body.lyrics.lyrics_body.split('\n').map((text) => {
-    return { text }
+    return {
+      text
+    }
   })
 
   if (language && language !== searchResults.lyrics_language && searchResults.track_lyrics_translation_status.find((status) => _normalizeLanguage(status.to) === language)) {

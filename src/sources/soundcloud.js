@@ -46,169 +46,171 @@ async function init() {
 }
 
 async function loadFrom(url) {
-  return new Promise(async (resolve) => {
-    let req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
+  let req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
 
-    if (req.error || req.statusCode !== 200) {
-      const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
+  if (req.error || req.statusCode !== 200) {
+    const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
 
-      debugLog('loadtracks', 4, { type: 2, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: errorMessage })
+    debugLog('loadtracks', 4, { type: 2, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: errorMessage })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: errorMessage,
+        severity: 'fault',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  const body = req.body
+
+  if (typeof body !== 'object') {
+    debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: 'Invalid response from SoundCloud.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'Invalid response from SoundCloud.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  debugLog('loadtracks', 4, { type: 1, loadType: body.kind || 'unknown', sourceName: 'SoundCloud', query: url })
+
+  if (Object.keys(body).length === 0) {
+    debugLog('loadtracks', 4, { type: 3, loadType: body.kind || 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
+
+    return {
+      loadType: 'empty',
+      data: {}
+    }
+  }
+
+  switch (body.kind) {
+    case 'track': {
+      const track = {
+        identifier: body.id.toString(),
+        isSeekable: true,
+        author: body.user.username,
+        length: body.duration,
+        isStream: false,
+        position: 0,
+        title: body.title,
+        uri: body.permalink_url,
+        artworkUrl: body.artwork_url,
+        isrc: body.publisher_metadata ? body.publisher_metadata.isrc : null,
+        sourceName: 'soundcloud'
+      }
+
+      debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query: url })
 
       return resolve({
-        loadType: 'error',
+        loadType: 'track',
         data: {
-          message: errorMessage,
-          severity: 'fault',
-          cause: 'Unknown'
+          encoded: encodeTrack(track),
+          info: track,
+          playlistInfo: {}
         }
       })
     }
+    case 'playlist': {
+      const tracks = []
+      const notLoaded = []
 
-    const body = req.body
+      if (body.tracks.length > config.options.maxAlbumPlaylistLength)
+        data.tracks = body.tracks.slice(0, config.options.maxAlbumPlaylistLength)
 
-    if (typeof body !== 'object') {
-      debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: 'Invalid response from SoundCloud.' })
+        body.tracks.forEach((item, index) => {
+        if (!item.title) {
+          notLoaded.push(item.id.toString())
 
-      return resolve({
-        loadType: 'error',
-        data: {
-          message: 'Invalid response from SoundCloud.',
-          severity: 'common',
-          cause: 'Unknown'
+          return;
         }
-      })
-    }
 
-    debugLog('loadtracks', 4, { type: 1, loadType: body.kind || 'unknown', sourceName: 'SoundCloud', query: url })
-
-    if (Object.keys(body).length === 0) {
-      debugLog('loadtracks', 4, { type: 3, loadType: body.kind || 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
-
-      return resolve({
-        loadType: 'empty',
-        data: {}
-      })
-    }
-
-    switch (body.kind) {
-      case 'track': {
         const track = {
-          identifier: body.id.toString(),
+          identifier: item.id.toString(),
           isSeekable: true,
-          author: body.user.username,
-          length: body.duration,
+          author: item.user.username,
+          length: item.duration,
           isStream: false,
-          position: 0,
-          title: body.title,
-          uri: body.permalink_url,
-          artworkUrl: body.artwork_url,
-          isrc: body.publisher_metadata ? body.publisher_metadata.isrc : null,
+          position: index,
+          title: item.title,
+          uri: item.permalink_url,
+          artworkUrl: item.artwork_url,
+          isrc: item.publisher_metadata?.isrc,
           sourceName: 'soundcloud'
         }
 
-        debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query: url })
-
-        return resolve({
-          loadType: 'track',
-          data: {
-            encoded: encodeTrack(track),
-            info: track,
-            playlistInfo: {}
-          }
+        tracks.push({
+          encoded: encodeTrack(track),
+          info: track,
+          playlistInfo: {}
         })
-      }
-      case 'playlist': {
-        const tracks = []
-        const notLoaded = []
+      })
 
-        if (body.tracks.length > config.options.maxAlbumPlaylistLength)
-          data.tracks = body.tracks.slice(0, config.options.maxAlbumPlaylistLength)
+      if (notLoaded.length) {
+        let stop = false
 
-          body.tracks.forEach((item, index) => {
-          if (!item.title) {
-            notLoaded.push(item.id.toString())
-            return;
-          }
+        while ((notLoaded.length && !stop) && (tracks.length > config.options.maxAlbumPlaylistLength)) {
+          const notLoadedLimited = notLoaded.slice(0, 50)
+          data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
+          data = data.body
 
-          const track = {
-            identifier: item.id.toString(),
-            isSeekable: true,
-            author: item.user.username,
-            length: item.duration,
-            isStream: false,
-            position: index,
-            title: item.title,
-            uri: item.permalink_url,
-            artworkUrl: item.artwork_url,
-            isrc: item.publisher_metadata?.isrc,
-            sourceName: 'soundcloud'
-          }
+          data.forEach((item, index) => {
+            const track = {
+              identifier: item.id.toString(),
+              isSeekable: true,
+              author: item.user.username,
+              length: item.duration,
+              isStream: false,
+              position: index,
+              title: item.title,
+              uri: item.permalink_url,
+              artworkUrl: item.artwork_url,
+              isrc: item.publisher_metadata ? item.publisher_metadata.isrc : null,
+              sourceName: 'soundcloud'
+            }
 
-          tracks.push({
-            encoded: encodeTrack(track),
-            info: track,
-            playlistInfo: {}
-          })
-        })
-
-        if (notLoaded.length) {
-          let stop = false
-
-          while ((notLoaded.length && !stop) && (tracks.length > config.options.maxAlbumPlaylistLength)) {
-            const notLoadedLimited = notLoaded.slice(0, 50)
-            data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
-            data = data.body
-
-            data.forEach((item, index) => {
-              const track = {
-                identifier: item.id.toString(),
-                isSeekable: true,
-                author: item.user.username,
-                length: item.duration,
-                isStream: false,
-                position: index,
-                title: item.title,
-                uri: item.permalink_url,
-                artworkUrl: item.artwork_url,
-                isrc: item.publisher_metadata ? item.publisher_metadata.isrc : null,
-                sourceName: 'soundcloud'
-              }
-
-              tracks.push({
-                encoded: encodeTrack(track),
-                info: track,
-                playlistInfo: {}
-              })
+            tracks.push({
+              encoded: encodeTrack(track),
+              info: track,
+              playlistInfo: {}
             })
+          })
 
-            notLoaded.splice(0, 50)
+          notLoaded.splice(0, 50)
 
-            if (notLoaded.length === 0)
-              stop = true
-          }
+          if (notLoaded.length === 0)
+            stop = true
         }
-
-        debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: data.title })
-
-        return resolve({
-          loadType: 'playlist',
-          data: {
-            info: {
-              name: data.title,
-              selectedTrack: 0,
-            },
-            pluginInfo: {},
-            tracks,
-          }
-        })
       }
-      case 'user': {
-        debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'SoundCloud', playlistName: data.full_name })
 
-        return resolve({ loadType: 'empty', data: {} })
+      debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: data.title })
+
+      return {
+        loadType: 'playlist',
+        data: {
+          info: {
+            name: data.title,
+            selectedTrack: 0,
+          },
+          pluginInfo: {},
+          tracks,
+        }
       }
     }
-  })
+    case 'user': {
+      debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'SoundCloud', playlistName: data.full_name })
+
+      return {
+        loadType: 'empty',
+        data: {}
+      }
+    }
+  }
 }
 
 async function search(query, shouldLog) {
@@ -356,7 +358,14 @@ async function loadStream(title, url, protocol) {
         res.stream.on('error', (error) => {
           debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
   
-          resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+          resolve({
+            status: 1,
+            exception: {
+              message: error.message,
+              severity: 'fault',
+              cause: 'Unknown'
+            }
+          })
         })
       }
 
@@ -372,7 +381,14 @@ async function loadStream(title, url, protocol) {
       res.stream.on('error', (error) => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
 
-        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+        resolve({
+          status: 1,
+          exception: {
+            message: error.message,
+            severity: 'fault',
+            cause: 'Unknown'
+          }
+        })
       })
 
       res.stream.once('readable', () => resolve(stream))
@@ -384,7 +400,14 @@ async function loadStream(title, url, protocol) {
       res.stream.on('error', (error) => {
         debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
 
-        resolve({ status: 1, exception: { message: error.message, severity: 'fault', cause: 'Unknown' } })
+        resolve({
+          status: 1,
+          exception: {
+            message: error.message,
+            severity: 'fault',
+            cause: 'Unknown'
+          }
+        })
       })
 
       res.stream.once('readable', () => resolve(stream))
