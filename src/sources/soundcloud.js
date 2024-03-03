@@ -123,7 +123,7 @@ async function loadFrom(url) {
       if (body.tracks.length > config.options.maxAlbumPlaylistLength)
         data.tracks = body.tracks.slice(0, config.options.maxAlbumPlaylistLength)
 
-        body.tracks.forEach((item, index) => {
+      body.tracks.forEach((item) => {
         if (!item.title) {
           notLoaded.push(item.id.toString())
 
@@ -136,7 +136,7 @@ async function loadFrom(url) {
           author: item.user.username,
           length: item.duration,
           isStream: false,
-          position: index,
+          position: 0,
           title: item.title,
           uri: item.permalink_url,
           artworkUrl: item.artwork_url,
@@ -159,14 +159,14 @@ async function loadFrom(url) {
           data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
           data = data.body
 
-          data.forEach((item, index) => {
+          data.forEach((item) => {
             const track = {
               identifier: item.id.toString(),
               isSeekable: true,
               author: item.user.username,
               length: item.duration,
               isStream: false,
-              position: index,
+              position: 0,
               title: item.title,
               uri: item.permalink_url,
               artworkUrl: item.artwork_url,
@@ -241,19 +241,18 @@ async function search(query, shouldLog) {
   }
 
   const tracks = []
-  let index = 0
 
-  body.collection.forEach((item, i) => {
-    if (tracks.length > config.options.maxSearchResults) return
-    if (item.kind !== 'track') return;
+  if (body.collection.length > config.options.maxSearchResults)
+    body.collection = body.collection.filter((item, i) => i < config.options.maxSearchResults || item.kind === 'track')
 
+  body.collection.forEach((item) => {
     const track = {
       identifier: item.id.toString(),
       isSeekable: true,
       author: item.user.username,
       length: item.duration,
       isStream: false,
-      position: index++,
+      position: 0,
       title: item.title,
       uri: item.uri,
       artworkUrl: item.artwork_url,

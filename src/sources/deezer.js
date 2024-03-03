@@ -122,7 +122,6 @@ async function loadFrom(query, type) {
     case 'album':
     case 'playlist': {
       const tracks = []
-      let index = 0
 
       if (data.tracks.data.length > config.options.maxAlbumPlaylistLength)
         data.tracks.data = data.tracks.data.slice(0, config.options.maxAlbumPlaylistLength)
@@ -134,7 +133,7 @@ async function loadFrom(query, type) {
           author: item.artist.name,
           length: item.duration * 1000,
           isStream: false,
-          position: index++,
+          position: 0,
           title: item.title,
           uri: item.link,
           artworkUrl: type[1] === 'album' ? data.cover_xl : data.picture_xl,
@@ -185,21 +184,18 @@ async function search(query, shouldLog) {
   }
 
   const tracks = []
-  let index = 0
 
   if (data.data.length > config.options.maxResultsLength)
-    data.data = data.data.slice(0, config.options.maxResultsLength)
+    data.data = data.data.filter((item, i) => i < config.options.maxResultsLength || item.type === 'track')
 
   data.data.forEach(async (item) => {
-    if (item.type !== 'track') return;
-
     const track = {
       identifier: item.id.toString(),
       isSeekable: true,
       author: item.artist.name,
       length: item.duration * 1000,
       isStream: false,
-      position: index++,
+      position: 0,
       title: item.title,
       uri: item.link,
       artworkUrl: item.album.cover_xl,

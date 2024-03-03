@@ -179,7 +179,6 @@ async function search(query, type, shouldLog) {
   }
 
   const tracks = []
-  let i = 0
 
   let videos = search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
 
@@ -196,7 +195,7 @@ async function search(query, type, shouldLog) {
         author: video.longBylineText.runs[0].text,
         length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
         isStream: video.lengthText ? false : true,
-        position: i++,
+        position: 0,
         title: video.title.runs[0].text,
         uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
         artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
@@ -336,7 +335,6 @@ async function loadFrom(query, type) {
       }
     
       const tracks = []
-      let i = 0
       let selectedTrack = 0
 
       let playlistContent = playlist.contents.singleColumnWatchNextResults.playlist.playlist.contents
@@ -344,7 +342,7 @@ async function loadFrom(query, type) {
       if (playlistContent.length > config.options.maxAlbumPlaylistLength)
         playlistContent = playlistContent.slice(0, config.options.maxAlbumPlaylistLength)
 
-      playlistContent.forEach((video) => {
+      playlistContent.forEach((video, i) => {
         video = video.playlistPanelVideoRenderer
 
         if (video) {
@@ -354,7 +352,7 @@ async function loadFrom(query, type) {
             author: video.shortBylineText.runs ? video.shortBylineText.runs[0].text : 'Unknown author',
             length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
             isStream: false,
-            position: i++,
+            position: 0,
             title: video.title.runs[0].text,
             uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
             artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,

@@ -55,7 +55,7 @@ async function loadFrom(url) {
     case 'MusicAlbum': {
       const tracks = []
 
-      trackInfo.track.itemListElement.forEach((item, i) => {
+      trackInfo.track.itemListElement.forEach((item) => {
         const identifier = item.item['@id'].match(/^https?:\/\/([^/]+)\/track\/([^/?]+)/)
 
         const track = {
@@ -64,7 +64,7 @@ async function loadFrom(url) {
           author: trackInfo.byArtist.name,
           length: (item.item.duration.split('P')[1].split('H')[0] * 3600000) + (item.item.duration.split('H')[1].split('M')[0] * 60000) + (item.item.duration.split('M')[1].split('S')[0] * 1000),
           isStream: false,
-          position: i,
+          position: 0,
           title: item.item.name,
           uri: item.item['@id'],
           artworkUrl: trackInfo.image,
@@ -114,7 +114,7 @@ async function search(query, shouldLog) {
   if (names.length > config.options.maxResultsLength)
     names = names.slice(0, config.options.maxResultsLength)
   
-  names.forEach((name, i) => {
+  names.forEach((name) => {
     tracks.push({
       encoded: null,
       info: {
@@ -123,7 +123,7 @@ async function search(query, shouldLog) {
         author: null,
         length: -1,
         isStream: false,
-        position: i++,
+        position: 0,
         title: name[1].trim(),
         uri: null,
         artworkUrl: null,

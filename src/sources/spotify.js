@@ -113,7 +113,7 @@ async function search(query) {
         }
 
         tracks.push({
-          encoded: null,
+          encoded: encodeTrack(track),
           info: track,
           pluginInfo: {}
         })
@@ -131,12 +131,10 @@ async function search(query) {
       }
 
       const new_tracks = []
-      data.tracks.items.nForEach((items2, index2) => {
+      data.tracks.items.nForEach((items2) => {
         tracks.nForEach((track) => {
           if (track.info.title !== items2.name || track.info.author !== items2.artists.map((artist) => artist.name).join(', ')) return false
 
-          track.info.position = index2
-          track.encoded = encodeTrack(track.info)
           new_tracks.push(track)
 
           return true
@@ -335,7 +333,7 @@ async function loadFrom(query, type) {
               }
 
               tracks.push({
-                encoded: null,
+                encoded: encodeTrack(track),
                 info: track,
                 pluginInfo: {}
               })
@@ -354,7 +352,7 @@ async function loadFrom(query, type) {
           }
 
           const new_tracks = []
-          data.tracks.items.nForEach(async (item2, index2) => {
+          data.tracks.items.nForEach(async (item2) => {
             if (type[1] === 'playlist' && !item2.track) return false
 
             item2 = type[1] === 'playlist' ? item2.track : item2
@@ -362,8 +360,6 @@ async function loadFrom(query, type) {
             await tracks.nForEach((track) => {
               if (track.info.title !== item2.name || track.info.author !== item2.artists[0].name) return false
 
-              track.info.position = index2
-              track.encoded = encodeTrack(track.info)
               new_tracks.push(track)
 
               return true
@@ -415,7 +411,7 @@ async function loadFrom(query, type) {
             }
 
             tracks.push({
-              encoded: null,
+              encoded: encodeTrack(track),
               info: track,
               pluginInfo: {}
             })
@@ -433,12 +429,10 @@ async function loadFrom(query, type) {
           }
 
           const new_tracks = []
-          data.episodes.items.nForEach(async (episode2, index2) => {
+          data.episodes.items.nForEach(async (episode2) => {
             await tracks.nForEach((track) => {
               if (track.info.title !== episode2.name || track.info.author !== episode2.publisher) return false
 
-              track.info.position = index2
-              track.encoded = encodeTrack(track.info)
               new_tracks.push(track)
 
               return true

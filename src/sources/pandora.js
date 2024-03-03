@@ -84,7 +84,7 @@ async function search(query) {
             author: data.annotations[key].artistName,
             length: search.data[0].info.length,
             isStream: false,
-            position: index,
+            position: 0,
             title: data.annotations[key].name,
             uri: `https://www.pandora.com${data.annotations[key].shareableUrlPath}`,
             artworkUrl: `https://content-images.p-cdn.com/${data.annotations[key].icon.artUrl}`,
@@ -93,7 +93,7 @@ async function search(query) {
           }
 
           tracks.push({
-            encoded: null,
+            encoded: encodeTrack(track),
             info: track,
             playlistInfo: {}
           })
@@ -103,12 +103,10 @@ async function search(query) {
       if (index !== data.results.length - 1) return index++
 
       const new_tracks = []
-      annotationKeys.nForEach(async (key2, index2) => {
+      annotationKeys.nForEach(async (key2) => {
         await tracks.nForEach((track) => {
           if (track.info.title !== data.annotations[key2].name || track.info.author !== data.annotations[key2].artistName) return false
 
-          track.position = index2
-          track.encoded = encodeTrack(track.info)
           new_tracks.push(track)
 
           return true
@@ -298,7 +296,7 @@ async function loadFrom(query) {
                 }
             
                 tracks.push({
-                  encoded: null,
+                  encoded: encodeTrack(track),
                   info: track,
                   playlistInfo: {}
                 })
@@ -320,8 +318,6 @@ async function loadFrom(query) {
                 await tracks.nForEach((track) => {
                   if (track.info.title !== data.annotations[key2].name || track.info.author !== data.annotations[key2].artistName) return false
 
-                  track.info.position = index2
-                  track.encoded = encodeTrack(track.info)
                   new_tracks.push(track)
 
                   return true
@@ -409,7 +405,7 @@ async function loadFrom(query) {
                 }
           
                 tracks.push({
-                  encoded: null,
+                  encoded: encodeTrack(track),
                   info: track,
                   playlistInfo: {}
                 })
@@ -427,12 +423,10 @@ async function loadFrom(query) {
               }
 
               const new_tracks = []
-              topTracks.nForEach(async (pTrack2, index2) => {
+              topTracks.nForEach(async (pTrack2) => {
                 await tracks.nForEach((track) => {
                   if (track.info.title !== pTrack2.name || track.info.author !== pTrack2.artistName.name) return false
 
-                  track.info.position = index2
-                  track.encoded = encodeTrack(track.info)
                   track.push(track)
 
                   return true
@@ -518,7 +512,7 @@ async function loadFrom(query) {
             }
       
             tracks.push({
-              encoded: null,
+              encoded: encodeTrack(track),
               info: track,
               playlistInfo: {}
             })
@@ -536,12 +530,10 @@ async function loadFrom(query) {
           }
 
           const new_tracks = []
-          keys.nForEach(async (key2, index2) => {
+          keys.nForEach(async (key2) => {
             await tracks.nForEach((track) => {
               if (track.info.title !== data.annotations[key2].name || track.info.author !== data.annotations[key2].artistName) return false
-              
-              track.info.position = index2
-              track.encoded = encodeTrack(track.info)
+
               new_tracks.push(track)
             
               return true
@@ -632,7 +624,7 @@ async function loadFrom(query) {
             }
 
             tracks.push({
-              encoded: null,
+              encoded: encodeTrack(track),
               info: track,
               playlistInfo: {}
             })
@@ -650,12 +642,10 @@ async function loadFrom(query) {
           }
 
           const new_tracks = []
-          seeds.nForEach(async (seed2, index2) => {
+          seeds.nForEach(async (seed2) => {
             await tracks.nForEach((track) => {
               if (track.info.title !== seed2.song.songTitle || track.info.author !== seed2.song.artistSummary) return false
 
-              track.info.position = index2
-              track.encoded = encodeTrack(track.info)
               new_tracks.push(track)
 
               return true
@@ -863,7 +853,7 @@ async function loadFrom(query) {
                 }
 
                 tracks.push({
-                  encoded: null,
+                  encoded: encodeTrack(track),
                   info: track,
                   playlistInfo: {}
                 })
@@ -881,14 +871,12 @@ async function loadFrom(query) {
               }
 
               const new_tracks = []
-              episodes.nForEach(async (episode2, index2) => {
+              episodes.nForEach(async (episode2) => {
                 if (typeof episode2 !== 'object') episode2 = allEpisodesData.annotations[episode2]
 
                 await tracks.nForEach((track) => {
                   if (track.info.title !== episode2.name || track.info.author !== episode2.programName) return false
 
-                  track.info.position = index2
-                  track.encoded = encodeTrack(track.info)
                   new_tracks.push(track)
 
                   return true
