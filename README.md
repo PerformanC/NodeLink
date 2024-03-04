@@ -57,11 +57,12 @@ NodeLink is compatible with most LavaLink clients, as it implements most of the 
 | [Mafic](https://github.com/ooliver1/mafic)                          | Python       | Yes             | No                  | v1 and v2              |
 | [Wavelink](https://github.com/PythonistaGuild/Wavelink)             | Python       | Yes             | No                  | v1 and v2              |
 | [Pomice](https://github.com/cloudwithax/pomice)                     | Python       | Yes             | No                  | v1 and v2              |
-| [Moonlink.js](https://github.com/1Lucas1apk/moonlink.js)            | Node.js      | Yes             | No                  | v1 and v2              |
-| [Magmastream](https://github.com/Blackfort-Hosting/magmastream)     | Node.js      | No              | No                  | v1                     |
-| [Lavacord](https://github.com/lavacord/Lavacord)                    | Node.js      | Yes             | No                  | v1 and v2              |
-| [Shoukaku](https://github.com/Deivu/Shoukaku)                       | Node.js      | Yes             | No                  | v1 and v2              |
-| [Lavalink-Client](https://github.com/tomato6966/Lavalink-Client)    | Node.js      | No              | No                  | v1                     |
+| [Hikari-ongaku](https://github.com/MPlatypus/hikari-ongaku)         | Python       | Yes             | No                  | v1 and v2              |
+| [Moonlink.js](https://github.com/1Lucas1apk/moonlink.js)            | Typescript   | Yes             | Partial             | v1 and v2              |
+| [Magmastream](https://github.com/Blackfort-Hosting/magmastream)     | Typescript   | No              | No                  | v1                     |
+| [Lavacord](https://github.com/lavacord/Lavacord)                    | Typescript   | Yes             | No                  | v1 and v2              |
+| [Shoukaku](https://github.com/Deivu/Shoukaku)                       | Typescript   | Yes             | No                  | v1 and v2              |
+| [Lavalink-Client](https://github.com/tomato6966/Lavalink-Client)    | Typescript   | No              | No                  | v1                     |
 | [FastLink](https://github.com/PerformanC/FastLink)                  | Node.js      | Yes             | Yes                 | v1 and v2              |
 | [Riffy](https://github.com/riffy-team/riffy)                        | Node.js      | Yes             | No                  | v1 and v2              |
 | [DisCatSharp](https://github.com/Aiko-IT-Systems/DisCatSharp)       | .NET         | Yes             | No                  | v1 and v2              |
