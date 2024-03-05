@@ -321,23 +321,21 @@ async function loadFrom(query, type) {
         method: 'POST'
       })
 
-      if (!playlist.contents.singleColumnWatchNextResults.playlist) {
-        debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'Failed to load playlist.' })
+      const contentsRoot = type === 'ytmusic' ? playlist.contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs[0].tabRenderer.content.musicQueueRenderer : playlist.contents.singleColumnWatchNextResults
+
+      if (!(type === 'ytmusic' ? contentsRoot.content : contentsRoot)) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
       
         return {
-          loadType: 'error',
-          data: {
-            message: 'Failed to load playlist.',
-            severity: 'common',
-            cause: 'Unknown'
-          }
+          loadType: 'empty',
+          data: {}
         }
       }
     
       const tracks = []
       let selectedTrack = 0
 
-      let playlistContent = playlist.contents.singleColumnWatchNextResults.playlist.playlist.contents
+      let playlistContent = type === 'ytmusic' ? contentsRoot.content.playlistPanelRenderer.contents : contentsRoot.playlist.playlist.contents
 
       if (playlistContent.length > config.options.maxAlbumPlaylistLength)
         playlistContent = playlistContent.slice(0, config.options.maxAlbumPlaylistLength)
@@ -380,13 +378,15 @@ async function loadFrom(query, type) {
         }
       }
 
-      debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: _getSourceName(type), playlistName: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title })
+      const playlistName = type === 'ytmusic' ? contentsRoot.header.musicQueueHeaderRenderer.subtitle.runs[0].text : contentsRoot.playlist.playlist.title
+
+      debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: _getSourceName(type), playlistName: playlistName })
 
       return {
         loadType: 'playlist',
         data: {
           info: {
-            name: playlist.contents.singleColumnWatchNextResults.playlist.playlist.title,
+            name: playlistName,
             selectedTrack: selectedTrack
           },
           pluginInfo: {},
