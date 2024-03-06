@@ -85,12 +85,12 @@ function startPlayerUpdate() {
   }, config.options.playerUpdateInterval)
 }
 
-async function configureConnection(ws, req) {
+async function configureConnection(ws, req, parsedClientName) {
   let sessionId = null
   let client = null
 
   ws.on('close', (code, reason) => {
-    debugLog('disconnect', 3, { ...req.clientInfo, code, reason })
+    debugLog('disconnect', 3, { ...parsedClientName, code, reason })
 
     if (!client) return;
 

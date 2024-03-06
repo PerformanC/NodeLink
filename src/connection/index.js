@@ -91,7 +91,7 @@ server.on('upgrade', (req, socket, head) => {
   if (pathname === '/v4/websocket') {
     debugLog('connect', 3, parsedClientName)
 
-    v4.handleUpgrade(req, socket, head, { 'isNodeLink': true }, (ws) => v4.emit('/v4/websocket', ws, req))
+    v4.handleUpgrade(req, socket, head, { 'isNodeLink': true }, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
   }
 
   if (pathname === '/connection/data') {
@@ -105,7 +105,7 @@ server.on('upgrade', (req, socket, head) => {
 
     debugLog('connectCD', 3, { ...parsedClientName, guildId: req.headers['guild-id'] })
 
-    v4.handleUpgrade(req, socket, head, {}, (ws) => v4.emit('/connection/data', ws, req))
+    v4.handleUpgrade(req, socket, head, {}, (ws) => v4.emit('/connection/data', ws, req, parsedClientName))
   }
 })
 

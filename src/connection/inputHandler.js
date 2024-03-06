@@ -6,18 +6,18 @@ import discordVoice from '@performanc/voice'
 
 const Connections = {}
 
-function setupConnection(ws, req) {
-  let userId = req.headers['user-id']
-  let guildId = req.headers['guild-id']
+function setupConnection(ws, req, parsedClientName) {
+  const userId = req.headers['user-id']
+  const guildId = req.headers['guild-id']
 
   ws.on('close', (code, reason) => {
-    debugLog('disconnectCD', 3, { code, reason, guildId })
+    debugLog('disconnectCD', 3, { ...parsedClientName, code, reason, guildId })
 
     delete Connections[userId]
   })
 
   ws.on('error', (err) => {
-    debugLog('disconnectCD', 3, { error: `Error: ${err.message}`, guildId })
+    debugLog('disconnectCD', 3, { ...parsedClientName, error: `Error: ${err.message}`, guildId })
 
     delete Connections[userId]
   })
