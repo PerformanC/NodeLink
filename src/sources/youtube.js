@@ -117,7 +117,7 @@ function checkURLType(url, type) {
     else if (videoRegex.test(url)) return constants.YouTube.video
     else return -1
   } else {
-    const videoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+/
+    const videoRegex = /^https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+)|youtu\.be\/[\w-]+)/
     const playlistRegex = /^https?:\/\/(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/
     const selectedVideoRegex = /^https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[\w-]+&list=[\w-]+/
     const shortsRegex = /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/
@@ -237,7 +237,7 @@ async function loadFrom(query, type) {
     case constants.YouTube.video: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
       
-      const identifier = /v=([^&]+)/.exec(query)[1]
+      const identifier = (/v=([^&]+)/.exec(query) || /youtu\.be\/([^&]+)/.exec(query))[1]
 
       const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
         headers: {
