@@ -321,9 +321,12 @@ async function loadFrom(query, type) {
         method: 'POST'
       })
 
-      const contentsRoot = type === 'ytmusic' ? playlist.contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs[0].tabRenderer.content.musicQueueRenderer : playlist.contents.singleColumnWatchNextResults
+      let contentsRoot = null
+      
+      if (config.options.bypassAgeRestriction) contentsRoot = playlist.contents.singleColumnWatchNextResults.playlist
+      else contentsRoot = type === 'ytmusic' ? playlist.contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs[0].tabRenderer.content.musicQueueRenderer : playlist.contents.singleColumnWatchNextResults
 
-      if (!(type === 'ytmusic' ? contentsRoot.content : contentsRoot)) {
+      if (!(type === 'ytmusic' && !config.options.bypassAgeRestriction ? contentsRoot.content : contentsRoot)) {
         debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
       
         return {
@@ -335,7 +338,10 @@ async function loadFrom(query, type) {
       const tracks = []
       let selectedTrack = 0
 
-      let playlistContent = type === 'ytmusic' ? contentsRoot.content.playlistPanelRenderer.contents : contentsRoot.playlist.playlist.contents
+      let playlistContent = null
+      
+      if (config.options.bypassAgeRestriction) playlistContent = contentsRoot.playlist.contents
+      else playlistContent = type === 'ytmusic' ? contentsRoot.content.playlistPanelRenderer.contents : contentsRoot.playlist.playlist.contents
 
       if (playlistContent.length > config.options.maxAlbumPlaylistLength)
         playlistContent = playlistContent.slice(0, config.options.maxAlbumPlaylistLength)
@@ -378,7 +384,10 @@ async function loadFrom(query, type) {
         }
       }
 
-      const playlistName = type === 'ytmusic' ? contentsRoot.header.musicQueueHeaderRenderer.subtitle.runs[0].text : contentsRoot.playlist.playlist.title
+      let playlistName = null
+      
+      if (config.options.bypassAgeRestriction) playlistName = contentsRoot.playlist.title
+      else playlistName = type === 'ytmusic' ? contentsRoot.header.musicQueueHeaderRenderer.subtitle.runs[0].text : contentsRoot.playlist.playlist.title
 
       debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: _getSourceName(type), playlistName: playlistName })
 
