@@ -314,7 +314,7 @@ async function loadFrom(query, type) {
         data.tracks.items.forEach(async (item) => {
           item = type[1] === 'playlist' ? item.track : item
 
-          if (item) {
+          if (item && !item.is_local) {
             const search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
 
             if (search.loadType === 'search') {
