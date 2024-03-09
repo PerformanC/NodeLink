@@ -583,6 +583,9 @@ async function loadLyrics(decodedTrack, language) {
     }
   }
 
+  if (!video.captions)
+    return null
+
   const selectedCaption = video.captions.playerCaptionsTracklistRenderer.captionTracks.find((caption) => {
     return caption.languageCode === language
   })
@@ -601,12 +604,15 @@ async function loadLyrics(decodedTrack, language) {
       }
     })
 
-    const captionEvents = captionData.events.map((event) => {
-      return {
+    const captionEvents = []
+    captionData.events.forEach((event) => {
+      if (!event.segs) return null
+
+      captionEvents.push({
         startTime: event.tStartMs,
-        endTime: event.tStartMs + event.dDurationMs,
+        endTime: event.tStartMs + (event.dDurationMs || 0),
         text: event.segs ? event.segs.map((seg) => seg.utf8).join('') : null
-      }
+      })
     })
 
     return {
