@@ -141,11 +141,11 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
   })
 }
 
-function loadLyrics(decodedTrack, language, generic) {
+function loadLyrics(decodedTrack, language, fallback) {
   return new Promise(async (resolve) => {
     let captions = { loadType: 'empty', data: {} }
 
-    switch (generic ? config.search.defaultSearchSource : decodedTrack.sourceName) {
+    switch (fallback ? config.search.lyricsFallbackSource : decodedTrack.sourceName) {
       case 'ytmusic':
       case 'youtube': {
         if (!config.search.sources[decodedTrack.sourceName]) {
@@ -154,7 +154,7 @@ function loadLyrics(decodedTrack, language, generic) {
           break
         }
 
-        captions = await sources.youtube.loadLyrics(decodedTrack, language) || captions
+        captions = await youtube.loadLyrics(decodedTrack, language) || captions
 
         if (captions.loadType === 'error')
           captions = await loadLyrics(decodedTrack, language, true)
@@ -171,7 +171,7 @@ function loadLyrics(decodedTrack, language, generic) {
         if (config.search.sources.spotify.sp_dc === 'DISABLED')
           return resolve(loadLyrics(decodedTrack, language, true))
 
-        captions = await sources.spotify.loadLyrics(decodedTrack, language) || captions
+        captions = await spotify.loadLyrics(decodedTrack, language) || captions
 
         if (captions.loadType === 'error')
           captions = await loadLyrics(decodedTrack, language, true)
@@ -188,23 +188,37 @@ function loadLyrics(decodedTrack, language, generic) {
         if (config.search.sources.deezer.arl === 'DISABLED')
           return resolve(loadLyrics(decodedTrack, language, true))
 
-        captions = await sources.deezer.loadLyrics(decodedTrack, language) || captions
+        captions = await deezer.loadLyrics(decodedTrack, language) || captions
 
         if (captions.loadType === 'error')
           captions = await loadLyrics(decodedTrack, language, true)
 
         break
       }
-      default: {
-        if (!config.search.sources[config.search.lyricsFallbackSearchSource]) {
+      case 'genius': {
+        if (!config.search.sources.genius.enabled) {
           debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
         }
 
-        captions = await sources[config.search.lyricsFallbackSearchSource].loadLyrics(decodedTrack, language) || captions
+        captions = await genius.loadLyrics(decodedTrack, language) || captions
 
         break
+      }
+      case 'musixmatch': {
+        if (!config.search.sources.musixmatch.enabled) {
+          debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
+
+          break
+        }
+
+        captions = await musixmatch.loadLyrics(decodedTrack, language) || captions
+
+        break
+      }
+      default: {
+        captions = await loadLyrics(decodedTrack, language, true)
       }
     }
 

@@ -87,7 +87,7 @@ export default {
   search: {
     defaultSearchSource: 'youtube',
     fallbackSearchSource: 'bandcamp',
-    lyricsFallbackSearchSource: 'genius',
+    lyricsFallbackSource: 'genius',
     sources: {
       youtube: {
         enabled: true,
