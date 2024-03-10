@@ -314,7 +314,7 @@ async function loadFrom(query) {
               }
 
               const new_tracks = []
-              trackKeys.nForEach(async (key2, index2) => {
+              trackKeys.nForEach(async (key2) => {
                 await tracks.nForEach((track) => {
                   if (track.info.title !== data.annotations[key2].name || track.info.author !== data.annotations[key2].artistName) return false
 

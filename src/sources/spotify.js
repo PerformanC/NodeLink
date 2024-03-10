@@ -22,7 +22,7 @@ async function init() {
     return;
   }
 
-  const { body: data } = await http1makeRequest('https://clienttoken.spotify.com/v1/clienttoken', {
+  const { body: data } = await http1makeRequest(`https://clienttoken.spotify.com/v1/clienttoken`, {
     body: {
       client_data: {
         client_version: '1.2.9.2269.g2fe25d39',
@@ -89,66 +89,43 @@ async function search(query) {
     }
       
     const tracks = []
-    let index = 0
-
-    if (data.tracks.items.length > config.options.maxResultsLength)
-      data.tracks.items = data.tracks.items.splice(0, config.options.maxResultsLength) 
 
     data.tracks.items.forEach(async (items) => {
-      const search = await searchWithDefault(`${items.name} ${items.artists[0].name}`)
-
-      if (search.loadType === 'search') {
-        const track = {
-          identifier: search.data[0].info.identifier,
-          isSeekable: true,
-          author: items.artists.map((artist) => artist.name).join(', '),
-          length: items.duration_ms,
-          isStream: false,
-          position: 0,
-          title: items.name,
-          uri: items.href,
-          artworkUrl: items.album.images[0].url,
-          isrc: items.external_ids.isrc,
-          sourceName: 'spotify'
-        }
-
-        tracks.push({
-          encoded: encodeTrack(track),
-          info: track,
-          pluginInfo: {}
-        })
+      const track = {
+        identifier: items.id,
+        isSeekable: true,
+        author: items.artists.map((artist) => artist.name).join(', '),
+        length: items.duration_ms,
+        isStream: false,
+        position: 0,
+        title: items.name,
+        uri: items.href,
+        artworkUrl: items.album.images[0].url,
+        isrc: items.external_ids.isrc,
+        sourceName: 'spotify'
       }
 
-      if (index !== data.tracks.items.length - 1) return index++
-
-      if (tracks.length === 0) {
-        debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
-
-        return resolve({
-          loadType: 'empty',
-          data: {}
-        })
-      }
-
-      const new_tracks = []
-      data.tracks.items.nForEach((items2) => {
-        tracks.nForEach((track) => {
-          if (track.info.title !== items2.name || track.info.author !== items2.artists.map((artist) => artist.name).join(', ')) return false
-
-          new_tracks.push(track)
-
-          return true
-        })
-
-        if (new_tracks.length !== tracks.length) return false
-
-        debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', tracksLen: new_tracks.length, query })
-
-        return resolve({
-          loadType: 'search',
-          data: new_tracks
-        })
+      tracks.push({
+        encoded: encodeTrack(track),
+        info: track,
+        pluginInfo: {}
       })
+    })
+
+    if (tracks.length === 0) {
+      debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
+      return resolve({
+        loadType: 'empty',
+        data: {}
+      })
+    }
+
+    debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', tracksLen: new_tracks.length, query })
+
+    return resolve({
+      loadType: 'search',
+      data: new_tracks
     })
   })   
 }
@@ -159,23 +136,28 @@ async function loadFrom(query, type) {
 
     switch (type[1]) {
       case 'track': {
-        endpoint = `/tracks/${type[2]}`
+        endpoint = `/tracks/${type[2]}?limit=${config.options.maxResultsLength}`
+
         break
       }
       case 'playlist': {
         endpoint = `/playlists/${type[2]}`
+
         break
       }
       case 'album': {
-        endpoint = `/albums/${type[2]}`
+        endpoint = `/albums/${type[2]}?limit=${config.options.maxAlbumPlaylistLength < 100 ? config.options.maxAlbumPlaylistLength : 100}`
+
         break
       }
       case 'episode': {
-        endpoint = `/episodes/${type[2]}?market=${config.search.sources.spotify.market}`
+        endpoint = `/episodes/${type[2]}?market=${config.search.sources.spotify.market}&limit=${config.options.maxAlbumPlaylistLength < 100 ? config.options.maxAlbumPlaylistLength : 100}`
+
         break
       }
       case 'show': {
-        endpoint = `/shows/${type[2]}?market=${config.search.sources.spotify.market}`
+        endpoint = `/shows/${type[2]}?market=${config.search.sources.spotify.market}&limit=${config.options.maxAlbumPlaylistLength < 100 ? config.options.maxAlbumPlaylistLength : 100}`
+
         break
       }
       default: {
@@ -242,22 +224,17 @@ async function loadFrom(query, type) {
 
     switch (type[1]) {
       case 'track': {
-        const search = await searchWithDefault(`"${data.name} ${data.artists[0].name}"`)
-
-        if (search.loadType !== 'search')
-          return resolve(search)
-
         const track = {
-          identifier: search.data[0].info.identifier,
+          identifier: data.id,
           isSeekable: true,
           author: data.artists[0].name,
-          length: search.data[0].info.length,
+          length: data.duration_ms,
           isStream: false,
           position: 0,
           title: data.name,
           uri: data.external_urls.spotify,
           artworkUrl: data.album.images[0].url,
-          isrc: data.external_ids.isrc,
+          isrc: data.external_ids?.isrc || null,
           sourceName: 'spotify'
         }
 
@@ -273,22 +250,17 @@ async function loadFrom(query, type) {
         })
       }
       case 'episode': {
-        const search = await searchWithDefault(`"${data.name} ${data.show.publisher}"`)
-
-        if (search.loadType !== 'search')
-          return resolve(search)
-
         const track = {
-          identifier: search.data[0].info.identifier,
+          identifier: data.id,
           isSeekable: true,
           author: data.show.publisher,
-          length: search.data[0].info.length,
+          length: data.duration_ms,
           isStream: false,
           position: 0,
           title: data.name,
           uri: data.external_urls.spotify,
           artworkUrl: data.images[0].url,
-          isrc: data.external_ids.isrc,
+          isrc: data.external_ids?.isrc || null,
           sourceName: 'spotify'
         }
 
@@ -308,67 +280,72 @@ async function loadFrom(query, type) {
         const tracks = []
         let index = 0
 
-        if (data.tracks.items.length > config.options.maxAlbumPlaylistLength)
-          data.tracks.items = data.tracks.items.splice(0, config.options.maxAlbumPlaylistLength)
+        if (data.tracks.total > config.options.maxAlbumPlaylistLength)
+          data.tracks.total = config.options.maxAlbumPlaylistLength
 
-        data.tracks.items.forEach(async (item) => {
-          item = type[1] === 'playlist' ? item.track : item
+        const fragments = []
+        const fragmentLengths = []
 
-          if (item && !item.is_local) {
-            const search = await searchWithDefault(`${item.name} ${item.artists[0].name}`)
+        for (let i = data.tracks.items.length; i != data.tracks.total;) {
+          const requestLimit = data.tracks.total - i > 100 ? 100 : data.tracks.total - i
 
-            if (search.loadType === 'search') {
+          fragmentLengths.push(requestLimit)
+          i += requestLimit
+        }
+
+        fragmentLengths.forEach(async (limit, i) => {
+          if (fragmentLengths.length !== 0) {
+            let url = `https://api.spotify.com/v1${endpoint}/tracks?offset=${(i + 1) * 100}&limit=${limit}`
+
+            const { body: data2 } = await makeRequest(url, {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${playerInfo.accessToken}`
+              }
+            })
+
+            fragments[i] = data2.items
+
+            if (index === fragmentLengths.length - 1)
+              data.tracks.items = data.tracks.items.concat(...fragments)
+          }
+
+          if (index === fragmentLengths.length - 1) {
+            data.tracks.items.forEach(async (item) => {
+              item = type[1] === 'playlist' ? item.track : item
+    
               const track = {
-                identifier: search.data[0].info.identifier,
+                identifier: item.id || 'unknown',
                 isSeekable: true,
                 author: item.artists[0].name,
-                length: search.data[0].info.length,
+                length: item.duration_ms,
                 isStream: false,
                 position: 0,
                 title: item.name,
                 uri: item.external_urls.spotify,
-                artworkUrl: item.album ? item.album.images[0].url : null,
-                isrc: null,
+                artworkUrl: item.album ? item.album.images[0]?.url : null,
+                isrc: item.external_ids?.isrc || null,
                 sourceName: 'spotify'
               }
-
+    
               tracks.push({
                 encoded: encodeTrack(track),
                 info: track,
                 pluginInfo: {}
               })
+            })
+    
+            if (tracks.length === 0) {
+              debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+    
+              return resolve({
+                loadType: 'empty',
+                data: {}
+              })
             }
-          }
-
-          if (index !== data.tracks.items.length - 1) return index++
-
-          if (tracks.length === 0) {
-            debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
-
-            return resolve({
-              loadType: 'empty',
-              data: {}
-            })
-          }
-
-          const new_tracks = []
-          data.tracks.items.nForEach(async (item2) => {
-            if (type[1] === 'playlist' && !item2.track) return false
-
-            item2 = type[1] === 'playlist' ? item2.track : item2
-
-            await tracks.nForEach((track) => {
-              if (track.info.title !== item2.name || track.info.author !== item2.artists[0].name) return false
-
-              new_tracks.push(track)
-
-              return true
-            })
-
-            if (new_tracks.length !== tracks.length) return false
-
+    
             debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
-
+    
             return resolve({
               loadType: type[1],
               data: {
@@ -377,86 +354,63 @@ async function loadFrom(query, type) {
                   selectedTrack: 0
                 },
                 pluginInfo: {},
-                tracks: new_tracks
+                tracks
               }
             })
-          })
+          }
+
+          index++
         })
 
         break
       }
       case 'show': {
         const tracks = []
-        let index = 0
-
-        if (data.episodes.items.length > config.options.maxAlbumPlaylistLength)
-          data.episodes.items = data.episodes.items.splice(0, config.options.maxAlbumPlaylistLength)
 
         data.episodes.items.forEach(async (episode) => {
-          const search = await searchWithDefault(`${episode.name} ${episode.show.publisher}`)
-
-          if (search.loadType === 'search') {
-            const track = {
-              identifier: search.data[0].info.identifier,
-              isSeekable: true,
-              author: episode.show.publisher,
-              length: search.data[0].info.length,
-              isStream: false,
-              position: 0,
-              title: episode.name,
-              uri: episode.external_urls.spotify,
-              artworkUrl: episode.images[0].url,
-              isrc: episode.external_ids.isrc,
-              sourceName: 'spotify'
-            }
-
-            tracks.push({
-              encoded: encodeTrack(track),
-              info: track,
-              pluginInfo: {}
-            })
+          const track = {
+            identifier: episode.id,
+            isSeekable: true,
+            author: data.publisher,
+            length: episode.duration_ms,
+            isStream: false,
+            position: 0,
+            title: episode.name,
+            uri: episode.external_urls.spotify,
+            artworkUrl: episode.images[0].url,
+            isrc: episode.external_ids?.isrc || null,
+            sourceName: 'spotify'
           }
 
-          if (index !== data.episodes.items.length - 1) return index++
-
-          if (tracks.length === 0) {
-            debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
-
-            return resolve({
-              loadType: 'empty',
-              data: {}
-            })
-          }
-
-          const new_tracks = []
-          data.episodes.items.nForEach(async (episode2) => {
-            await tracks.nForEach((track) => {
-              if (track.info.title !== episode2.name || track.info.author !== episode2.publisher) return false
-
-              new_tracks.push(track)
-
-              return true
-            })
-            
-            if (new_tracks.length !== tracks.length) return false
-
-            debugLog('loadtracks', 4, { type: 2, loadType: 'episodes', sourceName: 'Spotify', playlistName: data.name })
-
-            return resolve({
-              loadType: 'show',
-              data: {
-                info: {
-                  name: data.name,
-                  selectedTrack: 0
-                },
-                pluginInfo: {},
-                tracks: new_tracks
-              }
-            })
+          tracks.push({
+            encoded: encodeTrack(track),
+            info: track,
+            pluginInfo: {}
           })
         })
 
-        break
+        if (tracks.length === 0) {
+          debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
+          return resolve({
+            loadType: 'empty',
+            data: {}
+          })
+        }
+
+        debugLog('loadtracks', 4, { type: 2, loadType: 'show', sourceName: 'Spotify', playlistName: data.name })
+
+        return resolve({
+          loadType: 'show',
+          data: {
+            info: {
+              name: data.name,
+              selectedTrack: 0
+            },
+            pluginInfo: {},
+            tracks
+          }
+        })
       }
     }
   })
