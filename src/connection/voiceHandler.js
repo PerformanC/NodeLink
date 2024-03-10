@@ -222,7 +222,7 @@ class VoiceConnection {
     }
 
     if (this.config.track?.encoded) {
-      debugLog('trackEnd', 2, { track: decodedTrack, reason: 'replaced' })
+      debugLog('trackEnd', 2, { track: this.config.track.info, reason: 'replaced' })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -230,6 +230,19 @@ class VoiceConnection {
         guildId: this.config.guildId,
         track: this.config.track,
         reason: 'replaced'
+      }))
+
+      debugLog('trackStart', 2, { track: decodedTrack })
+
+      this.client.ws.send(JSON.stringify({
+        op: 'event',
+        type: 'TrackStartEvent',
+        guildId: this.config.guildId,
+        track: {
+          encoded: track,
+          info: decodedTrack,
+          userData: this.config.track?.userData
+        }
       }))
     }
 
