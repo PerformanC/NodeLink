@@ -366,6 +366,9 @@ class VoiceConnection {
     resource.stream.setVolume(filters.volume || (this.config.volume / 100))
     this.config.volume = (filters.volume * 100) || this.config.volume
 
+    if (!this.connection)
+      return this.config
+
     if (!this.connection.udpInfo?.secretKey)
       await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected', config.options.threshold || undefined)
     
