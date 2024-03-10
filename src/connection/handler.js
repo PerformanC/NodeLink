@@ -800,7 +800,7 @@ async function requestHandler(req, res) {
         debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
       }
 
-      if (Object.keys(filters).length !== 0) {
+      if (Object.keys(filters).length != 0 || JSON.stringify(buffer.filters) === '{}') {
         player.filters(filters)
 
         client.players.set(guildId, player)
