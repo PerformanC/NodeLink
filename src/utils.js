@@ -671,7 +671,6 @@ export function sendResponse(req, res, data, status) {
   if (req.headers && req.headers['accept-encoding']) {
     if (req.headers['accept-encoding'].includes('br')) {
       res.setHeader('Content-Encoding', 'br')
-      res.setHeader('Connection', 'close')
       res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
 
       zlib.brotliCompress(JSON.stringify(data), (err, result) => {
@@ -688,7 +687,6 @@ export function sendResponse(req, res, data, status) {
 
     else if (req.headers['accept-encoding'].includes('gzip')) {
       res.setHeader('Content-Encoding', 'gzip')
-      res.setHeader('Connection', 'close')
       res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' })
   
       zlib.gzip(JSON.stringify(data), (err, result) => {
@@ -705,7 +703,6 @@ export function sendResponse(req, res, data, status) {
 
     else if (req.headers['accept-encoding'].includes('deflate')) {
       res.setHeader('Content-Encoding', 'deflate')
-      res.setHeader('Connection', 'close')
       res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'deflate' })
   
       zlib.deflate(JSON.stringify(data), (err, result) => {
