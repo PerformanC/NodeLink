@@ -563,7 +563,7 @@ async function requestHandler(req, res) {
         player.updateVoice(buffer.voice)
 
         if (player.cache.track) {
-          player.play(player.cache.track.encoded, decodeTrack(player.cache.track), false)
+          player.play(player.cache.track, decodeTrack(player.cache.track), false)
 
           player.cache.track = null
         }
