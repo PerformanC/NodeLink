@@ -216,7 +216,7 @@ async function requestHandler(req, res) {
     if (verifyMethod(parsedUrl, req, res, 'POST')) return;
 
     let buffer = ''
-    if (!(buffer = await tryParseBody(req, res, buffer))) return;
+    if (!(buffer = await tryParseBody(req, res))) return;
 
     if (typeof buffer !== 'object' || !Array.isArray(buffer)) {
       debugLog('decodetracks', 1, { headers: req.headers, body: buffer, error: 'The provided body is invalid.' })
@@ -268,7 +268,7 @@ async function requestHandler(req, res) {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
     let buffer = ''
-    if (!(buffer = await tryParseBody(req, res, buffer))) return;
+    if (!(buffer = await tryParseBody(req, res))) return;
 
     let encodedTrack = null
 
@@ -294,7 +294,7 @@ async function requestHandler(req, res) {
     if (verifyMethod(parsedUrl, req, res, 'POST')) return;
 
     let buffer = ''
-    if (!(buffer = await tryParseBody(req, res, buffer))) return;
+    if (!(buffer = await tryParseBody(req, res))) return;
 
     if (typeof buffer !== 'object' || !Array.isArray(buffer)) {
       debugLog('decodetracks', 1, { headers: req.headers, body: buffer, error: 'The provided body is invalid.' })
@@ -509,7 +509,7 @@ async function requestHandler(req, res) {
     }
 
     let buffer = ''
-    if (!(buffer = await tryParseBody(req, res, buffer))) return;
+    if (!(buffer = await tryParseBody(req, res))) return;
 
     if (req.method === 'GET') {
       if (!guildId) {

@@ -724,7 +724,7 @@ export function sendResponse(req, res, data, status) {
   return true
 }
 
-export function tryParseBody(req, res, body) {
+export function tryParseBody(req, res) {
   return new Promise((resolve) => {
     let buffer = ''
 
