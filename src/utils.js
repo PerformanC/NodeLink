@@ -102,7 +102,7 @@ export function http1makeRequest(url, options) {
     })
 
     if (options.body) {
-      if (options.disableBodyCompression)
+      if (options.disableBodyCompression || process.versions.deno)
         req.end(JSON.stringify(options.body))
       else zlib.gzip(JSON.stringify(options.body), (error, data) => {
         if (error) throw new Error(`\u001b[31mhttp1makeRequest\u001b[37m]: Failed gziping body: ${error}`)
