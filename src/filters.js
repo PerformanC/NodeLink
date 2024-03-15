@@ -261,7 +261,7 @@ class Filters {
       if (decodedTrack.sourceName === 'deezer') {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
 
-        resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Filtering does not support Deezer platform.' } })
+        return resolve({ status: 1, exception: { message: 'Filtering does not support Deezer platform', severity: 'fault', cause: 'Unimplemented feature.' } })
       }
 
       if (decodedTrack.sourceName === 'soundcloud')
