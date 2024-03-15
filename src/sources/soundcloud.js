@@ -249,7 +249,7 @@ async function search(query, shouldLog) {
     const track = {
       identifier: item.id.toString(),
       isSeekable: true,
-      author: item.user.username,
+      author: item.user?.username || 'Unknown',
       length: item.duration,
       isStream: false,
       position: 0,
