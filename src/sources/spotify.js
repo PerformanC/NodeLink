@@ -161,6 +161,8 @@ async function loadFrom(query, type) {
         break
       }
       default: {
+        debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: 'No matches found.' })
+
         return resolve({
           loadType: 'empty',
           data: {}

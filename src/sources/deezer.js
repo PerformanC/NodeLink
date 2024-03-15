@@ -183,6 +183,15 @@ async function search(query, shouldLog) {
     }
   }
 
+  if (data.total === 0) {
+    if (shouldLog) debugLog('search', 4, { type: 3, sourceName: 'Deezer', query, message: 'No matches found.' })
+
+    return {
+      loadType: 'empty',
+      data: {}
+    }
+  }
+
   const tracks = []
 
   if (data.data.length > config.options.maxResultsLength)
@@ -210,14 +219,8 @@ async function search(query, shouldLog) {
     })
   })
 
-  if (tracks.length === 0) {
-    return {
-      loadType: 'empty',
-      data: {}
-    }
-  }
-
-  if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'deezer', tracksLen: tracks.length, query })
+  if (shouldLog)
+    debugLog('search', 4, { type: 2, sourceName: 'Deezer', tracksLen: tracks.length, query })
 
   return {
     loadType: 'search',

@@ -2,17 +2,12 @@ import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
 async function loadFrom(url) {
-  if (!/https?:\/\/[\w-]+\.bandcamp\.com\/(track|album)\/[\w-]+/.test(url)) {
-    return {
-      loadType: 'empty',
-      data: {}
-    }
-  }
-
   const { body: data } = await makeRequest(url, { method: 'GET' })
   const matches = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(data)
 
   if (!matches.length) {
+    debugLog('loadtracks', 4, { type: 2, loadType: 'empty', sourceName: 'BandCamp', query: url, message: 'No matches found.' })
+
     return {
       loadType: 'empty',
       data: {}
@@ -103,6 +98,8 @@ async function search(query, shouldLog) {
   const names = data.match(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
 
   if (!names) {
+    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'BandCamp', query, message: 'No matches found.' })
+
     return {
       loadType: 'empty',
       data: {}
@@ -135,6 +132,8 @@ async function search(query, shouldLog) {
   })
 
   if (!tracks.length) {
+    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'BandCamp', query, message: 'No matches found.' })
+
     return {
       loadType: 'empty',
       data: {}

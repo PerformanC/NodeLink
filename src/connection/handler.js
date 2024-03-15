@@ -387,9 +387,6 @@ async function requestHandler(req, res) {
 
     const search = await sources.loadTracks(parsedUrl.searchParams.get('identifier'))
 
-    if (search.loadType === 'empty')
-      debugLog('loadtracks', 4, { type: 3, loadType: 'error', sourceName: 'unknown', message: 'No possible search source found.' })
-
     sendResponse(req, res, search, 200)
 
     return;

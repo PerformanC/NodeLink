@@ -234,6 +234,8 @@ async function search(query, shouldLog) {
   }
 
   if (body.total_results === 0) {
+    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: 'No matches found.' })
+
     return {
       loadType: 'empty',
       data: {}
