@@ -121,11 +121,11 @@ async function search(query) {
       })
     }
 
-    debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', tracksLen: new_tracks.length, query })
+    debugLog('search', 4, { type: 2, loadType: 'track', sourceName: 'Spotify', tracksLen: tracks.length, query })
 
     return resolve({
       loadType: 'search',
-      data: new_tracks
+      data: tracks
     })
   })   
 }

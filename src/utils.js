@@ -806,7 +806,7 @@ export function parseClientName(clientName) {
   if (!clientName)
     return null
 
-  clientInfo = clientName.split('(')[0]
+  let clientInfo = clientName.split('(')[0]
   clientInfo = clientInfo.slice(0, clientInfo.length - 1)
 
   const split = clientInfo.split('/')
