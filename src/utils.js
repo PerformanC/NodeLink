@@ -806,12 +806,8 @@ export function parseClientName(clientName) {
   if (!clientName)
     return null
 
-  const nameAndVersion = clientName.split(' ')[0]
-  const split = nameAndVersion.split('/')
-  const name = split[0]
-  const version = split[1]
-
-  if (!name || !version || split.length != 2) return null
+  const [ name, version, ...invalids ] = clientName.split('/');
+  if (!name || !version || invalids.length > 0) return null
 
   return { name, version }
 }
