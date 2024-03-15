@@ -246,10 +246,12 @@ async function search(query, shouldLog) {
     body.collection = body.collection.filter((item, i) => i < config.options.maxSearchResults || item.kind === 'track')
 
   body.collection.forEach((item) => {
+    if (item.kind !== 'track') return;
+    
     const track = {
       identifier: item.id.toString(),
       isSeekable: true,
-      author: item.user?.username || 'Unknown',
+      author: item.user.username,
       length: item.duration,
       isStream: false,
       position: 0,
