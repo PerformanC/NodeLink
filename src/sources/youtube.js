@@ -180,25 +180,29 @@ async function search(query, type, shouldLog) {
 
   const tracks = []
 
-  let videos = search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+  let videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer.mainContent.sectionListRenderer.contents[0].musicShelfRenderer.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
 
   if (videos.length > config.options.maxSearchResults)
     videos = videos.slice(0, config.options.maxSearchResults)
 
   videos.forEach((video) => {
-    video = video.compactVideoRenderer
+    video = video.compactVideoRenderer || video.musicTwoColumnItemRenderer
 
     if (video) {
+      const identifier = type === 'ytmusic' ? video.navigationEndpoint.watchEndpoint.videoId : video.videoId
+      const length = type === 'ytmusic' ? video.subtitle.runs[2].text : video.lengthText.runs[0].text
+      const thumbnails = type === 'ytmusic' ? video.thumbnail.musicThumbnailRenderer.thumbnail.thumbnails : video.thumbnail.thumbnails
+
       const track = {
-        identifier: video.videoId,
+        identifier,
         isSeekable: true,
-        author: video.longBylineText.runs[0].text,
-        length: video.lengthText ? (parseInt(video.lengthText.runs[0].text.split(':')[0]) * 60 + parseInt(video.lengthText.runs[0].text.split(':')[1])) * 1000 : 0,
+        author: video.longBylineText ? video.longBylineText.runs[0].text : video.subtitle.runs[0].text,
+        length: length ? (parseInt(length.split(':')[0]) * 60 + parseInt(length.split(':')[1])) * 1000 : 0,
         isStream: video.lengthText ? false : true,
         position: 0,
         title: video.title.runs[0].text,
-        uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
-        artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
+        uri: `https://${_getBaseHost(type)}/watch?v=${identifier}`,
+        artworkUrl: thumbnails[thumbnails.length - 1].url.split('?')[0],
         isrc: null,
         sourceName: type
       }
