@@ -99,6 +99,6 @@ NodeLink follows the PerformanC's [contribution guidelines](https://github.com/P
 
 ## License
 
-NodeLink is licensed under PerformanC's License, which is a modified version of the MIT License, focusing on the protection of the source code and the rights of the PerformanC team over the source code.
+NodeLink is licensed under [BSD 2-Clause License](LICENSE). You can read more about it on [Open Source Initiative](https://opensource.org/licenses/BSD-2-Clause).
 
 * This project is considered as: [standard compliant](https://github.com/PerformanC/contributing?tab=readme-ov-file#project-information).
