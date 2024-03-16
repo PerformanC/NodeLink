@@ -1,4 +1,3 @@
-import { OggLogicalBitstream, OpusHead } from '../prism-media.js'
 import { debugLog } from '../utils.js'
 import config from '../../config.js'
 
@@ -30,108 +29,37 @@ function setupConnection(ws, req, parsedClientName) {
 
 function handleStartSpeaking(ssrc, userId, guildId) {
   const opusStream = discordVoice.getSpeakStream(ssrc)
+  let timeout = null
 
-  if (config.voiceReceive.audioType === 'ogg/opus') {
-    const oggStream = new OggLogicalBitstream({
-      opusHead: new OpusHead({
-        channelCount: 2,
-        sampleRate: 48000
-      }),
-      pageSizeControl: {
-        maxPackets: 10
-      }
-    })
+  let buffer = []
+  opusStream.on('data', (chunk) => {
+    if (timeout) {
+      clearTimeout(timeout)
+      timeout = null
+    }
 
-    let buffer = []
-    oggStream.on('data', (chunk) => {
-      if (Object.keys(Connections).length === 0) {
-        oggStream.destroy()
-        opusStream.destroy()
-        buffer = null
+    if (Object.keys(Connections).length === 0) {
+      opusStream.destroy()
+      buffer = null
 
-        return;
-      }
+      return;
+    }
 
-      buffer.push(chunk)
-    })
+    buffer.push(chunk)
+  })
 
-    opusStream.on('end', () => {   
-      oggStream.destroy()
+  opusStream.on('end', () => {
+    let i = 0
 
-      let i = 0
+    const connectionsArray = Object.keys(Connections)
 
-      const connectionsArray = Object.keys(Connections)
-
-      if (connectionsArray.length === 0) {
-        buffer = []
-
-        return;
-      }
-
-      const endSpeakingResponse = JSON.stringify({
-        op: 'speak',
-        type: 'endSpeakingEvent',
-        data: {
-          userId,
-          guildId,
-          data: Buffer.concat(buffer).toString('base64'),
-          type: 'ogg/opus'
-        }
-      })
-
-      connectionsArray.forEach((botId) => {
-        if (Connections[botId].guildId !== guildId) return;
-
-        Connections[botId].ws.send(endSpeakingResponse)
-
-        i++
-      })
-
+    if (connectionsArray.length === 0) {
       buffer = []
 
-      debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
-    })
+      return;
+    }
 
-    opusStream.pipe(oggStream)
-
-    const startSpeakingResponse = JSON.stringify({
-      op: 'speak',
-      type: 'startSpeakingEvent',
-      data: {
-        userId,
-        guildId
-      }
-    })
-
-    Object.keys(Connections).forEach((botId) => {
-      if (Connections[botId].guildId !== guildId) return;
-
-      Connections[botId].ws.send(startSpeakingResponse)
-    })
-  } else {
-    let buffer = []
-    opusStream.on('data', (chunk) => {
-      if (Object.keys(Connections).length === 0) {
-        opusStream.destroy()
-        buffer = null
-
-        return;
-      }
-
-      buffer.push(chunk)
-    })
-
-    opusStream.on('end', () => {
-      let i = 0
-
-      const connectionsArray = Object.keys(Connections)
-
-      if (connectionsArray.length === 0) {
-        buffer = []
-
-        return;
-      }
-
+    timeout = setTimeout(() => {
       const endSpeakingResponse = JSON.stringify({
         op: 'speak',
         type: 'endSpeakingEvent',
@@ -154,23 +82,23 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       buffer = []
 
       debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
-    })
+    }, config.voiceReceive.timeout)
+  })
 
-    const startSpeakingResponse = JSON.stringify({
-      op: 'speak',
-      type: 'startSpeakingEvent',
-      data: {
-        userId,
-        guildId
-      }
-    })
+  const startSpeakingResponse = JSON.stringify({
+    op: 'speak',
+    type: 'startSpeakingEvent',
+    data: {
+      userId,
+      guildId
+    }
+  })
 
-    Object.keys(Connections).forEach((botId) => {
-      if (Connections[botId].guildId !== guildId) return;
+  Object.keys(Connections).forEach((botId) => {
+    if (Connections[botId].guildId !== guildId) return;
 
-      Connections[botId].ws.send(startSpeakingResponse)
-    })
-  }
+    Connections[botId].ws.send(startSpeakingResponse)
+  })
 }
 
 export default {

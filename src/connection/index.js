@@ -55,8 +55,8 @@ if (![ 'high', 'medium', 'low', 'lowest' ].includes(config.audio.quality))
 if (![ 'xsalsa20_poly1305', 'xsalsa20_poly1305_suffix', 'xsalsa20_poly1305_lite' ].includes(config.audio.encryption))
   throw new Error('Encryption must be either "xsalsa20_poly1305", "xsalsa20_poly1305_suffix" or "xsalsa20_poly1305_lite".')
 
-if (![ 'ogg/opus', 'opus' ].includes(config.voiceReceive.audioType))
-  throw new Error('Audio type must be either "ogg/opus" or "opus".')
+if (typeof config.voiceReceive.timeout !== 'number')
+  throw new Error('Voice receive timeout must be a number.')
 
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()
