@@ -79,6 +79,18 @@ However, NodeLink's error message always includes `trace` key, containing the st
 
 NodeLink doesn't support resuming, as it's not needed. The client should always keep the connection alive and if the connection is lost, the client should reconnect and send the play request again.
 
+### loadTracks
+
+For better identification of the tracks, NodeLink introduces more `loadType`s, which are used to identify the type of the URL.
+
+- `album` (playlist-like)
+- `artist` (playlist-like)
+- `playlist` (playlist-like)
+- `station` (playlist-like)
+- `podcast` (playlist-like)
+- `show` (playlist-like)
+- `short` (track-like)
+
 ### loadLyrics
 
 NodeLink features a new endpoint, `loadLyrics`, which is used to load lyrics for the track. It's used to load lyrics from the supported sources. Currently it supports the following sources:
