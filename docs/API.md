@@ -144,7 +144,7 @@ The `endSpeakingEvent` type message is emitted when the user stops speaking and 
 - `userId`: The user ID of the user who stopped speaking.
 - `guildId`: The guild ID of the guild where the user stopped speaking.
 - `data`: The audio data received from the user in base64.
-- `type`: The type of the audio data. It can be `opus` or `ogg/opus`.
+- `type`: The type of the audio data. For compability in newer versions, it is always `opus`, but in older versions can be `ogg/opus`.
 
 ### Router planner
 

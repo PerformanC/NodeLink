@@ -67,7 +67,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
           userId,
           guildId,
           data: Buffer.concat(buffer).toString('base64'),
-          type: 'pcm'
+          type: 'opus'
         }
       })
 
