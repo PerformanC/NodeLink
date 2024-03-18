@@ -298,8 +298,13 @@ class VoiceConnection {
   
     if (!this.connection.udpInfo?.secretKey)
       await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected', config.options.threshold || undefined)
+
+    const oldResource = this.connection.audioStream
     
     this.connection.play(resource.stream)
+
+    if (oldResource)
+      resource.stream.once('readable', () => oldResource.destroy())
 
     return this.config
   }
