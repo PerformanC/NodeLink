@@ -191,7 +191,23 @@ async function requestHandler(req, res) {
   else if (parsedUrl.pathname === '/v4/decodetrack') {
     if (verifyMethod(parsedUrl, req, res, 'GET')) return;
 
-    const encodedTrack = parsedUrl.searchParams.get('encodedTrack').replace(/ /, '+')
+    let encodedTrack = parsedUrl.searchParams.get('encodedTrack')
+    
+    if (!encodedTrack) {
+      debugLog('decodetrack', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided track is invalid.' })
+
+      return sendResponse(req, res, {
+        timestamp: Date.now(),
+        status: 400,
+        error: 'Bad Request',
+        trace: new Error().stack,
+        message: 'The provided track is invalid.',
+        path: parsedUrl.pathname
+      }, 400)
+    }
+    
+    encodedTrack = encodedTrack.replace(/ /, '+')
+
     let decodedTrack = null
 
     if (!encodedTrack || !(decodedTrack = decodeTrack(encodedTrack))) {
