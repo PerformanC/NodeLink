@@ -552,134 +552,133 @@ async function retrieveStream(identifier, type, title) {
   }
 }
 
-async function loadLyrics(decodedTrack, language) {
-  if (!config.options.bypassAgeRestriction)
-    _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
+function loadLyrics(decodedTrack, language) {
+  return new Promise(async (resolve, reject) => {
+    if (!config.options.bypassAgeRestriction)
+      _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
-  const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
-    headers: {
-      'User-Agent': ytContext.client.userAgent,
-      ...(config.search.sources.youtube.authentication.enabled ? {
-        Authorization: config.search.sources.youtube.authentication.authorization,
-        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-      } : {})
-    },
-    body: {
-      context: ytContext,
-      videoId: decodedTrack.identifier,
-      contentCheckOk: true,
-      racyCheckOk: true,
-      params: 'CgIQBg'
-    },
-    method: 'POST'
-  })
+    const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+      headers: {
+        'User-Agent': ytContext.client.userAgent,
+        ...(config.search.sources.youtube.authentication.enabled ? {
+          Authorization: config.search.sources.youtube.authentication.authorization,
+          Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
+        } : {})
+      },
+      body: {
+        context: ytContext,
+        videoId: decodedTrack.identifier,
+        contentCheckOk: true,
+        racyCheckOk: true,
+        params: 'CgIQBg'
+      },
+      method: 'POST'
+    })
 
-  if (video.playabilityStatus.status !== 'OK') {
-    debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
+    if (video.playabilityStatus.status !== 'OK') {
+      debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
 
-    return {
-      loadType: 'error',
-      data: {
-        message: video.playabilityStatus.reason,
-        severity: 'common',
-        cause: 'Unknown'
-      }
-    }
-  }
-
-  if (!video.captions)
-    return null
-
-  const selectedCaption = video.captions.playerCaptionsTracklistRenderer.captionTracks.find((caption) => {
-    return caption.languageCode === language
-  })
-
-  if (selectedCaption) {
-    const { body: captionData } = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-      debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
-
-      return {
+      return resolve({
         loadType: 'error',
         data: {
-          message: err.message,
+          message: video.playabilityStatus.reason,
           severity: 'common',
           cause: 'Unknown'
         }
-      }
-    })
-
-    const captionEvents = []
-    captionData.events.forEach((event) => {
-      if (!event.segs) return null
-
-      captionEvents.push({
-        startTime: event.tStartMs,
-        endTime: event.tStartMs + (event.dDurationMs || 0),
-        text: event.segs ? event.segs.map((seg) => seg.utf8).join('') : null
       })
-    })
-
-    return {
-      loadType: 'lyricsSingle',
-      data: {
-        name: selectedCaption.languageCode,
-        synced: true,
-        data: captionEvents,
-        rtl: !!selectedCaption.rtl
-      }
     }
-  } else {
-    const captions = []
-    let i = 0
 
     if (!video.captions)
-      return null
+      return resolve(null)
 
-    video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
-      const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+    const selectedCaption = video.captions.playerCaptionsTracklistRenderer.captionTracks.find((caption) => {
+      return caption.languageCode === language
+    })
+
+    if (selectedCaption) {
+      const { body: captionData } = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
         debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
-        return {
+        return resolve({
           loadType: 'error',
           data: {
             message: err.message,
             severity: 'common',
             cause: 'Unknown'
           }
-        }
+        })
       })
 
-      const captionEvents = captionData.events.map((event) => {
-        return {
+      const captionEvents = []
+      captionData.events.forEach((event) => {
+        if (!event.segs) return null
+
+        captionEvents.push({
           startTime: event.tStartMs,
-          endTime: event.tStartMs + event.dDurationMs,
+          endTime: event.tStartMs + (event.dDurationMs || 0),
           text: event.segs ? event.segs.map((seg) => seg.utf8).join('') : null
-        }
+        })
       })
 
-      captions.push({
-        name: caption.languageCode,
-        synced: true,
-        data: captionEvents,
-        rtl: !!caption.rtl
+      return resolve({
+        loadType: 'lyricsSingle',
+        data: {
+          name: selectedCaption.languageCode,
+          synced: true,
+          data: captionEvents,
+          rtl: !!selectedCaption.rtl
+        }
       })
+    } else {
+      const captions = []
+      let i = 0
 
-      if (i === video.captions.playerCaptionsTracklistRenderer.captionTracks.length - 1) {
-        if (captions.length === 0) {
-          debugLog('loadlyrics', 4, { type: 3, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
+      video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
+        const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
+          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
 
-          return null
+          return resolve({
+            loadType: 'error',
+            data: {
+              message: err.message,
+              severity: 'common',
+              cause: 'Unknown'
+            }
+          })
+        })
+
+        const captionEvents = captionData.events.map((event) => {
+          return {
+            startTime: event.tStartMs,
+            endTime: event.tStartMs + event.dDurationMs,
+            text: event.segs ? event.segs.map((seg) => seg.utf8).join('') : null
+          }
+        })
+
+        captions.push({
+          name: caption.languageCode,
+          synced: true,
+          data: captionEvents,
+          rtl: !!caption.rtl
+        })
+
+        if (++i === video.captions.playerCaptionsTracklistRenderer.captionTracks.length) {
+          if (captions.length === 0) {
+            debugLog('loadlyrics', 4, { type: 3, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: 'No captions found.' })
+
+            return resolve(null)
+          }
+
+          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author } })
+
+          return resolve({
+            loadType: 'lyricsMultiple',
+            data: captions
+          })
         }
-
-        debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author } })
-
-        return {
-          loadType: 'lyricsMultiple',
-          data: captions
-        }
-      }
-    })
-  }
+      })
+    }
+  })
 }
 
 export default {
