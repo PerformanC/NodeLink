@@ -146,7 +146,7 @@ async function search(query, type, shouldLog) {
     body: {
       context: ytContext,
       query,
-      params: 'EgIQAQ%3D%3D'
+      params: type === 'ytmusic' ? 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D' : 'EgIQAQ%3D%3D'
     },
     method: 'POST',
     disableBodyCompression: true
