@@ -345,13 +345,22 @@ async function loadFrom(query, type) {
       let playlistContent = null
       
       if (config.options.bypassAgeRestriction) playlistContent = contentsRoot.playlist.contents
-      else playlistContent = type === 'ytmusic' ? contentsRoot.content.playlistPanelRenderer.contents : contentsRoot.playlist.playlist.contents
+      else playlistContent = type === 'ytmusic' ? contentsRoot.content.playlistPanelRenderer.contents : contentsRoot.playlist?.playlist?.contents
+
+      if (!playlistContent) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
+
+        return {
+          loadType: 'empty',
+          data: {}
+        }
+      }
 
       if (playlistContent.length > config.options.maxAlbumPlaylistLength)
         playlistContent = playlistContent.slice(0, config.options.maxAlbumPlaylistLength)
 
       playlistContent.forEach((video, i) => {
-        video = video.playlistPanelVideoRenderer
+        video = video.playlistPanelVideoRenderer || video.gridVideoRenderer
 
         if (video) {
           const track = {
