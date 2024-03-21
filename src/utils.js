@@ -160,6 +160,8 @@ export function makeRequest(url, options) {
 
     let req = client.request(reqOptions)
 
+    client.on('error', () => { /* Add listener or else will crash */ })
+
     req.on('error', (error) => {
       console.error(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
 
