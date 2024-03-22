@@ -521,9 +521,6 @@ async function requestHandler(req, res) {
       return sendResponse(req, res, null, 204)
     }
 
-    let buffer = ''
-    if (!(buffer = await tryParseBody(req, res))) return;
-
     if (req.method === 'GET') {
       if (!guildId) {
         debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing guildId parameter.' })
@@ -554,10 +551,13 @@ async function requestHandler(req, res) {
 
       debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers })
 
-      sendResponse(req, res, player.config, 200)
+      return sendResponse(req, res, player.config, 200)
     }
+
+    let buffer = ''
+    if (!(buffer = await tryParseBody(req, res))) return;
     
-    else if (req.method === 'PATCH') {
+    if (req.method === 'PATCH') {
       if (!player) player = new VoiceConnection(guildId, client)
 
       if (buffer.voice !== undefined) {
