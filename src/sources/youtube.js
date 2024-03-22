@@ -190,7 +190,7 @@ async function search(query, type, shouldLog) {
 
     if (video) {
       const identifier = type === 'ytmusic' ? video.navigationEndpoint.watchEndpoint.videoId : video.videoId
-      const length = type === 'ytmusic' ? video.subtitle.runs[2].text : video.lengthText.runs[0].text
+      const length = type === 'ytmusic' ? video.subtitle.runs[2].text : video.lengthText?.runs[0]?.text
       const thumbnails = type === 'ytmusic' ? video.thumbnail.musicThumbnailRenderer.thumbnail.thumbnails : video.thumbnail.thumbnails
 
       const track = {
@@ -198,7 +198,7 @@ async function search(query, type, shouldLog) {
         isSeekable: true,
         author: video.longBylineText ? video.longBylineText.runs[0].text : video.subtitle.runs[0].text,
         length: length ? (parseInt(length.split(':')[0]) * 60 + parseInt(length.split(':')[1])) * 1000 : 0,
-        isStream: video.lengthText ? false : true,
+        isStream: !length,
         position: 0,
         title: video.title.runs[0].text,
         uri: `https://${_getBaseHost(type)}/watch?v=${identifier}`,
