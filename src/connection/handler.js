@@ -444,7 +444,7 @@ async function requestHandler(req, res) {
       debugLog('getPlayers', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided session Id doesn\'t exist.' })
 
       return sendResponse(req, res, {
-        timestamp: new Date(),
+        timestamp: Date.now(),
         status: 404,
         trace: new Error().stack,
         message: 'The provided session Id doesn\'t exist.',
@@ -456,7 +456,7 @@ async function requestHandler(req, res) {
 
     client.players.forEach((player) => {
       player.config.state = {
-        time: new Date(),
+        time: Date.now(),
         position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
         connected: player.connection ? player.connection.state.status === 'ready' : false,
         ping: player.connection?.ping || -1
@@ -489,7 +489,7 @@ async function requestHandler(req, res) {
       debugLog('updatePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided session Id doesn\'t exist.' })
 
       return sendResponse(req, res, {
-        timestamp: new Date(),
+        timestamp: Date.now(),
         status: 404,
         trace: new Error().stack,
         message: 'The provided session Id doesn\'t exist.',
@@ -505,7 +505,7 @@ async function requestHandler(req, res) {
         debugLog('deletePlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'The provided guildId doesn\'t exist.' })
 
         return sendResponse(req, res, {
-          timestamp: new Date(),
+          timestamp: Date.now(),
           status: 404,
           trace: new Error().stack,
           message: 'The provided guildId doesn\'t exist.',
@@ -526,7 +526,7 @@ async function requestHandler(req, res) {
         debugLog('getPlayer', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'Missing guildId parameter.' })
 
         return sendResponse(req, res, {
-          timestamp: new Date(),
+          timestamp: Date.now(),
           status: 400,
           trace: new Error().stack,
           message: 'Missing guildId parameter.',
@@ -543,7 +543,7 @@ async function requestHandler(req, res) {
       }
 
       player.config.state = {
-        time: new Date(),
+        time: Date.now(),
         position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
         connected: player.connection ? player.connection.state.status === 'ready' : false,
         ping: player.connection?.ping || -1
@@ -565,7 +565,7 @@ async function requestHandler(req, res) {
           debugLog('voice', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: `Invalid voice object.` })
 
           return sendResponse(req, res, {
-            timestamp: new Date(),
+            timestamp: Date.now(),
             status: 400,
             trace: new Error().stack,
             message: 'Invalid voice object.',
@@ -598,7 +598,7 @@ async function requestHandler(req, res) {
             debugLog('stop', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The player is not playing.' })
 
             return sendResponse(req, res, {
-              timestamp: new Date(),
+              timestamp: Date.now(),
               status: 400,
               trace: new Error().stack,
               message: 'The player is not playing.',
@@ -617,7 +617,7 @@ async function requestHandler(req, res) {
             debugLog('play', 1, { track: encodedTrack, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
 
             return sendResponse(req, res, {
-              timestamp: new Date(),
+              timestamp: Date.now(),
               status: 400,
               trace: new Error().stack,
               message: 'The provided track is invalid.',
@@ -648,7 +648,7 @@ async function requestHandler(req, res) {
           debugLog('volume', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The volume must be between 0 and 1000.' })
 
           return sendResponse(req, res, {
-            timestamp: new Date(),
+            timestamp: Date.now(),
             status: 400,
             trace: new Error().stack,
             message: 'The volume must be between 0 and 1000.',
@@ -668,7 +668,7 @@ async function requestHandler(req, res) {
           debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The paused value must be a boolean.' })
 
           return sendResponse(req, res, {
-            timestamp: new Date(),
+            timestamp: Date.now(),
             status: 400,
             trace: new Error().stack,
             message: 'The paused value must be a boolean.',
@@ -680,7 +680,7 @@ async function requestHandler(req, res) {
           debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The player is not connected to a voice server.' })
 
           return sendResponse(req, res, {
-            timestamp: new Date(),
+            timestamp: Date.now(),
             status: 400,
             trace: new Error().stack,
             message: 'The player is not connected to a voice server.',
@@ -702,7 +702,7 @@ async function requestHandler(req, res) {
           debugLog('filters', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The filters value must be an object.' })
 
           return sendResponse(req, res, {
-            timestamp: new Date(),
+            timestamp: Date.now(),
             status: 400,
             trace: new Error().stack,
             message: 'The filters value must be an object.',
@@ -720,7 +720,7 @@ async function requestHandler(req, res) {
           debugLog('seek', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The position value must be a number.' })
 
           return sendResponse(req, res, {
-            timestamp: new Date(),
+            timestamp: Date.now(),
             status: 400,
             trace: new Error().stack,
             message: 'The position value must be a number.',
@@ -738,7 +738,7 @@ async function requestHandler(req, res) {
           debugLog('endTime', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The endTime value must be a number.' })
 
           return sendResponse(req, res, {
-            timestamp: new Date(),
+            timestamp: Date.now(),
             status: 400,
             trace: new Error().stack,
             message: 'The endTime value must be a number.',
@@ -759,7 +759,7 @@ async function requestHandler(req, res) {
 
       /* Updating player state to ensure it's sending up-to-date data */
       player.config.state = {
-        time: new Date(),
+        time: Date.now(),
         position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
         connected: player.connection ? player.connection.state.status === 'ready' : false,
         ping: player.connection?.ping || -1 
