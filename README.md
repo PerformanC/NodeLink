@@ -29,11 +29,8 @@ $ cd NodeLink
 ### 2. Install the dependencies
 
 ```shell
-$ npm i -f
+$ npm i
 ```
-
-> [!NOTE]
-> You must use `-f` flag to force the installation of the dependencies. `prism-media` uses an outdated `opusscript` version. This will not affect the usage of NodeLink.
 
 > [!NOTE]
 > If you to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
