@@ -2,7 +2,7 @@ export default {
   version: {
     major: '2',
     minor: '0',
-    patch: '0',
+    patch: '1',
     preRelease: null
   },
   server: {
