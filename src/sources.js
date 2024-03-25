@@ -182,7 +182,7 @@ async function loadTracks(identifier) {
     return spSearch ? spotify.search(identifier.replace('spsearch:', '')) : spotify.loadFrom(identifier, spRegex)
 
   const dzSearch = config.search.sources.deezer.enabled ? identifier.startsWith('dzsearch:') : null
-  const dzRegex = config.search.sources.deezer.enabled && !dzSearch ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)$/.exec(identifier) : null
+  const dzRegex = config.search.sources.deezer.enabled && !dzSearch ? /^https?:\/\/(?:www\.)?deezer\.com\/(?:[a-z]{2}\/)?(track|album|playlist)\/(\d+)/.exec(identifier) : null
   if (config.search.sources.deezer.enabled && (dzSearch || dzRegex))
     return dzSearch ? deezer.search(identifier.replace('dzsearch:', ''), true) : deezer.loadFrom(identifier, dzRegex)
 
