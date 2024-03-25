@@ -112,7 +112,6 @@ export default {
       deezer: {
         enabled: false,
         decryptionKey: 'DISABLED', // For legal reasons, this key is not provided.
-        apiKey: 'DISABLED', // Available in Deezer website API requests in api_token parameter.
         arl: 'DISABLED' // Necessary for direct Deezer Lyrics. Available in Deezer website cookies in arl parameter.
       },
       soundcloud: {

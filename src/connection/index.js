@@ -43,10 +43,10 @@ if (config.search.fallbackSearchSource === 'soundcloud')
 if (config.search.sources.spotify.enabled && !config.search.sources.spotify.market)
   throw new Error('Spotify is enabled but no market was provided.')
 
-if (config.search.sources.deezer.enabled && (!config.search.sources.deezer.decryptionKey || !config.search.sources.deezer.apiKey))
+if (config.search.sources.deezer.enabled && config.search.sources.deezer.decryptionKey === 'DISABLED')
   throw new Error('Deezer is enabled but no decryption key or API key was provided.')
 
-if (config.search.sources.soundcloud.enabled && !config.search.sources.soundcloud.clientId)
+if (config.search.sources.soundcloud.enabled && config.search.sources.soundcloud.clientId === 'DISABLED')
   throw new Error('SoundCloud is enabled but no client ID was provided.')
 
 if (![ 'high', 'medium', 'low', 'lowest' ].includes(config.audio.quality))
