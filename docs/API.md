@@ -79,6 +79,10 @@ However, NodeLink's error message always includes `trace` key, containing the st
 
 NodeLink doesn't support resuming, as it's not needed. The client should always keep the connection alive and if the connection is lost, the client should reconnect and send the play request again.
 
+### Stats
+
+NodeLink, although follows most of the structure for `/v4/stats`, we made `frameStats` to be an object instead of `null`, so the client can always expect an object.
+
 ### loadTracks
 
 For better identification of the tracks, NodeLink introduces more `loadType`s, which are used to identify the type of the URL.

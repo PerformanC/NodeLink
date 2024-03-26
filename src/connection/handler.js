@@ -363,7 +363,7 @@ async function requestHandler(req, res) {
       deficit: 0
     }
 
-    clients.forEach((key) => {
+    Object.keys(clients).forEach((key) => {
       const client = clients[key]
 
       client.players.forEach((player) => {
@@ -392,7 +392,7 @@ async function requestHandler(req, res) {
         systemLoad: os.loadavg()[0],
         lavalinkLoad: 0
       },
-      frameStats: null
+      frameStats: statistics
     }, 200)
   }
 
