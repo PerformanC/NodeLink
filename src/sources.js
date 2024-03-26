@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { PassThrough } from 'node:stream'
 
 import config from '../config.js'
