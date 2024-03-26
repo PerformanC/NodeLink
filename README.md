@@ -12,7 +12,6 @@ Performant LavaLink replacement written in Node.js.
 ## Dependencies
 
 - [`@performanc/voice`](https://npmjs.com/package/@performanc/voice)
-- [`polycrc`](https://npmjs.com/package/polycrc)
 - [`prism-media`](https://npmjs.com/package/prism-media)
 - [`opusscript`](https://npmjs.com/package/opusscript) or [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus)
 - [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) or [`sodium-native`](https://npmjs.com/package/sodium-native) or [`tweetnacl`](https://npmjs.com/package/tweetnacl)
