@@ -198,7 +198,7 @@ async function loadTracks(identifier) {
     return bcSearch ? bandcamp.search(identifier.replace('bcsearch:', ''), true) : bandcamp.loadFrom(identifier)
 
   const pdSearch = config.search.sources.pandora ? identifier.startsWith('pdsearch:') : null
-  const pdRegex = config.search.sources.pandora && !pdRegex ? /^https:\/\/www\.pandora\.com\/(?:playlist|station|podcast|artist)\/.+/.exec(identifier) : null
+  const pdRegex = config.search.sources.pandora && !pdSearch ? /^https:\/\/www\.pandora\.com\/(?:playlist|station|podcast|artist)\/.+/.exec(identifier) : null
   if (config.search.sources.pandora && (pdSearch || pdRegex))
     return pdSearch ? pandora.search(identifier.replace('pdsearch:', '')) : pandora.loadFrom(identifier)
 
