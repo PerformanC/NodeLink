@@ -17,6 +17,7 @@ import searchWithDefault from './sources/default.js'
 import { debugLog, http1makeRequest, makeRequest } from './utils.js'
 
 async function getTrackURL(track, toDefault) {
+  console.log(track)
   switch (track.sourceName === 'pandora' || toDefault ? config.search.defaultSearchSource : track.sourceName) {
     case 'spotify': {
       const result = await searchWithDefault(`${track.title} - ${track.author}`, false)
@@ -211,14 +212,14 @@ async function loadTracks(identifier) {
   return { loadType: 'empty', data: {} }
 }
 
-function loadLyrics(decodedTrack, language, fallback) {
+function loadLyrics(parsedUrl, req, decodedTrack, language, fallback) {
   return new Promise(async (resolve) => {
     let captions = { loadType: 'empty', data: {} }
 
     switch (fallback ? config.search.lyricsFallbackSource : decodedTrack.sourceName) {
       case 'ytmusic':
       case 'youtube': {
-        if (!config.search.sources[decodedTrack.sourceName]) {
+        if (!config.search.sources.youtube) {
           debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers, error: 'No possible search source found.' })
 
           break
@@ -227,7 +228,7 @@ function loadLyrics(decodedTrack, language, fallback) {
         captions = await youtube.loadLyrics(decodedTrack, language) || captions
 
         if (captions.loadType === 'error')
-          captions = await loadLyrics(decodedTrack, language, true)
+          captions = await loadLyrics(parsedUrl, req, decodedTrack, language, true)
 
         break
       }
@@ -239,12 +240,12 @@ function loadLyrics(decodedTrack, language, fallback) {
         }
 
         if (config.search.sources.spotify.sp_dc === 'DISABLED')
-          return resolve(loadLyrics(decodedTrack, language, true))
+          return resolve(loadLyrics(parsedUrl, decodedTrack, language, true))
 
         captions = await spotify.loadLyrics(decodedTrack, language) || captions
 
         if (captions.loadType === 'error')
-          captions = await loadLyrics(decodedTrack, language, true)
+          captions = await loadLyrics(parsedUrl, req, decodedTrack, language, true)
 
         break
       }
@@ -256,12 +257,12 @@ function loadLyrics(decodedTrack, language, fallback) {
         }
 
         if (config.search.sources.deezer.arl === 'DISABLED')
-          return resolve(loadLyrics(decodedTrack, language, true))
+          return resolve(loadLyrics(parsedUrl, decodedTrack, language, true))
 
         captions = await deezer.loadLyrics(decodedTrack, language) || captions
 
         if (captions.loadType === 'error')
-          captions = await loadLyrics(decodedTrack, language, true)
+          captions = await loadLyrics(parsedUrl, req, decodedTrack, language, true)
 
         break
       }
@@ -288,7 +289,7 @@ function loadLyrics(decodedTrack, language, fallback) {
         break
       }
       default: {
-        captions = await loadLyrics(decodedTrack, language, true)
+        captions = await loadLyrics(parsedUrl, req, decodedTrack, language, true)
       }
     }
 

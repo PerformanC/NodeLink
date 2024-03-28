@@ -428,7 +428,7 @@ async function requestHandler(req, res) {
     }
 
     const language = parsedUrl.searchParams.get('language')
-    const captions = await sources.loadLyrics(decodedTrack, language)
+    const captions = await sources.loadLyrics(parsedUrl, req, decodedTrack, language)
 
     debugLog('loadlyrics', 1, { params: parsedUrl.pathname, headers: req.headers })
 
