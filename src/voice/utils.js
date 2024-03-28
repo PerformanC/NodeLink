@@ -11,16 +11,6 @@ class NodeLinkStream {
       const pipe = pipes[i]
 
       pipe.pipe(pipes[i + 1])
-
-      if (pipe instanceof prism.FFmpeg) {
-        this.ffmpeg = pipe
-      }
-      if (pipe instanceof prism.VolumeTransformer) {
-        this.volume = pipe
-      }
-      if (pipe instanceof prism.opus.Encoder) {
-        this.encoder = pipe
-      }
     }
 
     this.stream = pipes[pipes.length - 1]
@@ -32,28 +22,16 @@ class NodeLinkStream {
   _end() {
     this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
     this.listeners = []
-  
-    this.pipes.forEach((_, i) => {
-      if (this.pipes[i].destroy) this.pipes[i].destroy()
-      delete this.pipes[i]
-    })
 
     if (this.stream) { 
       this.stream.destroy()
       this.stream = null
     }
-    if (this.ffmpeg) {
-      this.ffmpeg.destroy()
-      this.ffmpeg = null
-    }
-    if (this.volume) {
-      this.volume.destroy()
-      this.volume = null
-    }
-    if (this.encoder) {
-      this.encoder.destroy()
-      this.encoder = null
-    }
+  
+    this.pipes.forEach((_, i) => {
+      if (this.pipes[i].destroy) this.pipes[i].destroy()
+      delete this.pipes[i]
+    })
   }
 
   on(event, listener) {
@@ -85,7 +63,7 @@ class NodeLinkStream {
   }
 
   setVolume(volume) {
-    this.volume.setVolume(volume)
+    this.pipes.find((pipe) => pipe instanceof prism.VolumeTransformer)?.setVolume(volume)
   }
 }
 

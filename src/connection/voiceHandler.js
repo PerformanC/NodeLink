@@ -314,7 +314,7 @@ class VoiceConnection {
 
   volume(volume) {
     if (this.connection.audioStream)
-      this.connection.audioStream.volume.setVolume(volume / 100)
+      this.connection.audioStream.setVolume(volume / 100)
 
     this.config.volume = volume
 
