@@ -676,7 +676,7 @@ async function requestHandler(req, res) {
           }, 400)
         }
 
-        if (!player.connection.ws) {
+        if (!player.connection?.ws) {
           debugLog('pause', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The player is not connected to a voice server.' })
 
           return sendResponse(req, res, {
