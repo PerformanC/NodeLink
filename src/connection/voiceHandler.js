@@ -156,14 +156,10 @@ class VoiceConnection {
     if (!this.connection) this._setupVoice()
 
     this.connection.voiceStateUpdate({
-      guild_id: this.config.guildId,
-      user_id: this.client.userId,
       session_id: buffer.sessionId
     })
     this.connection.voiceServerUpdate({
-      user_id: this.client.userId,
       token: buffer.token,
-      guild_id: this.config.guildId,
       endpoint: buffer.endpoint
     })
 

@@ -562,7 +562,7 @@ async function retrieveStream(identifier, type, title) {
 }
 
 function loadLyrics(decodedTrack, language) {
-  return new Promise(async (resolve, reject) => {
+  return new Promise(async (resolve) => {
     if (!config.options.bypassAgeRestriction)
       _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
