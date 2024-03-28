@@ -12,7 +12,7 @@ function loadFrom(path) {
 
         return resolve({
           loadType: 'error',
-          exception: {
+          data: {
             message: 'Failed to retrieve stream from source. (File not found or not accessible)',
             severity: 'common',
             cause: 'No permission to access file or doesn\'t exist'
