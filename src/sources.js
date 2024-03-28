@@ -209,6 +209,8 @@ async function loadTracks(identifier) {
   if (config.search.sources.local && identifier.startsWith('local:'))
     return local.loadFrom(identifier.replace('local:', ''))
 
+  debugLog('loadTracks', 1, { params: identifier, error: 'No possible search source found.' })
+
   return { loadType: 'empty', data: {} }
 }
 
