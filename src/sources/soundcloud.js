@@ -107,14 +107,14 @@ async function loadFrom(url) {
 
       debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: 'SoundCloud', track, query: url })
 
-      return resolve({
+      return {
         loadType: 'track',
         data: {
           encoded: encodeTrack(track),
           info: track,
           playlistInfo: {}
         }
-      })
+      }
     }
     case 'playlist': {
       const tracks = []
