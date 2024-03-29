@@ -285,7 +285,7 @@ async function loadFrom(query, type) {
         position: 0,
         title: video.videoDetails.title,
         uri: `https://${_getBaseHost(type)}/watch?v=${video.videoDetails.videoId}`,
-        artworkUrl: `https://i.ytimg.com/vi/${video.videoDetails.videoId}/maxresdefault.jpg`,
+        artworkUrl: video.videoDetails.thumbnail.thumbnails[video.videoDetails.thumbnail.thumbnails.length - 1].url,
         isrc: null,
         sourceName: type
       }
@@ -372,7 +372,7 @@ async function loadFrom(query, type) {
             position: 0,
             title: video.title.runs[0].text,
             uri: `https://${_getBaseHost(type)}/watch?v=${video.videoId}`,
-            artworkUrl: `https://i.ytimg.com/vi/${video.videoId}/maxresdefault.jpg`,
+            artworkUrl: video.thumbnail.thumbnails[video.thumbnail.thumbnails.length - 1].url,
             isrc: null,
             sourceName: 'youtube'
           }
@@ -460,7 +460,7 @@ async function loadFrom(query, type) {
         position: 0,
         title: short.videoDetails.title,
         uri: `https://${_getBaseHost(type)}/watch?v=${short.videoDetails.videoId}`,
-        artworkUrl: `https://i.ytimg.com/vi/${short.videoDetails.videoId}/maxresdefault.jpg`,
+        artworkUrl: short.videoDetails.thumbnail.thumbnails[short.videoDetails.thumbnail.thumbnails.length - 1].url,
         isrc: null,
         sourceName: 'youtube'
       }
