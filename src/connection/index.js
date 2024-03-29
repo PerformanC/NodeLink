@@ -58,6 +58,9 @@ if (![ 'xsalsa20_poly1305', 'xsalsa20_poly1305_suffix', 'xsalsa20_poly1305_lite'
 if (typeof config.voiceReceive.timeout !== 'number')
   throw new Error('Voice receive timeout must be a number.')
 
+if (![ 'opus', 'pcm' ].includes(config.voiceReceive.type))
+  throw new Error('Voice receive type must be either "opus" or "pcm".')
+
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()
 

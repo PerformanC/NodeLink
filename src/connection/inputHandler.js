@@ -1,7 +1,9 @@
 import { debugLog } from '../utils.js'
 import config from '../../config.js'
 
+import voiceUtils from '../voice/utils.js'
 import discordVoice from '@performanc/voice'
+import prism from 'prism-media'
 
 const Connections = {}
 
@@ -29,17 +31,33 @@ function setupConnection(ws, req, parsedClientName) {
 
 function handleStartSpeaking(ssrc, userId, guildId) {
   const opusStream = discordVoice.getSpeakStream(ssrc)
+  const stream = new voiceUtils.NodeLinkStream(opusStream, config.voiceReceive.type === 'pcm' ? [ new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }) ] : [])
   let timeout = null
 
+  const startSpeakingResponse = JSON.stringify({
+    op: 'speak',
+    type: 'startSpeakingEvent',
+    data: {
+      userId,
+      guildId
+    }
+  })
+
+  Object.keys(Connections).forEach((botId) => {
+    if (Connections[botId].guildId !== guildId) return;
+
+    Connections[botId].ws.send(startSpeakingResponse)
+  })
+
   let buffer = []
-  opusStream.on('data', (chunk) => {
+  stream.on('data', (chunk) => {
     if (timeout) {
       clearTimeout(timeout)
       timeout = null
     }
 
     if (Object.keys(Connections).length === 0) {
-      opusStream.destroy()
+      stream.destroy()
       buffer = null
 
       return;
@@ -48,7 +66,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
     buffer.push(chunk)
   })
 
-  opusStream.on('end', () => {
+  stream.on('end', () => {
     let i = 0
 
     const connectionsArray = Object.keys(Connections)
@@ -67,7 +85,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
           userId,
           guildId,
           data: Buffer.concat(buffer).toString('base64'),
-          type: 'opus'
+          type: config.voiceReceive.type
         }
       })
 
@@ -83,21 +101,6 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
       debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
     }, config.voiceReceive.timeout)
-  })
-
-  const startSpeakingResponse = JSON.stringify({
-    op: 'speak',
-    type: 'startSpeakingEvent',
-    data: {
-      userId,
-      guildId
-    }
-  })
-
-  Object.keys(Connections).forEach((botId) => {
-    if (Connections[botId].guildId !== guildId) return;
-
-    Connections[botId].ws.send(startSpeakingResponse)
   })
 }
 

@@ -149,6 +149,7 @@ export default {
     encryption: 'xsalsa20_poly1305_lite'
   },
   voiceReceive: {
+    type: 'pcm', // pcm, opus
     timeout: 1000 // 1s of silence to consider as it stopped speaking.
   }
 }
