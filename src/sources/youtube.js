@@ -542,7 +542,7 @@ async function retrieveStream(identifier, type, title) {
   const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag === itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
   let url = audio.url || audio.signatureCipher || audio.cipher
 
-  if (config.options.bypassAgeRestriction) { /* ANDROID client won't ask for deciphering */
+  if ((audio.signatureCipher || audio.cipher) && config.options.bypassAgeRestriction) {
     const args = new URLSearchParams(url)
     url = decodeURIComponent(args.get('url'))
 

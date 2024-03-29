@@ -17,7 +17,6 @@ import searchWithDefault from './sources/default.js'
 import { debugLog, http1makeRequest, makeRequest } from './utils.js'
 
 async function getTrackURL(track, toDefault) {
-  console.log(track)
   switch (track.sourceName === 'pandora' || toDefault ? config.search.defaultSearchSource : track.sourceName) {
     case 'spotify': {
       const result = await searchWithDefault(`${track.title} - ${track.author}`, false)
