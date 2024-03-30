@@ -5,6 +5,7 @@ import zlib from 'node:zlib'
 import process from 'node:process'
 import { Buffer } from 'node:buffer'
 import { URL } from 'node:url'
+import { PassThrough } from 'node:stream'
 
 import config from '../config.js'
 import constants from '../constants.js'
@@ -773,7 +774,7 @@ export function verifyMethod(parsedUrl, req, res, expected) {
 
 Array.prototype.nForEach = async function(callback) {
   return new Promise(async (resolve) => {
-    for (let i = 0; i < this.length; i++) {
+    for (let i = 0; i < this.length - 1; i++) {
       const res = await callback(this[i], i)
 
       if (res) return resolve()
@@ -823,4 +824,120 @@ export function parseClientName(clientName) {
 
 export function isEmpty(value) {
   return value === undefined || value === null || false
+}
+
+export function loadHLS(url, stream, onceEnded) {
+  return new Promise(async (resolve) => {
+    const response = await http1makeRequest(url, { method: 'GET' })
+    const body = response.body.split('\n')
+
+    let segmentMetadata = {
+      duration: 0
+    }
+
+    body.nForEach(async (line, i) => {
+      return new Promise(async (resolveSegment) => {
+        if (stream.ended) {
+          resolveSegment(true)
+
+          return resolve(false)
+        }
+
+        if (line.startsWith('#')) {
+          const tag = line.split(':')[0]
+          let value = line.split(':')[1]
+          if (value) value = value.split(',')[0]
+
+          if (tag === '#EXTINF') {
+            segmentMetadata.duration = parseFloat(value) * 1000
+          } else if (tag === '#EXT-X-ENDLIST') {
+            stream.end()
+
+            return resolveSegment(true)
+          }
+
+          return resolveSegment(false)
+        }
+
+        const now = Date.now()
+
+        const segment = await http1makeRequest(line, { method: 'GET', streamOnly: true })
+
+        segment.stream.on('data', (chunk) => stream.write(chunk))
+        segment.stream.once('readable', () => {
+          if (segmentMetadata.duration) {
+            setTimeout(() => {
+              resolveSegment(false)
+            }, segmentMetadata.duration - (Date.now() - now) * 2)
+  
+            segmentMetadata.duration = 0
+          } else {
+            segment.stream.on('end', () => {
+              resolveSegment(false)
+
+              segment.stream.destroy()
+            })
+          }
+        })
+
+        if (onceEnded && i === body.length - 2) {
+          segment.stream.on('end', () => {
+            resolve(true)
+
+            segment.stream.destroy()
+          })
+        }
+      })
+    })
+
+    if (!onceEnded) resolve(true)
+  })
+}
+
+export function loadHLSPlaylist(url, stream) {
+  return new Promise(async (resolve) => {
+    const response = await http1makeRequest(url, { method: 'GET' })
+    const body = response.body.split('\n')
+
+    body.nForEach(async (line, i) => {
+      return new Promise(async (resolvePlaylist) => {
+        if (line.startsWith('#')) {
+          const tag = line.split(':')[0]
+          let value = line.split(':')[1]
+          if (value) value = value.split(',')[0]
+
+          if (tag === '#EXT-X-ENDLIST') {
+            stream.end()
+
+            resolvePlaylist(true)
+
+            return resolve(stream)
+          }
+
+          resolvePlaylist(false)
+
+          if (i === body.length - 1) {
+            loadHLSPlaylist(value, stream)
+
+            resolve(stream)
+          }
+
+          return;
+        }
+
+        if (await loadHLS(line, stream, true) === false)
+          return resolve(stream)
+
+        resolvePlaylist(false)
+
+        if (i === body.length - 2) {
+          loadHLSPlaylist(url, stream)
+
+          return resolve(stream)
+        }
+      })
+    })
+
+    resolve(stream)
+  })
 }

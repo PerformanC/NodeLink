@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream'
 
 import config from '../../config.js'
-import { debugLog, encodeTrack, http1makeRequest } from '../utils.js'
+import { debugLog, encodeTrack, http1makeRequest, loadHLS } from '../utils.js'
 import searchWithDefault from './default.js'
 import sources from '../sources.js'
 
@@ -337,85 +337,13 @@ async function retrieveStream(identifier, title) {
   }
 }
 
-async function loadStream(title, url, protocol) {
-  return new Promise(async (resolve) => {
-    const stream = new PassThrough()
+async function loadHLSStream(url) {
+  const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
 
-    if (protocol === 'hls') {
-      const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
-      const streamHls = await http1makeRequest(streamHlsRedirect.body.url, { method: 'GET' })
-      const streams = streamHls.body.split('\n').filter((line) => line.startsWith('https://'))
+  const stream = new PassThrough()
+  await loadHLS(streamHlsRedirect.body.url, stream)
 
-      let i = 0
-
-      async function loadNext() {
-        const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
-
-        res.stream.on('data', (chunk) => stream.write(chunk))
-        res.stream.on('end', () => {
-          i++
-
-          if (i < streams.length) loadNext()
-          else stream.end()
-        })
-        res.stream.on('error', (error) => {
-          debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
-  
-          resolve({
-            status: 1,
-            exception: {
-              message: error.message,
-              severity: 'fault',
-              cause: 'Unknown'
-            }
-          })
-        })
-      }
-
-      const res = await http1makeRequest(streams[i], { method: 'GET', streamOnly: true })
-
-      res.stream.on('data', (chunk) => stream.write(chunk))
-      res.stream.on('end', () => {
-        i++
-
-        if (i < streams.length) loadNext()
-        else stream.end()
-      })
-      res.stream.on('error', (error) => {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
-
-        resolve({
-          status: 1,
-          exception: {
-            message: error.message,
-            severity: 'fault',
-            cause: 'Unknown'
-          }
-        })
-      })
-
-      res.stream.once('readable', () => resolve(stream))
-    } else {
-      const res = await http1makeRequest(url, { method: 'GET', streamOnly: true })
-
-      res.stream.on('data', (chunk) => stream.write(chunk))
-      res.stream.on('end', () => stream.end())
-      res.stream.on('error', (error) => {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: error.message })
-
-        resolve({
-          status: 1,
-          exception: {
-            message: error.message,
-            severity: 'fault',
-            cause: 'Unknown'
-          }
-        })
-      })
-
-      res.stream.once('readable', () => resolve(stream))
-    }
-  })
+  return stream
 }
 
 async function loadFilters(url, protocol) {
@@ -433,6 +361,6 @@ export default {
   loadFrom,
   search,
   retrieveStream,
-  loadStream,
+  loadHLSStream,
   loadFilters
 }

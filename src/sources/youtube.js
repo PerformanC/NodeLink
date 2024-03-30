@@ -1,6 +1,8 @@
+import { PassThrough } from 'node:stream'
+
 import config from '../../config.js'
 import constants from '../../constants.js'
-import { debugLog, makeRequest, encodeTrack, randomLetters } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, randomLetters, loadHLSPlaylist } from '../utils.js'
 
 const ytContext = {
   ...(config.options.bypassAgeRestriction ? {
@@ -9,12 +11,13 @@ const ytContext = {
     },
   } : {}),
   client: {
-    clientName: config.options.bypassAgeRestriction ? 'TVHTML5_SIMPLY_EMBEDDED_PLAYER' : 'ANDROID',
-    clientVersion: config.options.bypassAgeRestriction ? '2.0' : '19.04.33',
     ...(!config.options.bypassAgeRestriction ? {
-      androidSdkVersion: '34',
-      userAgent: 'com.google.android.youtube/19.04.33 (Linux; U; Android 14 gzip)'
+      userAgent: 'com.google.android.youtube/19.13.34 (Linux; U; Android 14 gzip)',
+      clientName: 'ANDROID',
+      clientVersion: '19.13.34',
     } : {
+      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      clientVersion: '2.0',
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
     }),
     screenDensityFloat: 1,
@@ -555,8 +558,8 @@ async function retrieveStream(identifier, type, title) {
   url += `&rn=1&cpn=${randomLetters(16)}&ratebypass=yes&range=0-` /* range query is necessary to bypass throttling */
 
   return {
-    url,
-    protocol: 'https',
+    url: videos.streamingData.hlsManifestUrl ? videos.streamingData.hlsManifestUrl : url,
+    protocol: videos.streamingData.hlsManifestUrl ? 'hls' : 'http',
     format: audio.mimeType === 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary'
   }
 }
@@ -690,11 +693,21 @@ function loadLyrics(decodedTrack, language) {
   })
 }
 
+async function loadStream(url) {
+  return new Promise(async (resolve) => {
+    const stream = new PassThrough()
+    await loadHLSPlaylist(url, stream)
+
+    resolve(stream)
+  })
+}
+
 export default {
   init,
   free,
   search,
   loadFrom,
   retrieveStream,
-  loadLyrics
+  loadLyrics,
+  loadStream
 }
