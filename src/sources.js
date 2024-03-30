@@ -173,6 +173,15 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
 }
 
 async function loadTracks(identifier) {
+  if (identifier.trim() === '' || identifier.split(':').slice(1).join(':').trim() === '') {
+    debugLog('loadTracks', 1, { params: identifier, error: 'No search query provided.' })
+
+    return {
+      loadType: 'empty',
+      data: {}
+    }
+  }
+
   const ytSearch = config.search.sources.youtube ? identifier.startsWith('ytsearch:') : null
   const ytRegex = config.search.sources.youtube && !ytSearch ? /^(?:(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+))|(?:https?:\/\/)?(?:www\.)?youtu\.be\/[a-zA-Z0-9_-]{11})/.test(identifier) : null
   if (config.search.sources.youtube && (ytSearch || ytRegex))
