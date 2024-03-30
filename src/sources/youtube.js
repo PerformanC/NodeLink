@@ -449,7 +449,8 @@ async function loadFrom(query, type) {
 
         return {
           loadType: 'error',
-          data: { message: errorMessage,
+          data: {
+            message: errorMessage,
             severity: 'common',
             cause: 'Unknown'
           }
