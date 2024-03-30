@@ -149,7 +149,7 @@ async function search(query, type, shouldLog) {
     body: {
       context: ytContext,
       query,
-      params: type === 'ytmusic' ? 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D' : 'EgIQAQ%3D%3D'
+      params: type === 'ytmusic' && !config.options.bypassAgeRestriction ? 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D' : 'EgIQAQ%3D%3D'
     },
     method: 'POST',
     disableBodyCompression: true
@@ -184,11 +184,20 @@ async function search(query, type, shouldLog) {
   const tracks = []
 
   let videos = null
-  if (config.options.bypassAgeRestriction) videos = type == 'ytmusic' ? search.contents.sectionListRenderer.contents[0].itemSectionRenderer.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
-  else videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer.mainContent.sectionListRenderer.contents[0].musicShelfRenderer.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+  if (config.options.bypassAgeRestriction) videos = type == 'ytmusic' ? search.contents?.sectionListRenderer?.contents[0]?.itemSectionRenderer?.contents : search.contents?.sectionListRenderer?.contents[search.contents?.sectionListRenderer?.contents.length - 1]?.itemSectionRenderer?.contents
+  else videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer?.mainContent?.sectionListRenderer?.contents[0]?.musicShelfRenderer?.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+
+  if (!videos) {
+    debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'No matches found.' })
+
+    return {
+      loadType: 'empty',
+      data: {}
+    }
+  }
 
   if (videos.length > config.options.maxSearchResults)
-    videos = videos.slice(0, config.options.maxSearchResults)
+    videos = videos.filter((video, i) => (video.compactVideoRenderer || video.musicTwoColumnItemRenderer) && i < config.options.maxSearchResults)
 
   videos.forEach((video) => {
     video = video.compactVideoRenderer || video.musicTwoColumnItemRenderer
