@@ -52,8 +52,6 @@ class VoiceConnection {
     this.connection.on('stateChange', async (oldState, newState) => {
       switch (newState.status) {
         case 'disconnected': {
-          if (oldState.status === 'disconnected' || newState.code !== 4014) return;
-
           debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
           this.connection.destroy()
@@ -64,8 +62,8 @@ class VoiceConnection {
             op: 'event',
             type: 'WebSocketClosedEvent',
             guildId: this.config.guildId,
-            code: newState.closeCode,
-            reason: constants.VoiceWSCloseCodes[newState.closeCode],
+            code: newState.code,
+            reason: constants.VoiceWSCloseCodes[newState.code],
             byRemote: true
           }))
 
@@ -291,6 +289,9 @@ class VoiceConnection {
 
     if (this.config.volume !== 100) 
       resource.stream.setVolume(this.config.volume / 100)
+
+    if (!this.connection)
+      return this.config
   
     if (!this.connection.udpInfo?.secretKey)
       await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected', config.options.threshold || undefined)

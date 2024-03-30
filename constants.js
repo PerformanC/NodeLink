@@ -5,20 +5,18 @@ export default {
     shorts: 3,
   },
   VoiceWSCloseCodes: {
-    4000: 'Unknown error',
     4001: 'Unknown opcode',
-    4002: 'Decode error',
+    4002: 'Failed to decode payload',
     4003: 'Not authenticated',
     4004: 'Authentication failed',
     4005: 'Already authenticated',
-    4007: 'Invalid seq',
-    4008: 'Rate limited',
-    4009: 'Session timed out',
-    4010: 'Invalid shard',
-    4011: 'Sharding required',
-    4012: 'Invalid API version',
-    4013: 'Invalid intent(s)',
-    4014: 'Disallowed intent(s)'
+    4006: 'Session no longer valid',
+    4009: 'Session timeout',
+    4011: 'Server not found',
+    4012: 'Unknown protocol',
+    4014: 'Disconnected',
+    4015: 'Voice server crashed',
+    4016: 'Unknown encryption mode'
   },
   opus: {
     samplingRate: 48000,
