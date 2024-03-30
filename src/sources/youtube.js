@@ -183,7 +183,9 @@ async function search(query, type, shouldLog) {
 
   const tracks = []
 
-  let videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer.mainContent.sectionListRenderer.contents[0].musicShelfRenderer.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+  let videos = null
+  if (config.options.bypassAgeRestriction) videos = type == 'ytmusic' ? search.contents.sectionListRenderer.contents[0].itemSectionRenderer.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+  else videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer.mainContent.sectionListRenderer.contents[0].musicShelfRenderer.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
 
   if (videos.length > config.options.maxSearchResults)
     videos = videos.slice(0, config.options.maxSearchResults)
@@ -193,8 +195,8 @@ async function search(query, type, shouldLog) {
 
     if (video) {
       const identifier = type === 'ytmusic' ? video.navigationEndpoint.watchEndpoint.videoId : video.videoId
-      const length = type === 'ytmusic' ? video.subtitle.runs[2].text : video.lengthText?.runs[0]?.text
-      const thumbnails = type === 'ytmusic' ? video.thumbnail.musicThumbnailRenderer.thumbnail.thumbnails : video.thumbnail.thumbnails
+      const length = type === 'ytmusic' && !config.options.bypassAgeRestriction ? video.subtitle.runs[2].text : video.lengthText?.runs[0]?.text
+      const thumbnails = type === 'ytmusic' && !config.options.bypassAgeRestriction ? video.thumbnail.musicThumbnailRenderer.thumbnail.thumbnails : video.thumbnail.thumbnails
 
       const track = {
         identifier,
