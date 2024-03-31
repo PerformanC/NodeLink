@@ -614,7 +614,7 @@ async function requestHandler(req, res) {
           const decodedTrack = decodeTrack(encodedTrack)
 
           if (!decodedTrack) {
-            debugLog('play', 1, { track: encodedTrack, exception: { message: 'The provided track is invalid.', severity: 'common', cause: 'Invalid track' } })
+            debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer, error: 'The provided track is invalid.' })
 
             return sendResponse(req, res, {
               timestamp: Date.now(),
