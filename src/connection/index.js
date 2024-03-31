@@ -1,4 +1,6 @@
 import http from 'node:http'
+import os from 'node:os'
+import process from 'node:process'
 import { URL } from 'node:url'
 
 import connectionHandler from './handler.js'
@@ -31,6 +33,9 @@ if (typeof config.options.maxAlbumPlaylistLength !== 'number')
 if (typeof config.options.maxCaptionsLength !== 'number')
   throw new Error('Max captions length must be a number.')
 
+if (typeof config.options.logFile !== 'string' && config.options.logFile !== false)
+  throw new Error('Log file must be a string or false.')
+
 if (!['bandcamp', 'deezer', 'soundcloud', 'youtube', 'ytmusic'].includes(config.search.defaultSearchSource))
   throw new Error('Default search source must be either "bandcamp", "deezer", "soundcloud", "youtube" or "ytmusic".')
 
@@ -57,6 +62,8 @@ if (typeof config.voiceReceive.timeout !== 'number')
 
 if (![ 'opus', 'pcm' ].includes(config.voiceReceive.type))
   throw new Error('Voice receive type must be either "opus" or "pcm".')
+
+process.env.UV_THREADPOOL_SIZE = os.cpus().length
 
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()

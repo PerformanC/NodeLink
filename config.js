@@ -15,7 +15,8 @@ export default {
     statsInterval: false,
     maxResultsLength: 200,
     maxAlbumPlaylistLength: 200,
-    maxCaptionsLength: 3
+    maxCaptionsLength: 3,
+    logFile: 'logs.txt'
   },
   debug: {
     youtube: {
