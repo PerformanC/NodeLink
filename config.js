@@ -3,7 +3,7 @@ export default {
     major: '2',
     minor: '0',
     patch: '1',
-    preRelease: null
+    preRelease: ''
   },
   server: {
     port: 2333,
