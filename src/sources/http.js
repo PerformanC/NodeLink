@@ -10,9 +10,12 @@ async function loadFrom(uri) {
     debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: type, query: uri, message: 'Not possible to connect to the URL.', })
 
     return {
-      message: 'Not possible to connect to the URL.',
-      severity: 'fault',
-      cause: 'Unknown'
+      loadType: 'error',
+      data: {
+        message: 'Not possible to connect to the URL.',
+        severity: 'fault',
+        cause: 'Unknown'
+      }
     }
   }
 
