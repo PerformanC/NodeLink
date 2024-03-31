@@ -5,7 +5,6 @@ import zlib from 'node:zlib'
 import process from 'node:process'
 import { Buffer } from 'node:buffer'
 import { URL } from 'node:url'
-import { PassThrough } from 'node:stream'
 
 import config from '../config.js'
 import constants from '../constants.js'
@@ -831,10 +830,6 @@ export function loadHLS(url, stream, onceEnded) {
     const response = await http1makeRequest(url, { method: 'GET' })
     const body = response.body.split('\n')
 
-    let segmentMetadata = {
-      duration: 0
-    }
-
     body.nForEach(async (line, i) => {
       return new Promise(async (resolveSegment) => {
         if (stream.ended) {
@@ -845,12 +840,8 @@ export function loadHLS(url, stream, onceEnded) {
 
         if (line.startsWith('#')) {
           const tag = line.split(':')[0]
-          let value = line.split(':')[1]
-          if (value) value = value.split(',')[0]
 
-          if (tag === '#EXTINF') {
-            segmentMetadata.duration = parseFloat(value) * 1000
-          } else if (tag === '#EXT-X-ENDLIST') {
+          if (tag === '#EXT-X-ENDLIST') {
             stream.end()
 
             return resolveSegment(true)
@@ -859,34 +850,21 @@ export function loadHLS(url, stream, onceEnded) {
           return resolveSegment(false)
         }
 
-        const now = Date.now()
-
         const segment = await http1makeRequest(line, { method: 'GET', streamOnly: true })
 
         segment.stream.on('data', (chunk) => stream.write(chunk))
-        segment.stream.once('readable', () => {
-          if (segmentMetadata.duration) {
-            setTimeout(() => {
-              resolveSegment(false)
-            }, segmentMetadata.duration - (Date.now() - now) * 2)
-  
-            segmentMetadata.duration = 0
-          } else {
-            segment.stream.on('end', () => {
-              resolveSegment(false)
 
-              segment.stream.destroy()
-            })
-          }
-        })
-
-        if (onceEnded && i === body.length - 2) {
-          segment.stream.on('end', () => {
+        segment.stream.on('end', () => {
+          if (onceEnded && i === body.length - 2) {
             resolve(true)
 
             segment.stream.destroy()
-          })
-        }
+          } else {
+            resolveSegment(false)
+
+            segment.stream.destroy()
+          }
+        })
       })
     })
 
