@@ -258,86 +258,92 @@ class Filters {
 
   getResource(decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
     return new Promise(async (resolve) => {
-      if (decodedTrack.sourceName === 'deezer') {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
+      try {
+        if (decodedTrack.sourceName === 'deezer') {
+          debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
 
-        return resolve({ status: 1, exception: { message: 'Filtering does not support Deezer platform', severity: 'fault', cause: 'Unimplemented feature.' } })
-      }
+          return resolve({ status: 1, exception: { message: 'Filtering does not support Deezer platform', severity: 'fault', cause: 'Unimplemented feature.' } })
+        }
 
-      if (decodedTrack.sourceName === 'soundcloud')
-        url = await soundcloud.loadFilters(url, protocol)
+        if (decodedTrack.sourceName === 'soundcloud')
+          url = await soundcloud.loadFilters(url, protocol)
 
-      const ffmpeg = new prism.FFmpeg({
-        args: [
-          '-loglevel', '0',
-          '-analyzeduration', '0',
-          '-hwaccel', 'auto',
-          '-threads', config.filters.threads,
-          '-filter_threads', config.filters.threads,
-          '-filter_complex_threads', config.filters.threads,
-          ...(this.result.startTime !== undefined || startTime ? ['-ss', `${this.result.startTime !== undefined ? this.result.startTime : startTime}ms`] : []),
-          '-i', url,
-          ...(this.command.length !== 0 ? [ '-af', this.command.join(',') ] : [] ),
-          ...(endTime ? ['-t', `${endTime}ms`] : []),
-          '-f', 's16le',
-          '-ar', constants.opus.samplingRate,
-          '-ac', '2',
-          '-crf', '0'
-        ]
-      })
+        const ffmpeg = new prism.FFmpeg({
+          args: [
+            '-loglevel', '0',
+            '-analyzeduration', '0',
+            '-hwaccel', 'auto',
+            '-threads', config.filters.threads,
+            '-filter_threads', config.filters.threads,
+            '-filter_complex_threads', config.filters.threads,
+            ...(this.result.startTime !== undefined || startTime ? ['-ss', `${this.result.startTime !== undefined ? this.result.startTime : startTime}ms`] : []),
+            '-i', url,
+            ...(this.command.length !== 0 ? [ '-af', this.command.join(',') ] : [] ),
+            ...(endTime ? ['-t', `${endTime}ms`] : []),
+            '-f', 's16le',
+            '-ar', constants.opus.samplingRate,
+            '-ac', '2',
+            '-crf', '0'
+          ]
+        })
 
-      const stream = PassThrough()
+        const stream = PassThrough()
 
-      ffmpeg.process.stdout.on('data', (data) => stream.write(data))
-      ffmpeg.process.stdout.on('end', () => stream.end())
-      ffmpeg.on('error', (err) => {
-        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
+        ffmpeg.process.stdout.on('data', (data) => stream.write(data))
+        ffmpeg.process.stdout.on('end', () => stream.end())
+        ffmpeg.on('error', (err) => {
+          debugLog('retrieveStream', 3, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
+
+          resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Unknown' } })
+        })
+
+        ffmpeg.process.stdout.once('readable', () => {
+          const pipelines = [
+            new prism.VolumeTransformer({ type: 's16le' })
+          ]
+
+          if (this.equalizer.some((band) => band.gain !== 0)) {
+            pipelines.push(
+              new Filtering(
+                this.equalizer.map((band) => band.gain),
+                constants.filtering.types.equalizer
+              )
+            )
+          }
+
+          if (this.result.tremolo) {
+            pipelines.push(
+              new Filtering({
+                frequency: this.result.tremolo.frequency,
+                depth: this.result.tremolo.depth
+              },
+              constants.filtering.types.tremolo)
+            )
+          }
+
+          if (this.result.rotation) {
+            pipelines.push(
+              new Filtering({
+                rotationHz: this.result.rotation.rotationHz / 2
+              }, constants.filtering.types.rotationHz)
+            )
+          }
+
+          pipelines.push(
+            new prism.opus.Encoder({
+              rate: constants.opus.samplingRate,
+              channels: constants.opus.channels,
+              frameSize: constants.opus.frameSize
+            })
+          )
+
+          resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines) })
+        })
+      } catch (err) {
+        debugLog('retrieveStream', 3, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
 
         resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Unknown' } })
-      })
-
-      ffmpeg.process.stdout.once('readable', () => {
-        const pipelines = [
-          new prism.VolumeTransformer({ type: 's16le' })
-        ]
-
-        if (this.equalizer.some((band) => band.gain !== 0)) {
-          pipelines.push(
-            new Filtering(
-              this.equalizer.map((band) => band.gain),
-              constants.filtering.types.equalizer
-            )
-          )
-        }
-
-        if (this.result.tremolo) {
-          pipelines.push(
-            new Filtering({
-              frequency: this.result.tremolo.frequency,
-              depth: this.result.tremolo.depth
-            },
-            constants.filtering.types.tremolo)
-          )
-        }
-
-        if (this.result.rotation) {
-          pipelines.push(
-            new Filtering({
-              rotationHz: this.result.rotation.rotationHz / 2
-            }, constants.filtering.types.rotationHz)
-          )
-        }
-
-        pipelines.push(
-          new prism.opus.Encoder({
-            rate: constants.opus.samplingRate,
-            channels: constants.opus.channels,
-            frameSize: constants.opus.frameSize
-          })
-        )
-
-        resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines) })
-      })
+      }
     })
   }
 }
