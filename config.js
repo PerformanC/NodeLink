@@ -15,8 +15,7 @@ export default {
     statsInterval: false,
     maxResultsLength: 200,
     maxAlbumPlaylistLength: 200,
-    maxCaptionsLength: 3,
-    bypassAgeRestriction: false // Bypasses age-restricted videos. Enable at your own risk.
+    maxCaptionsLength: 3
   },
   debug: {
     youtube: {
@@ -98,7 +97,8 @@ export default {
             LOGIN_INFO: 'DISABLED'
           },
           authorization: 'DISABLED' // Available in YouTube website in Authorization header.
-        }
+        },
+        bypassAgeRestriction: true // Bypasses age-restricted videos. Enable at your own risk.
       },
       bandcamp: true,
       http: false, // Enabling can allow IP leaks. Enable at your own risk.

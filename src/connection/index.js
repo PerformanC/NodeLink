@@ -31,9 +31,6 @@ if (typeof config.options.maxAlbumPlaylistLength !== 'number')
 if (typeof config.options.maxCaptionsLength !== 'number')
   throw new Error('Max captions length must be a number.')
 
-if (typeof config.options.bypassAgeRestriction !== 'boolean')
-  throw new Error('Bypass age restriction must be a boolean.')
-
 if (!['bandcamp', 'deezer', 'soundcloud', 'youtube', 'ytmusic'].includes(config.search.defaultSearchSource))
   throw new Error('Default search source must be either "bandcamp", "deezer", "soundcloud", "youtube" or "ytmusic".')
 
