@@ -774,7 +774,7 @@ export function verifyMethod(parsedUrl, req, res, expected) {
 
 Array.prototype.nForEach = async function(callback) {
   return new Promise(async (resolve) => {
-    for (let i = 0; i < this.length - 1; i++) {
+    for (let i = 0; i < this.length; i++) {
       const res = await callback(this[i], i)
 
       if (res) return resolve()

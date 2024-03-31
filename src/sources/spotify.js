@@ -315,26 +315,28 @@ async function loadFrom(query, type) {
           if (index === fragmentLengths.length - 1) {
             data.tracks.items.forEach(async (item) => {
               item = type[1] === 'playlist' ? item.track : item
-    
-              const track = {
-                identifier: item.id || 'unknown',
-                isSeekable: true,
-                author: item.artists[0].name,
-                length: item.duration_ms,
-                isStream: false,
-                position: 0,
-                title: item.name,
-                uri: item.external_urls.spotify,
-                artworkUrl: item.album ? item.album.images[0]?.url : null,
-                isrc: item.external_ids?.isrc || null,
-                sourceName: 'spotify'
+
+              if (item) {
+                const track = {
+                  identifier: item.id || 'unknown',
+                  isSeekable: true,
+                  author: item.artists[0].name,
+                  length: item.duration_ms,
+                  isStream: false,
+                  position: 0,
+                  title: item.name,
+                  uri: item.external_urls.spotify,
+                  artworkUrl: item.album ? item.album.images[0]?.url : null,
+                  isrc: item.external_ids?.isrc || null,
+                  sourceName: 'spotify'
+                }
+      
+                tracks.push({
+                  encoded: encodeTrack(track),
+                  info: track,
+                  pluginInfo: {}
+                })
               }
-    
-              tracks.push({
-                encoded: encodeTrack(track),
-                info: track,
-                pluginInfo: {}
-              })
             })
     
             if (tracks.length === 0) {
