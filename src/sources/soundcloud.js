@@ -325,7 +325,8 @@ async function retrieveStream(identifier, title) {
         url: urlInfo.url,
         protocol: urlInfo.protocol,
         format: urlInfo.format,
-        additionalData: true
+        additionalData: true,
+        bitrate: urlInfo.bitrate
       }
     }
   }
@@ -341,9 +342,14 @@ async function loadHLSStream(url) {
   const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
 
   const stream = new PassThrough()
-  await loadHLS(streamHlsRedirect.body.url, stream)
+  const metadata = await loadHLS(streamHlsRedirect.body.url, stream)
 
-  return stream
+  return {
+    stream,
+    ...metadata,
+    protocol: 'hls',
+    size: -1
+  }
 }
 
 async function loadFilters(url, protocol) {

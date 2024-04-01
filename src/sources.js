@@ -119,26 +119,18 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         let trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
         if (trueSource === 'youtube' && protocol === 'hls') {
-          return resolve({
-            stream: await youtube.loadStream(url)
-          })
+          return resolve(await youtube.loadStream(url))
         }
 
         if (trueSource === 'deezer') {
-          return resolve({
-            stream: await deezer.loadTrack(decodedTrack.title, url, additionalData)
-          })
+          return resolve(await deezer.loadTrack(decodedTrack.title, url, additionalData))
         }
 
         if (trueSource === 'soundcloud') {
           if (additionalData === true) {
             trueSource = config.search.fallbackSearchSource
           } else if (protocol === 'hls') {
-            const stream = await soundcloud.loadHLSStream(url)
-
-            return resolve({
-              stream
-            })
+            return resolve(await soundcloud.loadHLSStream(url))
           }
         }
 
@@ -182,8 +174,13 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
           })
         })
 
+        console.log(res.headers['content-length'], decodedTrack.duration)
+
         resolve({
-          stream
+          stream,
+          bitrate: decodedTrack.sourceName !== 'http' ? Math.round((res.headers['content-length'] * 8) / decodedTrack.duration / 1000) : null,
+          protocol,
+          size: res.headers['content-length']
         })
       }
     } catch (err) {

@@ -365,6 +365,8 @@ function loadTrack(title, url, trackInfos) {
       streamOnly: true
     })
 
+    const bitrate = Math.round((res.headers['content-length'] * 8) / trackInfos.DURATION)
+
     res.stream.on('end', () => stream.end())
     res.stream.on('error', (error) => {
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: error.message })
@@ -413,7 +415,10 @@ function loadTrack(title, url, trackInfos) {
         }
       }
 
-      resolve(stream)
+      resolve({
+        stream,
+        bitrate
+      })
     })
   })
 }
