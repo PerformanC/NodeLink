@@ -275,6 +275,19 @@ async function loadFrom(query, type) {
         method: 'POST'
       })
 
+      if (video.error) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: _getSourceName(type), query, message: video.error.message })
+
+        return {
+          loadType: 'error',
+          data: {
+            message: video.error.message,
+            severity: 'common',
+            cause: 'Unknown'
+          }
+        }
+      }
+
       if (video.playabilityStatus.status !== 'OK') {
         const errorMessage = video.playabilityStatus.reason || video.playabilityStatus.messages[0]
 
@@ -338,6 +351,19 @@ async function loadFrom(query, type) {
         },
         method: 'POST'
       })
+
+      if (playlist.error) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: playlist.error.message })
+
+        return {
+          loadType: 'error',
+          data: {
+            message: playlist.error.message,
+            severity: 'common',
+            cause: 'Unknown'
+          }
+        }
+      }
 
       let contentsRoot = null
       
@@ -451,6 +477,19 @@ async function loadFrom(query, type) {
         method: 'POST'
       })
 
+      if (short.error) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.error.message })
+
+        return {
+          loadType: 'error',
+          data: {
+            message: short.error.message,
+            severity: 'common',
+            cause: 'Unknown'
+          }
+        }
+      }
+
       if (short.playabilityStatus.status !== 'OK') {
         const errorMessage = short.playabilityStatus.reason || short.playabilityStatus.messages[0]
 
@@ -533,6 +572,18 @@ async function retrieveStream(identifier, type, title) {
     disableBodyCompression: true
   })
 
+  if (videos.error) {
+    debugLog('retrieveStream', 4, { type: 2, sourceName: _getSourceName(type), query: title, message: videos.error.message })
+
+    return {
+      exception: {
+        message: videos.error.message,
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   if (videos.playabilityStatus.status !== 'OK') {
     debugLog('retrieveStream', 4, { type: 2, sourceName: _getSourceName(type), query: title, message: videos.playabilityStatus.reason })
 
@@ -598,6 +649,19 @@ function loadLyrics(decodedTrack, language) {
       },
       method: 'POST'
     })
+
+    if (video.error) {
+      debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.error.message })
+
+      return resolve({
+        loadType: 'error',
+        data: {
+          message: video.error.message,
+          severity: 'common',
+          cause: 'Unknown'
+        }
+      })
+    }
 
     if (video.playabilityStatus.status !== 'OK') {
       debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.playabilityStatus.reason })
