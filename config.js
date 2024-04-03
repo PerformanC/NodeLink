@@ -103,7 +103,7 @@ export default {
       },
       bandcamp: true,
       http: false, // Enabling can allow IP leaks. Enable at your own risk.
-      local: true,
+      local: false, // Enabling can allow access to local files. Enable at your own risk.
       pandora: false,
       spotify: {
         enabled: true,
