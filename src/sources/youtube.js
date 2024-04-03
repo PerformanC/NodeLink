@@ -308,7 +308,7 @@ async function loadFrom(query, type) {
         isSeekable: true,
         author: video.videoDetails.author,
         length: parseInt(video.videoDetails.lengthSeconds) * 1000,
-        isStream: !video.videoDetails?.lengthSeconds,
+        isStream: !!video.videoDetails.isLive,
         position: 0,
         title: video.videoDetails.title,
         uri: `https://${_getBaseHost(type)}/watch?v=${video.videoDetails.videoId}`,
