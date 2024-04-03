@@ -3,7 +3,7 @@ WORKDIR /usr/src/app
 
 COPY . .
 
-RUN apk add --no-cache git ffmpeg
+RUN apk add --no-cache ffmpeg
 
 ENV NODE_ENV=production
 
