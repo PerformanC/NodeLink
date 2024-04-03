@@ -919,6 +919,7 @@ export function loadHLSPlaylist(url, stream) {
   return new Promise(async (resolve) => {
     const response = await http1makeRequest(url, { method: 'GET' })
     const body = response.body.split('\n')
+    body.pop()
 
     body.nForEach(async (line, i) => {
       return new Promise(async (resolvePlaylist) => {
