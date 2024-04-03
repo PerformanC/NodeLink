@@ -5,21 +5,13 @@ import constants from '../../constants.js'
 import { debugLog, makeRequest, encodeTrack, randomLetters, loadHLSPlaylist } from '../utils.js'
 
 const ytContext = {
-  ...(config.search.sources.youtube.bypassAgeRestriction ? {
-    thirdParty: {
-      embedUrl: 'https://www.youtube.com'
-    },
-  } : {}),
+  thirdParty: {
+    embedUrl: 'https://www.youtube.com'
+  },
   client: {
-    ...(!config.search.sources.youtube.bypassAgeRestriction ? {
-      userAgent: 'com.google.android.youtube/19.13.34 (Linux; U; Android 14 gzip)',
-      clientName: 'ANDROID',
-      clientVersion: '19.13.34',
-    } : {
-      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-      clientVersion: '2.0',
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
-    }),
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    clientName: 'WEB',
+    clientVersion: '2.20240401.05.00',
     screenDensityFloat: 1,
     screenHeightPoints: 1080,
     screenPixelDensity: 1,
@@ -42,18 +34,6 @@ function _getBaseHostRequest(type) {
 
 function _getBaseHost(type) {
   return `${type === 'ytmusic' ? 'music' : 'www'}.youtube.com`
-}
-
-function _switchClient(newClient) {
-  if (newClient === 'ANDROID') {
-    ytContext.client.clientName = 'ANDROID'
-    ytContext.client.clientVersion = '19.04.33'
-    ytContext.client.userAgent = 'com.google.android.youtube/19.04.33 (Linux; U; Android 14 gzip)'
-  } else if (newClient === 'ANDROID_MUSIC') {
-    ytContext.client.clientName = 'ANDROID_MUSIC'
-    ytContext.client.clientVersion = '6.37.50'
-    ytContext.client.userAgent = 'com.google.android.apps.youtube.music/6.37.50 (Linux; U; Android 14 gzip)'
-  }
 }
 
 function _getSourceName(type) {
@@ -135,9 +115,6 @@ function checkURLType(url, type) {
 async function search(query, type, shouldLog) {
   if (shouldLog) debugLog('search', 4, { type: 1, sourceName: _getSourceName(type), query })
 
-  if (!config.search.sources.youtube.bypassAgeRestriction)
-    _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
-
   const { body: search } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/search`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
@@ -149,7 +126,7 @@ async function search(query, type, shouldLog) {
     body: {
       context: ytContext,
       query,
-      params: type === 'ytmusic' && !config.search.sources.youtube.bypassAgeRestriction ? 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D' : 'EgIQAQ%3D%3D'
+      params: 'EgIQAQ%3D%3D'
     },
     method: 'POST',
     disableBodyCompression: true
@@ -183,9 +160,7 @@ async function search(query, type, shouldLog) {
 
   const tracks = []
 
-  let videos = null
-  if (config.search.sources.youtube.bypassAgeRestriction) videos = type == 'ytmusic' ? search.contents?.sectionListRenderer?.contents[0]?.itemSectionRenderer?.contents : search.contents?.sectionListRenderer?.contents[search.contents?.sectionListRenderer?.contents.length - 1]?.itemSectionRenderer?.contents
-  else videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer?.mainContent?.sectionListRenderer?.contents[0]?.musicShelfRenderer?.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+  const videos = search.contents?.twoColumnSearchResultsRenderer.primaryContents.sectionListRenderer.contents[0]?.itemSectionRenderer.contents
 
   if (!videos) {
     debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'No matches found.' })
@@ -197,15 +172,15 @@ async function search(query, type, shouldLog) {
   }
 
   if (videos.length > config.options.maxSearchResults)
-    videos = videos.filter((video, i) => (video.compactVideoRenderer || video.musicTwoColumnItemRenderer) && i < config.options.maxSearchResults)
+    videos = videos.filter((video, i) => (video.videoRenderer) && i < config.options.maxSearchResults)
 
   videos.forEach((video) => {
-    video = video.compactVideoRenderer || video.musicTwoColumnItemRenderer
+    video = video.videoRenderer
 
     if (video) {
-      const identifier = type === 'ytmusic' ? video.navigationEndpoint.watchEndpoint.videoId : video.videoId
-      const length = type === 'ytmusic' && !config.search.sources.youtube.bypassAgeRestriction ? video.subtitle.runs[2].text : video.lengthText?.runs[0]?.text
-      const thumbnails = type === 'ytmusic' && !config.search.sources.youtube.bypassAgeRestriction ? video.thumbnail.musicThumbnailRenderer.thumbnail.thumbnails : video.thumbnail.thumbnails
+      const identifier = video.videoId
+      const length = video.lengthText?.simpleText
+      const thumbnails = video.thumbnail.thumbnails
 
       const track = {
         identifier,
@@ -248,9 +223,6 @@ async function search(query, type, shouldLog) {
 }
 
 async function loadFrom(query, type) {
-  if (!config.search.sources.youtube.bypassAgeRestriction)
-    _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
-
   switch (checkURLType(query, type)) {
     case constants.YouTube.video: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
@@ -365,12 +337,9 @@ async function loadFrom(query, type) {
         }
       }
 
-      let contentsRoot = null
-      
-      if (config.search.sources.youtube.bypassAgeRestriction) contentsRoot = playlist.contents.singleColumnWatchNextResults.playlist
-      else contentsRoot = type === 'ytmusic' ? playlist.contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs[0].tabRenderer.content.musicQueueRenderer : playlist.contents.singleColumnWatchNextResults
+      const contentsRoot = playlist.contents.singleColumnWatchNextResults.playlist
 
-      if (!(type === 'ytmusic' && !config.search.sources.youtube.bypassAgeRestriction ? contentsRoot.content : contentsRoot)) {
+      if (!contentsRoot) {
         debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
       
         return {
@@ -382,10 +351,7 @@ async function loadFrom(query, type) {
       const tracks = []
       let selectedTrack = 0
 
-      let playlistContent = null
-      
-      if (config.search.sources.youtube.bypassAgeRestriction) playlistContent = contentsRoot.playlist.contents
-      else playlistContent = type === 'ytmusic' ? contentsRoot.content.playlistPanelRenderer.contents : contentsRoot.playlist?.playlist?.contents
+      const playlistContent = contentsRoot.playlist.contents
 
       if (!playlistContent) {
         debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
@@ -437,10 +403,7 @@ async function loadFrom(query, type) {
         }
       }
 
-      let playlistName = null
-      
-      if (config.search.sources.youtube.bypassAgeRestriction) playlistName = contentsRoot.playlist.title
-      else playlistName = type === 'ytmusic' ? contentsRoot.header.musicQueueHeaderRenderer.subtitle.runs[0].text : contentsRoot.playlist.playlist.title
+      const playlistName = contentsRoot.playlist.title
 
       debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: _getSourceName(type), playlistName: playlistName })
 
@@ -542,9 +505,6 @@ async function loadFrom(query, type) {
 }
 
 async function retrieveStream(identifier, type, title) {
-  if (!config.search.sources.youtube.bypassAgeRestriction)
-    _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
-
   const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
@@ -556,13 +516,11 @@ async function retrieveStream(identifier, type, title) {
     body: {
       context: ytContext,
       cpn: randomLetters(16),
-      ...(config.search.sources.youtube.bypassAgeRestriction ? {
-        playbackContext: {
-          contentPlaybackContext: {
-            signatureTimestamp: sourceInfo.signatureTimestamp
-          }
+      playbackContext: {
+        contentPlaybackContext: {
+          signatureTimestamp: sourceInfo.signatureTimestamp
         }
-      } : {}),
+      },
       videoId: identifier,
       contentCheckOk: true,
       racyCheckOk: true,
@@ -608,7 +566,7 @@ async function retrieveStream(identifier, type, title) {
   const audio = videos.streamingData.adaptiveFormats.find((format) => format.itag === itag) || videos.streamingData.adaptiveFormats.find((format) => format.mimeType.startsWith('audio/'))
   let url = audio.url || audio.signatureCipher || audio.cipher
 
-  if ((audio.signatureCipher || audio.cipher) && config.search.sources.youtube.bypassAgeRestriction) {
+  if ((audio.signatureCipher || audio.cipher)) {
     const args = new URLSearchParams(url)
     url = decodeURIComponent(args.get('url'))
 
@@ -629,9 +587,6 @@ async function retrieveStream(identifier, type, title) {
 
 function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
-    if (!config.search.sources.youtube.bypassAgeRestriction)
-      _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
-
     const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
       headers: {
         'User-Agent': ytContext.client.userAgent,
