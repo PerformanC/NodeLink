@@ -99,7 +99,7 @@ export default {
           },
           authorization: 'DISABLED' // Available in YouTube website in Authorization header.
         },
-        bypassAgeRestriction: true // Bypasses age-restricted videos. Enable at your own risk.
+        bypassAgeRestriction: false // Bypasses age-restricted videos. Enable at your own risk.
       },
       bandcamp: true,
       http: false, // Enabling can allow IP leaks. Enable at your own risk.
