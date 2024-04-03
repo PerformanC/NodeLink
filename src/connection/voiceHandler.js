@@ -104,7 +104,7 @@ class VoiceConnection {
     })
 
     this.connection.on('error', (error) => {
-      if (this.config.track) nodeLinkPlayingPlayersCount--
+      if (this.config.track) nodelinkPlayingPlayersCount--
 
       debugLog('trackException', 2, { track: this.config.track?.info, exception: error.message })
 
@@ -176,7 +176,7 @@ class VoiceConnection {
 
     this._stopTrack()
 
-    nodeLinkPlayersCount--
+    nodelinkPlayersCount--
   }
 
   async getResource(decodedTrack, urlInfo) {
