@@ -1,7 +1,6 @@
 import { debugLog, makeRequest, encodeTrack } from '../utils.js'
 
 async function loadFrom(uri) {
-  const type = uri.startsWith('http://') ? 'http' : 'https'
   debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: type, query: uri })
 
   const data = await makeRequest(uri, { method: 'HEAD' })
@@ -18,7 +17,6 @@ async function loadFrom(uri) {
       }
     }
   }
-
 
   if (!data.headers || !data.headers['content-type']?.startsWith('audio/')) {
     debugLog('loadtracks', 4, { type: 2, loadType: 'error', sourceName: type, query: uri, message: 'Url is not a playable stream.' })
@@ -44,7 +42,7 @@ async function loadFrom(uri) {
     uri,
     artworkUrl: null,
     isrc: null,
-    sourceName: type
+    sourceName: 'http'
   }
 
   debugLog('loadtracks', 4, { type: 2, loadType: 'track', sourceName: type, track, query: uri })

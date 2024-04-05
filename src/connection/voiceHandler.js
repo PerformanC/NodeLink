@@ -184,7 +184,10 @@ class VoiceConnection {
 
     if (streamInfo.exception) return streamInfo
 
-    return { stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format) }
+    return {
+      stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format),
+      bitrate: streamInfo.bitrate
+    }
   }
 
   async play(track, decodedTrack, noReplace) {
@@ -290,7 +293,13 @@ class VoiceConnection {
 
     this.cache.url = urlInfo.url
     this.cache.protocol = urlInfo.protocol
-    this.config.track = { encoded: track, info: decodedTrack }
+    this.config.track = {
+      encoded: track,
+      info: decodedTrack,
+      metadata: {
+        bitrate: resource.bitrate
+      }
+    }
     this.config.paused = false
 
     if (this.config.volume !== 100) 

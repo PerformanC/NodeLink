@@ -872,6 +872,10 @@ export function loadHLS(url, stream, onceEnded) {
   return new Promise(async (resolve) => {
     const response = await http1makeRequest(url, { method: 'GET' })
     const body = response.body.split('\n')
+    const metadata = {
+      bitrate: null
+    }
+    let nextLength = 0
 
     body.nForEach(async (line, i) => {
       return new Promise(async (resolveSegment) => {
@@ -884,6 +888,9 @@ export function loadHLS(url, stream, onceEnded) {
         if (line.startsWith('#')) {
           const tag = line.split(':')[0]
 
+          if (tag === '#EXTINF')
+            nextLength = parseFloat(line.split(':')[1].split(',')[0])
+
           if (tag === '#EXT-X-ENDLIST') {
             stream.end()
 
@@ -895,11 +902,17 @@ export function loadHLS(url, stream, onceEnded) {
 
         const segment = await http1makeRequest(line, { method: 'GET', streamOnly: true })
 
+        if (metadata.bitrate === null && segment.headers['content-length'] && nextLength)
+          metadata.bitrate = Math.round((parseInt(segment.headers['content-length'] * 8) / nextLength))
+
+        if (!onceEnded)
+          resolve(metadata)
+
         segment.stream.on('data', (chunk) => stream.write(chunk))
 
         segment.stream.on('end', () => {
           if (onceEnded && i === body.length - 2) {
-            resolve(true)
+            resolve(metadata)
 
             segment.stream.destroy()
           } else {
@@ -910,8 +923,6 @@ export function loadHLS(url, stream, onceEnded) {
         })
       })
     })
-
-    if (!onceEnded) resolve(true)
   })
 }
 

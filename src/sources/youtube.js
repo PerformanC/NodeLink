@@ -12,9 +12,16 @@ const ytContext = {
   } : {}),
   client: {
     ...(!config.search.sources.youtube.bypassAgeRestriction ? {
-      userAgent: 'com.google.android.youtube/19.13.34 (Linux; U; Android 14 gzip)',
+      userAgent: 'com.google.android.youtube/19.13.35 (Linux; U; Android 14 gzip)',
       clientName: 'ANDROID',
-      clientVersion: '19.13.34',
+      clientVersion: '19.13.35',
+      deviceMake: 'Google',
+      deviceModel: 'Pixel 8',
+      onName: 'Android',
+      osVersion: '14',
+      gl: 'BR',
+      hl: 'pt',
+      timezone: 'America/Sao_Paulo'
     } : {
       clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
       clientVersion: '2.0',
@@ -47,12 +54,12 @@ function _getBaseHost(type) {
 function _switchClient(newClient) {
   if (newClient === 'ANDROID') {
     ytContext.client.clientName = 'ANDROID'
-    ytContext.client.clientVersion = '19.04.33'
-    ytContext.client.userAgent = 'com.google.android.youtube/19.04.33 (Linux; U; Android 14 gzip)'
+    ytContext.client.clientVersion = '19.13.35'
+    ytContext.client.userAgent = 'com.google.android.youtube/19.13.35 (Linux; U; Android 14 gzip)'
   } else if (newClient === 'ANDROID_MUSIC') {
     ytContext.client.clientName = 'ANDROID_MUSIC'
-    ytContext.client.clientVersion = '6.37.50'
-    ytContext.client.userAgent = 'com.google.android.apps.youtube.music/6.37.50 (Linux; U; Android 14 gzip)'
+    ytContext.client.clientVersion = '6.44.54'
+    ytContext.client.userAgent = 'com.google.android.apps.youtube.music/6.44.54 (Linux; U; Android 14 gzip)'
   }
 }
 
@@ -144,7 +151,8 @@ async function search(query, type, shouldLog) {
       ...(config.search.sources.youtube.authentication.enabled ? {
         Authorization: config.search.sources.youtube.authentication.authorization,
         Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-      } : {})
+      } : {}),
+      'X-GOOG-API-FORMAT-VERSION': 2
     },
     body: {
       context: ytContext,
@@ -263,7 +271,8 @@ async function loadFrom(query, type) {
           ...(config.search.sources.youtube.authentication.enabled ? {
             Authorization: config.search.sources.youtube.authentication.authorization,
             Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          } : {}),
+          'X-GOOG-API-FORMAT-VERSION': 2
         },
         body: {
           context: ytContext,
@@ -340,7 +349,8 @@ async function loadFrom(query, type) {
           ...(config.search.sources.youtube.authentication.enabled ? {
             Authorization: config.search.sources.youtube.authentication.authorization,
             Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          } : {}),
+          'X-GOOG-API-FORMAT-VERSION': 2
         },
         body: {
           context: ytContext,
@@ -465,7 +475,8 @@ async function loadFrom(query, type) {
           ...(config.search.sources.youtube.authentication.enabled ? {
             Authorization: config.search.sources.youtube.authentication.authorization,
             Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          } : {}),
+          'X-GOOG-API-FORMAT-VERSION': 2
         },
         body: {
           context: ytContext,
@@ -551,7 +562,8 @@ async function retrieveStream(identifier, type, title) {
       ...(config.search.sources.youtube.authentication.enabled ? {
         Authorization: config.search.sources.youtube.authentication.authorization,
         Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-      } : {})
+      } : {}),
+      'X-GOOG-API-FORMAT-VERSION': 2
     },
     body: {
       context: ytContext,
@@ -638,7 +650,8 @@ function loadLyrics(decodedTrack, language) {
         ...(config.search.sources.youtube.authentication.enabled ? {
           Authorization: config.search.sources.youtube.authentication.authorization,
           Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-        } : {})
+        } : {}),
+        'X-GOOG-API-FORMAT-VERSION': 2
       },
       body: {
         context: ytContext,
@@ -774,7 +787,10 @@ async function loadStream(url) {
     const stream = new PassThrough()
     await loadHLSPlaylist(url, stream)
 
-    resolve(stream)
+    resolve({
+      stream,
+      bitrate: -1
+    })
   })
 }
 
