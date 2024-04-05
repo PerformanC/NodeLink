@@ -625,7 +625,7 @@ async function requestHandler(req, res) {
             }, 400)
           }
 
-          if (!player.connection.voiceServer) player.cache.track = encodedTrack
+          if (!player.connection?.voiceServer) player.cache.track = encodedTrack
           else player.play(encodedTrack, decodedTrack, noReplace === true)
 
           debugLog('play', 1, { params: parsedUrl.pathname, headers: req.headers, body: buffer })
