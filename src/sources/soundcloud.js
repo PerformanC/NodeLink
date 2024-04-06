@@ -341,7 +341,7 @@ async function loadHLSStream(url) {
   const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
 
   const stream = new PassThrough()
-  await loadHLS(streamHlsRedirect.body.url, stream)
+  await loadHLS(streamHlsRedirect.body.url, stream, false, true)
 
   return stream
 }

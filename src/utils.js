@@ -868,12 +868,15 @@ export function isEmpty(value) {
   return value === undefined || value === null || false
 }
 
-export function loadHLS(url, stream, onceEnded) {
+/* if return is false, it means the function has ended */
+export function loadHLS(url, stream, onceEnded, shouldEnd) {
   return new Promise(async (resolve) => {
     const response = await http1makeRequest(url, { method: 'GET' })
     const body = response.body.split('\n')
+    body.pop()
+    let i = 0
 
-    body.nForEach(async (line, i) => {
+    body.nForEach(async (line) => {
       return new Promise(async (resolveSegment) => {
         if (stream.ended) {
           resolveSegment(true)
@@ -881,27 +884,21 @@ export function loadHLS(url, stream, onceEnded) {
           return resolve(false)
         }
 
-        if (line.startsWith('#')) {
-          const tag = line.split(':')[0]
-
-          if (tag === '#EXT-X-ENDLIST') {
-            stream.end()
-
-            return resolveSegment(true)
-          }
-
-          return resolveSegment(false)
-        }
+        if (line.startsWith('#')) return resolveSegment(false)
 
         const segment = await http1makeRequest(line, { method: 'GET', streamOnly: true })
 
         segment.stream.on('data', (chunk) => stream.write(chunk))
 
         segment.stream.on('end', () => {
-          if (onceEnded && i === body.length - 2) {
-            resolve(true)
+          if (++i === body.filter((line) => !line.startsWith('#')).length - 1) {
+            if (shouldEnd) stream.write(Buffer.alloc(1))
 
-            segment.stream.destroy()
+            if (onceEnded) {
+              resolve(true)
+
+              segment.stream.destroy()
+            }
           } else {
             resolveSegment(false)
 
@@ -929,7 +926,7 @@ export function loadHLSPlaylist(url, stream) {
           if (value) value = value.split(',')[0]
 
           if (tag === '#EXT-X-ENDLIST') {
-            stream.end()
+            stream.write(Buffer.alloc(1))
 
             resolvePlaylist(true)
 
@@ -947,12 +944,12 @@ export function loadHLSPlaylist(url, stream) {
           return;
         }
 
-        if (await loadHLS(line, stream, true) === false)
+        if (await loadHLS(line, stream, true, false) === false)
           return resolve(stream)
 
         resolvePlaylist(false)
 
-        if (i === body.length - 2) {
+        if (i === body.length - 1) {
           loadHLSPlaylist(url, stream)
 
           return resolve(stream)
