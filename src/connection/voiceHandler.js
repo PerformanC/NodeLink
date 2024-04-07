@@ -54,6 +54,8 @@ class VoiceConnection {
         case 'disconnected': {
           debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
 
+          if (this.config.track) nodelinkPlayingPlayersCount--
+
           this.connection.destroy()
           this.connection = null
           this._stopTrack()
@@ -314,8 +316,6 @@ class VoiceConnection {
 
   stop() {
     if (!this.config.track) return this.config
-
-    nodelinkPlayingPlayersCount--
 
     if (this.connection.audioStream) this.connection.stop()
     else this._stopTrack()
