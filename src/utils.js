@@ -892,7 +892,7 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
 
         segment.stream.on('end', () => {
           if (++i === body.filter((line) => !line.startsWith('#')).length - 1) {
-            if (shouldEnd) stream.write(Buffer.alloc(1))
+            if (shouldEnd) stream.end()
 
             if (onceEnded) {
               resolve(true)
@@ -926,7 +926,7 @@ export function loadHLSPlaylist(url, stream) {
           if (value) value = value.split(',')[0]
 
           if (tag === '#EXT-X-ENDLIST') {
-            stream.write(Buffer.alloc(1))
+            stream.end()
 
             resolvePlaylist(true)
 

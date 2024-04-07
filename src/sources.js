@@ -1,5 +1,4 @@
 import fs from 'node:fs'
-import { Buffer } from 'node:buffer'
 import { PassThrough } from 'node:stream'
 
 import config from '../config.js'
@@ -169,7 +168,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         const stream = new PassThrough()
 
         res.stream.on('data', (chunk) => stream.write(chunk))
-        res.stream.on('end', () => stream.write(Buffer.alloc(1)))
+        res.stream.on('end', () => stream.end())
         res.stream.on('error', (error) => {
           debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
 

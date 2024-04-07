@@ -5,7 +5,7 @@
     "start": "node --dns-result-order=ipv4first --openssl-legacy-provider src/connection/index.js"
   },
   "dependencies": {
-    "@performanc/voice": "^2.0.0",
+    "@performanc/voice": "^2.0.1",
     "opusscript": "^0.0.8",
     "prism-media": "^1.3.5",
     "sodium-native": "^4.1.1"
