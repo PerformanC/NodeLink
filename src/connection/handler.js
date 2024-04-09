@@ -145,8 +145,9 @@ async function requestHandler(req, res) {
   }
 
   if (!req.headers || req.headers.authorization !== config.server.password) {
-    res.writeHead(401, { 'Content-Type': 'text/plain' })
+    debugLog('auth', 7, { reason: 'Wrong password.' })
 
+    res.writeHead(401, { 'Content-Type': 'text/plain' })
     res.end('Unauthorized')
   }
 

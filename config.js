@@ -52,6 +52,7 @@ export default {
       sentDataCD: true
     },
     request: {
+      auth: true,
       all: false, // Only enable for debugging purposes.
       enabled: true,
       error: true,

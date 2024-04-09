@@ -695,6 +695,11 @@ export function debugLog(name, type, options) {
 
       break
     }
+    case 7: {
+      if (!config.debug.request.auth) return;
+
+      consoleError(`[\u001b[31mauth\u001b[37m]: Failed to authenticate client.\n Reason: ${options.reason}`)
+    }
   }
 }
 
