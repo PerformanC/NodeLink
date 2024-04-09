@@ -312,6 +312,7 @@ async function retrieveStream(identifier, title) {
 
   const oggOpus = body.media.transcodings.find((transcoding) => transcoding.format.mime_type === 'audio/ogg; codecs="opus"')
   const transcoding = oggOpus || body.media.transcodings[0]
+  let url = `${transcoding.url}?client_id=${sourceInfo.clientId}`
 
   if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
     debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: `Track is snipped, falling back to: ${config.search.fallbackSearchSource}.` })
@@ -330,29 +331,15 @@ async function retrieveStream(identifier, title) {
     }
   }
 
-  return {
-    url: `${transcoding.url}?client_id=${sourceInfo.clientId}`,
-    protocol: transcoding.format.protocol,
-    format: oggOpus ? 'ogg/opus' : 'arbitrary'
+  if (transcoding.format.protocol === 'hls') {
+    url = await http1makeRequest(url, { method: 'GET' })
+    url = url.body.url
   }
-}
 
-async function loadHLSStream(url) {
-  const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
-
-  const stream = new PassThrough()
-  await loadHLS(streamHlsRedirect.body.url, stream, false, true)
-
-  return stream
-}
-
-async function loadFilters(url, protocol) {
-  if (protocol === 'hls') {
-    const streamHlsRedirect = await http1makeRequest(url, { method: 'GET' })
-
-    return streamHlsRedirect.body.url
-  } else {
-    return url
+  return {
+    url,
+    protocol: transcoding.format.protocol === 'hls' ? 'hls_segment' : transcoding.format.protocol,
+    format: oggOpus ? 'ogg/opus' : 'arbitrary'
   }
 }
 
@@ -360,7 +347,5 @@ export default {
   init,
   loadFrom,
   search,
-  retrieveStream,
-  loadHLSStream,
-  loadFilters
+  retrieveStream
 }

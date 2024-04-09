@@ -265,9 +265,6 @@ class Filters {
           return resolve({ status: 1, exception: { message: 'Filtering does not support Deezer platform', severity: 'fault', cause: 'Unimplemented feature.' } })
         }
 
-        if (decodedTrack.sourceName === 'soundcloud')
-          url = await soundcloud.loadFilters(url, protocol)
-
         const ffmpeg = new prism.FFmpeg({
           args: [
             '-loglevel', '0',

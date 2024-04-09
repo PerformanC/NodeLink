@@ -1,8 +1,6 @@
-import { PassThrough } from 'node:stream'
-
 import config from '../../config.js'
 import constants from '../../constants.js'
-import { debugLog, makeRequest, encodeTrack, randomLetters, loadHLSPlaylist } from '../utils.js'
+import { debugLog, makeRequest, encodeTrack, randomLetters } from '../utils.js'
 
 const ytContext = {
   ...(config.search.sources.youtube.bypassAgeRestriction ? {
@@ -622,7 +620,7 @@ async function retrieveStream(identifier, type, title) {
 
   return {
     url: videos.streamingData.hlsManifestUrl ? videos.streamingData.hlsManifestUrl : url,
-    protocol: videos.streamingData.hlsManifestUrl ? 'hls' : 'http',
+    protocol: videos.streamingData.hlsManifestUrl ? 'hls_playlist' : 'http',
     format: audio.mimeType === 'audio/webm; codecs="opus"' ? 'webm/opus' : 'arbitrary'
   }
 }
@@ -769,21 +767,11 @@ function loadLyrics(decodedTrack, language) {
   })
 }
 
-async function loadStream(url) {
-  return new Promise(async (resolve) => {
-    const stream = new PassThrough()
-    await loadHLSPlaylist(url, stream)
-
-    resolve(stream)
-  })
-}
-
 export default {
   init,
   free,
   search,
   loadFrom,
   retrieveStream,
-  loadLyrics,
-  loadStream
+  loadLyrics
 }

@@ -14,7 +14,7 @@ import genius from './sources/genius.js'
 import musixmatch from './sources/musixmatch.js'
 import searchWithDefault from './sources/default.js'
 
-import { debugLog, http1makeRequest, makeRequest } from './utils.js'
+import { debugLog, http1makeRequest, makeRequest, loadHLS, loadHLSPlaylist } from './utils.js'
 
 async function getTrackURL(track, toDefault) {
   try {
@@ -118,9 +118,21 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
       } else {
         let trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName
 
-        if (trueSource === 'youtube' && protocol === 'hls') {
+        if (protocol === 'hls_playlist') {
+          const stream = PassThrough()
+          await loadHLSPlaylist(url, stream)
+
           return resolve({
-            stream: await youtube.loadStream(url)
+            stream
+          })
+        }
+
+        if (protocol === 'hls_segment') {
+          const stream = PassThrough()
+          await loadHLS(url, stream)
+
+          return resolve({
+            stream
           })
         }
 
@@ -130,17 +142,8 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
           })
         }
 
-        if (trueSource === 'soundcloud') {
-          if (additionalData === true) {
-            trueSource = config.search.fallbackSearchSource
-          } else if (protocol === 'hls') {
-            const stream = await soundcloud.loadHLSStream(url)
-
-            return resolve({
-              stream
-            })
-          }
-        }
+        if (trueSource === 'soundcloud' && additionalData)
+          trueSource = config.search.fallbackSearchSource
 
         const res = await ((trueSource === 'youtube' || trueSource === 'ytmusic') ? http1makeRequest : makeRequest)(url, {
           headers: {
