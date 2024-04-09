@@ -6,7 +6,7 @@ import { URL } from 'node:url'
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
 import config from '../../config.js'
-import { debugLog, parseClientName } from '../utils.js'
+import { debugLog, parseClientName, verifyDiscordID } from '../utils.js'
 import { WebSocketServer } from '../ws.js'
 
 if (typeof config.server.port !== 'number')
@@ -96,14 +96,46 @@ server.on('upgrade', (req, socket, head) => {
   req.clientInfo = parsedClientName
 
   if (pathname === '/v4/websocket') {
+    if (!req.headers['user-id']) {
+      debugLog('connect', 1, { ...parsedClientName, error: `"user-id" header not provided.` })
+
+      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+  
+      return req.socket.destroy()
+    }
+
+    if (verifyDiscordID(req.headers['user-id']) === false) {
+      debugLog('connect', 1, { ...parsedClientName, error: `"user-id" header must be a valid id.` })
+
+      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+  
+      return req.socket.destroy()
+    }
+
     debugLog('connect', 3, parsedClientName)
 
     v4.handleUpgrade(req, socket, head, { 'isNodeLink': true }, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
   }
 
   if (pathname === '/connection/data') {
+    const nullIds = []
+    if (!req.headers['guild-id']) nullIds.push('"guild-id"')
+    if (!req.headers['user-id']) nullIds.push('"user-id"')
+
     if (!req.headers['guild-id'] || !req.headers['user-id']) {
-      debugLog('connectCD', 1, { ...parsedClientName, error: `"${!req.headers['guild-id'] ? 'guild-id' : 'user-id'}" header not provided.` })
+      debugLog('connectCD', 1, { ...parsedClientName, error: `${nullIds.join(' and ')} header not provided.` })
+
+      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+  
+      return req.socket.destroy()
+    }
+
+    const wrongIds = []
+    if (verifyDiscordID(req.headers['guild-id']) === false) wrongIds.push('"guild-id"')
+    if (verifyDiscordID(req.headers['user-id']) === false) wrongIds.push('"user-id"')
+
+    if (wrongIds.length) {
+      debugLog('connectCD', 1, { ...parsedClientName, error: `${wrongIds.join(' and ')} header must be a valid id.` })
 
       req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
   

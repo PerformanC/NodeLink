@@ -965,3 +965,11 @@ export function loadHLSPlaylist(url, stream) {
     resolve(stream)
   })
 }
+
+export function verifyDiscordID(id) {
+  if (Number(id).toString() === 'NaN') return false
+
+  if (id.length !== 18 && id.length !== 19) return false
+
+  return true
+}
