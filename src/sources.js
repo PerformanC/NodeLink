@@ -146,9 +146,6 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
           trueSource = config.search.fallbackSearchSource
 
         const res = await ((trueSource === 'youtube' || trueSource === 'ytmusic') ? http1makeRequest : makeRequest)(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
-          },
           method: 'GET',
           streamOnly: true
         })
@@ -171,7 +168,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         const stream = new PassThrough()
 
         res.stream.on('data', (chunk) => stream.write(chunk))
-        res.stream.on('end', () => stream.end())
+        res.stream.on('end', () => stream.emit('finishBuffering'))
         res.stream.on('error', (error) => {
           debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
 

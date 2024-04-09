@@ -892,7 +892,7 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
 
         segment.stream.on('end', () => {
           if (++i === body.filter((line) => !line.startsWith('#')).length - 1) {
-            if (shouldEnd) stream.end()
+            if (shouldEnd) stream.emit('finishBuffering')
 
             if (onceEnded) {
               resolve(true)

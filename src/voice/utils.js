@@ -17,6 +17,9 @@ class NodeLinkStream {
 
     this.listeners = []
     this.pipes = pipes
+
+    /* @performanc/voice event */
+    stream.on('finishBuffering', () => this.emit('finishBuffering'))
   }
 
   _end() {
