@@ -14,9 +14,6 @@ if (typeof config.server.port !== 'number')
 if (typeof config.server.password !== 'string')
   throw new Error('Password must be a string.')
 
-if (typeof config.options.threshold !== 'boolean' && typeof config.options.threshold !== 'number')
-  throw new Error('Threshold must be a boolean or a number.')
-
 if (typeof config.options.playerUpdateInterval !== 'boolean' && typeof config.options.playerUpdateInterval !== 'number')
   throw new Error('Player update interval must be a boolean or a number.')
 

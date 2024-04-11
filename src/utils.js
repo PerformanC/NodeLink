@@ -824,16 +824,11 @@ Array.prototype.nForEach = async function(callback) {
   })
 }
 
-export function waitForEvent(emitter, eventName, func, timeoutMs) {
+export function waitForEvent(emitter, eventName, func) {
   return new Promise((resolve) => {
-    const timeout = timeoutMs ? setTimeout(() => {
-      throw new Error(`Event ${eventName} timed out after ${timeoutMs}ms`)
-    }, timeoutMs) : null
-
     const listener = (param, param2) => {
       if (func(param, param2) === true) {
         emitter.removeListener(eventName, listener)
-        timeoutMs ? clearTimeout(timeout) : null
         resolve()
       }
     }

@@ -302,7 +302,7 @@ class VoiceConnection {
       return this.config
   
     if (!this.connection.udpInfo?.secretKey)
-      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected', config.options.threshold || undefined)
+      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected')
 
     const oldResource = this.connection.audioStream
     
@@ -380,7 +380,7 @@ class VoiceConnection {
       return this.config
 
     if (!this.connection.udpInfo?.secretKey)
-      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected', config.options.threshold || undefined)
+      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected')
     
     this.connection.play(resource.stream)
 
