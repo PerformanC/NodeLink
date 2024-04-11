@@ -6,19 +6,23 @@ Documents the differences the API changes compared to LavaLink API, the API desi
 
 - [Events](#events)
   - [TrackStartEvent](#trackstartevent)
+  - [TrackStuckEvent](#trackstuckevent)
 - [Filters](#filters)
   - [Stack filters](#stack-filters)
 - [Endpoints](#endpoints)
   - [Compression](#compression)
   - [Websocket connection](#websocket-connection)
   - [Errors](#errors)
+  - [Resuming](#resuming)
+  - [Stats](#stats)
+  - [loadTracks](#loadtracks)
   - [loadLyrics](#loadlyrics)
-  - [Voice receive](#voice-receive)
-    - [Connection](#connection)
-    - [Messages](#messages)
-      - [startSpeakingEvent](#startspeakingevent)
-      - [endSpeakingEvent](#endspeakingevent)
-
+- [Voice receive](#voice-receive)
+  - [Connection](#connection)
+  - [Messages](#messages)
+    - [startSpeakingEvent](#startspeakingevent)
+    - [endSpeakingEvent](#endspeakingevent)
+  - [Router planner](#router-planner)
 
 ## Events
 
@@ -27,6 +31,10 @@ While NodeLink has the same events as LavaLink to ensure the full compatibility,
 ### TrackStartEvent
 
 NodeLink, differently from LavaLink, emits the `TrackStartEvent` when the `@performanc/voice` starts sending the audio data to Discord, while LavaLink emits the event when receives the play request.
+
+### TrackStuckEvent
+
+There's no concept of `TrackStuckEvent` in NodeLink, as it's impossible to detect and/or not totally impossible to detect. When a track fails, it will emit the `TrackExceptionEvent` event.
 
 ## Filters
 
