@@ -1,5 +1,4 @@
 import http from 'node:http'
-import os from 'node:os'
 import process from 'node:process'
 import { URL } from 'node:url'
 
@@ -63,7 +62,8 @@ if (typeof config.voiceReceive.timeout !== 'number')
 if (![ 'opus', 'pcm' ].includes(config.voiceReceive.type))
   throw new Error('Voice receive type must be either "opus" or "pcm".')
 
-process.env.UV_THREADPOOL_SIZE = os.cpus().length
+if (process.platform === 'win32')
+  console.warn('[\u001b[33mNodeLink\u001b[37m]: Windows detected, audio sending performance impacted. Consider using a Linux-based (or any OS besides Windows) system. See https://github.com/PerformanC/voice/issues/1')
 
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()

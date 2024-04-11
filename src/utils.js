@@ -484,7 +484,7 @@ export function debugLog(name, type, options) {
 
           consoleLog(`[\u001b[32mtrackStart\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m.`)
 
-            break
+          break
         }
         case 'trackEnd': {
           if (!config.debug.track.end) return;
@@ -497,13 +497,6 @@ export function debugLog(name, type, options) {
           if (!config.debug.track.exception) return;
 
           consoleError(`[\u001b[31mtrackException\u001b[37m]: \u001b[94m${options.track?.title || 'None'}\u001b[37m by \u001b[94m${options.track?.author || 'none'}\u001b[37m: \u001b[31m${options.exception}\u001b[37m`)
-
-          break
-        }
-        case 'trackStuck': {
-          if (!config.debug.track.stuck) return;
-
-          consoleWarn(`[\u001b[33mtrackStuck\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m: \u001b[33m${config.options.threshold}ms have passed.\u001b[37m`)
 
           break
         }
