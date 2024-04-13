@@ -95,7 +95,7 @@ async function search(query, shouldLog) {
 
   const { body: data } = await makeRequest(`https://bandcamp.com/search?q=${encodeURI(query)}&item_type=t&from=results`, { method: 'GET' })
 
-  const names = data.match(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
+  let names = data.match(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
 
   if (!names) {
     if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'BandCamp', query, message: 'No matches found.' })
