@@ -56,10 +56,6 @@ class VoiceConnection {
 
           if (this.config.track) nodelinkPlayingPlayersCount--
 
-          this.connection.destroy()
-          this.connection = null
-          this._stopTrack()
-
           this.client.ws.send(JSON.stringify({
             op: 'event',
             type: 'WebSocketClosedEvent',
@@ -165,7 +161,9 @@ class VoiceConnection {
       endpoint: buffer.endpoint
     })
 
-    if (!this.connection.ws) this.connection.connect()
+    this.connection.connect(() => {
+      if (this.config.track) nodelinkPlayingPlayersCount++
+    })
   }
 
   destroy() {
