@@ -28,6 +28,7 @@ class NodeLinkStream {
 
     if (this.stream) { 
       this.stream.destroy()
+      this.stream.removeAllListeners()
       this.stream = null
     }
   
