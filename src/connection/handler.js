@@ -66,12 +66,12 @@ function startPlayerUpdate() {
       const client = clients[key]
 
       client.players.forEach((player) => {
-        if (!player.connection) return;
+        if (!player.config.track) return;
 
         player.config.state = {
           time: Date.now(),
-          position: player.connection.playerState.status === 'playing' ? player._getRealTime() : 0,
-          connected: player.connection.state.status === 'connected',
+          position: player._getRealTime(),
+          connected: ![ 'disconnected', 'destroyed' ].includes(player.connection.state.status),
           ping: player.connection.ping || -1
         }
 
