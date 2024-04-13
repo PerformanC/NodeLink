@@ -72,7 +72,7 @@ class VoiceConnection {
 
     this.connection.on('playerStateChange', (_oldState, newState) => {
       if (newState.status === 'idle' && [ 'stopped', 'finished' ].includes(newState.reason)) {
-        nodelinkPlayingPlayersCount--
+        if (!this.config.paused) nodelinkPlayingPlayersCount--
 
         debugLog('trackEnd', 2, { track: this.config.track.info, reason: newState.reason })
 
@@ -102,7 +102,7 @@ class VoiceConnection {
     })
 
     this.connection.on('error', (error) => {
-      if (this.config.track) nodelinkPlayingPlayersCount--
+      if (this.config.track && !this.config.paused) nodelinkPlayingPlayersCount--
 
       debugLog('trackException', 2, { track: this.config.track?.info, exception: error.message })
 
@@ -162,13 +162,17 @@ class VoiceConnection {
     })
 
     this.connection.connect(() => {
-      if (this.config.track) nodelinkPlayingPlayersCount++
+      if (this.connection.audioStream && !this.config.paused) {
+        nodelinkPlayingPlayersCount++
+
+        this.connection.unpause('reconnected')
+      }
     })
   }
 
   destroy() {
     if (this.connection) {
-      if (this.connection.audioStream) nodelinkPlayingPlayersCount--
+      if (this.connection.audioStream && !this.config.paused) nodelinkPlayingPlayersCount--
 
       this.connection.destroy()
       this.connection = null
@@ -330,7 +334,11 @@ class VoiceConnection {
 
   pause(pause) {
     if (this.connection.audioStream) {
-      if (pause) this.connection.pause()
+      if (pause) {
+        this.connection.pause()
+
+        nodelinkPlayingPlayersCount--
+      }
       else this.connection.unpause()
     }
 
