@@ -698,27 +698,37 @@ export function debugLog(name, type, options) {
 
 export function sendResponse(req, res, data, status) {
   if (!data) {
-    res.writeHead(status)
+    res.writeHead(status, {
+      'Lavalink-Api-Version': '4'
+    })
     res.end()
 
     return true
   }
 
   if (!req.headers || !req.headers['accept-encoding']) {
-    res.setHeader('Connection', 'close')
-    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.writeHead(status, {
+      'Connection': 'close',
+      'Content-Type': 'application/json',
+      'Lavalink-Api-Version': '4'
+    })
 
     res.end(JSON.stringify(data))
   }
 
   if (req.headers && req.headers['accept-encoding']) {
     if (req.headers['accept-encoding'].includes('br')) {
-      res.setHeader('Content-Encoding', 'br')
-      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' })
+      res.writeHead(status, {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'br',
+        'Lavalink-Api-Version': '4'
+      })
 
       zlib.brotliCompress(JSON.stringify(data), (err, result) => {
         if (err) {
-          res.writeHead(500)
+          res.writeHead(500, {
+            'Lavalink-Api-Version': '4'
+          })
           res.end()
 
           return;
@@ -729,12 +739,17 @@ export function sendResponse(req, res, data, status) {
     }
 
     else if (req.headers['accept-encoding'].includes('gzip')) {
-      res.setHeader('Content-Encoding', 'gzip')
-      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' })
+      res.writeHead(status, {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip',
+        'Lavalink-Api-Version': '4'
+      })
   
       zlib.gzip(JSON.stringify(data), (err, result) => {
         if (err) {
-          res.writeHead(500)
+          res.writeHead(500, {
+            'Lavalink-Api-Version': '4'
+          })
           res.end()
 
           return;
@@ -745,12 +760,17 @@ export function sendResponse(req, res, data, status) {
     }
 
     else if (req.headers['accept-encoding'].includes('deflate')) {
-      res.setHeader('Content-Encoding', 'deflate')
-      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Encoding': 'deflate' })
+      res.writeHead(status, {
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'deflate',
+        'Lavalink-Api-Version': '4'
+      })
   
       zlib.deflate(JSON.stringify(data), (err, result) => {
         if (err) {
-          res.writeHead(500)
+          res.writeHead(500, {
+            'Lavalink-Api-Version': '4'
+          })
           res.end()
 
           return;

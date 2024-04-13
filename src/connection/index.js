@@ -75,7 +75,7 @@ server.on('upgrade', (req, socket, head) => {
   if (req.headers.authorization !== config.server.password) {
     debugLog('disconnect', 3, { name: 'Unknown', version: '0.0.0', code: 401, reason: 'Invalid password' })
 
-    req.socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n')
+    req.socket.write('HTTP/1.1 401 Unauthorized\r\nLavalink-Api-Version: 4\r\n\r\n')
 
     return req.socket.destroy()
   }
@@ -85,7 +85,7 @@ server.on('upgrade', (req, socket, head) => {
   if (!parsedClientName) {
     debugLog('connect', 1, { name: req.headers['client-name'], error: 'Client-name doesn\'t conform to NAME/VERSION format.' })
 
-    req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+    req.socket.write('HTTP/1.1 400 Bad Request\r\nLavalink-Api-Version: 4\r\n\r\n')
 
     return req.socket.destroy()
   }
@@ -96,7 +96,7 @@ server.on('upgrade', (req, socket, head) => {
     if (!req.headers['user-id']) {
       debugLog('connect', 1, { ...parsedClientName, error: `"user-id" header not provided.` })
 
-      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+      req.socket.write('HTTP/1.1 400 Bad Request\r\nLavalink-Api-Version: 4\r\n\r\n')
   
       return req.socket.destroy()
     }
@@ -104,14 +104,14 @@ server.on('upgrade', (req, socket, head) => {
     if (verifyDiscordID(req.headers['user-id']) === false) {
       debugLog('connect', 1, { ...parsedClientName, error: `"user-id" header must be a valid id.` })
 
-      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+      req.socket.write('HTTP/1.1 400 Bad Request\r\nLavalink-Api-Version: 4\r\n\r\n')
   
       return req.socket.destroy()
     }
 
     debugLog('connect', 3, parsedClientName)
 
-    v4.handleUpgrade(req, socket, head, { 'isNodeLink': true }, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
+    v4.handleUpgrade(req, socket, head, { 'isNodeLink': true, 'Lavalink-Api-Version': '4' }, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
   }
 
   if (pathname === '/connection/data') {
@@ -122,7 +122,7 @@ server.on('upgrade', (req, socket, head) => {
     if (!req.headers['guild-id'] || !req.headers['user-id']) {
       debugLog('connectCD', 1, { ...parsedClientName, error: `${nullIds.join(' and ')} header not provided.` })
 
-      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+      req.socket.write('HTTP/1.1 400 Bad Request\r\nLavalink-Api-Version: 4\r\n\r\n')
   
       return req.socket.destroy()
     }
@@ -134,7 +134,7 @@ server.on('upgrade', (req, socket, head) => {
     if (wrongIds.length) {
       debugLog('connectCD', 1, { ...parsedClientName, error: `${wrongIds.join(' and ')} header must be a valid id.` })
 
-      req.socket.write('HTTP/1.1 400 Bad Request\r\n\r\n')
+      req.socket.write('HTTP/1.1 400 Bad Request\r\nLavalink-Api-Version: 4\r\n\r\n')
   
       return req.socket.destroy()
     }

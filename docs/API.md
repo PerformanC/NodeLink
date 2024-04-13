@@ -50,6 +50,9 @@ There aren't limitations on how many filters you can use at the same time, be aw
 
 Endpoints covers most of the LavaLink endpoints, except the route planner. It also features new endpoints.
 
+> [!NOTE]
+> ALL responses from both LavaLink and NodeLink will have `Lavalink-Api-Version` header, which contains the version of the API.
+
 ### Compression
 
 NodeLink offers compression for multiple compression formats:
