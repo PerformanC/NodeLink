@@ -203,7 +203,21 @@ export function makeRequest(url, options) {
 
     let req = client.request(reqOptions)
 
-    client.on('error', () => { /* Add listener or else will crash */ })
+    client.on('connect', () => {
+      if (client.alpnProtocol !== 'h2') {
+        client.close()
+
+        resolve({
+          error: {
+            message: 'No HTTP/2 support'
+          }
+        })
+      }
+    })
+
+    client.on('error', () => { 
+      consoleError(`[\u001b[31mmakeRequest\u001b[37m]: Failed connecting to ${url}.`)
+    })
 
     req.on('error', (error) => {
       consoleError(`[\u001b[31mmakeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
