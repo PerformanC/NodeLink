@@ -85,6 +85,17 @@ function createAudioResource(stream, type) {
     ])
   }
 
+  if (type === 'wav') {
+    return new NodeLinkStream(stream, [
+      new prism.VolumeTransformer({ type: 's16le' }),
+      new prism.opus.Encoder({
+        rate: constants.opus.samplingRate / 2,
+        channels: constants.opus.channels / 2,
+        frameSize: constants.opus.frameSize / 2
+      })
+    ])
+  }
+
   const ffmpeg = new prism.FFmpeg({
     args: [
       '-loglevel', '0',

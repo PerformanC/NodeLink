@@ -12,6 +12,7 @@ import spotify from './sources/spotify.js'
 import youtube from './sources/youtube.js'
 import genius from './sources/genius.js'
 import musixmatch from './sources/musixmatch.js'
+import flowery from './sources/flowery.js'
 import searchWithDefault from './sources/default.js'
 
 import { debugLog, http1makeRequest, makeRequest, loadHLS, loadHLSPlaylist } from './utils.js'
@@ -51,7 +52,11 @@ async function getTrackURL(track, toDefault) {
         return youtube.retrieveStream(track.identifier, track.sourceName, track.title)
       }
       case 'local': {
-        return { url: track.uri, protocol: 'file', format: 'arbitrary' }
+        return {
+          url: track.uri,
+          protocol: 'file',
+          format: 'arbitrary'
+        }
       }
 
       case 'http':
@@ -66,6 +71,20 @@ async function getTrackURL(track, toDefault) {
       }
       case 'deezer': {
         return deezer.retrieveStream(track.identifier, track.title)
+      }
+      case 'flowery': {
+        let format = null
+        switch (config.audio.quality) {
+          case 'high': format = 'wav'; break
+          case 'low': format = 'ogg/opus'; break
+          default: format = 'arbitrary'; break
+        }
+
+        return {
+          url: flowery.retrieveStream(track.title),
+          protocol: 'http',
+          format
+        }
       }
       default: {
         return {
@@ -252,6 +271,9 @@ async function loadTracks(identifier) {
 
     if (config.search.sources.local && identifier.startsWith('local:'))
       return await local.loadFrom(identifier.replace('local:', ''))
+
+    if (config.search.sources.flowery && identifier.startsWith('flowery:'))
+      return await flowery.loadFrom(identifier.replace('flowery:', ''))
 
     debugLog('loadTracks', 1, { params: identifier, error: 'No possible search source found.' })
 

@@ -39,6 +39,10 @@ export default {
       success: true,
       error: true
     },
+    flowery: {
+      success: true,
+      error: true
+    },
     musixmatch: true,
     websocket: {
       connect: true,
@@ -120,6 +124,16 @@ export default {
         enabled: true,
         clientId: 'AUTOMATIC', // Available in SoundCloud website API requests in client_id parameter.
         fallbackIfSnipped: true
+      },
+      flowery: {
+        enabled: true,
+        config: {
+          voice: 'Ali',
+          translate: false, // Translate lyrics to selected language.
+          silence: 0, // Range is 0 to 10000
+          speed: 1, // Range is 0.5 to 10
+        },
+        enforceConfig: true // Doesn't allow the client to use custom values
       },
       musixmatch: {
         enabled: false,

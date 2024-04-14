@@ -19,7 +19,6 @@ async function loadFrom(uri) {
     }
   }
 
-
   if (!data.headers || !data.headers['content-type']?.startsWith('audio/')) {
     debugLog('loadtracks', 4, { type: 2, loadType: 'error', sourceName: type, query: uri, message: 'Url is not a playable stream.' })
 

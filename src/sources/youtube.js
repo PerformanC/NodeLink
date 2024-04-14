@@ -45,8 +45,8 @@ function _getBaseHost(type) {
 function _switchClient(newClient) {
   if (newClient === 'ANDROID') {
     ytContext.client.clientName = 'ANDROID'
-    ytContext.client.clientVersion = '19.04.33'
-    ytContext.client.userAgent = 'com.google.android.youtube/19.04.33 (Linux; U; Android 14 gzip)'
+    ytContext.client.clientVersion = '19.14.34'
+    ytContext.client.userAgent = 'com.google.android.youtube/19.13.34 (Linux; U; Android 14 gzip)'
   } else if (newClient === 'ANDROID_MUSIC') {
     ytContext.client.clientName = 'ANDROID_MUSIC'
     ytContext.client.clientVersion = '6.37.50'
@@ -152,6 +152,12 @@ async function search(query, type, shouldLog) {
     method: 'POST',
     disableBodyCompression: true
   })
+
+  console.log(JSON.stringify({
+    context: ytContext,
+    query,
+    params: type === 'ytmusic' && !config.search.sources.youtube.bypassAgeRestriction ? 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D' : 'EgIQAQ%3D%3D'
+  }))
 
   if (typeof search !== 'object') {
     debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'Failed to load results.' })
