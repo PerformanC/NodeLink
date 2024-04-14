@@ -153,12 +153,6 @@ async function search(query, type, shouldLog) {
     disableBodyCompression: true
   })
 
-  console.log(JSON.stringify({
-    context: ytContext,
-    query,
-    params: type === 'ytmusic' && !config.search.sources.youtube.bypassAgeRestriction ? 'EgWKAQIIAWoQEAMQBBAJEAoQBRAREBAQFQ%3D%3D' : 'EgIQAQ%3D%3D'
-  }))
-
   if (typeof search !== 'object') {
     debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'Failed to load results.' })
 
