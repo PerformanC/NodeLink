@@ -113,7 +113,9 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
   return new Promise(async (resolve) => {
     try {
       if (protocol === 'file') {
-        const file = fs.createReadStream(url)
+        const file = fs.createReadStream(url, {
+          autoClose: true
+        })
 
         file.on('error', () => {
           debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Failed to retrieve stream from source. (File not found or not accessible)' })
@@ -128,11 +130,11 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
           })
         })
 
-        file.on('open', () => {
-          resolve({
-            stream: file,
-            type: 'arbitrary'
-          })
+        file.on('open', () => file.emit('finishBuffering'))
+
+        resolve({
+          stream: file,
+          type: 'arbitrary'
         })
       } else {
         let trueSource = [ 'pandora', 'spotify' ].includes(decodedTrack.sourceName) ? config.search.defaultSearchSource : decodedTrack.sourceName

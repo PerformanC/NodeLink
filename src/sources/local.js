@@ -27,7 +27,7 @@ function loadFrom(path) {
         length: -1,
         isStream: false,
         position: 0,
-        title: 'unknown',
+        title: path.substring(path.lastIndexOf('/') + 1),
         uri: path,
         artworkUrl: null,
         isrc: null,
