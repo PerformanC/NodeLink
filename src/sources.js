@@ -130,7 +130,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
           })
         })
 
-        file.on('open', () => file.emit('finishBuffering'))
+        file.once('close', () => file.emit('finishBuffering'))
 
         resolve({
           stream: file,
