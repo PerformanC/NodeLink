@@ -247,9 +247,8 @@ class Filters {
       this.command.push(`lowpass=f=${filters.lowPass.smoothing / 500}`)
     }
 
-    if (filters.seek !== undefined) {
-      result.startTime = Math.min(filters.seek, decodedTrack.length)
-    }
+    if (filters.seek !== undefined)
+      result.startTime = decodedTrack.length !== -1 ? Math.min(filters.seek, decodedTrack.length) : filters.seek
 
     this.result = result
 
