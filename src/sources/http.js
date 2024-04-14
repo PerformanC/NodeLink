@@ -7,12 +7,12 @@ async function loadFrom(uri) {
   const data = await makeRequest(uri, { method: 'HEAD' })
   
   if (data.error) {
-    debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: type, query: uri, message: 'Not possible to connect to the URL.', })
+    debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: type, query: uri, message: `Not possible to connect to the URL: ${data.error.message}` })
 
     return {
       loadType: 'error',
       data: {
-        message: 'Not possible to connect to the URL.',
+        message: `Not possible to connect to the URL: ${data.error.message}`,
         severity: 'fault',
         cause: 'Unknown'
       }
