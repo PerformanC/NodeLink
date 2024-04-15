@@ -183,7 +183,7 @@ async function search(query, type, shouldLog) {
 
   let videos = null
   if (config.search.sources.youtube.bypassAgeRestriction) videos = type == 'ytmusic' ? search.contents?.sectionListRenderer?.contents[0]?.itemSectionRenderer?.contents : search.contents?.sectionListRenderer?.contents[search.contents?.sectionListRenderer?.contents.length - 1]?.itemSectionRenderer?.contents
-  else videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer?.mainContent?.sectionListRenderer?.contents[0]?.musicShelfRenderer?.contents : search.contents.sectionListRenderer.contents[search.contents.sectionListRenderer.contents.length - 1].itemSectionRenderer.contents
+  else videos = type == 'ytmusic' ? search.contents.tabbedSearchResultsRenderer.tabs[0].tabRenderer.content.musicSplitViewRenderer?.mainContent?.sectionListRenderer?.contents[0]?.musicShelfRenderer?.contents : search.contents.sectionListRenderer.contents[0].itemSectionRenderer.contents
 
   if (!videos) {
     debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'No matches found.' })
@@ -255,7 +255,7 @@ async function loadFrom(query, type) {
       
       const identifier = (/v=([^&]+)/.exec(query) || /youtu\.be\/([^?]+)/.exec(query))[1]
 
-      const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+      const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
           ...(config.search.sources.youtube.authentication.enabled ? {
@@ -332,7 +332,7 @@ async function loadFrom(query, type) {
       let identifier = /v=([^&]+)/.exec(query)
       if (identifier) identifier = identifier[1]
 
-      const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+      const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
           ...(config.search.sources.youtube.authentication.enabled ? {
@@ -457,7 +457,7 @@ async function loadFrom(query, type) {
     case constants.YouTube.shorts: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
 
-      const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+      const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
           ...(config.search.sources.youtube.authentication.enabled ? {
@@ -543,7 +543,7 @@ async function retrieveStream(identifier, type, title) {
   if (!config.search.sources.youtube.bypassAgeRestriction)
     _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
-  const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false&t=${randomLetters(12)}&id=${identifier}`, {
+  const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
       ...(config.search.sources.youtube.authentication.enabled ? {
@@ -630,7 +630,7 @@ function loadLyrics(decodedTrack, language) {
     if (!config.search.sources.youtube.bypassAgeRestriction)
       _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
-    const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`, {
+    const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player`, {
       headers: {
         'User-Agent': ytContext.client.userAgent,
         ...(config.search.sources.youtube.authentication.enabled ? {
