@@ -53,6 +53,10 @@ class NodeLinkStream {
     this.stream.emit(event, ...args)
   }
 
+  removeListener(event, listener) {
+    this.stream.removeListener(event, listener)
+  }
+
   read() {
     return this.stream?.read()
   }
