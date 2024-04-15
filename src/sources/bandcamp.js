@@ -98,7 +98,7 @@ async function search(query, shouldLog) {
   let names = data.match(/<div class="heading">\s+<a.*?>(.*?)<\/a>/gs)
 
   if (!names) {
-    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'BandCamp', query, message: 'No matches found.' })
+    if (shouldLog) debugLog('search', 4, { type: 3, sourceName: 'BandCamp', query, message: 'No matches found.' })
 
     return {
       loadType: 'empty',
@@ -130,15 +130,6 @@ async function search(query, shouldLog) {
       pluginInfo: {}
     })
   })
-
-  if (!tracks.length) {
-    if (shouldLog) debugLog('search', 4, { type: 2, sourceName: 'BandCamp', query, message: 'No matches found.' })
-
-    return {
-      loadType: 'empty',
-      data: {}
-    }
-  }
 
   const authors = data.match(/<div class="subhead">\s+(?:from\s+)?[\s\S]*?by (.*?)\s+<\/div>/gs)
 

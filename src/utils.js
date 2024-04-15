@@ -503,7 +503,7 @@ export function debugLog(name, type, options) {
         case 'trackEnd': {
           if (!config.debug.track.end) return;
 
-          consoleLog(`[\u001b[32mtrackEnd\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m because was \u001b[94m${options.reason}\u001b[37m.`)
+          consoleLog(`[\u001b[32mtrackEnd\u001b[37m]: \u001b[94m${options.track.title}\u001b[37m by \u001b[94m${options.track.author}\u001b[37m because it was \u001b[94m${options.reason}\u001b[37m.`)
 
           break
         }
