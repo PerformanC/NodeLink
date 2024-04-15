@@ -261,7 +261,14 @@ class Filters {
         if (decodedTrack.sourceName === 'deezer') {
           debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
 
-          return resolve({ status: 1, exception: { message: 'Filtering does not support Deezer platform', severity: 'fault', cause: 'Unimplemented feature.' } })
+          return resolve({
+            status: 1,
+            exception: {
+              message: 'Filtering does not support Deezer platform',
+              severity: 'fault',
+              cause: 'Unimplemented feature.'
+            }
+          })
         }
 
         const ffmpeg = new prism.FFmpeg({
@@ -288,7 +295,7 @@ class Filters {
         ffmpeg.process.stdout.on('data', (data) => stream.write(data))
         ffmpeg.process.stdout.on('end', () => stream.end())
         ffmpeg.on('error', (err) => {
-          debugLog('retrieveStream', 3, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
+          debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
 
           resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Unknown' } })
         })
@@ -336,9 +343,16 @@ class Filters {
           resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines) })
         })
       } catch (err) {
-        debugLog('retrieveStream', 3, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
+        debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
 
-        resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Unknown' } })
+        resolve({
+          status: 1,
+          exception: {
+            message: err.message,
+            severity: 'fault',
+            cause: 'Unknown'
+          }
+        })
       }
     })
   }
