@@ -276,7 +276,7 @@ class VoiceConnection {
   stop() {
     if (!this.config.track) return this.config
 
-    if (this.connection.audioStream && player.connection.udp) this.connection.stop()
+    if (this.connection.audioStream && this.connection.udp) this.connection.stop()
     else this._stopTrack()
   }
 
