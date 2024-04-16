@@ -293,7 +293,7 @@ class Filters {
         const stream = PassThrough()
 
         ffmpeg.process.stdout.on('data', (data) => stream.write(data))
-        ffmpeg.process.stdout.on('end', () => stream.end())
+        ffmpeg.process.stdout.on('end', () => stream.emit('finishBuffering'))
         ffmpeg.on('error', (err) => {
           debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
 
