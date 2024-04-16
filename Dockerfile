@@ -9,4 +9,6 @@ ENV NODE_ENV=production
 
 RUN npm i
 
+RUN apk --purge del python3 make clang g++
+
 CMD ["npm", "start"]
