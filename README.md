@@ -40,6 +40,12 @@ $ npm i
 $ npm start
 ```
 
+### Or installing in Docker
+
+```shell
+$ docker pull performanc/nodelink
+```
+
 ## Usage
 
 NodeLink is compatible with most LavaLink clients, as it implements most of the LavaLink API. However, some clients may not be compatible with NodeLink, as it implements changes some behaviors and endpoints.
