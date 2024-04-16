@@ -49,7 +49,7 @@ $ docker pull performanc/nodelink
 #### Run in Docker
 
 ```shell
-$ docker run -d --name nodelink -p 2333:2333 performanc/nodelink
+$ docker run -d --name NodeLink -p 2333:2333 performanc/nodelink
 ```
 
 ## Usage
