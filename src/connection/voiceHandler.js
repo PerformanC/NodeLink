@@ -308,7 +308,12 @@ class VoiceConnection {
     if (!this.config.track?.encoded || !config.filters.enabled) return this.config
 
     const filter = new Filters()
-    this.config.filters = filter.configure(filters, this.config.track.info)
+    const trackFilters = filter.configure(filters, this.config.track.info)
+    this.config.filters = {
+      ...trackFilters,
+      startTime: undefined,
+      endTime: undefined
+    }
 
     if (!this.config.track) return this.config
 
