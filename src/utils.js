@@ -953,7 +953,7 @@ export function loadHLSPlaylist(url, stream) {
           if (value) value = value.split(',')[0]
 
           if (tag === '#EXT-X-ENDLIST') {
-            stream.end()
+            stream.emit('finishBuffering')
 
             resolvePlaylist(true)
 

@@ -365,7 +365,7 @@ function loadTrack(title, url, trackInfos) {
       streamOnly: true
     })
 
-    res.stream.on('end', () => stream.end())
+    res.stream.on('end', () => stream.emit('finishBuffering'))
     res.stream.on('error', (error) => {
       debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: error.message })
 
