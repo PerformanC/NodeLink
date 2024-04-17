@@ -1,5 +1,3 @@
-import { PassThrough } from 'node:stream'
-
 import config from '../../config.js'
 import { debugLog, encodeTrack, http1makeRequest, loadHLS } from '../utils.js'
 import searchWithDefault from './default.js'
@@ -43,6 +41,73 @@ async function init() {
   sourceInfo.clientId = clientId
 
   debugLog('soundcloud', 5, { type: 1, message: 'Successfully fetched clientId.' })
+}
+
+async function search(query, shouldLog) {
+  if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
+
+  const req = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=${config.options.maxResultsLength}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, { method: 'GET' })
+  const body = req.body
+
+  if (req.error || req.statusCode !== 200) {
+    const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
+
+    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: errorMessage })
+
+    return {
+      exception: {
+        message: errorMessage,
+        severity: 'fault',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  if (body.total_results === 0) {
+    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: 'No matches found.' })
+
+    return {
+      loadType: 'empty',
+      data: {}
+    }
+  }
+
+  const tracks = []
+
+  if (body.collection.length > config.options.maxSearchResults)
+    body.collection = body.collection.filter((item, i) => i < config.options.maxSearchResults || item.kind === 'track')
+
+  body.collection.forEach((item) => {
+    if (item.kind !== 'track') return;
+    
+    const track = {
+      identifier: item.id.toString(),
+      isSeekable: true,
+      author: item.user.username,
+      length: item.duration,
+      isStream: false,
+      position: 0,
+      title: item.title,
+      uri: item.permalink_url,
+      artworkUrl: item.artwork_url,
+      isrc: null,
+      sourceName: 'soundcloud'
+    }
+
+    tracks.push({
+      encoded: encodeTrack(track),
+      info: track,
+      pluginInfo: {}
+    })
+  })
+
+  if (shouldLog)
+    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+
+  return {
+    loadType: 'search',
+    data: tracks
+  }
 }
 
 async function loadFrom(url) {
@@ -213,73 +278,6 @@ async function loadFrom(url) {
   }
 }
 
-async function search(query, shouldLog) {
-  if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
-
-  const req = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=${config.options.maxResultsLength}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, { method: 'GET' })
-  const body = req.body
-
-  if (req.error || req.statusCode !== 200) {
-    const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
-
-    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: errorMessage })
-
-    return {
-      exception: {
-        message: errorMessage,
-        severity: 'fault',
-        cause: 'Unknown'
-      }
-    }
-  }
-
-  if (body.total_results === 0) {
-    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: 'No matches found.' })
-
-    return {
-      loadType: 'empty',
-      data: {}
-    }
-  }
-
-  const tracks = []
-
-  if (body.collection.length > config.options.maxSearchResults)
-    body.collection = body.collection.filter((item, i) => i < config.options.maxSearchResults || item.kind === 'track')
-
-  body.collection.forEach((item) => {
-    if (item.kind !== 'track') return;
-    
-    const track = {
-      identifier: item.id.toString(),
-      isSeekable: true,
-      author: item.user.username,
-      length: item.duration,
-      isStream: false,
-      position: 0,
-      title: item.title,
-      uri: item.uri,
-      artworkUrl: item.artwork_url,
-      isrc: null,
-      sourceName: 'soundcloud'
-    }
-
-    tracks.push({
-      encoded: encodeTrack(track),
-      info: track,
-      pluginInfo: {}
-    })
-  })
-
-  if (shouldLog)
-    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
-
-  return {
-    loadType: 'search',
-    data: tracks
-  }
-}
-
 async function retrieveStream(identifier, title) {
   const req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
   const body = req.body
@@ -345,7 +343,7 @@ async function retrieveStream(identifier, title) {
 
 export default {
   init,
-  loadFrom,
   search,
+  loadFrom,
   retrieveStream
 }
