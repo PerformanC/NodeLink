@@ -150,7 +150,7 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
 
         if (protocol === 'hls_segment') {
           const stream = PassThrough()
-          await loadHLS(url, stream)
+          await loadHLS(url, stream, false, true)
 
           return resolve({
             stream
