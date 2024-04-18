@@ -194,8 +194,10 @@ async function search(query, type, shouldLog) {
     }
   }
 
-  if (videos.length > config.options.maxSearchResults)
-    videos = videos.filter((video, i) => (video.compactVideoRenderer || video.musicTwoColumnItemRenderer) && i < config.options.maxSearchResults)
+  if (videos.length > config.options.maxSearchResults) {
+    let i = 0
+    videos = videos.filter((video) => (video.compactVideoRenderer || video.musicTwoColumnItemRenderer) && i++ < config.options.maxSearchResults)
+  }
 
   videos.forEach((video) => {
     video = video.compactVideoRenderer || video.musicTwoColumnItemRenderer

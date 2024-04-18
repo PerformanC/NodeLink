@@ -46,7 +46,7 @@ async function init() {
 async function search(query, shouldLog) {
   if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
 
-  const req = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=${config.options.maxResultsLength}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, { method: 'GET' })
+  const req = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=${config.options.maxSearchResults}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, { method: 'GET' })
   const body = req.body
 
   if (req.error || req.statusCode !== 200) {

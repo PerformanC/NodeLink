@@ -68,7 +68,7 @@ async function search(query) {
   return new Promise(async (resolve) => {
     debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
-    const limit = config.options.maxResultsLength >= 50 ? 50 : config.options.maxResultsLength
+    const limit = config.options.maxSearchResults >= 50 ? 50 : config.options.maxSearchResults
 
     const { body: data } = await makeRequest(`https://api.spotify.com/v1/search?q=${encodeURI(query)}&type=track&limit=${limit}&market=${config.search.sources.spotify.market}`, {
       method: 'GET',
@@ -136,7 +136,7 @@ async function loadFrom(query, type) {
 
     switch (type[1]) {
       case 'track': {
-        endpoint = `/tracks/${type[2]}?limit=${config.options.maxResultsLength}`
+        endpoint = `/tracks/${type[2]}?limit=${config.options.maxSearchResults}`
 
         break
       }

@@ -20,7 +20,7 @@ if (typeof config.options.playerUpdateInterval !== 'boolean' && typeof config.op
 if (typeof config.options.statsInterval !== 'boolean' && typeof config.options.statsInterval !== 'number')
   throw new Error('Stats interval must be a boolean or a number.')
 
-if (typeof config.options.maxResultsLength !== 'number')
+if (typeof config.options.maxSearchResults !== 'number')
   throw new Error('Max results length must be a number.')
 
 if (typeof config.options.maxAlbumPlaylistLength !== 'number')

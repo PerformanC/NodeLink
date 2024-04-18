@@ -13,7 +13,7 @@ export default {
     threshold: false,
     playerUpdateInterval: false,
     statsInterval: false,
-    maxResultsLength: 200,
+    maxSearchResults: 200,
     maxAlbumPlaylistLength: 200,
     maxCaptionsLength: 3,
     logFile: 'logs.txt'
