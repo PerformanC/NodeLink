@@ -108,8 +108,8 @@ async function search(query, shouldLog) {
 
   const tracks = []
 
-  if (names.length > config.options.maxResultsLength)
-    names = names.slice(0, config.options.maxResultsLength)
+  if (names.length > config.options.maxSearchResults)
+    names = names.slice(0, config.options.maxSearchResults)
   
   names.forEach((name) => {
     tracks.push({

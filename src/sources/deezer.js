@@ -194,8 +194,10 @@ async function search(query, shouldLog) {
 
   const tracks = []
 
-  if (data.data.length > config.options.maxResultsLength)
-    data.data = data.data.filter((item, i) => i < config.options.maxResultsLength || item.type === 'track')
+  if (data.data.length > config.options.maxSearchResults) {
+    let i = 0
+    data.data = data.data.filter((item) => item.type === 'track' && i++ < config.options.maxSearchResults)
+  }
 
   data.data.forEach(async (item) => {
     const track = {

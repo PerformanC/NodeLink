@@ -41,7 +41,7 @@ async function search(query) {
       types: ['TR'],
       listener: null,
       start: 0,
-      count: config.options.maxResultsLength,
+      count: config.options.maxSearchResults,
       annotate: true,
       searchTime: 0,
       annotationRecipe: 'CLASS_OF_2019'
@@ -70,8 +70,8 @@ async function search(query) {
 
     let annotationKeys = Object.keys(data.annotations)
 
-    if (annotationKeys.length > config.options.maxResultsLength)
-      annotationKeys = annotationKeys.slice(0, config.options.maxResultsLength)
+    if (annotationKeys.length > config.options.maxSearchResults)
+      annotationKeys = annotationKeys.slice(0, config.options.maxSearchResults)
 
     annotationKeys.forEach(async (key) => {
       if (data.annotations[key].type === 'TR') {
