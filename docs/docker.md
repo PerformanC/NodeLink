@@ -7,7 +7,7 @@ Docker is an open source platform that simplifies the development, deployment an
    - [Installing Docker](#installing-docker)
    - [Installing NodeLink](#installing-nodelink)
       - [Installing with Docker Compose](#installing-with-docker-compose)
-      - [Command-Line Installation](#command-line-installation)
+      - [Command-Line Installation](#command-line)
 
 ## Installing
 
