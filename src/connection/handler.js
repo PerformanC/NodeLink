@@ -77,7 +77,7 @@ function startPlayerUpdate() {
 
         client.ws.send(JSON.stringify({
           op: 'playerUpdate',
-          guildId: player.guildId,
+          guildId: player.config.guildId,
           state: player.config.state
         }))
       })
