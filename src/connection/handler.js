@@ -206,8 +206,6 @@ async function requestHandler(req, res) {
         path: parsedUrl.pathname
       }, 400)
     }
-    
-    encodedTrack = encodedTrack.replace(/ /, '+')
 
     let decodedTrack = null
 
