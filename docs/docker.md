@@ -76,7 +76,7 @@ that's it, now just set it up on a client and be happy
 an easier and quicker way is to use the Docker CLI
 
 ```shell
-docker run -d --name nodelink -p 2333:2333 performanc/nodelink
+docker run -d --name NodeLink -p 2333:2333 performanc/nodelink
 ```
 
 This way it's not very easy to modify the configuration file, but in the files inside the container you can find them in `usr/src/app`
