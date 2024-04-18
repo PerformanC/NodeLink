@@ -3,6 +3,11 @@
 Docker is an open source platform that simplifies the development, deployment and execution of applications through the use of containers. Containers are units of software that encapsulate the application and its dependencies, allowing it to run consistently and portably in different environments.
 
 ## Table of contents
+1. [**Installing**](#installing)
+   - [Installing Docker](#installing-docker)
+   - [Installing NodeLink](#installing-nodelink)
+      - [Installing with Docker Compose](#installing-with-docker-compose)
+      - [Command-Line Installation](#command-line-installation)
 
 ## Installing
 
