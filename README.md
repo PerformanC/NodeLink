@@ -40,7 +40,7 @@ $ npm i
 $ npm start
 ```
 
-### Or using Docker
+### Using with Docker
 for information on how to install NodeLink using Docker, see the documentation [docs/docker.md](docs/docker.md)
 
 ## Usage
