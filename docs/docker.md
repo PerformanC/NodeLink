@@ -31,8 +31,8 @@ There are two ways to do this installation, the first is by showing a method to 
 
 1. Create a folder wherever you want, inside this folder we'll create a file called `docker-compose.yml`
 
-![folder](https://i.ibb.co/YNx3jKk/image.png)
-![creating-file-docker-compose](https://i.ibb.co/whhtrND/image.png)
+![folder](assets/new-folder.png)
+![creating-file-docker-compose](assets/creating-file-docker-compose.png)
 
 2. Once it's done, copy and paste this configuration:
 
@@ -56,20 +56,19 @@ networks:
 
 where there is 2333, it is the port where docker will redirect the NodeLink API, change it to the port you want, for example `2333:5000` it will expose the API to localhost:5000
 
-![past-config](https://i.ibb.co/F4RR8NX/image.png)
+![past-config](assets/docker-compose-past.png)
 
 3. With this, create a file in the same folder called config.js, and copy and paste the NodeLink configuration code into this file.
 
-![github-file-config.js](https://i.ibb.co/Xz4WMfs/image.png)
-![creating-file-config.js](https://i.ibb.co/c66v3dc/image.png)
-![past-file-config.js](https://i.ibb.co/k4BTgNW/image.png)
+![github-file-config.js](assets/github-copy-code-config-js.png)
+![creating-file-config.js](assets/config-js.png)
+![past-file-config.js](assets/past-code-config-js.png)
 
 4. Do whatever any change you wish in config.js such as modifying the password, adding source credentials or enabling sources. Finally open the terminal in the directory where these files are located and type the following command: 
 
 ```shell
 # docker compose up -d`
-\`\`\` // Fix this because suggestions are broken
-
+``` 
 
 ![terminal-command-line](https://i.ibb.co/zHnM4Bb/image.png)
 ![terminal-command-line-sucess](https://i.ibb.co/xFbm28M/image.png)
