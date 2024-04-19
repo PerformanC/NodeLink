@@ -83,7 +83,7 @@ An easier and quicker way is to use the Docker CLI:
 docker run -d --name NodeLink -p 2333:2333 performanc/nodelink
 ```
 
-This way it's not very easy to modify the configuration file, but in the files inside the container you can find them in `usr/src/app`
+This way it's not very easy to modify the configuration file, but it's localized in  `/usr/src/app`.
 
 modifying the port where it exposes the NodeLink API is also the same as the first method `2333:5000` it will expose to localhost:5000
 
