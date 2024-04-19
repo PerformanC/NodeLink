@@ -25,7 +25,8 @@ class VoiceConnection {
     this.cache = {
       url: null,
       protocol: null,
-      track: null
+      track: null,
+      time: 0
     }
   
     this.config = {
@@ -126,7 +127,8 @@ class VoiceConnection {
     this.cache = {
       url: null,
       protocol: null,
-      track: null
+      track: null,
+      time: 0
     }
 
     this.config = {
@@ -137,7 +139,7 @@ class VoiceConnection {
   }
 
   _getRealTime() {
-    return this.connection.statistics.packetsExpected * 20
+    return this.cache.time + (this.connection.statistics.packetsExpected * 20)
   }
 
   updateVoice(buffer) {
@@ -326,7 +328,8 @@ class VoiceConnection {
 
     if (!this.config.track) return this.config
 
-    const resource = await filter.getResource(this.config.track.info, this.cache.protocol, this.cache.url, this._getRealTime(), filters.endTime, null, null)
+    const realTime = this._getRealTime()
+    const resource = await filter.getResource(this.config.track.info, this.cache.protocol, this.cache.url, realTime, filters.endTime, null, null)
 
     if (resource.exception) {
       debugLog('trackException', 2, { track: this.config.track.info, exception: resource.exception.message })
@@ -353,6 +356,7 @@ class VoiceConnection {
     if (!this.connection.udpInfo?.secretKey)
       await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected')
     
+    this.cache.time = filters.seek || realTime
     this.connection.play(resource.stream)
 
     return this.config
