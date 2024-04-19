@@ -17,7 +17,7 @@ This topic has information on how to install docker and how to use it with NodeL
 
 For detailed instructions on installing the Docker Engine on various operating systems, including Linux, macOS and Windows, consult the official Docker documentation:
 
-[Official Docker documentation] (https://docs.docker.com/engine/install/)
+[Official Docker documentation](https://docs.docker.com/engine/install/)
 
 we'll also need a docker tool called Docker Compose:
 
