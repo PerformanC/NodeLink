@@ -85,7 +85,7 @@ docker run -d --name NodeLink -p 2333:2333 performanc/nodelink
 
 This way it's not very easy to modify the configuration file, but it's localized in  `/usr/src/app`.
 
-modifying the port where it exposes the NodeLink API is also the same as the first method `2333:5000` it will expose to localhost:5000
+Modifying the port where it exposes the NodeLink API is also the same as the first method `2333:5000` it will expose to `localhost:5000`.
 
 why is the first part still 2333:?
 this indicates the internal docker port where the API is running, if you modify in config.js, you also need to modify this internal port for example, you put 4444 in config.js you will put like this `4444:4444`.
