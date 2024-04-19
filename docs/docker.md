@@ -29,7 +29,7 @@ There are two ways to do this installation, the first is by showing a method to 
 
 #### Installing with Docker Compose
 
-1. Create a folder wherever you want, inside this folder we'll create a file called docker-compose.yml
+1. Create a folder wherever you want, inside this folder we'll create a file called `docker-compose.yml`
 
 ![folder](https://i.ibb.co/YNx3jKk/image.png)
 ![creating-file-docker-compose](https://i.ibb.co/whhtrND/image.png)
