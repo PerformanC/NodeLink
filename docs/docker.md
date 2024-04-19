@@ -21,7 +21,7 @@ For detailed instructions on installing the Docker Engine on various operating s
 
 we'll also need a docker tool called Docker Compose:
 
-[Docker-Compose] (https://docs.docker.com/compose/install/)
+[Docker-Compose](https://docs.docker.com/compose/install/)
 
 ### Installing NodeLink
 
