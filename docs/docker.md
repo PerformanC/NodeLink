@@ -78,7 +78,7 @@ That's it, now just set it up on a client and be happy.
 
 #### Command-Line
 
-an easier and quicker way is to use the Docker CLI
+An easier and quicker way is to use the Docker CLI:
 
 ```shell
 docker run -d --name NodeLink -p 2333:2333 performanc/nodelink
