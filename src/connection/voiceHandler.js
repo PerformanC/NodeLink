@@ -220,13 +220,17 @@ class VoiceConnection {
         reason: 'replaced'
       }))
 
-      debugLog('trackStart', 2, { track: this.config.track.info })
+      debugLog('trackStart', 2, { track: decodedTrack })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
         type: 'TrackStartEvent',
         guildId: this.config.guildId,
-        track: this.config.track
+        track: {
+          encoded: track,
+          info: decodedTrack,
+          userData: this.config.track?.userData
+        }
       }))
     }
 
