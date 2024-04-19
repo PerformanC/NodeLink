@@ -40,6 +40,9 @@ $ npm i
 $ npm start
 ```
 
+### Using with Docker
+For information on how to install NodeLink using Docker, see [the NodeLink Docker guide](docs/docker.md).
+
 ## Usage
 
 NodeLink is compatible with most LavaLink clients, as it implements most of the LavaLink API. However, some clients may not be compatible with NodeLink, as it implements changes some behaviors and endpoints.
