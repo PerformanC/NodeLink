@@ -70,8 +70,8 @@ where there is 2333, it is the port where docker will redirect the NodeLink API,
 # docker compose up -d`
 ``` 
 
-![terminal-command-line](https://i.ibb.co/zHnM4Bb/image.png)
-![terminal-command-line-sucess](https://i.ibb.co/xFbm28M/image.png)
+![terminal-command-line](assets/command-docker-compose.png)
+![terminal-command-line-sucess](assets/command-sucess-docker-compose.png)
 
 That's it, now just set it up on a client and be happy.
 
