@@ -58,7 +58,7 @@ where there is 2333, it is the port where docker will redirect the NodeLink API,
 
 ![past-config](https://i.ibb.co/F4RR8NX/image.png)
 
-3. with this, create a file in the same folder called config.js, and copy and paste the NodeLink configuration code into this file.
+3. With this, create a file in the same folder called config.js, and copy and paste the NodeLink configuration code into this file.
 
 ![github-file-config.js](https://i.ibb.co/Xz4WMfs/image.png)
 ![creating-file-config.js](https://i.ibb.co/c66v3dc/image.png)
