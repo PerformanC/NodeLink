@@ -34,7 +34,7 @@ There are two ways to do this installation, the first is by showing a method to 
 ![folder](https://i.ibb.co/YNx3jKk/image.png)
 ![creating-file-docker-compose](https://i.ibb.co/whhtrND/image.png)
 
-2. once this is done, copy and paste this configuration:
+2. Once it's done, copy and paste this configuration:
 
 ```yml
 services:
