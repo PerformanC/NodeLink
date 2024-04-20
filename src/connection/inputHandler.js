@@ -69,9 +69,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
   stream.on('end', () => {
     let i = 0
 
-    const connectionsArray = Object.keys(Connections)
-
-    if (connectionsArray.length === 0) {
+    if (Object.keys(Connections).length === 0) {
       buffer = []
 
       return;
@@ -89,7 +87,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
         }
       })
 
-      connectionsArray.forEach((botId) => {
+      Object.keys(Connections).forEach((botId) => {
         if (Connections[botId].guildId !== guildId) return;
 
         Connections[botId].ws.send(endSpeakingResponse)
