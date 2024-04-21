@@ -186,7 +186,7 @@ async function loadFrom(url) {
       const notLoaded = []
 
       if (body.tracks.length > config.options.maxAlbumPlaylistLength)
-        data.tracks = body.tracks.slice(0, config.options.maxAlbumPlaylistLength)
+        body.tracks = body.tracks.slice(0, config.options.maxAlbumPlaylistLength)
 
       body.tracks.forEach((item) => {
         if (!item.title) {
@@ -221,8 +221,7 @@ async function loadFrom(url) {
 
         while ((notLoaded.length && !stop) && (tracks.length > config.options.maxAlbumPlaylistLength)) {
           const notLoadedLimited = notLoaded.slice(0, 50)
-          data = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
-          data = data.body
+          const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
 
           data.forEach((item) => {
             const track = {
@@ -253,13 +252,13 @@ async function loadFrom(url) {
         }
       }
 
-      debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: data.title })
+      debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'SoundCloud', playlistName: body.title })
 
       return {
         loadType: 'playlist',
         data: {
           info: {
-            name: data.title,
+            name: body.title,
             selectedTrack: 0,
           },
           pluginInfo: {},
@@ -268,7 +267,7 @@ async function loadFrom(url) {
       }
     }
     case 'user': {
-      debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'SoundCloud', playlistName: data.full_name })
+      debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'SoundCloud', playlistName: body.full_name })
 
       return {
         loadType: 'empty',
