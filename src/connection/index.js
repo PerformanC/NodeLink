@@ -1,12 +1,11 @@
 import http from 'node:http'
-import process from 'node:process'
 import { URL } from 'node:url'
 
 import connectionHandler from './handler.js'
 import inputHandler from './inputHandler.js'
 import config from '../../config.js'
 import { debugLog, parseClientName, verifyDiscordID } from '../utils.js'
-import { WebSocketServer } from '../ws.js'
+import WebSocketServer from '@performanc/pwsl-server'
 
 if (typeof config.server.port !== 'number')
   throw new Error('Port must be a number.')
@@ -58,7 +57,6 @@ if (typeof config.voiceReceive.timeout !== 'number')
 
 if (![ 'opus', 'pcm' ].includes(config.voiceReceive.type))
   throw new Error('Voice receive type must be either "opus" or "pcm".')
-
 
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer()

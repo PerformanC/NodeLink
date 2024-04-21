@@ -11,6 +11,7 @@ Performant LavaLink replacement written in Node.js.
 
 ## Dependencies
 
+- [`@performanc/pwsl-server](https://github.com/PerformanC/internals/tree/PWSL-server)
 - [`@performanc/voice`](https://npmjs.com/package/@performanc/voice)
 - [`prism-media`](https://npmjs.com/package/prism-media)
 - [`opusscript`](https://npmjs.com/package/opusscript) or [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus)
