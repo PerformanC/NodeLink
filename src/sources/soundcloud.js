@@ -90,7 +90,7 @@ async function search(query, shouldLog) {
       title: item.title,
       uri: item.permalink_url,
       artworkUrl: item.artwork_url,
-      isrc: null,
+      isrc: item.publisher_metadata?.isrc || null,
       sourceName: 'soundcloud'
     }
 
@@ -166,7 +166,7 @@ async function loadFrom(url) {
         title: body.title,
         uri: body.permalink_url,
         artworkUrl: body.artwork_url,
-        isrc: body.publisher_metadata ? body.publisher_metadata.isrc : null,
+        isrc: body.publisher_metadata?.isrc || null,
         sourceName: 'soundcloud'
       }
 
@@ -205,7 +205,7 @@ async function loadFrom(url) {
           title: item.title,
           uri: item.permalink_url,
           artworkUrl: item.artwork_url,
-          isrc: item.publisher_metadata?.isrc,
+          isrc: item.publisher_metadata?.isrc || null,
           sourceName: 'soundcloud'
         }
 
@@ -234,7 +234,7 @@ async function loadFrom(url) {
               title: item.title,
               uri: item.permalink_url,
               artworkUrl: item.artwork_url,
-              isrc: item.publisher_metadata ? item.publisher_metadata.isrc : null,
+              isrc: item.publisher_metadata?.isrc || null,
               sourceName: 'soundcloud'
             }
 
