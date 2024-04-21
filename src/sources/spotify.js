@@ -287,12 +287,16 @@ async function loadFrom(query, type) {
 
         const fragments = []
         const fragmentLengths = []
+        
+        if (data.tracks.items.length === data.tracks.total) {
+          fragmentLengths.push(data.tracks.total)
+        } else {
+          for (let i = data.tracks.items.length; i != data.tracks.total;) {
+            const requestLimit = data.tracks.total - i > 100 ? 100 : data.tracks.total - i
 
-        for (let i = data.tracks.items.length; i != data.tracks.total;) {
-          const requestLimit = data.tracks.total - i > 100 ? 100 : data.tracks.total - i
-
-          fragmentLengths.push(requestLimit)
-          i += requestLimit
+            fragmentLengths.push(requestLimit)
+            i += requestLimit
+          }
         }
 
         fragmentLengths.forEach(async (limit, i) => {
