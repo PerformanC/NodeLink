@@ -254,7 +254,7 @@ async function loadTracks(identifier) {
       return await (dzSearch ? deezer.search(identifier.replace('dzsearch:', ''), true) : deezer.loadFrom(identifier, dzRegex))
 
     const scSearch = config.search.sources.soundcloud.enabled ? identifier.startsWith('scsearch:') : null
-    const scRegex = config.search.sources.soundcloud.enabled && !scSearch ? /^(https?:\/\/)?(www\.)?(m\.)?soundcloud\.com\/[\w\-\.]+(\/[\w\-\.]+)*$/.test(identifier) : null
+    const scRegex = config.search.sources.soundcloud.enabled && !scSearch ? /^(https?:\/\/)?(www\.)?(m\.)?soundcloud\.com\/[\w\-\.]+(\/[\w\-\.]+)*/.test(identifier) : null
     if (config.search.sources.soundcloud.enabled && (scSearch || scRegex))
       return await (scSearch ? soundcloud.search(identifier.replace('scsearch:', ''), true) : soundcloud.loadFrom(identifier))
 
