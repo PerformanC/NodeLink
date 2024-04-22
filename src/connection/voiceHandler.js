@@ -312,7 +312,7 @@ class VoiceConnection {
   }
 
   pause(pause) {
-    if (this.connection.audioStream) {
+    if (this.connection.audioStream && this.connection.udp) {
       if (pause) {
         this.connection.pause()
 
