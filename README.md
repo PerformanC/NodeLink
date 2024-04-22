@@ -66,6 +66,7 @@ NodeLink is compatible with most LavaLink clients, as it implements most of the 
 | [FastLink](https://github.com/PerformanC/FastLink)                  | Node.js      | Yes             | Yes                 | v1 and v2              |
 | [Rainlink](https://github.com/RainyXeon/Rainlink)                   | Node.js      | Yes             | Yes                 | v1 and v2              |
 | [Riffy](https://github.com/riffy-team/riffy)                        | Node.js      | Yes             | No                  | v1 and v2              |
+| [TsumiLink](https://github.com/Fyphen1223/TsumiLink)                | Node.js      | Yes             | Partial (No comp)   | v1 and v2              |
 | [DisCatSharp](https://github.com/Aiko-IT-Systems/DisCatSharp)       | .NET         | Yes             | No                  | v1 and v2              |
 | [Lavalink4NET](https://github.com/angelobreuer/Lavalink4NET)        | .NET         | Yes             | No                  | v1 and v2              |
 | [Nomia](https://github.com/DHCPCD9/Nomia)                           | .NET         | Yes             | No                  | v1 and v2              |
