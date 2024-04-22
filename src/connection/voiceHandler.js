@@ -185,26 +185,42 @@ class VoiceConnection {
     return { stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format) }
   }
 
+  _emitException(track, reason) {
+    debugLog('trackException', 2, { track: track.info, exception: reason })
+
+    this.client.ws.send(JSON.stringify({
+      op: 'event',
+      type: 'TrackExceptionEvent',
+      guildId: this.config.guildId,
+      track: track,
+      exception: {
+        message: reason,
+        severity: 'fault',
+        cause: reason
+      }
+    }))
+    
+    this.wss.send(JSON.stringify({
+      op: 'event',
+      type: 'TrackEndEvent',
+      guildId: this.config.guildId,
+      track: track,
+      reason: 'loadFailed'
+    }))
+  }
+
   async play(track, decodedTrack, noReplace) {
     if (noReplace && this.config.track) return this.config
 
     const urlInfo = await sources.getTrackURL(decodedTrack)
 
     if (urlInfo.exception) {
-      debugLog('trackException', 2, { track: decodedTrack, exception: urlInfo.exception.message })
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackExceptionEvent',
-        guildId: this.config.guildId,
-        track: {
-          encoded: track,
-          info: decodedTrack
-        },
-        exception: urlInfo.exception
-      }))
-
-      this.connection.stop('loadFailed')
+      if (this.connection.audioStream) this.connection.stop('loadFailed')
+      else this._emitException({
+        encoded: track,
+        info: decodedTrack,
+        userData: this.config.track?.userData
+      }, urlInfo.exception.message)
 
       return this.config
     }
@@ -245,21 +261,12 @@ class VoiceConnection {
     }
   
     if (resource.exception) {
-      debugLog('trackException', 2, { track: decodedTrack, exception: resource.exception.message })
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackExceptionEvent',
-        guildId: this.config.guildId,
-        track: {
-          encoded: track,
-          info: decodedTrack,
-          userData: this.config.track?.userData
-        },
-        exception: resource.exception
-      }))
-
-      this.connection.stop('loadFailed')
+      if (this.connection.audioStream) this.connection.stop('loadFailed')
+      else this._emitException({
+        encoded: track,
+        info: decodedTrack,
+        userData: this.config.track?.userData
+      }, resource.exception.message)
 
       return this.config
     }
@@ -336,17 +343,8 @@ class VoiceConnection {
     const resource = await filter.getResource(this.config.track.info, this.cache.protocol, this.cache.url, realTime, filters.endTime, null, null)
 
     if (resource.exception) {
-      debugLog('trackException', 2, { track: this.config.track.info, exception: resource.exception.message })
-
-      this.client.ws.send(JSON.stringify({
-        op: 'event',
-        type: 'TrackExceptionEvent',
-        guildId: this.config.guildId,
-        track: this.config.track,
-        exception: resource.exception
-      }))
-
-      this.connection.stop('loadFailed')
+      if (this.connection.audioStream) this.connection.stop('loadFailed')
+      else this._emitException(this.config.track, resource.exception.message)
 
       return this.config
     }
