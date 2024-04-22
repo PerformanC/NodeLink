@@ -239,7 +239,7 @@ async function loadTracks(identifier) {
       return await (ytSearch ? youtube.search(identifier.replace('ytsearch:', ''), 'youtube', true) : youtube.loadFrom(identifier, 'youtube'))
 
     const ytMusicSearch = config.search.sources.youtube ? identifier.startsWith('ytmsearch:') : null
-    const ytMusicRegex = config.search.sources.youtube && !ytMusicSearch ? /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)$/.test(identifier) : null
+    const ytMusicRegex = config.search.sources.youtube && !ytMusicSearch ? /^(https?:\/\/)?(music\.)?youtube\.com\/(?:shorts\/(?:\?v=)?[a-zA-Z0-9_-]{11}|playlist\?list=[a-zA-Z0-9_-]+|watch\?(?=.*v=[a-zA-Z0-9_-]{11})[^\s]+)/.test(identifier) : null
     if (config.search.sources.youtube && (ytMusicSearch || ytMusicRegex))
       return await (ytMusicSearch ? youtube.search(identifier.replace('ytmsearch:', ''), 'ytmusic', true) : youtube.loadFrom(identifier, 'ytmusic'))
 
