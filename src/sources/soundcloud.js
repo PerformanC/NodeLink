@@ -219,8 +219,12 @@ async function loadFrom(url) {
       if (notLoaded.length) {
         let stop = false
 
-        while ((notLoaded.length && !stop) && (tracks.length > config.options.maxAlbumPlaylistLength)) {
-          const notLoadedLimited = notLoaded.slice(0, 50)
+        while ((notLoaded.length && !stop) && (tracks.length < config.options.maxAlbumPlaylistLength)) {
+          let tracksLeft = notLoaded.length > 50 ? 50 : notLoaded.length
+          if (tracksLeft + tracks.length > config.options.maxAlbumPlaylistLength)
+            tracksLeft = config.options.maxAlbumPlaylistLength - tracks.length
+
+          const notLoadedLimited = notLoaded.slice(0, tracksLeft)
           const { body: data } = await http1makeRequest(`https://api-v2.soundcloud.com/tracks?ids=${notLoadedLimited.join('%2C')}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
 
           data.forEach((item) => {
@@ -245,7 +249,7 @@ async function loadFrom(url) {
             })
           })
 
-          notLoaded.splice(0, 50)
+          notLoaded.splice(0, tracksLeft)
 
           if (notLoaded.length === 0)
             stop = true
