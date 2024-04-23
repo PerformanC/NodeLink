@@ -67,7 +67,7 @@ where there is 2333, it is the port where docker will redirect the NodeLink API,
 4. Do whatever any change you wish in config.js such as modifying the password, adding source credentials or enabling sources. Finally open the terminal in the directory where these files are located and type the following command: 
 
 ```shell
-# docker compose up -d`
+# docker compose up -d
 ``` 
 
 ![terminal-command-line](assets/command-docker-compose.png)
