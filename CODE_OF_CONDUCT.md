@@ -1,1 +1,0 @@
-[See the contributing repository](https://github.com/PerformanC/contributing/blob/main/CODE_OF_CONDUCT.md)

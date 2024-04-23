@@ -1,1 +1,0 @@
-[See the contributing repository](https://github.com/PerformanC/contributing)
