@@ -2,7 +2,6 @@ import { PassThrough, Transform } from 'node:stream'
 
 import config from '../config.js'
 import { debugLog, clamp16Bit, isEmpty } from './utils.js'
-import soundcloud from './sources/soundcloud.js'
 import voiceUtils from './voice/utils.js'
 import constants from '../constants.js'
 

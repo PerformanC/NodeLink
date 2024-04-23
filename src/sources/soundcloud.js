@@ -1,5 +1,5 @@
 import config from '../../config.js'
-import { debugLog, encodeTrack, http1makeRequest, loadHLS } from '../utils.js'
+import { debugLog, encodeTrack, http1makeRequest } from '../utils.js'
 import searchWithDefault from './default.js'
 import sources from '../sources.js'
 

@@ -2,7 +2,6 @@ import crypto from 'node:crypto'
 
 import config from '../../config.js'
 import { debugLog, makeRequest, encodeTrack, http1makeRequest } from '../utils.js'
-import searchWithDefault from './default.js'
 
 let playerInfo = {}
 

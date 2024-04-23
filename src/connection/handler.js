@@ -1,7 +1,7 @@
 import os from 'node:os'
 import { URL } from 'node:url'
 
-import { randomLetters, debugLog, sendResponse, sendResponseNonNull, verifyMethod, encodeTrack, decodeTrack, tryParseBody } from '../utils.js'
+import { randomLetters, debugLog, sendResponse, verifyMethod, encodeTrack, decodeTrack, tryParseBody } from '../utils.js'
 import config from '../../config.js'
 import sources from '../sources.js'
 import VoiceConnection from './voiceHandler.js'
