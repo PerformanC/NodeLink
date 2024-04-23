@@ -1,5 +1,13 @@
-# NPM files
+*
 
-node_modules
-package-lock.json
-
+!.github
+!docs
+!src
+!.dockerignore
+!.gitignore
+!config.js
+!constants.js
+!Dockerfile
+!LICENSE
+!package.json
+!README.md
