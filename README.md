@@ -63,8 +63,8 @@ NodeLink is compatible with most LavaLink clients, as it implements most of the 
 | [Lavacord](https://github.com/lavacord/Lavacord)                    | Typescript   | Yes             | No                  | v1 and v2              |
 | [Shoukaku](https://github.com/Deivu/Shoukaku)                       | Typescript   | Yes             | No                  | v1 and v2              |
 | [Lavalink-Client](https://github.com/tomato6966/Lavalink-Client)    | Typescript   | No              | No                  | v1                     |
+| [Rainlink](https://github.com/RainyXeon/Rainlink)                   | Typescript   | Yes             | Yes                 | v1 and v2              |
 | [FastLink](https://github.com/PerformanC/FastLink)                  | Node.js      | Yes             | Yes                 | v1 and v2              |
-| [Rainlink](https://github.com/RainyXeon/Rainlink)                   | Node.js      | Yes             | Yes                 | v1 and v2              |
 | [Riffy](https://github.com/riffy-team/riffy)                        | Node.js      | Yes             | No                  | v1 and v2              |
 | [TsumiLink](https://github.com/Fyphen1223/TsumiLink)                | Node.js      | Yes             | Partial             | v1 and v2              |
 | [DisCatSharp](https://github.com/Aiko-IT-Systems/DisCatSharp)       | .NET         | Yes             | No                  | v1 and v2              |
