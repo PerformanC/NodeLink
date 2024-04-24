@@ -103,9 +103,11 @@ class VoiceConnection {
     })
 
     this.connection.on('error', (error) => {
-      if (this.config.track && !this.config.paused) nodelinkPlayingPlayersCount--
+      if (!this.config.track) return;
+      
+      if (!this.config.paused) nodelinkPlayingPlayersCount--
 
-      debugLog('trackException', 2, { track: this.config.track?.info, exception: error.message })
+      debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
 
       this.client.ws.send(JSON.stringify({
         op: 'event',
@@ -185,7 +187,7 @@ class VoiceConnection {
     return { stream: voiceUtils.createAudioResource(streamInfo.stream, urlInfo.format) }
   }
 
-  _emitException(track, reason) {
+  _emitException(track, reason, cause) {
     debugLog('trackException', 2, { track: track.info, exception: reason })
 
     this.client.ws.send(JSON.stringify({
@@ -196,7 +198,7 @@ class VoiceConnection {
       exception: {
         message: reason,
         severity: 'fault',
-        cause: reason
+        cause
       }
     }))
     
@@ -220,7 +222,7 @@ class VoiceConnection {
         encoded: track,
         info: decodedTrack,
         userData: this.config.track?.userData
-      }, urlInfo.exception.message)
+      }, urlInfo.exception.message, urlInfo.exception.cause)
 
       return this.config
     }
@@ -266,7 +268,7 @@ class VoiceConnection {
         encoded: track,
         info: decodedTrack,
         userData: this.config.track?.userData
-      }, resource.exception.message)
+      }, resource.exception.message, resource.exception.cause)
 
       return this.config
     }
@@ -344,7 +346,7 @@ class VoiceConnection {
 
     if (resource.exception) {
       if (this.connection.audioStream) this.connection.stop('loadFailed')
-      else this._emitException(this.config.track, resource.exception.message)
+      else this._emitException(this.config.track, resource.exception.message, resource.exception.cause)
 
       return this.config
     }
