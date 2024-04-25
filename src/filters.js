@@ -179,9 +179,9 @@ class Filters {
 
     if (!isEmpty(filters.timescale) && config.filters.list.timescale) {
       result.timescale = {
-        speed: Math.max(filters.timescale.speed, 0.0),
-        pitch: Math.max(filters.timescale.pitch, 0.0),
-        rate: Math.max(filters.timescale.rate, 0.0)
+        speed: Math.max(filters.timescale.speed, 0.0) || 1.0,
+        pitch: Math.max(filters.timescale.pitch, 0.0) || 1.0,
+        rate: Math.max(filters.timescale.rate, 0.0) || 1.0
       }
 
       const finalspeed = result.timescale.speed + (1.0 - result.timescale.pitch)
