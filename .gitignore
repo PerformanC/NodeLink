@@ -1,8 +1,11 @@
 *
 
 !.github
+!.github/**
 !docs
+!docs/**
 !src
+!src/**
 !.dockerignore
 !.gitignore
 !config.js

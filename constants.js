@@ -99,6 +99,11 @@ export default {
       equalizer: 1,
       tremolo: 2,
       rotationHz: 3,
+      karaoke: 4,
+      lowPass: 5,
+      distortion: 6,
+      channelMix: 7,
+      vibrato: 8
     }
   },
   circunferece: {
