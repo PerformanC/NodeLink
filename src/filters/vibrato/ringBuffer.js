@@ -59,7 +59,6 @@ class RingBuffer {
   }
 
   getSampleHermite4p3o(x, buffer, offset) {
-    // Read a float/number
     const y0 = buffer[offset]
     const y1 = buffer[offset + 1]
     const y2 = buffer[offset + 2]

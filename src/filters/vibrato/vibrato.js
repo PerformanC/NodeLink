@@ -27,9 +27,9 @@ const ADDITIONAL_DELAY = 3
 const BASE_DELAY_SEC = 0.002
 
 class Vibrato {
-  constructor(frequency, depth) {
-    this.depth = depth
-    this.lfo = new lfo(frequency)
+  constructor(data) {
+    this.depth = data.depth
+    this.lfo = new lfo(data.frequency)
     this.buffer = new RingBuffer(Math.ceil(BASE_DELAY_SEC * constants.opus.samplingRate * 2))
   }
 

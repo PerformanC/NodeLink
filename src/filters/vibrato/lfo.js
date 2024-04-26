@@ -31,9 +31,7 @@ class lfo {
     const value = ((Math.sin(this.phase) + 1) * 0.5)
     this.phase += dp
 
-    while (this.phase > 2 * Math.PI) {
-      this.phase -= 2 * Math.PI
-    }
+    while (this.phase > 2 * Math.PI) this.phase -= 2 * Math.PI
   
     return value
   }
