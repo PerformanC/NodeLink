@@ -23,8 +23,11 @@ class VoiceConnection {
     }
 
     this.cache = {
-      url: null,
-      protocol: null,
+      streamInfo: {
+        url: null,
+        protocol: null,
+        format: null,
+      },
       track: null,
       time: 0
     }
@@ -202,7 +205,7 @@ class VoiceConnection {
       }
     }))
     
-    this.wss.send(JSON.stringify({
+    this.client.ws.send(JSON.stringify({
       op: 'event',
       type: 'TrackEndEvent',
       guildId: this.config.guildId,
@@ -257,7 +260,7 @@ class VoiceConnection {
       const filter = new Filters()
       this.config.filters = filter.configure(this.config.filters)
 
-      resource = await filter.getResource(decodedTrack, urlInfo.protocol, urlInfo.url, null, null, this.cache.ffmpeg, urlInfo.additionalData)  
+      resource = await filter.getResource(decodedTrack, urlInfo, null, null)  
     } else {
       resource = await this.getResource(decodedTrack, urlInfo)
     }
@@ -273,8 +276,11 @@ class VoiceConnection {
       return this.config
     }
 
-    this.cache.url = urlInfo.url
-    this.cache.protocol = urlInfo.protocol
+    this.cache.streamInfo = {
+      url: urlInfo.url,
+      protocol: urlInfo.protocol,
+      format: urlInfo.format
+    }
     this.config.track = { encoded: track, info: decodedTrack }
     this.config.paused = false
 
@@ -332,17 +338,16 @@ class VoiceConnection {
     if (!this.config.track?.encoded || !config.filters.enabled) return this.config
 
     const filter = new Filters()
-    const trackFilters = filter.configure(filters, this.config.track.info)
-    this.config.filters = {
-      ...trackFilters,
-      startTime: undefined,
-      endTime: undefined
-    }
+    const filtersResults = filter.configure(filters, this.config.track.info)
+
+    filter.filters.forEach((filter) => {
+      this.config.filters[filter.name] = filter.data
+    })
 
     if (!this.config.track) return this.config
 
     const realTime = this._getRealTime()
-    const resource = await filter.getResource(this.config.track.info, this.cache.protocol, this.cache.url, realTime, filters.endTime, null, null)
+    const resource = await filter.getResource(this.config.track.info, this.cache.streamInfo, realTime, filters.endTime, this.connection.audioStream)
 
     if (resource.exception) {
       if (this.connection.audioStream) this.connection.stop('loadFailed')
@@ -351,17 +356,23 @@ class VoiceConnection {
       return this.config
     }
 
-    resource.stream.setVolume(filters.volume || (this.config.volume / 100))
-    this.config.volume = (filters.volume * 100) || this.config.volume
+    this.config.volume = (filtersResults.volume * 100) || this.config.volume
 
-    if (!this.connection)
-      return this.config
+    if (resource.stream || filtersResults.seek || filtersResults.endTime || filter.command.length !== 0) {
+      resource.stream.setVolume(filtersResults.volume || (this.config.volume / 100))
+      this.cache.time = filtersResults.seek || realTime
 
-    if (!this.connection.udpInfo?.secretKey)
-      await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected')
-    
-    this.cache.time = filters.seek || realTime
-    this.connection.play(resource.stream)
+      if (!this.connection)
+        return this.config
+
+      if (!this.connection.udpInfo?.secretKey)
+        await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected')
+      
+      this.cache.time = filtersResults.seek || realTime
+      this.connection.play(resource.stream)
+    } else {
+      this.connection.audioStream.setVolume(filtersResults.volume || (this.config.volume / 100))
+    }
 
     return this.config
   }

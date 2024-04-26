@@ -98,7 +98,7 @@ export default {
     types: {
       equalizer: 1,
       tremolo: 2,
-      rotationHz: 3,
+      rotation: 3,
       karaoke: 4,
       lowPass: 5,
       distortion: 6,

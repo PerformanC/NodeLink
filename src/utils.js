@@ -997,3 +997,11 @@ export function verifyDiscordID(id) {
 
   return true
 }
+
+export function replacePart(original, start, end, replacement) {
+  return original.slice(0, start).concat(replacement).concat(original.slice(end))
+}
+
+export function addPartAt(original, start, part) {
+  return original.slice(0, start).concat(part).concat(original.slice(start))
+}

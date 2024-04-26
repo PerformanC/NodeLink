@@ -4,7 +4,7 @@ import constants from '../../constants.js'
 import prism from 'prism-media'
 
 class NodeLinkStream {
-  constructor(stream, pipes) {
+  constructor(stream, pipes, ffmpeged) {
     pipes.unshift(stream)
 
     for (let i = 0; i < pipes.length - 1; i++) {
@@ -17,9 +17,25 @@ class NodeLinkStream {
 
     this.listeners = []
     this.pipes = pipes
+    this.filtersIndex = []
+    this.ffmpeged = ffmpeged
 
     /* @performanc/voice event */
     stream.on('finishBuffering', () => this.emit('finishBuffering'))
+  }
+
+  detach() {
+    this.pipes.forEach((_, i) => {
+      this.pipes[i].unpipe()
+    })
+  }
+
+  rewindPipes() {
+    this.pipes.forEach((_, i) => {
+      if (i < this.pipes.length - 1) {
+        this.pipes[i].pipe(this.pipes[i + 1])
+      }
+    })
   }
 
   _end() {
@@ -74,29 +90,40 @@ class NodeLinkStream {
   }
 }
 
-function createAudioResource(stream, type) {
+function isDecodedInternally(type) {
+  switch (type) {
+    case 'webm/opus':
+    case 'ogg/opus': return 3 + 1
+    case 'wav': return 2 + 1
+    default: return false
+  }
+}
+
+function createAudioResource(stream, type, additionalPipes = [], ffmpeged = false) {
   if ([ 'webm/opus', 'ogg/opus' ].includes(type)) {
     return new NodeLinkStream(stream, [
       new prism.opus[type === 'webm/opus' ? 'WebmDemuxer' : 'OggDemuxer'](),
       new prism.opus.Decoder({ frameSize: 960, channels: 2, rate: 48000 }),
       new prism.VolumeTransformer({ type: 's16le' }),
+      ...additionalPipes,
       new prism.opus.Encoder({
         rate: constants.opus.samplingRate,
         channels: constants.opus.channels,
         frameSize: constants.opus.frameSize
       })
-    ])
+    ], ffmpeged)
   }
 
   if (type === 'wav') {
     return new NodeLinkStream(stream, [
       new prism.VolumeTransformer({ type: 's16le' }),
+      ...additionalPipes,
       new prism.opus.Encoder({
         rate: constants.opus.samplingRate / 2,
         channels: constants.opus.channels / 2,
         frameSize: constants.opus.frameSize / 2
       })
-    ])
+    ], ffmpeged)
   }
 
   const ffmpeg = new prism.FFmpeg({
@@ -118,15 +145,17 @@ function createAudioResource(stream, type) {
   return new NodeLinkStream(stream, [
     ffmpeg, 
     new prism.VolumeTransformer({ type: 's16le' }),
+    ...additionalPipes,
     new prism.opus.Encoder({
       rate: constants.opus.samplingRate,
       channels: constants.opus.channels,
       frameSize: constants.opus.frameSize
     })
-  ])
+  ], ffmpeged)
 }
 
 export default {
   NodeLinkStream,
+  isDecodedInternally,
   createAudioResource
 }

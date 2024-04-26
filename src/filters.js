@@ -22,10 +22,11 @@ import { PassThrough } from 'node:stream'
 
 import prism from 'prism-media'
 
-import config from '../config.js'
-import { debugLog, isEmpty } from './utils.js'
-import voiceUtils from './voice/utils.js'
 import constants from '../constants.js'
+import config from '../config.js'
+import { debugLog, isEmpty, replacePart, addPartAt } from './utils.js'
+import voiceUtils from './voice/utils.js'
+import sources from './sources.js'
 import filters from './filters/filters.js'
 
 class Filters {
@@ -33,6 +34,7 @@ class Filters {
     this.command = []
     this.equalizer = null
     this.filters = []
+    this.result = {}
   }
 
   configure(filters, decodedTrack) {
@@ -48,6 +50,7 @@ class Filters {
 
       this.filters.push({
         type: constants.filtering.types.equalizer,
+        name: 'equalizer',
         data: this.equalizer.map((band) => band.gain)
       })
     }
@@ -78,10 +81,10 @@ class Filters {
         data: adjustedParams
       })
 
-      const finalspeed = adjustedParams.timescale.speed + (1.0 - adjustedParams.timescale.pitch)
-      const ratedif = 1.0 - adjustedParams.timescale.rate
+      const finalspeed = adjustedParams.speed + (1.0 - adjustedParams.pitch)
+      const ratedif = 1.0 - adjustedParams.rate
 
-      this.command.push(`asetrate=${constants.opus.samplingRate}*${adjustedParams.timescale.pitch + ratedif},atempo=${finalspeed},aresample=${constants.opus.samplingRate}`)
+      this.command.push(`asetrate=${constants.opus.samplingRate}*${adjustedParams.pitch + ratedif},atempo=${finalspeed},aresample=${constants.opus.samplingRate}`)
     }
 
     if (!isEmpty(filters.tremolo) && config.filters.list.tremolo) {
@@ -108,7 +111,7 @@ class Filters {
 
     if (!isEmpty(filters.rotation?.rotationHz) && config.filters.list.rotation) {
       this.filters.push({
-        type: constants.filtering.types.rotationHz,
+        type: constants.filtering.types.rotation,
         name: 'rotation',
         data: { 
           rotationHz: filters.rotation.rotationHz
@@ -162,7 +165,7 @@ class Filters {
     return this.result
   }
 
-  getResource(decodedTrack, protocol, url, startTime, endTime, oldFFmpeg, additionalData) {
+  getResource(decodedTrack, streamInfo, startTime, endTime, currentStream) {
     return new Promise(async (resolve) => {
       try {
         if (decodedTrack.sourceName === 'deezer') {
@@ -178,56 +181,98 @@ class Filters {
           })
         }
 
-        const ffmpeg = new prism.FFmpeg({
-          args: [
-            '-loglevel', '0',
-            '-analyzeduration', '0',
-            '-hwaccel', 'auto',
-            '-threads', config.filters.threads,
-            '-filter_threads', config.filters.threads,
-            '-filter_complex_threads', config.filters.threads,
-            ...(this.result.startTime !== undefined || startTime ? ['-ss', `${this.result.startTime !== undefined ? this.result.startTime : startTime}ms`] : []),
-            '-i', url,
-            ...(this.command.length !== 0 ? [ '-af', this.command.join(',') ] : [] ),
-            ...(endTime ? ['-t', `${endTime}ms`] : []),
-            '-f', 's16le',
-            '-ar', constants.opus.samplingRate,
-            '-ac', '2',
-            '-crf', '0'
-          ]
-        })
-
-        const stream = PassThrough()
-
-        ffmpeg.process.stdout.on('data', (data) => stream.write(data))
-        ffmpeg.process.stdout.on('end', () => stream.emit('finishBuffering'))
-        ffmpeg.on('error', (err) => {
-          debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
-
-          resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Unknown' } })
-        })
-
-        ffmpeg.process.stdout.once('readable', () => {
-          const pipelines = [
-            new prism.VolumeTransformer({ type: 's16le' })
-          ]
+        const isDecodedInternally = voiceUtils.isDecodedInternally(streamInfo.format)
+        if (this.result.startTime === undefined && isDecodedInternally !== false && this.command.length === 0 && !endTime) {
+          const filtersClasses = []
 
           this.filters.forEach((filter) => {
             if (!filters.isValid(filter)) return;
 
-            pipelines.push(new filters.Interface(filter.type, filter.data))
+            filtersClasses.push(new filters.Interface(filter.type, filter.data))
           })
 
-          pipelines.push(
-            new prism.opus.Encoder({
-              rate: constants.opus.samplingRate,
-              channels: constants.opus.channels,
-              frameSize: constants.opus.frameSize
-            })
-          )
+          if (currentStream && !currentStream.ffmpeged) {
+            if (currentStream.filtersIndex.length === 0) {
+              currentStream.detach()
+              currentStream.pipes = addPartAt(currentStream.pipes, isDecodedInternally, filtersClasses)
+              currentStream.rewindPipes()
+            } else {
+              currentStream.detach()
+              currentStream.pipes = replacePart(currentStream.pipes, currentStream.filtersIndex[0], currentStream.filtersIndex[1], filtersClasses)
+              currentStream.rewindPipes()
+            }
 
-          resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines) })
-        })
+            if (filtersClasses.length === 0) currentStream.filtersIndex = []
+            else currentStream.filtersIndex = [ isDecodedInternally, isDecodedInternally + filtersClasses.length ]
+
+            resolve({})
+          } else {
+            const filterClasses = []
+
+            this.filters.forEach((filter) => {
+              if (!filters.isValid(filter)) return;
+
+              filterClasses.push(new filters.Interface(filter.type, filter.data))
+            })
+
+            const pureStream = await sources.getTrackStream(decodedTrack, streamInfo.url, streamInfo.protocol)
+
+            const stream = new voiceUtils.createAudioResource(pureStream.stream, streamInfo.format, filterClasses, true)
+
+            resolve({ stream })
+          }
+        } else {
+          const ffmpeg = new prism.FFmpeg({
+            args: [
+              '-loglevel', '0',
+              '-analyzeduration', '0',
+              '-hwaccel', 'auto',
+              '-threads', config.filters.threads,
+              '-filter_threads', config.filters.threads,
+              '-filter_complex_threads', config.filters.threads,
+              ...(this.result.startTime !== undefined || startTime ? ['-ss', `${this.result.startTime !== undefined ? this.result.startTime : startTime}ms`] : []),
+              '-i', streamInfo.url,
+              ...(this.command.length !== 0 ? [ '-af', this.command.join(',') ] : [] ),
+              ...(endTime ? ['-t', `${endTime}ms`] : []),
+              '-f', 's16le',
+              '-ar', constants.opus.samplingRate,
+              '-ac', '2',
+              '-crf', '0'
+            ]
+          })
+
+          const stream = PassThrough()
+
+          ffmpeg.process.stdout.on('data', (data) => stream.write(data))
+          ffmpeg.process.stdout.on('end', () => stream.emit('finishBuffering'))
+          ffmpeg.on('error', (err) => {
+            debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
+
+            resolve({ status: 1, exception: { message: err.message, severity: 'fault', cause: 'Unknown' } })
+          })
+
+          ffmpeg.process.stdout.once('readable', () => {
+            const pipelines = [
+              new prism.VolumeTransformer({ type: 's16le' })
+            ]
+
+            this.filters.forEach((filter) => {
+              if (!filters.isValid(filter)) return;
+
+              pipelines.push(new filters.Interface(filter.type, filter.data))
+            })
+
+            pipelines.push(
+              new prism.opus.Encoder({
+                rate: constants.opus.samplingRate,
+                channels: constants.opus.channels,
+                frameSize: constants.opus.frameSize
+              })
+            )
+
+            resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines, [], true) })
+          })
+        }
       } catch (err) {
         debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: err.message })
 

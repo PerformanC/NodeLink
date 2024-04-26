@@ -7,14 +7,16 @@ import Distortion from './distortion.js'
 import Equalizer from './equalizer.js'
 import Karaoke from './karaoke.js'
 import LowPass from './lowPass.js'
-import RotationHz from './rotationHz.js'
+import Rotation from './rotation.js'
 import Tremolo from './tremolo.js'
 import { clamp16Bit } from '../utils.js'
 
 const CHANNEL_COUNT = 2
 
 class Interface extends Transform {
-  constructor(type, data) {    
+  constructor(type, data) {
+    super()
+
     switch (type) {
       /* volume */
       case constants.filtering.types.equalizer: {
@@ -38,8 +40,8 @@ class Interface extends Transform {
 
         break
       }
-      case constants.filtering.types.rotationHz: {
-        this.filter = new RotationHz(data)
+      case constants.filtering.types.rotation: {
+        this.filter = new Rotation(data)
 
         break
       }
@@ -62,7 +64,7 @@ class Interface extends Transform {
   }
 
   _transform(samples, _encoding, callback) {
-    for (let i = 0; i < samples.length - constants.pcm.bytes; i += constants.pcm.bytes * CHANNEL_COUNT) {
+    for (let i = 0; i < samples.length - constants.pcm.bytes - 1; i += constants.pcm.bytes * CHANNEL_COUNT) {
       const leftSample = samples.readInt16LE(i)
       const rightSample = samples.readInt16LE(i + 2)
 
@@ -77,7 +79,7 @@ class Interface extends Transform {
 }
 
 function isValid(filter) {
-  return filter.type in constants.filtering.types
+  return filter.name in constants.filtering.types
 }
 
 export default {
