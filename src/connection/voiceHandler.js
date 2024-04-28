@@ -258,9 +258,15 @@ class VoiceConnection {
     let resource = null
     if (Object.keys(this.config.filters).length > 0) {
       const filter = new Filters()
-      this.config.filters = filter.configure(this.config.filters)
+        .configure(this.config.filters)
 
-      resource = await filter.getResource(decodedTrack, urlInfo, null, null)  
+      filter.filters.forEach((filter) => {
+        if (typeof filter.type !== 'number' && filter.name !== 'timescale') return;
+  
+        this.config.filters[filter.name] = filter.data
+      })
+
+      resource = await filter.getResource(decodedTrack, urlInfo)  
     } else {
       resource = await this.getResource(decodedTrack, urlInfo)
     }
@@ -338,16 +344,18 @@ class VoiceConnection {
     if (!this.config.track?.encoded || !config.filters.enabled) return this.config
 
     const filter = new Filters()
-    const filtersResults = filter.configure(filters, this.config.track.info)
+      .configure(filters, this.config.track.info)
 
     filter.filters.forEach((filter) => {
+      if (typeof filter.type !== 'number' && filter.name !== 'timescale') return;
+
       this.config.filters[filter.name] = filter.data
     })
 
     if (!this.config.track) return this.config
 
     const realTime = this._getRealTime()
-    const resource = await filter.getResource(this.config.track.info, this.cache.streamInfo, realTime, filters.endTime, this.connection.audioStream)
+    const resource = await filter.getResource(this.config.track.info, this.cache.streamInfo, this._getRealTime(), this.connection.audioStream)
 
     if (resource.exception) {
       if (this.connection.audioStream) this.connection.stop('loadFailed')

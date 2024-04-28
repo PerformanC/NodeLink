@@ -32,26 +32,24 @@ import filters from './filters/filters.js'
 class Filters {
   constructor() {
     this.command = []
-    this.equalizer = null
     this.filters = []
-    this.result = {}
   }
 
   configure(filters, decodedTrack) {
     const result = {}
 
     if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
-      this.equalizer = Array(constants.filtering.equalizerBands).fill(0).map((_, i) => ({ band: i, gain: 0 }))
+      const equalizer = Array(constants.filtering.equalizerBands).fill(0).map((_, i) => ({ band: i, gain: 0 }))
 
       filters.equalizer.forEach((equalizedBand) => {
-        const band = this.equalizer.find((i) => i.band === equalizedBand.band)
+        const band = equalizer.find((i) => i.band === equalizedBand.band)
         if (band) band.gain = Math.min(Math.max(equalizedBand.gain, -0.25), 1.0)
       })
 
       this.filters.push({
         type: constants.filtering.types.equalizer,
         name: 'equalizer',
-        data: this.equalizer.map((band) => band.gain)
+        data: equalizer.map((band) => band.gain)
       })
     }
 
@@ -154,18 +152,29 @@ class Filters {
         type: constants.filtering.types.lowPass,
         name: 'lowPass',
         data: {
-          smoothing: result.lowPass.smoothing
+          smoothing: filters.lowPass.smoothing
         }
       })
     }
 
-    if (filters.seek !== undefined)
-      this.result.startTime = decodedTrack.length !== -1 ? Math.min(filters.seek, decodedTrack.length) : filters.seek
+    if (filters.seek !== undefined) {
+      this.filters.push({
+        type: 'not implemented natively',
+        name: 'seek',
+        data: decodedTrack.length !== -1 ? Math.min(filters.seek, decodedTrack.length) : filters.seek
+      })
+    }
 
-    return this.result
+    if (filters.endTime !== undefined) {
+      this.filters.push({
+        type: 'not implemented natively',
+        name: 'endTime',
+        data: decodedTrack.length !== -1 ? Math.max(filters.endTime, decodedTrack.length) : filters.endTime
+      })
+    }
   }
 
-  getResource(decodedTrack, streamInfo, startTime, endTime, currentStream) {
+  getResource(decodedTrack, streamInfo, realTime, currentStream) {
     return new Promise(async (resolve) => {
       try {
         if (decodedTrack.sourceName === 'deezer') {
@@ -181,8 +190,11 @@ class Filters {
           })
         }
 
+        const startTime = this.filters.find((filter) => filter.name === 'seek')?.data
+        const endTime = this.filters.find((filter) => filter.name === 'endTime')?.data
+
         const isDecodedInternally = voiceUtils.isDecodedInternally(streamInfo.format)
-        if (this.result.startTime === undefined && isDecodedInternally !== false && this.command.length === 0 && !endTime) {
+        if (startTime === undefined && isDecodedInternally !== false && this.command.length === 0 && !endTime) {
           const filtersClasses = []
 
           this.filters.forEach((filter) => {
@@ -230,7 +242,7 @@ class Filters {
               '-threads', config.filters.threads,
               '-filter_threads', config.filters.threads,
               '-filter_complex_threads', config.filters.threads,
-              ...(this.result.startTime !== undefined || startTime ? ['-ss', `${this.result.startTime !== undefined ? this.result.startTime : startTime}ms`] : []),
+              ...(startTime !== undefined ? ['-ss', `${startTime}ms`] : [ '-ss', `${realTime}ms` ]),
               '-i', streamInfo.url,
               ...(this.command.length !== 0 ? [ '-af', this.command.join(',') ] : [] ),
               ...(endTime ? ['-t', `${endTime}ms`] : []),
