@@ -4,7 +4,7 @@ import constants from '../../constants.js'
 import prism from 'prism-media'
 
 class NodeLinkStream {
-  constructor(stream, pipes, ffmpeged) {
+  constructor(stream, pipes, ffmpegState) {
     pipes.unshift(stream)
 
     for (let i = 0; i < pipes.length - 1; i++) {
@@ -18,7 +18,7 @@ class NodeLinkStream {
     this.listeners = []
     this.pipes = pipes
     this.filtersIndex = []
-    this.ffmpeged = ffmpeged
+    this.ffmpegState = ffmpegState
 
     /* @performanc/voice event */
     stream.on('finishBuffering', () => this.emit('finishBuffering'))
@@ -90,16 +90,16 @@ class NodeLinkStream {
   }
 }
 
-function isDecodedInternally(type) {
+function isDecodedInternally(stream, type) {
   switch (type) {
     case 'webm/opus':
-    case 'ogg/opus': return 3 + 1
-    case 'wav': return 2 + 1
+    case 'ogg/opus': return 3 + 1 + (stream.ffmpegState === 2 ? -2 : 0)
+    case 'wav': return 2 + 1 + (stream.ffmpegState === 2 ? -2 : 0)
     default: return false
   }
 }
 
-function createAudioResource(stream, type, additionalPipes = [], ffmpeged = false) {
+function createAudioResource(stream, type, additionalPipes = [], ffmpegState = false) {
   if ([ 'webm/opus', 'ogg/opus' ].includes(type)) {
     return new NodeLinkStream(stream, [
       new prism.opus[type === 'webm/opus' ? 'WebmDemuxer' : 'OggDemuxer'](),
@@ -111,7 +111,7 @@ function createAudioResource(stream, type, additionalPipes = [], ffmpeged = fals
         channels: constants.opus.channels,
         frameSize: constants.opus.frameSize
       })
-    ], ffmpeged)
+    ], ffmpegState)
   }
 
   if (type === 'wav') {
@@ -123,7 +123,7 @@ function createAudioResource(stream, type, additionalPipes = [], ffmpeged = fals
         channels: constants.opus.channels / 2,
         frameSize: constants.opus.frameSize / 2
       })
-    ], ffmpeged)
+    ], ffmpegState)
   }
 
   const ffmpeg = new prism.FFmpeg({
@@ -151,7 +151,7 @@ function createAudioResource(stream, type, additionalPipes = [], ffmpeged = fals
       channels: constants.opus.channels,
       frameSize: constants.opus.frameSize
     })
-  ], ffmpeged)
+  ], ffmpegState)
 }
 
 export default {

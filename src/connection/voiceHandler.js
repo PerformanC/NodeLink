@@ -260,6 +260,7 @@ class VoiceConnection {
       const filter = new Filters()
       filter.configure(this.config.filters)
 
+      this.config.filters = {}
       filter.filters.forEach((filter) => {
         if (typeof filter.type !== 'number' && filter.name !== 'timescale') return;
   
@@ -346,6 +347,7 @@ class VoiceConnection {
     const filter = new Filters()
     filter.configure(filters, this.config.track.info)
 
+    this.config.filters = {}
     filter.filters.forEach((filter) => {
       if (typeof filter.type !== 'number' && filter.name !== 'timescale') return;
 

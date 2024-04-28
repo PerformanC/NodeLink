@@ -193,7 +193,7 @@ class Filters {
         const startTime = this.filters.find((filter) => filter.name === 'seek')?.data
         const endTime = this.filters.find((filter) => filter.name === 'endTime')?.data
 
-        const isDecodedInternally = voiceUtils.isDecodedInternally(streamInfo.format)
+        const isDecodedInternally = voiceUtils.isDecodedInternally(currentStream, streamInfo.format)
         if (startTime === undefined && isDecodedInternally !== false && this.command.length === 0 && !endTime) {
           const filtersClasses = []
 
@@ -203,7 +203,7 @@ class Filters {
             filtersClasses.push(new filters.Interface(filter.type, filter.data))
           })
 
-          if (currentStream && !currentStream.ffmpeged) {
+          if (currentStream && (currentStream.ffmpegState !== 1 || !currentStream.ffmpegState)) {
             if (currentStream.filtersIndex.length === 0) {
               currentStream.detach()
               currentStream.pipes = addPartAt(currentStream.pipes, isDecodedInternally, filtersClasses)
@@ -229,7 +229,7 @@ class Filters {
 
             const pureStream = await sources.getTrackStream(decodedTrack, streamInfo.url, streamInfo.protocol)
 
-            const stream = new voiceUtils.createAudioResource(pureStream.stream, streamInfo.format, filterClasses, true)
+            const stream = new voiceUtils.createAudioResource(pureStream.stream, streamInfo.format, filterClasses, 0)
 
             resolve({ stream })
           }
@@ -282,7 +282,10 @@ class Filters {
               })
             )
 
-            resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines, [], true) })
+            const onlySeeked = Object.keys(this.filters).length === 1 && this.filters.find((filter) => filter.name === 'seek')
+            const ffmpegState = (this.command.length !== 0 || !onlySeeked) ? 1 : 2
+
+            resolve({ stream: new voiceUtils.NodeLinkStream(stream, pipelines, ffmpegState) })
           })
         }
       } catch (err) {
