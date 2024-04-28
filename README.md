@@ -16,6 +16,10 @@ Performant LavaLink replacement written in Node.js.
 - [`prism-media`](https://npmjs.com/package/prism-media)
 - [`opusscript`](https://npmjs.com/package/opusscript) or [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus)
 - [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) or [`sodium-native`](https://npmjs.com/package/sodium-native) or [`tweetnacl`](https://npmjs.com/package/tweetnacl)
+- [`ffmpeg`](https://ffmpeg.org/) or [`avconv`](https://libav.org/) or [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static)
+
+> [!NOTE]
+> For most sources FFmpeg isn't required. It is current required for timescale, seek and endTime filter. Required for `local` and `http` sources.
 
 ## Installation
 

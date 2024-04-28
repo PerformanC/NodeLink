@@ -286,7 +286,7 @@ async function retrieveStream(identifier, title) {
   return {
     url: streamData.data[0].media[0].sources[0].url,
     protocol: 'https',
-    format: 'arbitrary',
+    format: streamData.data[0].media[0].format.startsWith('MP3') ? 'mp3' : 'flac',
     additionalData: trackInfo
   }
 }

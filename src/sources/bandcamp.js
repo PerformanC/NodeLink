@@ -183,7 +183,7 @@ async function retrieveStream(uri, title) {
   return {
     url: streamURL[0],
     protocol: 'https',
-    format: 'arbitrary'
+    format: 'mp3'
   }
 }
 

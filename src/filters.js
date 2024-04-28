@@ -177,19 +177,6 @@ class Filters {
   getResource(decodedTrack, streamInfo, realTime, currentStream) {
     return new Promise(async (resolve) => {
       try {
-        if (decodedTrack.sourceName === 'deezer') {
-          debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
-
-          return resolve({
-            status: 1,
-            exception: {
-              message: 'Filtering does not support Deezer platform',
-              severity: 'fault',
-              cause: 'Unimplemented feature.'
-            }
-          })
-        }
-
         const startTime = this.filters.find((filter) => filter.name === 'seek')?.data
         const endTime = this.filters.find((filter) => filter.name === 'endTime')?.data
 
@@ -234,6 +221,19 @@ class Filters {
             resolve({ stream })
           }
         } else {
+          if (decodedTrack.sourceName === 'deezer') {
+            debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Filtering does not support Deezer platform.' })
+  
+            return resolve({
+              status: 1,
+              exception: {
+                message: 'Non-native filtering does not support Deezer platform',
+                severity: 'fault',
+                cause: 'Unimplemented feature.'
+              }
+            })
+          }
+
           const ffmpeg = new prism.FFmpeg({
             args: [
               '-loglevel', '0',

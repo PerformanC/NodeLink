@@ -162,7 +162,8 @@ export default {
   },
   audio: {
     quality: 'high',
-    encryption: 'xsalsa20_poly1305_lite'
+    encryption: 'xsalsa20_poly1305_lite',
+    resamplingQuality: 'best' // best, medium, fastest, zero order holder, linear
   },
   voiceReceive: {
     type: 'pcm', // pcm, opus
