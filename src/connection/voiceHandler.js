@@ -258,7 +258,7 @@ class VoiceConnection {
     let resource = null
     if (Object.keys(this.config.filters).length > 0) {
       const filter = new Filters()
-        .configure(this.config.filters)
+      filter.configure(this.config.filters)
 
       filter.filters.forEach((filter) => {
         if (typeof filter.type !== 'number' && filter.name !== 'timescale') return;
@@ -344,7 +344,7 @@ class VoiceConnection {
     if (!this.config.track?.encoded || !config.filters.enabled) return this.config
 
     const filter = new Filters()
-      .configure(filters, this.config.track.info)
+    filter.configure(filters, this.config.track.info)
 
     filter.filters.forEach((filter) => {
       if (typeof filter.type !== 'number' && filter.name !== 'timescale') return;
@@ -364,11 +364,16 @@ class VoiceConnection {
       return this.config
     }
 
-    this.config.volume = (filtersResults.volume * 100) || this.config.volume
+    const objectedFilters = Object.entries(this.config.filters)
 
-    if (resource.stream || filtersResults.seek || filtersResults.endTime || filter.command.length !== 0) {
-      resource.stream.setVolume(filtersResults.volume || (this.config.volume / 100))
-      this.cache.time = filtersResults.seek || realTime
+    const volumeFilter = objectedFilters.find(([ name ]) => name === 'volume')
+    this.config.volume = (volumeFilter * 100) || this.config.volume
+
+    const seekFilter = objectedFilters.find(([ name ]) => name === 'seek')
+    const endTimeFilter = objectedFilters.find(([ name ]) => name === 'endTime')
+    if (resource.stream || seekFilter || endTimeFilter || filter.command.length !== 0) {
+      resource.stream.setVolume(volumeFilter || (this.config.volume / 100))
+      this.cache.time = seekFilter || realTime
 
       if (!this.connection)
         return this.config
@@ -376,10 +381,10 @@ class VoiceConnection {
       if (!this.connection.udpInfo?.secretKey)
         await waitForEvent(this.connection, 'stateChange', (_oldState, newState) => newState.status === 'connected')
       
-      this.cache.time = filtersResults.seek || realTime
+      this.cache.time = seekFilter || realTime
       this.connection.play(resource.stream)
     } else {
-      this.connection.audioStream.setVolume(filtersResults.volume || (this.config.volume / 100))
+      this.connection.audioStream.setVolume(volumeFilter || (this.config.volume / 100))
     }
 
     return this.config
