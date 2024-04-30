@@ -514,6 +514,11 @@ export function debugLog(name, type, options) {
 
           break
         }
+        case 'websocketClosed': {
+          if (!config.debug.websocketClosed) return;
+
+          consoleError(`[\u001b[33mwebsocketClosed\u001b[37m]: The connection with Discord has been closed.\n Code: \u001b[33m${options.code}\u001b[37m\n Reason: \u001b[33m${options.reason === '' ? 'No reason provided' : options.reason}\u001b[37m`)
+        }
       }
 
       break

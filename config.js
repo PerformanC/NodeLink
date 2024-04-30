@@ -70,6 +70,7 @@ export default {
       exception: true,
       stuck: true
     },
+    websocketClosed: true,
     sources: {
       retrieveStream: true,
       loadtrack: {

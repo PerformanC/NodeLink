@@ -56,7 +56,7 @@ class VoiceConnection {
     this.connection.on('stateChange', async (_oldState, newState) => {
       switch (newState.status) {
         case 'disconnected': {
-          debugLog('websocketClosed', 2, { track: this.config.track?.info, exception: constants.VoiceWSCloseCodes[newState.closeCode] })
+          debugLog('websocketClosed', 2, { code: newState.code, reason: newState.closeReason })
 
           if (this.config.track) nodelinkPlayingPlayersCount--
 
@@ -65,7 +65,7 @@ class VoiceConnection {
             type: 'WebSocketClosedEvent',
             guildId: this.config.guildId,
             code: newState.code,
-            reason: constants.VoiceWSCloseCodes[newState.code],
+            reason: newState.closeReason,
             byRemote: true
           }))
 
@@ -333,7 +333,11 @@ class VoiceConnection {
 
         nodelinkPlayingPlayersCount--
       }
-      else this.connection.unpause()
+      else {
+        this.connection.unpause()
+
+        nodelinkPlayingPlayersCount++
+      }
     }
 
     this.config.paused = pause

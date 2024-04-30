@@ -4,20 +4,6 @@ export default {
     playlist: 2,
     shorts: 3,
   },
-  VoiceWSCloseCodes: {
-    4001: 'Unknown opcode',
-    4002: 'Failed to decode payload',
-    4003: 'Not authenticated',
-    4004: 'Authentication failed',
-    4005: 'Already authenticated',
-    4006: 'Session no longer valid',
-    4009: 'Session timeout',
-    4011: 'Server not found',
-    4012: 'Unknown protocol',
-    4014: 'Disconnected',
-    4015: 'Voice server crashed',
-    4016: 'Unknown encryption mode'
-  },
   opus: {
     samplingRate: 48000,
     frameSize: 960,
