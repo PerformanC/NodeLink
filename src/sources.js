@@ -379,14 +379,14 @@ async function loadLyrics(parsedUrl, req, decodedTrack, language, fallback) {
   } catch (err) {
     debugLog('loadLyrics', 3, { params: parsedUrl.pathname, headers: req.headers, error: `Internal NodeLink error: ${err.message}`, stack: err.stack })
 
-    resolve({
+    return {
       loadType: 'error',
       data: {
         message: `Internal NodeLink error: ${err.message}`,
         severity: 'fault',
         cause: 'Unknown'
       }
-    })
+    }
   }
 }
 
