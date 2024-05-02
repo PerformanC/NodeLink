@@ -322,7 +322,7 @@ async function loadLyrics(parsedUrl, req, decodedTrack, language, fallback) {
         }
 
         if (config.search.sources.spotify.sp_dc === 'DISABLED')
-          return await loadLyrics(parsedUrl, decodedTrack, language, true)
+          return await loadLyrics(parsedUrl, req, decodedTrack, language, true)
 
         captions = await spotify.loadLyrics(decodedTrack, language) || captions
 
