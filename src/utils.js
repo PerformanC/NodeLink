@@ -92,7 +92,10 @@ export function http1makeRequest(url, options) {
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
         'DNT': '1',
         ...(options.headers || {}),
-        ...(options.body ? { 'Content-Type': 'application/json' } : {})
+        ...(options.body ? {
+          'Content-Type': 'application/json',
+          ...(options.disableBodyCompression ? {} : { 'Content-Encoding': 'gzip' })
+        } : {})
       }
     }, async (res) => {
       const statusCode = res.statusCode
@@ -473,8 +476,7 @@ export function decodeTrack(track) {
         }
       }
     }
-  } catch (err) {
-    console.log(err)
+  } catch {
     return null
   }
 }
