@@ -309,7 +309,7 @@ class EncodeClass {
 
   changeBytes(bytes) {
     if (this.position + bytes > this.buffer.length) {
-      const newBuffer = Buffer.alloc(this.position + bytes)
+      const newBuffer = Buffer.allocUnsafe(this.position + bytes + 1)
 
       this.buffer.copy(newBuffer)
       this.buffer = newBuffer
@@ -326,16 +326,19 @@ class EncodeClass {
 
   /* unsigned short has the size of 2-byte, which is, in bits, 16-bit */
   writeUShort(value) {
-    this.buffer.writeUInt16BE(value, this.changeBytes(2))
+    const bytes = this.changeBytes(2)
+    this.buffer.writeUInt16BE(value, bytes)
   }
 
   /* See https://stackoverflow.com/a/53550757 */
   writeInt(value) {
-    this.buffer.writeInt32BE(value, this.changeBytes(4))
+    const bytes =  this.changeBytes(4)
+    this.buffer.writeInt32BE(value, bytes)
   }
   
   writeLong(value) {
-    this.buffer.writeBigInt64BE(value, this.changeBytes(8))
+    const bytes = this.changeBytes(8)
+    this.buffer.writeBigInt64BE(value, bytes)
   }
 
   /* string length (unsigned short) + string */
@@ -343,8 +346,8 @@ class EncodeClass {
     const len = Buffer.byteLength(value, 'utf8')
     this.writeUShort(len)
 
-    const start = this.changeBytes(len)
-    this.buffer.write(value, start, len, 'utf8')
+    const bytes = this.changeBytes(len)
+    this.buffer.write(value, bytes, len, 'utf8')
   }
 
   result() {
