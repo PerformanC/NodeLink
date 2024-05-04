@@ -301,49 +301,47 @@ export function makeRequest(url, options) {
 class EncodeClass {
   constructor() {
     this.position = 0
-    this.buffer = Buffer.alloc(512)
+    this.buffer = Buffer.alloc(128)
   }
 
   changeBytes(bytes) {
     if (this.position + bytes > this.buffer.length) {
-      const newBuffer = Buffer.alloc(Math.max(this.buffer.length * 2, this.position + bytes))
+      const newBuffer = Buffer.alloc(this.position + bytes)
+
       this.buffer.copy(newBuffer)
       this.buffer = newBuffer
     }
+
     this.position += bytes
     return this.position - bytes
   }
 
-  write(type, value) {
-    switch (type) {
-      case 'byte': {
-        this.buffer[this.changeBytes(1)] = value
-        break
-      }
-      case 'unsignedShort': {
-        this.buffer.writeUInt16BE(value, this.changeBytes(2))
-        break
-      }
-      case 'int': {
-        this.buffer.writeInt32BE(value, this.changeBytes(4))
-        break
-      }
-      case 'long': {
-        const msb = value / BigInt(2 ** 32)
-        const lsb = value % BigInt(2 ** 32)
+  /* A byte can simply be written as it is */
+  writeByte(value) {
+    this.buffer[this.changeBytes(1)] = value
+  }
 
-        this.write('int', Number(msb))
-        this.write('int', Number(lsb))
-        break
-      }
-      case 'utf': {
-        const len = Buffer.byteLength(value, 'utf8')
-        this.write('unsignedShort', len)
-        const start = this.changeBytes(len)
-        this.buffer.write(value, start, len, 'utf8')
-        break
-      }
-    }
+  /* unsigned short has the size of 2-byte, which is, in bits, 16-bit */
+  writeUShort(value) {
+    this.buffer.writeUInt16BE(value, this.changeBytes(2))
+  }
+
+  /* See https://stackoverflow.com/a/53550757 */
+  writeInt(value) {
+    this.buffer.writeInt32BE(value, this.changeBytes(4))
+  }
+  
+  writeLong(value) {
+    this.buffer.writeBigInt64BE(value, this.changeBytes(8))
+  }
+
+  /* string length (unsigned short) + string */
+  writeUTF(value) {
+    const len = Buffer.byteLength(value, 'utf8')
+    this.writeUShort(len)
+
+    const start = this.changeBytes(len)
+    this.buffer.write(value, start, len, 'utf8')
   }
 
   result() {
@@ -355,20 +353,20 @@ export function encodeTrack(obj) {
   try {
     const buf = new EncodeClass()
 
-    buf.write('byte', 3)
-    buf.write('utf', obj.title)
-    buf.write('utf', obj.author)
-    buf.write('long', BigInt(obj.length))
-    buf.write('utf', obj.identifier)
-    buf.write('byte', obj.isStream ? 1 : 0)
-    buf.write('byte', obj.uri ? 1 : 0)
-    if (obj.uri) buf.write('utf', obj.uri)
-    buf.write('byte', obj.artworkUrl ? 1 : 0)
-    if (obj.artworkUrl) buf.write('utf', obj.artworkUrl)
-    buf.write('byte', obj.isrc ? 1 : 0)
-    if (obj.isrc) buf.write('utf', obj.isrc)
-    buf.write('utf', obj.sourceName)
-    buf.write('long', BigInt(obj.position))
+    buf.writeByte(3)
+    buf.writeUTF(obj.title)
+    buf.writeUTF(obj.author)
+    buf.writeLong(BigInt(obj.length))
+    buf.writeUTF(obj.identifier)
+    buf.writeByte(!!obj.isStream)
+    buf.writeByte(!!obj.uri)
+    if (obj.uri) buf.writeUTF(obj.uri)
+    buf.writeByte(!!obj.artworkUrl)
+    if (obj.artworkUrl) buf.writeUTF(obj.artworkUrl)
+    buf.writeByte(!!obj.isrc)
+    if (obj.isrc) buf.writeUTF(obj.isrc)
+    buf.writeUTF(obj.sourceName)
+    buf.writeLong(BigInt(obj.position))
 
     const buffer = buf.result()
     const result = Buffer.alloc(buffer.length + 4)
@@ -393,32 +391,27 @@ class DecodeClass {
     return this.position - bytes
   }
 
-  read(type) {
-    switch (type) {
-      case 'byte': {
-        return this.buffer[this.changeBytes(1)]
-      }
-      case 'unsignedShort': {
-        const result = this.buffer.readUInt16BE(this.changeBytes(2))
-        return result
-      }
-      case 'int': {
-        const result = this.buffer.readInt32BE(this.changeBytes(4))
-        return result
-      }
-      case 'long': {
-        const msb = BigInt(this.read('int'))
-        const lsb = BigInt(this.read('int'))
+  readByte() {
+    return this.buffer[this.changeBytes(1)]
+  }
 
-        return msb * BigInt(2 ** 32) + lsb
-      }
-      case 'utf': {
-        const len = this.read('unsignedShort')
-        const start = this.changeBytes(len)
-        const result = this.buffer.toString('utf8', start, start + len)
-        return result
-      }
-    }
+  readUShort() {
+    return this.buffer.readUInt16BE(this.changeBytes(2))
+  }
+
+  readInt() {
+    return this.buffer.readInt32BE(this.changeBytes(4))
+  }
+
+  readLong() {
+    return this.buffer.readBigInt64BE(this.changeBytes(8))
+  }
+
+  readUTF() {
+    const len = this.readUShort()
+    const start = this.changeBytes(len)
+
+    return this.buffer.toString('utf8', start, start + len)
   }
 }
 
@@ -426,50 +419,62 @@ export function decodeTrack(track) {
   try {
     const buf = new DecodeClass(Buffer.from(track, 'base64'))
 
-    const version = ((buf.read('int') & 0xC0000000) >> 30 & 1) !== 0 ? buf.read('byte') : 1
+    const isVersioned = ((buf.readInt() & 0xC0000000) >> 30 & 1) !== 0
+    const version = isVersioned ? buf.readByte() : 1
 
     switch (version) {
       case 1: {
+        consoleWarn('[\u001b[33mdecodeTrack\u001b[37m]: The track is using an outdated version. Please update the track.')
+
         return {
-          title: buf.read('utf'),
-          author: buf.read('utf'),
-          length: Number(buf.read('long')),
-          identifier: buf.read('utf'),
-          isStream: buf.read('byte') === 1,
+          title: buf.readUTF(),
+          author: buf.readUTF(),
+          length: Number(buf.readLong()),
+          identifier: buf.readUTF(),
+          isSeekable: true,
+          isStream: !!buf.readByte(),
           uri: null,
-          source: buf.read('utf'),
-          position: Number(buf.read('long'))
+          artworkUrl: null,
+          isrc: null,
+          sourceName: buf.readUTF(),
+          position: Number(buf.readLong())
         }
       }
       case 2: {
+        consoleWarn('[\u001b[33mdecodeTrack\u001b[37m]: The track is using an outdated version. Please update the track.')
+
         return {
-          title: buf.read('utf'),
-          author: buf.read('utf'),
-          length: Number(buf.read('long')),
-          identifier: buf.read('utf'),
-          isStream: buf.read('byte') === 1,
-          uri: buf.read('byte') === 1 ? buf.read('utf') : null,
-          source: buf.read('utf'),
-          position: Number(buf.read('long'))
+          title: buf.readUTF(),
+          author: buf.readUTF(),
+          length: Number(buf.readLong()),
+          identifier: buf.readUTF(),
+          isSeekable: true,
+          isStream: !!buf.readByte(),
+          uri: buf.readByte() ? buf.readUTF() : null,
+          artworkUrl: null,
+          isrc: null,
+          sourceName: buf.readUTF(),
+          position: Number(buf.readLong())
         }
       }
       case 3: {
         return {
-          title: buf.read('utf'),
-          author: buf.read('utf'),
-          length: Number(buf.read('long')),
-          identifier: buf.read('utf'),
+          title: buf.readUTF(),
+          author: buf.readUTF(),
+          length: Number(buf.readLong()),
+          identifier: buf.readUTF(),
           isSeekable: true,
-          isStream: buf.read('byte') === 1,
-          uri: buf.read('byte') === 1 ? buf.read('utf') : null,
-          artworkUrl: buf.read('byte') === 1 ? buf.read('utf') : null,
-          isrc: buf.read('byte') === 1 ? buf.read('utf') : null,
-          sourceName: buf.read('utf'),
-          position: Number(buf.read('long'))
+          isStream: !!buf.readByte(),
+          uri: buf.readByte() ? buf.readUTF() : null,
+          artworkUrl: buf.readByte() ? buf.readUTF() : null,
+          isrc: buf.readByte() ? buf.readUTF() : null,
+          sourceName: buf.readUTF(),
+          position: Number(buf.readLong())
         }
       }
     }
-  } catch {
+  } catch (err) {
+    console.log(err)
     return null
   }
 }
