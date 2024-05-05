@@ -53,12 +53,12 @@ class VoiceConnection {
 
     this.connection.on('speakStart', (userId, ssrc) => inputHandler.handleStartSpeaking(ssrc, userId, this.config.guildId))
 
-    this.connection.on('stateChange', async (_oldState, newState) => {
+    this.connection.on('stateChange', async (oldState, newState) => {
       switch (newState.status) {
         case 'disconnected': {
           debugLog('websocketClosed', 2, { code: newState.code, reason: newState.closeReason })
 
-          if (this.config.track) nodelinkPlayingPlayersCount--
+          if (this.config.track && oldState.status === 'connected') nodelinkPlayingPlayersCount--
 
           this.client.ws.send(JSON.stringify({
             op: 'event',
