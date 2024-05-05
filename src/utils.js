@@ -309,7 +309,7 @@ class EncodeClass {
 
   changeBytes(bytes) {
     if (this.position + bytes > this.buffer.length) {
-      const newBuffer = Buffer.allocUnsafe(this.position + bytes + 1)
+      const newBuffer = Buffer.alloc(this.position + bytes)
 
       this.buffer.copy(newBuffer)
       this.buffer = newBuffer
@@ -321,7 +321,8 @@ class EncodeClass {
 
   /* A byte can simply be written as it is */
   writeByte(value) {
-    this.buffer[this.changeBytes(1)] = value
+    const bytes = this.changeBytes(1)
+    this.buffer[bytes] = value
   }
 
   /* unsigned short has the size of 2-byte, which is, in bits, 16-bit */
