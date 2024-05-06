@@ -1,6 +1,5 @@
 import { debugLog, waitForEvent } from '../utils.js'
 import config from '../../config.js'
-import constants from '../../constants.js'
 import sources from '../sources.js'
 import Filters from '../filters.js'
 
@@ -12,7 +11,7 @@ import discordVoice from '@performanc/voice'
 
 globalThis.nodelinkPlayersCount = 0
 globalThis.nodelinkPlayingPlayersCount = 0
- 
+
 class VoiceConnection {
   constructor(guildId, client) {
     nodelinkPlayersCount++
@@ -107,8 +106,6 @@ class VoiceConnection {
 
     this.connection.on('error', (error) => {
       if (!this.config.track) return;
-      
-      if (!this.config.paused) nodelinkPlayingPlayersCount--
 
       debugLog('trackException', 2, { track: this.config.track.info, exception: error.message })
 
