@@ -23,12 +23,7 @@ const INTERPOLATOR_MARGIN = 3
 class RingBuffer {
   constructor(size) {
     this.size = size
-    this.buffer = []
-
-    for (let i = 0; i < size + INTERPOLATOR_MARGIN; i++) {
-      this.buffer[i] = 0
-    }
-
+    this.buffer = new Array(size + INTERPOLATOR_MARGIN)
     this.writeIndex = 0
   }
 
@@ -45,14 +40,10 @@ class RingBuffer {
 
   getHermiteAt(delay) {
     let fReadIndex = this.writeIndex - 1 - delay
-    while (fReadIndex < 0) {
-      fReadIndex += this.size
-    }
-    while (fReadIndex >= this.size) {
-      fReadIndex -= this.size
-    }
+    while (fReadIndex < 0) fReadIndex += this.size
+    while (fReadIndex >= this.size) fReadIndex -= this.size
 
-    const iPart = Math.ceil(fReadIndex)
+    const iPart = Math.floor(fReadIndex)
     const fPart = fReadIndex - iPart
 
     return this.getSampleHermite4p3o(fPart, this.buffer, iPart)
