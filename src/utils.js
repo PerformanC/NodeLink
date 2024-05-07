@@ -88,7 +88,7 @@ export function http1makeRequest(url, options) {
     let req = (url.startsWith('https') ? https : http).request(url, {
       method: options.method,
       headers: {
-        'Accept-Encoding': 'br, gzip, deflate',
+        'Accept-Encoding': process.isBun ? 'gzip, deflate' : 'br, gzip, deflate',
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
         'DNT': '1',
         ...(options.headers || {}),
@@ -181,7 +181,7 @@ function _http2Events(request, headers) {
 }
 
 export function makeRequest(url, options) {
-  if (process.versions.deno) return http1makeRequest(url, options)
+  if (process.versions.deno || process.isBun) return http1makeRequest(url, options)
 
   return new Promise(async (resolve) => {
     const parsedUrl = new URL(url)

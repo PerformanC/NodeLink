@@ -1,5 +1,10 @@
 import prism from 'prism-media'
-import lame from '@flat/lame' /* libmp3lame bindings */
+
+import { createRequire } from 'node:module'
+const require = createRequire(import.meta.url)
+let lame = null
+if (!process.isBun) lame = require('@flat/lame') /* libmp3lame bindings */
+
 import SampleRate from 'node-libsamplerate' /* libsamplerate bindings */
 
 import config from '../../config.js'
@@ -106,7 +111,7 @@ function isDecodedInternally(stream, type) {
     case 'webm/opus':
     case 'ogg/opus': return 3 + 1 + (stream.ffmpegState === 2 ? -2 : 0)
     case 'wav': return 2 + 1 + (stream.ffmpegState === 2 ? -2 : 0)
-    case 'mp3': return 2 + 1 + (stream.ffmpegState === 2 ? -2 : 0)
+    case 'mp3': return lame ? 2 + 1 + (stream.ffmpegState === 2 ? -2 : 0) : false
     default: return false
   }
 }
@@ -138,7 +143,7 @@ function createAudioResource(stream, type, additionalPipes = [], ffmpegState = f
     ], ffmpegState)
   }
 
-  if (type === 'mp3') {
+  if (type === 'mp3' && lame) {
     return new NodeLinkStream(stream, [
       new lame.Decoder(),
       new SampleRate.SampleRate({

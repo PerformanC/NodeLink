@@ -1,4 +1,5 @@
 import http from 'node:http'
+import process from 'node:process'
 import { URL } from 'node:url'
 
 import connectionHandler from './handler.js'
@@ -58,8 +59,11 @@ if (typeof config.voiceReceive.timeout !== 'number')
 if (![ 'opus', 'pcm' ].includes(config.voiceReceive.type))
   throw new Error('Voice receive type must be either "opus" or "pcm".')
 
+if (process.isBun)
+  console.log('[\u001b[33mNodeLink Core\u001b[37m]: Detected that the process is running with Bun. Performance impacted to prevent crashes. Do NOT use sodium-native due to bugs with Bun. There\'s no guarantee on the stability or compliance with the NodeLink API.')
+
 const server = http.createServer(connectionHandler.requestHandler)
-const v4 = new WebSocketServer()
+const v4 = new WebSocketServer({ noServer: true })
 
 v4.on('/v4/websocket', connectionHandler.configureConnection)
 
@@ -107,7 +111,10 @@ server.on('upgrade', (req, socket, head) => {
 
     debugLog('connect', 3, parsedClientName)
 
-    v4.handleUpgrade(req, socket, head, { 'isNodeLink': true, 'Lavalink-Api-Version': '4' }, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
+    if (process.isBun)
+      v4.handleUpgrade(req, socket, head, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
+    else
+      v4.handleUpgrade(req, socket, head, { 'isNodeLink': true, 'Lavalink-Api-Version': '4' }, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
   }
 
   if (pathname === '/connection/data') {
@@ -137,6 +144,9 @@ server.on('upgrade', (req, socket, head) => {
 
     debugLog('connectCD', 3, { ...parsedClientName, guildId: req.headers['guild-id'] })
 
+    if (process.isBun)
+      v4.handleUpgrade(req, socket, head, (ws) => v4.emit('/connection/data', ws, req, parsedClientName))
+    else
     v4.handleUpgrade(req, socket, head, {}, (ws) => v4.emit('/connection/data', ws, req, parsedClientName))
   }
 })
