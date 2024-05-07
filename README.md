@@ -11,15 +11,20 @@ Performant LavaLink replacement written in Node.js.
 
 ## Dependencies
 
-- [`@performanc/pwsl-server`](https://github.com/PerformanC/internals/tree/PWSL-server)
-- [`@performanc/voice`](https://npmjs.com/package/@performanc/voice)
+- [`@performanc/pwsl-server`](https://github.com/PerformanC/internals/tree/PWSL-server) *
+- [`@performanc/voice`](https://npmjs.com/package/@performanc/voice) *
 - [`prism-media`](https://npmjs.com/package/prism-media)
 - [`opusscript`](https://npmjs.com/package/opusscript) or [`@discordjs/opus`](https://npmjs.com/package/@discordjs/opus)
 - [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) or [`sodium-native`](https://npmjs.com/package/sodium-native) or [`tweetnacl`](https://npmjs.com/package/tweetnacl)
 - [`ffmpeg`](https://ffmpeg.org/) or [`avconv`](https://libav.org/) or [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static)
+- [`@flat/lame`](https://github.com/FlatIO/node-lame)
+- [`node-libsamplerate`](https://github.com/ThePedroo/node-libsamplerate) *
 
 > [!NOTE]
 > For most sources FFmpeg isn't required. It is current required for timescale, seek and endTime filter. Required for `local` and `http` sources.
+
+> [!NOTE]
+> Dependencies marked with an asterisk (*) are dependencies maintained by PerformanC or one of its members.
 
 ## Installation
 
