@@ -1021,3 +1021,7 @@ export function replacePart(original, start, end, replacement) {
 export function addPartAt(original, start, part) {
   return original.slice(0, start).concat(part).concat(original.slice(start))
 }
+
+RegExp.escape = function(text) {
+  return text.replace(/[-[\]{}()*+?.,\\^$|]/g, '\\$&')
+}

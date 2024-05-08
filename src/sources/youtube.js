@@ -65,6 +65,8 @@ async function _init() {
     debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
   })
 
+  console.log(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`)
+
   const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
     debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
   })
@@ -74,10 +76,10 @@ async function _init() {
   let functionName = player.match(/a.set\("alr","yes"\);c&&\(c=(.*?)\(/)[1]
   const decipherFunctionName = functionName
 
-  const sigFunction = player.match(new RegExp(`${functionName.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')}=function\\(a\\){(.*)\\)};`, 'g'))[0]
+  const sigFunction = player.match(new RegExp(`${RegExp.escape(functionName)}=function\\(a\\){(.*)\\)};`, 'g'))[0]
 
   functionName = player.match(/a=a\.split\(""\);(.*?)\./)[1]
-  const sigWrapper = player.match(new RegExp(`var ${functionName}={(.*?)};`, 's'))[1]
+  const sigWrapper = player.match(new RegExp(`var ${RegExp.escape(functionName)}={(.*?)};`, 's'))[1]
 
   sourceInfo.functions[0] = `const ${functionName}={${sigWrapper}};const ${sigFunction}${decipherFunctionName}(sig);`
 
@@ -675,6 +677,8 @@ function loadLyrics(decodedTrack, language) {
         }
       })
     }
+
+    console.log(video)
 
     if (!video.captions)
       return resolve(null)
