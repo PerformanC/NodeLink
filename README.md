@@ -42,7 +42,7 @@ $ npm i
 ```
 
 > [!NOTE]
-> If you to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
+> If you want to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
 
 ### 3. Run NodeLink
 
