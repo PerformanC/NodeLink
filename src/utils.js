@@ -82,7 +82,7 @@ function _http1Events(request, headers, statusCode) {
 }
 
 export function http1makeRequest(url, options) { 
-  return new Promise(async (resolve, reject) => {
+  return new Promise(async (resolve) => {
     let compression = null
 
     let req = (url.startsWith('https') ? https : http).request(url, {
@@ -159,7 +159,7 @@ export function http1makeRequest(url, options) {
     req.on('error', (error) => {
       consoleError(`[\u001b[31mhttp1makeRequest\u001b[37m]: Failed sending HTTP request to ${url}: \u001b[31m${error}\u001b[37m`)
 
-      reject(error)
+      resolve({ error })
     })
   })
 }

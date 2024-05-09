@@ -171,6 +171,19 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
           streamOnly: true
         })
 
+        if (!res) {
+          debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: 'Network issue upon retrieving stream from source.' })
+
+          return resolve({
+            status: 1,
+            exception: {
+              message: 'Network issue upon retrieving stream from source.',
+              severity: 'common',
+              cause: 'Network issue'
+            }
+          })
+        }
+
         if (res.statusCode !== 200) {
           res.stream.emit('end') /* (http1)makeRequest will handle this automatically */
 

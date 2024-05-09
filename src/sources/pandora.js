@@ -25,14 +25,30 @@ async function init() {
     method: 'POST'
   })
 
-  if (token.errorCode === 0) return debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
+  if (!token || token.errorCode === 0)
+    return debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
 
   authToken = token.authToken
 
   debugLog('pandora', 5, { type: 1, message: 'Successfully set Pandora auth and CSRF token.' })
+
+  globalThis.NodeLinkSources.Pandora = true
 }
 
 async function search(query) {
+  if (!globalThis.NodeLinkSources.Pandora) {
+    debugLog('retrieveStream', 4, { type: 2, sourceName: 'Pandora', query, message: 'Pandora source is not available.' })
+
+    return {
+      type: 'error',
+      data: {
+        message: 'Pandora source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   return new Promise(async (resolve) => {
     debugLog('search', 4, { type: 1, sourceName: 'Pandora', query })
 
@@ -128,6 +144,19 @@ async function search(query) {
 }
 
 async function loadFrom(query) {
+  if (!globalThis.NodeLinkSources.Pandora) {
+    debugLog('loadtracks', 4, { type: 2, sourceName: 'Pandora', query, message: 'Pandora source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'Pandora source is not available.',
+        severity: 'common',
+        cause: 'Pandora availability'
+      }
+    }
+  }
+
   return new Promise(async (resolve) => {
     const type = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(query)
 

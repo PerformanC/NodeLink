@@ -18,17 +18,25 @@ async function init() {
 
   const { body: mainpage } = await http1makeRequest('https://soundcloud.com', {
     method: 'GET'
-  }).catch(() => {
-    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
   })
+
+  if (!mainpage) {
+    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+
+    return;
+  }
 
   const assetId = mainpage.match(/https:\/\/a-v2.sndcdn.com\/assets\/([a-zA-Z0-9-]+).js/gs)[5]
 
   const { body: data } = await http1makeRequest(assetId, {
     method: 'GET'
-  }).catch(() => {
-    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
   })
+
+  if (!data) {
+    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+
+    return;
+  }
 
   const clientId = data.match(/client_id=([a-zA-Z0-9]{32})/)[1]
 
@@ -41,9 +49,24 @@ async function init() {
   sourceInfo.clientId = clientId
 
   debugLog('soundcloud', 5, { type: 1, message: 'Successfully fetched clientId.' })
+
+  globalThis.NodeLinkSources.SoundCloud = true
 }
 
 async function search(query, shouldLog) {
+  if (!globalThis.NodeLinkSources.SoundCloud) {
+    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: 'SoundCloud source is not available.' })
+
+    return {
+      type: 'error',
+      data: {
+        message: 'SoundCloud source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'SoundCloud', query })
 
   const req = await http1makeRequest(`https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${sourceInfo.clientId}&limit=${config.options.maxSearchResults}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`, { method: 'GET' })
@@ -55,7 +78,8 @@ async function search(query, shouldLog) {
     debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: errorMessage })
 
     return {
-      exception: {
+      type: 'error',
+      data: {
         message: errorMessage,
         severity: 'fault',
         cause: 'Unknown'
@@ -111,6 +135,19 @@ async function search(query, shouldLog) {
 }
 
 async function loadFrom(url) {
+  if (!globalThis.NodeLinkSources.SoundCloud) {
+    debugLog('loadtracks', 4, { type: 2, loadType: 'unknown', sourceName: 'SoundCloud', query: url, message: 'SoundCloud source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'SoundCloud source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   let req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
 
   if (req.error || req.statusCode !== 200) {
@@ -282,6 +319,18 @@ async function loadFrom(url) {
 }
 
 async function retrieveStream(identifier, title) {
+  if (!globalThis.NodeLinkSources.SoundCloud) {
+    debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: 'SoundCloud source is not available.' })
+
+    return {
+      exception: {
+        message: 'SoundCloud source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   const req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=https://api.soundcloud.com/tracks/${identifier}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
   const body = req.body
 

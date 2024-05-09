@@ -27,6 +27,12 @@ async function init() {
     getCookies: true
   })
 
+  if (!res.body) {
+    debugLog('deezer', 5, { type: 3, message: 'Failed to fetch user data.' })
+
+    return
+  }
+
   sourceInfo.Cookie = res.headers['set-cookie'].join('; ')
   
   if (config.search.sources.deezer.arl !== 'DISABLED') {
@@ -39,6 +45,12 @@ async function init() {
       method: 'POST'
     })
 
+    if (!jwtInfo) {
+      debugLog('deezer', 5, { type: 3, message: 'Failed to fetch JWT token.' })
+
+      return
+    }
+
     sourceInfo.jwtToken = JSON.parse(jwtInfo).jwt
   } 
 
@@ -47,9 +59,102 @@ async function init() {
   sourceInfo.mediaUrl = res.body.results.URL_MEDIA
 
   debugLog('deezer', 5, { type: 1, message: 'Successfully fetched user data.' })
+
+  globalThis.NodeLinkSources.Deezer = true
+}
+
+async function search(query, shouldLog) {
+  if (!globalThis.NodeLinkSources.Deezer) {
+    debugLog('search', 4, { type: 2, sourceName: 'Deezer', query, message: 'Deezer source is not available.' })
+
+    return {
+      type: 'error',
+      data: {
+        message: 'Deezer source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'Deezer', query })
+
+  const { body: data } = await makeRequest(`https://api.deezer.com/2.0/search?q=${encodeURI(query)}`, { method: 'GET' })
+
+  // This API doesn't give ISRC, must change to internal API
+
+  if (data.error) {
+    return {
+      loadType: 'error',
+      data: {
+        message: data.error.message,
+        severity: 'fault',
+        cause: 'Unknown'
+      }
+    }
+  }
+
+  if (data.total === 0) {
+    if (shouldLog) debugLog('search', 4, { type: 3, sourceName: 'Deezer', query, message: 'No matches found.' })
+
+    return {
+      loadType: 'empty',
+      data: {}
+    }
+  }
+
+  const tracks = []
+
+  if (data.data.length > config.options.maxSearchResults) {
+    let i = 0
+    data.data = data.data.filter((item) => item.type === 'track' && i++ < config.options.maxSearchResults)
+  }
+
+  data.data.forEach(async (item) => {
+    const track = {
+      identifier: item.id.toString(),
+      isSeekable: true,
+      author: item.artist.name,
+      length: item.duration * 1000,
+      isStream: false,
+      position: 0,
+      title: item.title,
+      uri: item.link,
+      artworkUrl: item.album.cover_xl,
+      isrc: item.isrc,
+      sourceName: 'deezer'
+    }
+
+    tracks.push({
+      encoded: encodeTrack(track),
+      info: track,
+      pluginInfo: {}
+    })
+  })
+
+  if (shouldLog)
+    debugLog('search', 4, { type: 2, sourceName: 'Deezer', tracksLen: tracks.length, query })
+
+  return {
+    loadType: 'search',
+    data: tracks
+  }
 }
 
 async function loadFrom(query, type) {
+  if (!globalThis.NodeLinkSources.Deezer) {
+    debugLog('search', 4, { type: 2, sourceName: 'Deezer', query, message: 'Deezer source is not available.' })
+
+    return {
+      type: 'error',
+      data: {
+        message: 'Deezer source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   let endpoint
 
   switch (type[1]) {
@@ -165,72 +270,19 @@ async function loadFrom(query, type) {
   }
 }
 
-async function search(query, shouldLog) {
-  if (shouldLog) debugLog('search', 4, { type: 1, sourceName: 'Deezer', query })
+async function retrieveStream(identifier, title) {
+  if (!globalThis.NodeLinkSources.Deezer) {
+    debugLog('retrieveStream', 4, { type: 2, sourceName: 'Deezer', query: title, message: 'Deezer source is not available.' })
 
-  const { body: data } = await makeRequest(`https://api.deezer.com/2.0/search?q=${encodeURI(query)}`, { method: 'GET' })
-
-  // This API doesn't give ISRC, must change to internal API
-
-  if (data.error) {
     return {
-      loadType: 'error',
-      data: {
-        message: data.error.message,
-        severity: 'fault',
+      exception: {
+        message: 'Deezer source is not available.',
+        severity: 'common',
         cause: 'Unknown'
       }
     }
   }
 
-  if (data.total === 0) {
-    if (shouldLog) debugLog('search', 4, { type: 3, sourceName: 'Deezer', query, message: 'No matches found.' })
-
-    return {
-      loadType: 'empty',
-      data: {}
-    }
-  }
-
-  const tracks = []
-
-  if (data.data.length > config.options.maxSearchResults) {
-    let i = 0
-    data.data = data.data.filter((item) => item.type === 'track' && i++ < config.options.maxSearchResults)
-  }
-
-  data.data.forEach(async (item) => {
-    const track = {
-      identifier: item.id.toString(),
-      isSeekable: true,
-      author: item.artist.name,
-      length: item.duration * 1000,
-      isStream: false,
-      position: 0,
-      title: item.title,
-      uri: item.link,
-      artworkUrl: item.album.cover_xl,
-      isrc: item.isrc,
-      sourceName: 'deezer'
-    }
-
-    tracks.push({
-      encoded: encodeTrack(track),
-      info: track,
-      pluginInfo: {}
-    })
-  })
-
-  if (shouldLog)
-    debugLog('search', 4, { type: 2, sourceName: 'Deezer', tracksLen: tracks.length, query })
-
-  return {
-    loadType: 'search',
-    data: tracks
-  }
-}
-
-async function retrieveStream(identifier, title) {
   const { body: data } = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=song.getListData&input=3&api_version=1.0&api_token=${sourceInfo.csrfToken}`, {
     body: {
       sng_ids: [ identifier ]
@@ -292,6 +344,19 @@ async function retrieveStream(identifier, title) {
 }
 
 async function loadLyrics(decodedTrack, _language) {
+  if (!globalThis.NodeLinkSources.Deezer) {
+    debugLog('loadlyrics', 4, { type: 2, track: decodedTrack, sourceName: 'Deezer', message: 'Deezer source is not available.' })
+
+    return {
+      type: 'error',
+      data: {
+        message: 'Deezer source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   const { body: video } = await makeRequest('https://pipe.deezer.com/api', {
     headers: {
       Cookie: sourceInfo.Cookie,
@@ -422,8 +487,8 @@ function loadTrack(title, url, trackInfos) {
 
 export default {
   init,
-  loadFrom,
   search,
+  loadFrom,
   retrieveStream,
   loadLyrics,
   loadTrack

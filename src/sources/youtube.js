@@ -90,6 +90,8 @@ async function _init() {
   sourceInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
 
   debugLog('youtube', 5, { type: 1, message: 'Successfully fetched deciphering functions.' })
+
+  globalThis.NodeLinkSources.YouTube = true
 }
 
 async function init() {
@@ -131,6 +133,19 @@ function checkURLType(url, type) {
 }
 
 async function search(query, type, shouldLog) {
+  if (!globalThis.NodeLinkSources.YouTube) {
+    debugLog('search', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'YouTube source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'YouTube source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   if (shouldLog) debugLog('search', 4, { type: 1, sourceName: _getSourceName(type), query })
 
   if (!config.search.sources.youtube.bypassAgeRestriction)
@@ -248,6 +263,19 @@ async function search(query, type, shouldLog) {
 }
 
 async function loadFrom(query, type) {
+  if (!globalThis.NodeLinkSources.YouTube) {
+    debugLog('loadtracks', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'YouTube source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'YouTube source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   if (!config.search.sources.youtube.bypassAgeRestriction)
     _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
@@ -542,6 +570,18 @@ async function loadFrom(query, type) {
 }
 
 async function retrieveStream(identifier, type, title) {
+  if (!globalThis.NodeLinkSources.YouTube) {
+    debugLog('retrieveStream', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'YouTube source is not available.' })
+
+    return {
+      exception: {
+        message: 'YouTube source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   if (!config.search.sources.youtube.bypassAgeRestriction)
     _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')
 
@@ -628,6 +668,19 @@ async function retrieveStream(identifier, type, title) {
 }
 
 function loadLyrics(decodedTrack, language) {
+  if (!globalThis.NodeLinkSources.YouTube) {
+    debugLog('loadLyrics', 4, { type: 3, sourceName: _getSourceName(type), query, message: 'YouTube source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'YouTube source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   return new Promise(async (resolve) => {
     if (!config.search.sources.youtube.bypassAgeRestriction)
       _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'ANDROID')

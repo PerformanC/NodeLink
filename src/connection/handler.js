@@ -1,6 +1,8 @@
 import os from 'node:os'
 import { URL } from 'node:url'
 
+globalThis.NodeLinkSources = {}
+
 import { randomLetters, debugLog, sendResponse, verifyMethod, encodeTrack, decodeTrack, tryParseBody } from '../utils.js'
 import config from '../../config.js'
 import sources from '../sources.js'
@@ -118,7 +120,7 @@ async function configureConnection(ws, req, parsedClientName) {
 
   clients[sessionId] = client
 
-  await startSourceAPIs()
+  startSourceAPIs()
 
   ws.send(
     JSON.stringify({

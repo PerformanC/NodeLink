@@ -61,9 +61,24 @@ async function init() {
   }
 
   debugLog('spotify', 5, { type: 1, message: 'Successfully fetched token.' })
+
+  globalThis.NodeLinkSources.Spotify = true
 }
 
 async function search(query) {
+  if (!globalThis.NodeLinkSources.Spotify) {
+    debugLog('search', 4, { type: 3, sourceName: 'Spotify', query, message: 'Spotify source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'Spotify source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   return new Promise(async (resolve) => {
     debugLog('search', 4, { type: 1, sourceName: 'Spotify', query })
 
@@ -130,6 +145,19 @@ async function search(query) {
 }
 
 async function loadFrom(query, type) {
+  if (!globalThis.NodeLinkSources.Spotify) {
+    debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query: url, message: 'Spotify source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'Spotify source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   return new Promise(async (resolve) => {
     let endpoint
 
@@ -424,6 +452,19 @@ async function loadFrom(query, type) {
 }
 
 async function loadLyrics(decodedTrack, _language) {
+  if (!globalThis.NodeLinkSources.Spotify) {
+    debugLog('loadlyrics', 4, { type: 3, sourceName: 'Spotify', message: 'Spotify source is not available.' })
+
+    return {
+      loadType: 'error',
+      data: {
+        message: 'Spotify source is not available.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   const identifier = /^https?:\/\/(?:open\.spotify\.com\/|spotify:)(?:[^?]+)?(track|playlist|artist|episode|show|album)[/:]([A-Za-z0-9]+)/.exec(decodedTrack.uri)
 
   if (config.search.sources.spotify.sp_dc === 'DISABLED') {
