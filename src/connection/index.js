@@ -117,7 +117,7 @@ server.on('upgrade', (req, socket, head) => {
       v4.handleUpgrade(req, socket, head, { 'isNodeLink': true, 'Lavalink-Api-Version': '4' }, (ws) => v4.emit('/v4/websocket', ws, req, parsedClientName))
   }
 
-  if (pathname === '/connection/data') {
+  else if (pathname === '/connection/data') {
     const nullIds = []
     if (!req.headers['guild-id']) nullIds.push('"guild-id"')
     if (!req.headers['user-id']) nullIds.push('"user-id"')
@@ -148,6 +148,11 @@ server.on('upgrade', (req, socket, head) => {
       v4.handleUpgrade(req, socket, head, (ws) => v4.emit('/connection/data', ws, req, parsedClientName))
     else
     v4.handleUpgrade(req, socket, head, {}, (ws) => v4.emit('/connection/data', ws, req, parsedClientName))
+  }
+
+  else {
+    req.socket.write('HTTP/1.1 404 Not Found\r\nLavalink-Api-Version: 4\r\n\r\n')
+    req.socket.destroy()
   }
 })
 
