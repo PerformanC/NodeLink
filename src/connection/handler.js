@@ -249,22 +249,11 @@ async function requestHandler(req, res) {
     const tracks = []
     let failed = false
 
-    buffer.nForEach((encodedTrack) => {
+    await buffer.nForEach((encodedTrack) => {
       const decodedTrack = decodeTrack(encodedTrack)
 
       if (!decodedTrack) {
         failed = true
-
-        debugLog('decodetracks', 1, { headers: req.headers, body: encodedTrack, error: 'The provided track is invalid.' })
-
-        sendResponse(req, res, {
-          timestamp: Date.now(),
-          status: 400,
-          error: 'Bad request',
-          trace: new Error().stack,
-          message: 'The provided track is invalid.',
-          path: parsedUrl.pathname
-        }, 400)
 
         return true
       }
@@ -272,7 +261,20 @@ async function requestHandler(req, res) {
       tracks.push({ encoded: encodedTrack, info: decodedTrack })
     })
 
-    if (failed) return;
+    if (failed) {
+      debugLog('decodetracks', 1, { headers: req.headers, body: buffer, error: 'The provided track is invalid.' })
+
+      sendResponse(req, res, {
+        timestamp: Date.now(),
+        status: 400,
+        error: 'Bad request',
+        trace: new Error().stack,
+        message: 'The provided track is invalid.',
+        path: parsedUrl.pathname
+      }, 400)
+
+      return;
+    }
 
     debugLog('decodetracks', 1, { headers: req.headers, body: buffer })
 
