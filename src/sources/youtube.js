@@ -65,8 +65,6 @@ async function _init() {
     debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
   })
 
-  console.log(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`)
-
   const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
     debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
   })
@@ -86,7 +84,7 @@ async function _init() {
   functionName = player.match(/&&\(b=a\.get\("n"\)\)&&\(b=(.*?)\(/)[1]
 
   if (functionName && functionName.includes('['))
-    functionName = player.match(new RegExp(`${functionName.match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
+    functionName = player.match(new RegExp(`${RegExp.escape(functionName).match(/([^[]*)\[/)[1]}=\\[(.*?)]`))[1]
   
   const ncodeFunction = player.match(new RegExp(`${functionName}=function(.*?)};`, 's'))[1]
   sourceInfo.functions[1] = `const ${functionName} = function${ncodeFunction}};${functionName}(ncode)`
@@ -677,8 +675,6 @@ function loadLyrics(decodedTrack, language) {
         }
       })
     }
-
-    console.log(video)
 
     if (!video.captions)
       return resolve(null)
