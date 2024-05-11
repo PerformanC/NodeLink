@@ -59,6 +59,12 @@ function _getSourceName(type) {
 }
 
 async function _init() {
+  if (!config.search.sources.youtube.bypassAgeRestriction) {
+    globalThis.NodeLinkSources.YouTube = true
+
+    return;
+  }
+
   debugLog('youtube', 5, { type: 1, message: 'Fetching deciphering functions...' })
  
   const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {

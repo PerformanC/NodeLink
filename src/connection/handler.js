@@ -790,7 +790,7 @@ function startSourceAPIs() {
   return new Promise((resolve) => {
     const sourcesToInitialize = []
 
-    if (config.search.sources.youtube && config.search.sources.youtube.bypassAgeRestriction)
+    if (config.search.sources.youtube.enabled)
       sourcesToInitialize.push(sources.youtube)
 
     if (config.search.sources.spotify.enabled)
