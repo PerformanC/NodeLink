@@ -953,6 +953,12 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
             segment.stream.destroy()
           }
         })
+
+        stream.on('error', () => {
+          if (shouldEnd) stream.emit('finishBuffering')
+
+          resolveSegment(true)
+        })
       })
     })
 

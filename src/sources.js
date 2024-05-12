@@ -204,6 +204,8 @@ function getTrackStream(decodedTrack, url, protocol, additionalData) {
         res.stream.on('data', (chunk) => stream.write(chunk))
         res.stream.on('end', () => stream.emit('finishBuffering'))
         res.stream.on('error', (error) => {
+          stream.emit('finishBuffering')
+
           debugLog('retrieveStream', 4, { type: 2, sourceName: decodedTrack.sourceName, query: decodedTrack.title, message: error.message })
 
           resolve({
