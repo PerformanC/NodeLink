@@ -96,7 +96,8 @@ export function http1makeRequest(url, options) {
           'Content-Type': 'application/json',
           ...(options.disableBodyCompression ? {} : { 'Content-Encoding': 'gzip' })
         } : {})
-      }
+      },
+      ...(config.options.requestsTimeout ? { timeout: config.options.requestsTimeout } : {})
     }, async (res) => {
       const statusCode = res.statusCode
       const headers = res.headers
@@ -204,7 +205,9 @@ export function makeRequest(url, options) {
       reqOptions['Content-Type'] = 'application/json'
     }
 
-    let req = client.request(reqOptions)
+    const req = client.request(reqOptions)
+
+    if (config.options.requestsTimeout) req.setTimeout(config.options.requestsTimeout)
 
     client.on('connect', () => {
       if (client.alpnProtocol !== 'h2') {

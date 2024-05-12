@@ -10,7 +10,7 @@ export default {
     password: 'youshallnotpass'
   },
   options: {
-    threshold: false,
+    requestsTimeout: 5000, /* 5 seconds */
     playerUpdateInterval: false,
     statsInterval: false,
     maxSearchResults: 200,
