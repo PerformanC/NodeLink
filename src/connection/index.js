@@ -59,8 +59,12 @@ if (typeof config.voiceReceive.timeout !== 'number')
 if (![ 'opus', 'pcm' ].includes(config.voiceReceive.type))
   throw new Error('Voice receive type must be either "opus" or "pcm".')
 
-if (process.isBun)
+if (process.isBun) {
   console.log('[\u001b[33mNodeLink Core\u001b[37m]: Detected that the process is running with Bun. Performance impacted to prevent crashes. Do NOT use sodium-native due to bugs with Bun. There\'s no guarantee on the stability or compliance with the NodeLink API.')
+
+  if (process.versions.bun.startsWith('1.1.') && Number(process.versions.bun.split('.')[2]) < 8)
+    throw new Error('NodeLink is not compatible with Bun versions below 1.1.8.')
+}
 
 const server = http.createServer(connectionHandler.requestHandler)
 const v4 = new WebSocketServer({ noServer: true })
