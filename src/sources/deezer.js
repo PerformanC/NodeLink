@@ -22,7 +22,7 @@ async function init() {
 
   debugLog('deezer', 5, { type: 1, message: 'Fetching user data...' })
 
-  const res = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=${config.search.sources.deezer.apiToken}`, {
+  const res = await makeRequest(`https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=${crypto.randomBytes(16).toString('hex')}`, {
     method: 'GET',
     getCookies: true
   })
