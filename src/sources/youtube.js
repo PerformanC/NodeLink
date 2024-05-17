@@ -618,6 +618,18 @@ async function retrieveStream(identifier, type, title) {
     disableBodyCompression: true
   })
 
+  if (!videos) {
+    debugLog('retrieveStream', 4, { type: 3, sourceName: _getSourceName(type), query: title, message: 'Failed to load results.' })
+
+    return {
+      exception: {
+        message: 'Failed to load results.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
+
   if (videos.error) {
     debugLog('retrieveStream', 4, { type: 2, sourceName: _getSourceName(type), query: title, message: videos.error.message })
 
