@@ -112,6 +112,12 @@ In some regions like Europe, you may receive a 403 error when trying to connect 
 
 To fix this issue, you must login to your Google/YouTube account. The proccess of retrieving the neccessary information is explained in [config.js](config.js) file.
 
+### node: bad option: --openssl-legacy-provider
+
+This error happens when you are using an outdated version of Node.js. To fix this issue, you must update your Node.js version to the latest version.
+
+You can also remove the `--openssl-legacy-provider` flag from the `package.json` file if you wish to use an older version of Node.js.
+
 ## Support
 
 Any question or issue related to NodeLink or other PerformanC projects can be can be made in [PerformanC's Discord server](https://discord.gg/uPveNfTuCJ).
