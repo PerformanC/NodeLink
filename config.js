@@ -16,7 +16,8 @@ export default {
     maxSearchResults: 200,
     maxAlbumPlaylistLength: 200,
     maxCaptionsLength: 3,
-    logFile: 'logs.txt'
+    logFile: 'logs.txt',
+    nativePlayback: true
   },
   debug: {
     youtube: {

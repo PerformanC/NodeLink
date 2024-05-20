@@ -44,6 +44,9 @@ $ npm i
 > [!NOTE]
 > If you want to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
 
+> [!NOTE]
+> If you are incapable of installing `node-libsamplerate`, remove its dependency from `package.json` and disable `nativePlayback` in `config.js`.
+
 ### 3. Run NodeLink
 
 ```shell
