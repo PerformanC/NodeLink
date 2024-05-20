@@ -18,7 +18,13 @@ Performant LavaLink replacement written in Node.js.
 - [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) or [`sodium-native`](https://npmjs.com/package/sodium-native) or [`tweetnacl`](https://npmjs.com/package/tweetnacl)
 - [`ffmpeg`](https://ffmpeg.org/) or [`avconv`](https://libav.org/) or [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static)
 - [`@flat/lame`](https://github.com/FlatIO/node-lame)
+  - [`bindings`](https://npmjs.com/package/bindings)
+  - [`debug`](https://npmjs.com/package/debug)
+  - [`nan`](https://npmjs.com/package/nan)
+  - [`readable-stream`](https://npmjs.com/package/readable-stream)
 - [`node-libsamplerate`](https://github.com/ThePedroo/node-libsamplerate) *
+  - [`node-addon-api`](https://npmjs.com/package/node-addon-api)
+  - [`node-gyp`](https://npmjs.com/package/node-gyp)
 
 > [!NOTE]
 > For most sources FFmpeg isn't required. It is current required for timescale, seek and endTime filter. Required for `local` and `http` sources.
@@ -45,7 +51,7 @@ $ npm i
 > If you want to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
 
 > [!NOTE]
-> If you are incapable of installing `node-libsamplerate`, remove its dependency from `package.json` and disable `nativePlayback` in `config.js`.
+> If you are incapable of installing `node-libsamplerate` or/and `@flat/lame`, remove its dependency from `package.json` and disable `nativePlayback` in `config.js`.
 
 ### 3. Run NodeLink
 
