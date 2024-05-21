@@ -924,10 +924,22 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
 
     body.nForEach(async (line) => {
       return new Promise(async (resolveSegment) => {
+        const onError = function() {
+          if (shouldEnd) stream.emit('finishBuffering')
+    
+          resolveSegment(true)
+    
+          segment.stream.removeAllListeners()
+          stream.removeListener('error', onError)
+        }
+
         if (stream.ended) {
           if (shouldEnd) stream.emit('finishBuffering')
 
           resolveSegment(true)
+
+          segment.stream.removeAllListeners()
+          stream.removeListener('error', onError)
 
           return resolve(false)
         }
@@ -941,24 +953,26 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
         segment.stream.on('end', () => {
           if (++i === body.filter((line) => !line.startsWith('#')).length) {
             if (shouldEnd) stream.emit('finishBuffering')
-
+    
             if (onceEnded) {
               resolve(true)
-
+    
               segment.stream.destroy()
+    
+              segment.stream.removeAllListeners()
+              stream.removeListener('error', onError)
             }
           } else {
             resolveSegment(false)
-
+    
             segment.stream.destroy()
+    
+            segment.stream.removeAllListeners()
+            stream.removeListener('error', onError)
           }
         })
 
-        stream.on('error', () => {
-          if (shouldEnd) stream.emit('finishBuffering')
-
-          resolveSegment(true)
-        })
+        stream.on('error', onError)
       })
     })
 
