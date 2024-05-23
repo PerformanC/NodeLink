@@ -4,6 +4,7 @@ import https from 'node:https'
 import http2 from 'node:http2'
 import zlib from 'node:zlib'
 import process from 'node:process'
+import net from 'node:net'
 import { Buffer } from 'node:buffer'
 import { URL } from 'node:url'
 
@@ -97,7 +98,12 @@ export function http1makeRequest(url, options) {
           ...(options.disableBodyCompression ? {} : { 'Content-Encoding': 'gzip' })
         } : {})
       },
-      ...(config.options.requestsTimeout ? { timeout: config.options.requestsTimeout } : {})
+      ...(config.options.requestsTimeout ? { timeout: config.options.requestsTimeout } : {}),
+      ...(config.options.ipv6Block !== 'DISABLED' ? {
+        agent: new (url.startsWith('https') ? https : http).Agent({
+          localAddress: getRandomIPv6(config.options.ipv6Block)
+        })
+      } : {})
     }, async (res) => {
       const statusCode = res.statusCode
       const headers = res.headers
@@ -182,7 +188,7 @@ function _http2Events(request, headers) {
 }
 
 export function makeRequest(url, options) {
-  if (process.versions.deno || process.isBun) return http1makeRequest(url, options)
+  if (process.versions.deno || process.isBun || config.options.ipv6Block !== 'DISABLED') return http1makeRequest(url, options)
 
   return new Promise(async (resolve) => {
     const parsedUrl = new URL(url)
@@ -1072,4 +1078,74 @@ export function addPartAt(original, start, part) {
 
 RegExp.escape = function(text) {
   return text.replace(/[-[\]{}()*+?.,\\^$|]/g, '\\$&')
+}
+
+/*
+ * MIT License
+ *
+ * Copyright (C) 2012-present by fent
+
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE. 
+ * 
+ * The functions getRandomIPv6 and _normalizeIP are licensed in MIT license.
+ * See https://github.com/fent/node-ytdl-core
+ */
+
+function getRandomIPv6(ip) {
+  if (!net.isIPv6(ip)) throw Error('Invalid IPv6 format provided for IPv6 rotation.')
+
+  const [ rawAddr, rawMask ] = ip.split('/')
+  let base10Mask = parseInt(rawMask)
+
+  if (!base10Mask || base10Mask > 128 || base10Mask < 24) throw Error('Invalid IPv6 subnet provided for IPv6 rtation.')
+
+  const base10addr = _normalizeIP(rawAddr)
+  const randomAddr = new Array(8).fill(1).map(() => Math.floor(Math.random() * 0xffff))
+
+  const mergedAddr = randomAddr.map((randomItem, idx) => {
+    const staticBits = Math.min(base10Mask, 16)
+    base10Mask -= staticBits
+
+    const mask = 0xffff - ((2 ** (16 - staticBits)) - 1)
+
+    return (base10addr[idx] & mask) + (randomItem & (mask ^ 0xffff))
+  })
+
+  return mergedAddr.map(x => x.toString('16')).join(':')
+}
+
+function _normalizeIP(ip) {
+  const parts = ip.split('::').map(x => x.split(':'))
+
+  const partStart = parts[0] || []
+  const partEnd = parts[1] || []
+  partEnd.reverse()
+
+  const fullIP = new Array(8).fill(0)
+
+  for (let i = 0; i < Math.min(partStart.length, 8); i++) {
+    fullIP[i] = parseInt(partStart[i], 16) || 0
+  }
+
+  for (let i = 0; i < Math.min(partEnd.length, 8); i++) {
+    fullIP[7 - i] = parseInt(partEnd[i], 16) || 0
+  }
+
+  return fullIP
 }

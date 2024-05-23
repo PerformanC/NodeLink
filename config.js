@@ -17,7 +17,8 @@ export default {
     maxAlbumPlaylistLength: 200,
     maxCaptionsLength: 3,
     logFile: 'logs.txt',
-    nativePlayback: true
+    nativePlayback: true,
+    ipv6Block: 'DISABLED'
   },
   debug: {
     youtube: {
