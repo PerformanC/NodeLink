@@ -16,7 +16,7 @@ export default {
     maxSearchResults: 200,
     maxAlbumPlaylistLength: 200,
     maxCaptionsLength: 3,
-    logFile: 'logs.txt',
+    logFile: 'logs.txt', /* false to disable -- will overwrite existing file -- use crypto.randomBytes(x).toString() to always create new files */
     nativePlayback: true
   },
   debug: {
