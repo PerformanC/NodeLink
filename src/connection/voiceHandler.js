@@ -304,6 +304,8 @@ class VoiceConnection {
     if (oldResource)
       resource.stream.once('readable', () => oldResource.destroy())
 
+    await waitForEvent(this.connection, 'playerStateChange', (_oldState, newState) => newState.status === 'playing')
+
     return this.config
   }
 
