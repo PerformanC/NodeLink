@@ -67,13 +67,27 @@ async function _init() {
 
   debugLog('youtube', 5, { type: 1, message: 'Fetching deciphering functions...' })
  
-  const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-    debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
-  })
+  const embedRequest = await makeRequest('https://www.youtube.com/embed', { method: 'GET' })
 
-  const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
-    debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
-  })
+  if (embedRequest.error) {
+    debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${embedRequest.error.message}` })
+
+    globalThis.NodeLinkSources.YouTube = false
+
+    return;
+  }
+
+  const playerRequest = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(embedRequest.body)[0]}`, { method: 'GET' })
+
+  if (playerRequest.error) {
+    debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${playerRequest.error.message}` })
+
+    globalThis.NodeLinkSources.YouTube = false
+
+    return;
+  }
+
+  const player = playerRequest.body
 
   sourceInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
 
@@ -755,18 +769,22 @@ function loadLyrics(decodedTrack, language) {
     })
 
     if (selectedCaption) {
-      const { body: captionData } = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-        debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+      const captionRequest = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' })
+
+      if (captionRequest.error) {
+        debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: captionRequest.error.message })
 
         return resolve({
           loadType: 'error',
           data: {
-            message: err.message,
+            message: captionRequest.error.message,
             severity: 'common',
             cause: 'Unknown'
           }
         })
-      })
+      }
+
+      const captionData = captionRequest.body
 
       const captionEvents = []
       captionData.events.forEach((event) => {
@@ -793,18 +811,22 @@ function loadLyrics(decodedTrack, language) {
       let i = 0
 
       video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
-        const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+        const captionRequest = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' })
+
+        if (captionRequest.error) {
+          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: captionRequest.error.message })
 
           return resolve({
             loadType: 'error',
             data: {
-              message: err.message,
+              message: captionRequest.error.message,
               severity: 'common',
               cause: 'Unknown'
             }
           })
-        })
+        }
+
+        const captionData = captionRequest.body
 
         const captionEvents = captionData.events.map((event) => {
           return {

@@ -27,10 +27,12 @@ async function init() {
     getCookies: true
   })
 
-  if (!res.body) {
-    debugLog('deezer', 5, { type: 3, message: 'Failed to fetch user data.' })
+  if (res.error) {
+    debugLog('deezer', 5, { type: 3, message: `Failed to fetch user data: ${res.error.message}` })
 
-    return
+    globalThis.NodeLinkSources.Deezer = false
+
+    return;
   }
 
   sourceInfo.Cookie = res.headers['set-cookie'].join('; ')
@@ -38,20 +40,22 @@ async function init() {
   if (config.search.sources.deezer.arl !== 'DISABLED') {
     sourceInfo.Cookie += `; arl=${config.search.sources.deezer.arl}`
 
-    const { body: jwtInfo } = await makeRequest('https://auth.deezer.com/login/arl?jo=p&rto=c&i=c', {
+    const jwtRequest = await makeRequest('https://auth.deezer.com/login/arl?jo=p&rto=c&i=c', {
       headers: {
         Cookie: sourceInfo.Cookie
       },
       method: 'POST'
     })
 
-    if (!jwtInfo) {
-      debugLog('deezer', 5, { type: 3, message: 'Failed to fetch JWT token.' })
+    if (jwtRequest.error) {
+      debugLog('deezer', 5, { type: 3, message: `Failed to fetch JWT token: ${jwtInfo.error.message}` })
 
-      return
+      globalThis.NodeLinkSources.Deezer = false
+
+      return;
     }
 
-    sourceInfo.jwtToken = JSON.parse(jwtInfo).jwt
+    sourceInfo.jwtToken = JSON.parse(jwtRequest.body).jwt
   } 
 
   sourceInfo.licenseToken = res.body.results.USER.OPTIONS.license_token

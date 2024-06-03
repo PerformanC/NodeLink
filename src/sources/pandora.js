@@ -8,14 +8,29 @@ let authToken = null
 async function init() {
   debugLog('pandora', 5, { type: 1, message: 'Setting Pandora auth and CSRF token.' })
 
-  const { headers: headers } = await makeRequest('https://www.pandora.com', { method: 'HEAD' })
-  const csfr = headers['set-cookie']
+  const pandoraRequest = await makeRequest('https://www.pandora.com', { method: 'HEAD' })
 
-  if (!csfr[1]) return debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
+  if (pandoraRequest.error) {
+    debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
+
+    globalThis.NodeLinkSources.Pandora = false
+
+    return;
+  }
+
+  const csfr = pandoraRequest.headers['set-cookie']
+
+  if (!csfr[1]) {
+    debugLog('pandora', 5, { type: 2, message: 'Failed to set CSRF token from Pandora.' })
+
+    globalThis.NodeLinkSources.Pandora = false
+
+    return;
+  }
 
   csrfToken = { raw: csfr[1], parsed: /csrftoken=([a-f0-9]{16});/.exec(csfr[1])[1] }
 
-  const { body: token } = await makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
+  const tokenRequest = await makeRequest('https://www.pandora.com/api/v1/auth/anonymousLogin', {
     headers: {
       'Cookie': csrfToken.raw,
       'Content-Type': 'application/json',
@@ -25,8 +40,15 @@ async function init() {
     method: 'POST'
   })
 
-  if (!token || token.errorCode === 0)
-    return debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
+  if (tokenRequest.error || tokenRequest.body.errorCode === 0) {
+    debugLog('pandora', 5, { type: 2, message: 'Failed to set auth token from Pandora.' })
+
+    globalThis.NodeLinkSources.Pandora = false
+
+    return;
+  }
+
+  const token = tokenRequest.body
 
   authToken = token.authToken
 

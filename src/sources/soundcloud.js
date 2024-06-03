@@ -11,37 +11,45 @@ async function init() {
   if (config.search.sources.soundcloud.clientId !== 'AUTOMATIC') {
     sourceInfo.clientId = config.search.sources.soundcloud.clientId
 
+    debugLog('soundcloud', 5, { type: 1, message: 'clientId provided, instant ready.' })
+
     return;
   }
 
   debugLog('soundcloud', 5, { type: 1, message: 'clientId not provided. Fetching clientId...' })
 
-  const { body: mainpage } = await http1makeRequest('https://soundcloud.com', {
-    method: 'GET'
-  })
+  const mainpageRequest = await http1makeRequest('https://soundcloud.com', { method: 'GET' })
 
-  if (!mainpage) {
-    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+  if (mainpageRequest.errror) {
+    debugLog('soundcloud', 5, { type: 2, message: `Failed to fetch clientId: ${mainpageRequest.error.message}` })
+
+    globalThis.NodeLinkSources.SoundCloud = false
 
     return;
   }
+
+  const mainpage = mainpageRequest.body
 
   const assetId = mainpage.match(/https:\/\/a-v2.sndcdn.com\/assets\/([a-zA-Z0-9-]+).js/gs)[5]
 
-  const { body: data } = await http1makeRequest(assetId, {
-    method: 'GET'
-  })
+  const assetRequest = await http1makeRequest(assetId, { method: 'GET' })
 
-  if (!data) {
-    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+  if (assetRequest.error) {
+    debugLog('soundcloud', 5, { type: 2, message: `Failed to fetch asset: ${assetRequest.error.message}` })
+
+    globalThis.NodeLinkSources.SoundCloud = false
 
     return;
   }
 
-  const clientId = data.match(/client_id=([a-zA-Z0-9]{32})/)[1]
+  const asset = assetRequest.body
+
+  const clientId = asset.match(/client_id=([a-zA-Z0-9]{32})/)[1]
 
   if (!clientId) {
-    debugLog('soundcloud', 5, { type: 2, message: 'Failed to fetch clientId.' })
+    debugLog('soundcloud', 5, { type: 2, message: 'Failed to parse clientId.' })
+
+    globalThis.NodeLinkSources.SoundCloud = false
 
     return;
   }
