@@ -27,7 +27,7 @@ Performant LavaLink replacement written in Node.js.
   - [`node-gyp`](https://npmjs.com/package/node-gyp)
 
 > [!NOTE]
-> For most sources FFmpeg isn't required. It is current required for timescale, seek and endTime filter. Required for `local` and `http` sources.
+> For most sources FFmpeg isn't required. It is currently required for timescale, seek and endTime filter. Required for `local` and `http` sources.
 
 > [!NOTE]
 > Dependencies marked with an asterisk (*) are dependencies maintained by PerformanC or one of its members.
@@ -48,7 +48,7 @@ $ npm i
 ```
 
 > [!NOTE]
-> If you want to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
+> If you want to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer worse performance.
 
 > [!NOTE]
 > If you are incapable of installing `node-libsamplerate` or/and `@flat/lame`, remove its dependency from `package.json` and disable `nativePlayback` in `config.js`.
@@ -64,7 +64,7 @@ For information on how to install NodeLink using Docker, see [the NodeLink Docke
 
 ## Usage
 
-NodeLink is compatible with most LavaLink clients, as it implements most of the LavaLink API. However, some clients may not be compatible with NodeLink, as it implements changes some behaviors and endpoints.
+NodeLink is compatible with most LavaLink clients, as it implements most of the LavaLink API. However, some clients may not be compatible with NodeLink, as NodeLink implements changes in some behaviors and endpoints.
 
 | Client                                                              | Platform     | v2 supported?   | NodeLink Features?  | NodeLink major version |
 | --------------------------------------------------------------------|--------------|-----------------|---------------------|------------------------|
