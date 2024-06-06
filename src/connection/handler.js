@@ -460,8 +460,8 @@ async function requestHandler(req, res) {
     client.players.forEach((player) => {
       player.config.state = {
         time: Date.now(),
-        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        position: player.connection ? (player.connection.playerState.status === 'playing' || player.connection.playerState.reason === 'paused') ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'connected' : false,
         ping: player.connection?.ping || -1
       }
 
@@ -547,8 +547,8 @@ async function requestHandler(req, res) {
 
       player.config.state = {
         time: Date.now(),
-        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        position: player.connection ? (player.connection.playerState.status === 'playing' || player.connection.playerState.reason === 'paused') ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'connected' : false,
         ping: player.connection?.ping || -1
       }
 
@@ -778,8 +778,8 @@ async function requestHandler(req, res) {
       /* Updating player state to ensure it's sending up-to-date data */
       player.config.state = {
         time: Date.now(),
-        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        position: player.connection ? (player.connection.playerState.status === 'playing' || player.connection.playerState.reason === 'paused') ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'connected' : false,
         ping: player.connection?.ping || -1 
       }
 
