@@ -31,6 +31,24 @@ const sourceInfo = {
   functions: []
 }
 
+let _additionalHeaders = {}
+
+if (config.search.sources.youtube.authentication.Android.enabled) {
+  _additionalHeaders = {
+    Authorization: `Bearer ${config.search.sources.youtube.authentication.Android.authorization}`,
+    'X-Goog-Visitor-Id': config.search.sources.youtube.authentication.Android.visitorId
+  }
+} else if (config.search.sources.youtube.authentication.web.enabled) {
+  /* TODO: Port https://github.com/ytdl-org/youtube-dl/blob/master/youtube_dl/extractor/youtube.py#L105-L262 to Node.js */
+  _additionalHeaders = {
+    Authorization: config.search.sources.youtube.authentication.web.authorization,
+    Cookie: config.search.sources.youtube.authentication.web.cookie,
+    'X-Goog-Visitor-Id': config.search.sources.youtube.authentication.web.visitorId,
+    'X-Goog-AuthUser': '0',
+    'X-Youtube-Bootstrap-Logged-In': 'true'
+  }
+}
+
 function _getBaseHostRequest(type) {
   if (ytContext.client.clientName.startsWith('ANDROID'))
     return 'youtubei.googleapis.com'
@@ -174,10 +192,8 @@ async function search(query, type, shouldLog) {
   const { body: search } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/search`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
-      ...(config.search.sources.youtube.authentication.enabled ? {
-        Authorization: config.search.sources.youtube.authentication.authorization,
-        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-      } : {})
+      'X-GOOG-API-FORMAT-VERSION': '2',
+      ..._additionalHeaders
     },
     body: {
       context: ytContext,
@@ -308,10 +324,8 @@ async function loadFrom(query, type) {
       const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
-          ...(config.search.sources.youtube.authentication.enabled ? {
-            Authorization: config.search.sources.youtube.authentication.authorization,
-            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          'X-GOOG-API-FORMAT-VERSION': '2',
+          ..._additionalHeaders
         },
         body: {
           context: ytContext,
@@ -385,10 +399,8 @@ async function loadFrom(query, type) {
       const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
-          ...(config.search.sources.youtube.authentication.enabled ? {
-            Authorization: config.search.sources.youtube.authentication.authorization,
-            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          'X-GOOG-API-FORMAT-VERSION': '2',
+          ..._additionalHeaders
         },
         body: {
           context: ytContext,
@@ -510,10 +522,8 @@ async function loadFrom(query, type) {
       const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
-          ...(config.search.sources.youtube.authentication.enabled ? {
-            Authorization: config.search.sources.youtube.authentication.authorization,
-            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          'X-GOOG-API-FORMAT-VERSION': '2',
+          ..._additionalHeaders
         },
         body: {
           context: ytContext,
@@ -608,10 +618,8 @@ async function retrieveStream(identifier, type, title) {
   const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
-      ...(config.search.sources.youtube.authentication.enabled ? {
-        Authorization: config.search.sources.youtube.authentication.authorization,
-        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-      } : {})
+      'X-GOOG-API-FORMAT-VERSION': '2',
+      ..._additionalHeaders
     },
     body: {
       context: ytContext,
@@ -720,10 +728,8 @@ function loadLyrics(decodedTrack, language) {
     const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player`, {
       headers: {
         'User-Agent': ytContext.client.userAgent,
-        ...(config.search.sources.youtube.authentication.enabled ? {
-          Authorization: config.search.sources.youtube.authentication.authorization,
-          Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-        } : {})
+        'X-GOOG-API-FORMAT-VERSION': '2',
+        ..._additionalHeaders
       },
       body: {
         context: ytContext,
