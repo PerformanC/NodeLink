@@ -923,6 +923,8 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
     let i = 0
     let timeout = 0
 
+    if (!onceEnded) resolve(true)
+
     await body.nForEach(async (line) => {
       return new Promise(async (resolveSegment) => {
         const onError = function() {
@@ -1000,8 +1002,6 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
         stream.on('error', onError)
       })
     })
-
-    if (!onceEnded) resolve(true)
   })
 }
 
