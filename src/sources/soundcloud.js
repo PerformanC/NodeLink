@@ -158,10 +158,19 @@ async function loadFrom(url) {
 
   let req = await http1makeRequest(`https://api-v2.soundcloud.com/resolve?url=${encodeURI(url)}&client_id=${sourceInfo.clientId}`, { method: 'GET' })
 
+  if (req.statusCode === 404) {
+    debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: 'No matches found.' })
+
+    return {
+      loadType: 'empty',
+      data: {}
+    }
+  }
+
   if (req.error || req.statusCode !== 200) {
     const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
 
-    debugLog('loadtracks', 4, { type: 2, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: errorMessage })
+    debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'Soundcloud', query: url, message: errorMessage })
 
     return {
       loadType: 'error',
