@@ -18,10 +18,16 @@ Performant LavaLink replacement written in Node.js.
 - [`libsodium-wrappers`](https://npmjs.com/package/libsodium-wrappers) or [`sodium-native`](https://npmjs.com/package/sodium-native) or [`tweetnacl`](https://npmjs.com/package/tweetnacl)
 - [`ffmpeg`](https://ffmpeg.org/) or [`avconv`](https://libav.org/) or [`ffmpeg-static`](https://npmjs.com/package/ffmpeg-static)
 - [`@flat/lame`](https://github.com/FlatIO/node-lame)
+  - [`bindings`](https://npmjs.com/package/bindings)
+  - [`debug`](https://npmjs.com/package/debug)
+  - [`nan`](https://npmjs.com/package/nan)
+  - [`readable-stream`](https://npmjs.com/package/readable-stream)
 - [`node-libsamplerate`](https://github.com/ThePedroo/node-libsamplerate) *
+  - [`node-addon-api`](https://npmjs.com/package/node-addon-api)
+  - [`node-gyp`](https://npmjs.com/package/node-gyp)
 
 > [!NOTE]
-> For most sources FFmpeg isn't required. It is current required for timescale, seek and endTime filter. Required for `local` and `http` sources.
+> For most sources FFmpeg isn't required. It is currently required for timescale, seek and endTime filter. Required for `local` and `http` sources.
 
 > [!NOTE]
 > Dependencies marked with an asterisk (*) are dependencies maintained by PerformanC or one of its members.
@@ -42,7 +48,10 @@ $ npm i
 ```
 
 > [!NOTE]
-> If you want to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer a worse performance.
+> If you want to use pure JavaScript, replace `sodium-native` with `libsodium-wrappers`. Keep in mind that pure JavaScript will offer worse performance.
+
+> [!NOTE]
+> If you are incapable of installing `node-libsamplerate` or/and `@flat/lame`, remove its dependency from `package.json` and disable `nativePlayback` in `config.js`.
 
 ### 3. Run NodeLink
 
@@ -55,7 +64,7 @@ For information on how to install NodeLink using Docker, see [the NodeLink Docke
 
 ## Usage
 
-NodeLink is compatible with most LavaLink clients, as it implements most of the LavaLink API. However, some clients may not be compatible with NodeLink, as it implements changes some behaviors and endpoints.
+NodeLink is compatible with most LavaLink clients, as it implements most of the LavaLink API. However, some clients may not be compatible with NodeLink, as NodeLink implements changes in some behaviors and endpoints.
 
 | Client                                                              | Platform     | v2 supported?   | NodeLink Features?  | NodeLink major version |
 | --------------------------------------------------------------------|--------------|-----------------|---------------------|------------------------|
@@ -102,6 +111,12 @@ NodeLink only [documents the differences between LavaLink and NodeLink](docs/API
 In some regions like Europe, you may receive a 403 error when trying to connect to YouTube. The real reason is unknown, but The PerformanC team managed to create a proper workaround for this issue.
 
 To fix this issue, you must login to your Google/YouTube account. The proccess of retrieving the neccessary information is explained in [config.js](config.js) file.
+
+### node: bad option: --openssl-legacy-provider
+
+This error happens when you are using an outdated version of Node.js. To fix this issue, you must update your Node.js version to the latest version.
+
+You can also remove the `--openssl-legacy-provider` flag from the `package.json` file if you wish to use an older version of Node.js.
 
 ## Support
 

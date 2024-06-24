@@ -18,6 +18,8 @@ async function init() {
   if (typeof token !== 'object') {
     debugLog('spotify', 5, { type: 2, message: 'Failed to fetch Spotify token.' })
 
+    globalThis.NodeLinkSources.Spotify = false
+
     return;
   }
 
@@ -46,11 +48,15 @@ async function init() {
   if (typeof data !== 'object') {
     debugLog('spotify', 5, { type: 2, message: 'Failed to fetch client token.' })
 
+    globalThis.NodeLinkSources.Spotify = false
+
     return;
   }
 
   if (data.response_type !== 'RESPONSE_GRANTED_TOKEN_RESPONSE') {
     debugLog('spotify', 5, { type: 2, message: 'Failed to fetch client token.' })
+
+    globalThis.NodeLinkSources.Spotify = false
 
     return;
   }

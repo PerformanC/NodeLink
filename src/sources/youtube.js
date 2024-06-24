@@ -31,6 +31,24 @@ const sourceInfo = {
   functions: []
 }
 
+let _additionalHeaders = {}
+
+if (config.search.sources.youtube.authentication.Android.enabled) {
+  _additionalHeaders = {
+    Authorization: `Bearer ${config.search.sources.youtube.authentication.Android.authorization}`,
+    'X-Goog-Visitor-Id': config.search.sources.youtube.authentication.Android.visitorId
+  }
+} else if (config.search.sources.youtube.authentication.web.enabled) {
+  /* TODO: Port https://github.com/ytdl-org/youtube-dl/blob/master/youtube_dl/extractor/youtube.py#L105-L262 to Node.js */
+  _additionalHeaders = {
+    Authorization: config.search.sources.youtube.authentication.web.authorization,
+    Cookie: config.search.sources.youtube.authentication.web.cookie,
+    'X-Goog-Visitor-Id': config.search.sources.youtube.authentication.web.visitorId,
+    'X-Goog-AuthUser': '0',
+    'X-Youtube-Bootstrap-Logged-In': 'true'
+  }
+}
+
 function _getBaseHostRequest(type) {
   if (ytContext.client.clientName.startsWith('ANDROID'))
     return 'youtubei.googleapis.com'
@@ -67,13 +85,27 @@ async function _init() {
 
   debugLog('youtube', 5, { type: 1, message: 'Fetching deciphering functions...' })
  
-  const { body: data } = await makeRequest('https://www.youtube.com/embed', { method: 'GET' }).catch((err) => {
-    debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${err.message}` })
-  })
+  const embedRequest = await makeRequest('https://www.youtube.com/embed', { method: 'GET' })
 
-  const { body: player } = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(data)[0]}`, { method: 'GET' }).catch((err) => {
-    debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${err.message}` })
-  })
+  if (embedRequest.error) {
+    debugLog('youtube', 5, { type: 2, message: `Failed to access YouTube website: ${embedRequest.error.message}` })
+
+    globalThis.NodeLinkSources.YouTube = false
+
+    return;
+  }
+
+  const playerRequest = await makeRequest(`https://www.youtube.com${/(?<=jsUrl":")[^"]+/.exec(embedRequest.body)[0]}`, { method: 'GET' })
+
+  if (playerRequest.error) {
+    debugLog('youtube', 5, { type: 2, message: `Failed to fetch player.js: ${playerRequest.error.message}` })
+
+    globalThis.NodeLinkSources.YouTube = false
+
+    return;
+  }
+
+  const player = playerRequest.body
 
   sourceInfo.signatureTimestamp = /(?<=signatureTimestamp:)[0-9]+/.exec(player)[0]
 
@@ -160,10 +192,8 @@ async function search(query, type, shouldLog) {
   const { body: search } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/search`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
-      ...(config.search.sources.youtube.authentication.enabled ? {
-        Authorization: config.search.sources.youtube.authentication.authorization,
-        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-      } : {})
+      'X-GOOG-API-FORMAT-VERSION': '2',
+      ..._additionalHeaders
     },
     body: {
       context: ytContext,
@@ -294,10 +324,8 @@ async function loadFrom(query, type) {
       const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
-          ...(config.search.sources.youtube.authentication.enabled ? {
-            Authorization: config.search.sources.youtube.authentication.authorization,
-            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          'X-GOOG-API-FORMAT-VERSION': '2',
+          ..._additionalHeaders
         },
         body: {
           context: ytContext,
@@ -371,10 +399,8 @@ async function loadFrom(query, type) {
       const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
-          ...(config.search.sources.youtube.authentication.enabled ? {
-            Authorization: config.search.sources.youtube.authentication.authorization,
-            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          'X-GOOG-API-FORMAT-VERSION': '2',
+          ..._additionalHeaders
         },
         body: {
           context: ytContext,
@@ -496,10 +522,8 @@ async function loadFrom(query, type) {
       const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         headers: {
           'User-Agent': ytContext.client.userAgent,
-          ...(config.search.sources.youtube.authentication.enabled ? {
-            Authorization: config.search.sources.youtube.authentication.authorization,
-            Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-          } : {})
+          'X-GOOG-API-FORMAT-VERSION': '2',
+          ..._additionalHeaders
         },
         body: {
           context: ytContext,
@@ -594,10 +618,8 @@ async function retrieveStream(identifier, type, title) {
   const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
     headers: {
       'User-Agent': ytContext.client.userAgent,
-      ...(config.search.sources.youtube.authentication.enabled ? {
-        Authorization: config.search.sources.youtube.authentication.authorization,
-        Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-      } : {})
+      'X-GOOG-API-FORMAT-VERSION': '2',
+      ..._additionalHeaders
     },
     body: {
       context: ytContext,
@@ -617,6 +639,18 @@ async function retrieveStream(identifier, type, title) {
     method: 'POST',
     disableBodyCompression: true
   })
+
+  if (!videos) {
+    debugLog('retrieveStream', 4, { type: 3, sourceName: _getSourceName(type), query: title, message: 'Failed to load results.' })
+
+    return {
+      exception: {
+        message: 'Failed to load results.',
+        severity: 'common',
+        cause: 'Unknown'
+      }
+    }
+  }
 
   if (videos.error) {
     debugLog('retrieveStream', 4, { type: 2, sourceName: _getSourceName(type), query: title, message: videos.error.message })
@@ -694,10 +728,8 @@ function loadLyrics(decodedTrack, language) {
     const { body: video } = await makeRequest(`https://${_getBaseHostRequest(decodedTrack.sourceName)}/youtubei/v1/player`, {
       headers: {
         'User-Agent': ytContext.client.userAgent,
-        ...(config.search.sources.youtube.authentication.enabled ? {
-          Authorization: config.search.sources.youtube.authentication.authorization,
-          Cookie: `SID=${config.search.sources.youtube.authentication.cookies.SID}; LOGIN_INFO=${config.search.sources.youtube.authentication.cookies.LOGIN_INFO}`
-        } : {})
+        'X-GOOG-API-FORMAT-VERSION': '2',
+        ..._additionalHeaders
       },
       body: {
         context: ytContext,
@@ -743,18 +775,22 @@ function loadLyrics(decodedTrack, language) {
     })
 
     if (selectedCaption) {
-      const { body: captionData } = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-        debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+      const captionRequest = await makeRequest(selectedCaption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' })
+
+      if (captionRequest.error) {
+        debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: captionRequest.error.message })
 
         return resolve({
           loadType: 'error',
           data: {
-            message: err.message,
+            message: captionRequest.error.message,
             severity: 'common',
             cause: 'Unknown'
           }
         })
-      })
+      }
+
+      const captionData = captionRequest.body
 
       const captionEvents = []
       captionData.events.forEach((event) => {
@@ -781,18 +817,22 @@ function loadLyrics(decodedTrack, language) {
       let i = 0
 
       video.captions.playerCaptionsTracklistRenderer.captionTracks.forEach(async (caption) => {
-        const { body: captionData } = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' }).catch((err) => {
-          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: err.message })
+        const captionRequest = await makeRequest(caption.baseUrl.replace('&fmt=srv3', '&fmt=json3'), { method: 'GET' })
+
+        if (captionRequest.error) {
+          debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: captionRequest.error.message })
 
           return resolve({
             loadType: 'error',
             data: {
-              message: err.message,
+              message: captionRequest.error.message,
               severity: 'common',
               cause: 'Unknown'
             }
           })
-        })
+        }
+
+        const captionData = captionRequest.body
 
         const captionEvents = captionData.events.map((event) => {
           return {

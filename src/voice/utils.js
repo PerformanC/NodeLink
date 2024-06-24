@@ -3,21 +3,29 @@ import prism from 'prism-media'
 import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 let lame = null
-if (!process.isBun) lame = require('@flat/lame') /* libmp3lame bindings */
-
-import SampleRate from 'node-libsamplerate' /* libsamplerate bindings */
+if (config.options.nativePlayback && !process.isBun) lame = require('@flat/lame') /* libmp3lame bindings */
 
 import config from '../../config.js'
 import constants from '../../constants.js'
 
+let SampleRate = null
 let resamplingQuality = null
-switch (config.audio.resamplingQuality) {
-  case 'best': resamplingQuality = SampleRate.SRC_SINC_BEST_QUALITY; break
-  case 'medium': resamplingQuality = SampleRate.SRC_SINC_MEDIUM_QUALITY; break
-  case 'fastest': resamplingQuality = SampleRate.SRC_ZERO_ORDER_HOLD; break
-  case 'zero order holder': resamplingQuality = SampleRate.SRC_ZERO_ORDER_HOLD; break
-  case 'linear': resamplingQuality = SampleRate.SRC_LINEAR; break
+
+async function _startUp() {
+  if (config.options.nativePlayback) {
+    SampleRate = await import('node-libsamplerate')
+    SampleRate = SampleRate.default
+
+    switch (config.audio.resamplingQuality) {
+      case 'best': resamplingQuality = SampleRate.SRC_SINC_BEST_QUALITY; break
+      case 'medium': resamplingQuality = SampleRate.SRC_SINC_MEDIUM_QUALITY; break
+      case 'fastest': resamplingQuality = SampleRate.SRC_ZERO_ORDER_HOLD; break
+      case 'zero order holder': resamplingQuality = SampleRate.SRC_ZERO_ORDER_HOLD; break
+      case 'linear': resamplingQuality = SampleRate.SRC_LINEAR; break
+    }
+  }
 }
+_startUp()
 
 class NodeLinkStream {
   constructor(stream, pipes, ffmpegState) {
@@ -111,7 +119,7 @@ function isDecodedInternally(stream, type) {
     case 'webm/opus':
     case 'ogg/opus': return 3 + 1 + (stream.ffmpegState === 2 ? -2 : 0)
     case 'wav': return 2 + 1 + (stream.ffmpegState === 2 ? -2 : 0)
-    case 'mp3': return lame ? 2 + 1 + (stream.ffmpegState === 2 ? -2 : 0) : false
+    case 'mp3': return lame && SampleRate ? 2 + 1 + (stream.ffmpegState === 2 ? -2 : 0) : false
     default: return false
   }
 }
@@ -120,7 +128,11 @@ function createAudioResource(stream, type, additionalPipes = [], ffmpegState = f
   if ([ 'webm/opus', 'ogg/opus' ].includes(type)) {
     return new NodeLinkStream(stream, [
       new prism.opus[type === 'webm/opus' ? 'WebmDemuxer' : 'OggDemuxer'](),
-      new prism.opus.Decoder({ frameSize: 960, channels: 2, rate: 48000 }),
+      new prism.opus.Decoder({
+        rate: constants.opus.samplingRate,
+        channels: constants.opus.channels,
+        frameSize: constants.opus.frameSize
+      }),
       new prism.VolumeTransformer({ type: 's16le' }),
       ...additionalPipes,
       new prism.opus.Encoder({
@@ -143,7 +155,7 @@ function createAudioResource(stream, type, additionalPipes = [], ffmpegState = f
     ], ffmpegState)
   }
 
-  if (type === 'mp3' && lame) {
+  if (type === 'mp3' && lame && SampleRate) {
     return new NodeLinkStream(stream, [
       new lame.Decoder(),
       new SampleRate.SampleRate({

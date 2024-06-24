@@ -16,7 +16,8 @@ export default {
     maxSearchResults: 200,
     maxAlbumPlaylistLength: 200,
     maxCaptionsLength: 3,
-    logFile: 'logs.txt'
+    logFile: 'logs.txt', /* false to disable -- will overwrite existing file -- use crypto.randomBytes(x).toString() to always create new files */
+    nativePlayback: true
   },
   debug: {
     youtube: {
@@ -97,15 +98,20 @@ export default {
     sources: {
       youtube: {
         enabled: true,
-        authentication: {
-          enabled: false, // Authentication using accounts outside EU helps bypass 403 errors. Enable at your own risk.
-          cookies: { // Available in YouTube website cookies.
-            SID: 'DISABLED',
-            LOGIN_INFO: 'DISABLED'
+        authentication: {  // Authentication using accounts outside EU helps bypass numerous YouTube blocks. Enable at your own risk.
+          Android: { /* Takes priority over web */
+            enabled: false,
+            authorization: 'DISABLED', // Available in YouTube app in Authorization header. Requires intercepting the app's requests.
+            visitorId: 'DISABLED' // Available in YouTube app in X-Goog-Visitor-Id header. Requires intercepting the app's requests.
           },
-          authorization: 'DISABLED' // Available in YouTube website in Authorization header.
+          web: { /* Not working. */
+            enabled: false,
+            authorization: 'DISABLED', // Available in YouTube website in Authorization header. Requires intercepting the website's requests.
+            cookie: 'DISABLED', // Available in YouTube website in Cookie header. Requires intercepting the website's requests.
+            visitorId: 'DISABLED' // Available in YouTube website in X-Goog-Visitor-Id header. Requires intercepting the website's requests.
+          }
         },
-        bypassAgeRestriction: false // Bypasses age-restricted videos. Enable at your own risk.
+        bypassAgeRestriction: false // Bypasses age-restricted videos. Uses unsafe methods (eval) to allow this to work. Enable at your own risk.
       },
       bandcamp: true,
       http: false, // Enabling can allow IP leaks. Enable at your own risk.

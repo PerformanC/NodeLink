@@ -921,48 +921,87 @@ export function loadHLS(url, stream, onceEnded, shouldEnd) {
     const body = response.body.split('\n')
     body.pop()
     let i = 0
+    let timeout = 0
 
-    body.nForEach(async (line) => {
+    if (!onceEnded) resolve(true)
+
+    await body.nForEach(async (line) => {
       return new Promise(async (resolveSegment) => {
+        const onError = function() {
+          if (shouldEnd) stream.emit('finishBuffering')
+    
+          resolveSegment(true)
+    
+          segment.stream.removeAllListeners()
+          stream.removeListener('error', onError)
+        }
+
         if (stream.ended) {
           if (shouldEnd) stream.emit('finishBuffering')
 
           resolveSegment(true)
 
+          segment.stream.removeAllListeners()
+          stream.removeListener('error', onError)
+
           return resolve(false)
         }
 
-        if (line.startsWith('#')) return resolveSegment(false)
+        if (line.startsWith('#')) {
+          const tag = line.split(':')[0]
+          let value = line.split(':')[1]
+
+          if (value) value = value.split(',')[0]
+
+          if (tag === '#EXT-X-ENDLIST') {
+            if (shouldEnd) stream.emit('finishBuffering')
+
+            resolveSegment(true)
+
+            segment.stream.removeAllListeners()
+            stream.removeListener('error', onError)
+
+            return resolve(false)
+          }
+
+          if (tag === '#EXTINF') timeout = Number(value) * 1000
+
+          return resolveSegment(false)
+        }
 
         const segment = await http1makeRequest(line, { method: 'GET', streamOnly: true })
 
         segment.stream.on('data', (chunk) => stream.write(chunk))
 
         segment.stream.on('end', () => {
-          if (++i === body.filter((line) => !line.startsWith('#')).length) {
-            if (shouldEnd) stream.emit('finishBuffering')
-
-            if (onceEnded) {
-              resolve(true)
-
+          setTimeout(() => {
+            if (++i === body.filter((line) => !line.startsWith('#')).length) {
+              if (shouldEnd) stream.emit('finishBuffering')
+      
+              if (onceEnded) {
+                resolve(true)
+      
+                segment.stream.destroy()
+      
+                segment.stream.removeAllListeners()
+                stream.removeListener('error', onError)
+              }
+            } else {
+              resolveSegment(false)
+      
               segment.stream.destroy()
+      
+              segment.stream.removeAllListeners()
+              stream.removeListener('error', onError)
             }
-          } else {
-            resolveSegment(false)
 
-            segment.stream.destroy()
-          }
+            timeout = 0
+          }, timeout)
         })
 
-        stream.on('error', () => {
-          if (shouldEnd) stream.emit('finishBuffering')
-
-          resolveSegment(true)
-        })
+        stream.on('error', onError)
       })
     })
-
-    if (!onceEnded) resolve(true)
   })
 }
 

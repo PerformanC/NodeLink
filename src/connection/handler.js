@@ -460,8 +460,8 @@ async function requestHandler(req, res) {
     client.players.forEach((player) => {
       player.config.state = {
         time: Date.now(),
-        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        position: player.connection ? (player.connection.playerState.status === 'playing' || player.connection.playerState.reason === 'paused') ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'connected' : false,
         ping: player.connection?.ping || -1
       }
 
@@ -547,8 +547,8 @@ async function requestHandler(req, res) {
 
       player.config.state = {
         time: Date.now(),
-        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        position: player.connection ? (player.connection.playerState.status === 'playing' || player.connection.playerState.reason === 'paused') ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'connected' : false,
         ping: player.connection?.ping || -1
       }
 
@@ -592,6 +592,21 @@ async function requestHandler(req, res) {
                                                                    /* Deprecated */
       const encodedTrack = buffer.track?.encoded === undefined ? buffer.encodedTrack : buffer.track?.encoded
 
+      /* TODO (v3?): Awareness about filters to be applied on-the-fly,
+                      making it start with filters, avoiding the need to
+                      restart the player to apply filters if using
+                      non-native filters
+      
+         NOTE: This will requirely a rather big re-design of
+                 how it is handled the plays, checking first
+                 for filtering options being asked, and later
+                 if any play request has been created. If a play
+                 request is demanded, it will create the stream
+                 with the filters applied. If not, it will just
+                 apply the filters to the stream if using native
+                 filters, and if non-native, create a new stream
+                 with FFmpeg and apply the filters to it.
+      */
       if (encodedTrack !== undefined) {
         if (buffer.encodedTrack !== undefined) /* Deprecated */
           debugLog('encodedTrack', 2, { params: parsedUrl.pathname, headers: req.headers, body: buffer, warning: 'The client is using a deprecated method of play (encodedTrack), deprecated by LavaLink. Report to the client GitHub.' })
@@ -763,8 +778,8 @@ async function requestHandler(req, res) {
       /* Updating player state to ensure it's sending up-to-date data */
       player.config.state = {
         time: Date.now(),
-        position: player.connection ? player.connection.playerState.status === 'playing' ? player._getRealTime() : 0 : 0,
-        connected: player.connection ? player.connection.state.status === 'ready' : false,
+        position: player.connection ? (player.connection.playerState.status === 'playing' || player.connection.playerState.reason === 'paused') ? player._getRealTime() : 0 : 0,
+        connected: player.connection ? player.connection.state.status === 'connected' : false,
         ping: player.connection?.ping || -1 
       }
 
