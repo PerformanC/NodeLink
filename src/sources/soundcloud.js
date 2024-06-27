@@ -134,7 +134,7 @@ async function search(query, shouldLog) {
   })
 
   if (shouldLog)
-    debugLog('search', 4, { type: 3, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
+    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', tracksLen: tracks.length, query })
 
   return {
     loadType: 'search',
