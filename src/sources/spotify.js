@@ -152,7 +152,7 @@ async function search(query) {
 
 async function loadFrom(query, type) {
   if (!globalThis.NodeLinkSources.Spotify) {
-    debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query: url, message: 'Spotify source is not available.' })
+    debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'Spotify source is not available.' })
 
     return {
       loadType: 'error',
