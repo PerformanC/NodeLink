@@ -5,6 +5,7 @@ import { debugLog, makeRequest, encodeTrack, http1makeRequest } from '../utils.j
 
 let playerInfo = {}
 
+/* INFO: If any part of this fails, it's likely to be an User-Agent with old browser version. */
 async function init() {
   debugLog('spotify', 5, { type: 1, message: 'Fetching token...' })
 
@@ -16,7 +17,7 @@ async function init() {
   })
 
   if (typeof token !== 'object') {
-    debugLog('spotify', 5, { type: 2, message: 'Failed to fetch Spotify token.' })
+    debugLog('spotify', 5, { type: 2, message: 'Failed to fetch Spotify clientId.' })
 
     globalThis.NodeLinkSources.Spotify = false
 
@@ -46,7 +47,7 @@ async function init() {
   })
 
   if (typeof data !== 'object') {
-    debugLog('spotify', 5, { type: 2, message: 'Failed to fetch client token.' })
+    debugLog('spotify', 5, { type: 2, message: 'Failed to understand Spotify response while fetching client token.' })
 
     globalThis.NodeLinkSources.Spotify = false
 

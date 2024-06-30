@@ -89,7 +89,7 @@ export function http1makeRequest(url, options) {
       method: options.method,
       headers: {
         'Accept-Encoding': 'br, gzip, deflate',
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+        'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
         'DNT': '1',
         ...(options.headers || {}),
         ...(options.body ? {
@@ -194,7 +194,7 @@ export function makeRequest(url, options) {
       ':method': options.method,
       ':path': parsedUrl.pathname + parsedUrl.search,
       'Accept-Encoding': 'br, gzip, deflate',
-      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0',
+      'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0',
       'DNT': '1',
       ...(options.headers || {})
     }
@@ -238,6 +238,11 @@ export function makeRequest(url, options) {
 
         return resolve(makeRequest(headers.location, options))
       }
+
+      if (options.method === 'HEAD') return resolve({
+        statusCode: headers[':status'],
+        headers: headers
+      })
 
       switch (headers['content-encoding']) {
         case 'deflate': {
