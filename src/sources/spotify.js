@@ -491,11 +491,11 @@ async function loadFrom(query, type) {
           tracks.push({
             encoded: encodeTrack(trackInfo),
             info: trackInfo,
-            pluginInfo: {
-              nsfw: track.explicit,
-            }
+            pluginInfo: {}
           })
         })
+
+        debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'Spotify', playlistName: data.tracks[0].artists[0].name })
 
         if (tracks.length === 0) {
           debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
@@ -509,6 +509,11 @@ async function loadFrom(query, type) {
         return resolve({
           loadType: 'artist',
           data: {
+            info: {
+              name: data.tracks[0].artists[0].name,
+              artworkUrl: tracks[0].info.artworkUrl,
+              selectedTrack: 0
+            },
             tracks,
             pluginInfo: {},
           }
