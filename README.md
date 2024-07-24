@@ -76,7 +76,7 @@ NodeLink is compatible with most LavaLink clients, as it implements most of the 
 | [Wavelink](https://github.com/PythonistaGuild/Wavelink)             | Python       | Yes             | No                  | v1 and v2              |
 | [Pomice](https://github.com/cloudwithax/pomice)                     | Python       | Yes             | No                  | v1 and v2              |
 | [Hikari-ongaku](https://github.com/MPlatypus/hikari-ongaku)         | Python       | Yes             | No                  | v1 and v2              |
-| [Moonlink.js](https://github.com/1Lucas1apk/moonlink.js)            | Typescript   | Yes             | Partial             | v1 and v2              |
+| [Moonlink.js](https://github.com/1Lucas1apk/moonlink.js)            | Typescript   | Yes             | Yes                 | v1 and v2              |
 | [Magmastream](https://github.com/Blackfort-Hosting/magmastream)     | Typescript   | No              | No                  | v1                     |
 | [Lavacord](https://github.com/lavacord/Lavacord)                    | Typescript   | Yes             | No                  | v1 and v2              |
 | [Shoukaku](https://github.com/Deivu/Shoukaku)                       | Typescript   | Yes             | No                  | v1 and v2              |
