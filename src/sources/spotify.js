@@ -108,7 +108,7 @@ async function search(query) {
         data: {}
       })
     }
-      
+
     const tracks = []
 
     data.tracks.items.forEach(async (items) => {
@@ -148,7 +148,7 @@ async function search(query) {
       loadType: 'search',
       data: tracks
     })
-  })   
+  })
 }
 
 async function loadFrom(query, type) {
@@ -184,6 +184,13 @@ async function loadFrom(query, type) {
 
         break
       }
+
+      case 'artist': {
+        endpoint = `/artists/${type[2]}/top-tracks?market=${config.search.sources.spotify.market}`
+
+        break
+      }
+
       case 'episode': {
         endpoint = `/episodes/${type[2]}?market=${config.search.sources.spotify.market}&limit=${config.options.maxAlbumPlaylistLength < 100 ? config.options.maxAlbumPlaylistLength : 100}`
 
@@ -243,7 +250,7 @@ async function loadFrom(query, type) {
           data: {}
         })
       }
-    
+
       if (data.error) {
         debugLog('loadtracks', 4, { type: 3, loadType: type[1], sourceName: 'Spotify', query, message: data.error.message })
 
@@ -321,7 +328,7 @@ async function loadFrom(query, type) {
 
         const fragments = []
         const fragmentLengths = []
-        
+
         if (data.tracks.items.length === data.tracks.total) {
           fragmentLengths.push(data.tracks.total)
         } else {
@@ -368,7 +375,7 @@ async function loadFrom(query, type) {
                   isrc: item.external_ids?.isrc || null,
                   sourceName: 'spotify'
                 }
-      
+
                 tracks.push({
                   encoded: encodeTrack(track),
                   info: track,
@@ -376,18 +383,18 @@ async function loadFrom(query, type) {
                 })
               }
             })
-    
+
             if (tracks.length === 0) {
               debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
-    
+
               return resolve({
                 loadType: 'empty',
                 data: {}
               })
             }
-    
+
             debugLog('loadtracks', 4, { type: 2, loadType: 'playlist', sourceName: 'Spotify', playlistName: data.name })
-    
+
             return resolve({
               loadType: type[1],
               data: {
@@ -451,6 +458,64 @@ async function loadFrom(query, type) {
             },
             pluginInfo: {},
             tracks
+          }
+        })
+      }
+
+      /**
+       * Data/Response Structure:
+       * @see https://developer.spotify.com/documentation/web-api/reference/get-an-artists-top-tracks
+       */
+      case 'artist': {
+        const tracks = []
+
+        if (data.tracks.length > config.options.maxAlbumPlaylistLength)
+          data.tracks.length = config.options.maxAlbumPlaylistLength
+
+        data.tracks.forEach((track) => {
+
+          const trackInfo = {
+            identifier: track.id,
+            isSeekable: true,
+            author: track.artists[0].name,
+            length: track.duration_ms,
+            isStream: false,
+            position: 0,
+            title: track.name,
+            uri: track.external_urls.spotify,
+            artworkUrl: track.album.images[0].url,
+            isrc: track.external_ids?.isrc || null,
+            sourceName: 'spotify'
+          }
+
+          tracks.push({
+            encoded: encodeTrack(trackInfo),
+            info: trackInfo,
+            pluginInfo: {}
+          })
+        })
+
+        debugLog('loadtracks', 4, { type: 2, loadType: 'artist', sourceName: 'Spotify', playlistName: data.tracks[0].artists[0].name })
+
+        if (tracks.length === 0) {
+          debugLog('loadtracks', 4, { type: 3, sourceName: 'Spotify', query, message: 'No matches found.' })
+
+          return resolve({
+            loadType: 'empty',
+            data: {}
+          })
+        }
+
+        return resolve({
+          loadType: 'artist',
+          data: {
+            info: {
+              name: data.tracks[0].artists[0].name,
+              artworkUrl: tracks[0].info.artworkUrl,
+              selectedTrack: 0
+            },
+            tracks,
+            pluginInfo: {},
           }
         })
       }

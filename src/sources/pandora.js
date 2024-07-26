@@ -493,6 +493,7 @@ async function loadFrom(query) {
                     info: {
                       name: trackData[trackId].name,
                       artworkUrl: `https://content-images.p-cdn.com/${trackData[trackId].icon.artUrl}`,
+                      selectedTrack: 0
                     },
                     pluginInfo: {},
                     tracks: new_tracks,
