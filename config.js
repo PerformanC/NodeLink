@@ -174,6 +174,7 @@ export default {
   },
   voiceReceive: {
     type: 'pcm', // pcm, opus
-    timeout: 1000 // 1s of silence to consider as it stopped speaking.
+    timeout: 1000, // 1s of silence to consider as it stopped speaking.
+    gap: 1000 //1s of silence to consider as a new sentence
   }
 }
