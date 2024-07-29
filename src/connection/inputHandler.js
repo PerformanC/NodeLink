@@ -6,6 +6,7 @@ import discordVoice from '@performanc/voice'
 import prism from 'prism-media'
 
 const Connections = {}
+const speaks = {}
 
 function setupConnection(ws, req, parsedClientName) {
   const userId = req.headers['user-id']
@@ -30,6 +31,12 @@ function setupConnection(ws, req, parsedClientName) {
 }
 
 function handleStartSpeaking(ssrc, userId, guildId) {
+  if(speaks[userId) return;
+  if(!speaks[userId]) speaks[userId] = true;
+  setTimeout(() => {
+		speaks[userId] = false;
+	}, config.voiceReceive.gap);
+
   const opusStream = discordVoice.getSpeakStream(ssrc)
   const stream = new voiceUtils.NodeLinkStream(opusStream, config.voiceReceive.type === 'pcm' ? [ new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }) ] : [])
   let timeout = null
@@ -91,6 +98,8 @@ function handleStartSpeaking(ssrc, userId, guildId) {
         if (Connections[botId].guildId !== guildId) return;
 
         Connections[botId].ws.send(endSpeakingResponse)
+
+        delete speaks[userId];
 
         i++
       })
