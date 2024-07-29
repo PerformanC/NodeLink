@@ -32,11 +32,11 @@ function setupConnection(ws, req, parsedClientName) {
 
 function handleStartSpeaking(ssrc, userId, guildId) {
 	if(config.voiceReceive.gap) {
-  	if(speaks[userId) return;
-  	if(!speaks[userId]) speaks[userId] = true;
-  	setTimeout(() => {
-			speaks[userId] = false;
-		}, config.voiceReceive.gap);
+  		if(speaks[userId) return
+  		if(!speaks[userId]) speaks[userId] = true
+  		setTimeout(() => {
+				speaks[userId] = false
+			}, config.voiceReceive.gap)
 	}
 
   const opusStream = discordVoice.getSpeakStream(ssrc)
