@@ -31,11 +31,13 @@ function setupConnection(ws, req, parsedClientName) {
 }
 
 function handleStartSpeaking(ssrc, userId, guildId) {
-  if(speaks[userId) return;
-  if(!speaks[userId]) speaks[userId] = true;
-  setTimeout(() => {
-		speaks[userId] = false;
-	}, config.voiceReceive.gap);
+	if(config.voiceReceive.gap) {
+  	if(speaks[userId) return;
+  	if(!speaks[userId]) speaks[userId] = true;
+  	setTimeout(() => {
+			speaks[userId] = false;
+		}, config.voiceReceive.gap);
+	}
 
   const opusStream = discordVoice.getSpeakStream(ssrc)
   const stream = new voiceUtils.NodeLinkStream(opusStream, config.voiceReceive.type === 'pcm' ? [ new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }) ] : [])
@@ -99,7 +101,8 @@ function handleStartSpeaking(ssrc, userId, guildId) {
 
         Connections[botId].ws.send(endSpeakingResponse)
 
-        delete speaks[userId];
+				
+        if(config.voiceReceive.gap) delete speaks[userId]
 
         i++
       })
