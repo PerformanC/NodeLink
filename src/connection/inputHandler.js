@@ -6,6 +6,7 @@ import discordVoice from '@performanc/voice'
 import prism from 'prism-media'
 
 const Connections = {}
+const SpeechesTimeout = {}
 
 function setupConnection(ws, req, parsedClientName) {
   const userId = req.headers['user-id']
@@ -32,28 +33,29 @@ function setupConnection(ws, req, parsedClientName) {
 function handleStartSpeaking(ssrc, userId, guildId) {
   const opusStream = discordVoice.getSpeakStream(ssrc)
   const stream = new voiceUtils.NodeLinkStream(opusStream, config.voiceReceive.type === 'pcm' ? [ new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 }) ] : [])
-  let timeout = null
 
-  const startSpeakingResponse = JSON.stringify({
-    op: 'speak',
-    type: 'startSpeakingEvent',
-    data: {
-      userId,
-      guildId
-    }
-  })
+  if (!SpeechesTimeout[userId]) {
+    const startSpeakingResponse = JSON.stringify({
+      op: 'speak',
+      type: 'startSpeakingEvent',
+      data: {
+        userId,
+        guildId
+      }
+    })
 
-  Object.keys(Connections).forEach((botId) => {
-    if (Connections[botId].guildId !== guildId) return;
+    Object.keys(Connections).forEach((botId) => {
+      if (Connections[botId].guildId !== guildId) return;
 
-    Connections[botId].ws.send(startSpeakingResponse)
-  })
+      Connections[botId].ws.send(startSpeakingResponse)
+    })
+  }
 
   let buffer = []
   stream.on('data', (chunk) => {
-    if (timeout) {
-      clearTimeout(timeout)
-      timeout = null
+    if (SpeechesTimeout[userId]) {
+      clearTimeout(SpeechesTimeout[userId])
+      delete SpeechesTimeout[userId]
     }
 
     if (Object.keys(Connections).length === 0) {
@@ -75,7 +77,7 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       return;
     }
 
-    timeout = setTimeout(() => {
+    SpeechesTimeout[userId] = setTimeout(() => {
       const endSpeakingResponse = JSON.stringify({
         op: 'speak',
         type: 'endSpeakingEvent',
@@ -98,6 +100,8 @@ function handleStartSpeaking(ssrc, userId, guildId) {
       buffer = []
 
       debugLog('sentDataCD', 3, { clientsAmount: i, guildId })
+
+      delete SpeechesTimeout[userId]
     }, config.voiceReceive.timeout)
   })
 }
