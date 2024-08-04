@@ -16,8 +16,6 @@ class Filters {
   }
 
   configure(filters, decodedTrack) {
-    const result = {}
-
     if (filters.equalizer && Array.isArray(filters.equalizer) && filters.equalizer.length && config.filters.list.equalizer) {
       const equalizer = Array(constants.filtering.equalizerBands).fill(0).map((_, i) => ({ band: i, gain: 0 }))
 

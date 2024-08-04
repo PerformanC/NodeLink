@@ -369,14 +369,32 @@ class VoiceConnection {
       return this.config
     }
 
-    const objectedFilters = Object.entries(this.config.filters)
+    let volumeFilter = null
+    let seekFilter = null
+    let endTimeFilter = null
 
-    const volumeFilter = objectedFilters.find(([ name ]) => name === 'volume')
+    filter.filters.forEach((filter) => {
+      switch (filter.name) {
+        case 'volume': {
+          volumeFilter = filter.data
+
+          break
+        }
+        case 'seek': {
+          seekFilter = filter.data
+
+          break
+        }
+        case 'end': {
+          endTimeFilter = filter.data
+
+          break
+        }
+      }
+    })
+
     this.config.volume = (volumeFilter * 100) || this.config.volume
-
-    const seekFilter = objectedFilters.find(([ name ]) => name === 'seek')
-    const endTimeFilter = objectedFilters.find(([ name ]) => name === 'endTime')
-    if (resource.stream || seekFilter || endTimeFilter || filter.command.length !== 0) {
+    if (resource.stream || seekFilter !== null || endTimeFilter !== null || filter.command.length !== 0) {
       resource.stream.setVolume(volumeFilter || (this.config.volume / 100))
       this.cache.time = seekFilter || realTime
 
