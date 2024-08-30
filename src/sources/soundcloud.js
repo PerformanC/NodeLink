@@ -63,7 +63,7 @@ async function init() {
 
 async function search(query, shouldLog) {
   if (!globalThis.NodeLinkSources.SoundCloud) {
-    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: 'SoundCloud source is not available.' })
+    debugLog('search', 4, { type: 3, sourceName: 'SoundCloud', query, message: 'SoundCloud source is not available.' })
 
     return {
       type: 'error',
@@ -83,7 +83,7 @@ async function search(query, shouldLog) {
   if (req.error || req.statusCode !== 200) {
     const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
 
-    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: errorMessage })
+    debugLog('search', 4, { type: 3, sourceName: 'SoundCloud', query, message: errorMessage })
 
     return {
       type: 'error',
@@ -96,7 +96,7 @@ async function search(query, shouldLog) {
   }
 
   if (body.total_results === 0) {
-    debugLog('search', 4, { type: 2, sourceName: 'SoundCloud', query, message: 'No matches found.' })
+    debugLog('search', 4, { type: 3, sourceName: 'SoundCloud', query, message: 'No matches found.' })
 
     return {
       loadType: 'empty',
@@ -144,7 +144,7 @@ async function search(query, shouldLog) {
 
 async function loadFrom(url) {
   if (!globalThis.NodeLinkSources.SoundCloud) {
-    debugLog('loadtracks', 4, { type: 2, loadType: 'unknown', sourceName: 'SoundCloud', query: url, message: 'SoundCloud source is not available.' })
+    debugLog('loadtracks', 4, { type: 3, loadType: 'unknown', sourceName: 'SoundCloud', query: url, message: 'SoundCloud source is not available.' })
 
     return {
       loadType: 'error',
@@ -354,7 +354,7 @@ async function retrieveStream(identifier, title) {
   if (req.error || req.statusCode !== 200) {
     const errorMessage = req.error ? req.error.message : `SoundCloud returned invalid status code: ${req.statusCode}`
 
-    debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: errorMessage })
+    debugLog('retrieveStream', 4, { type: 3, sourceName: 'SoundCloud', query: title, message: errorMessage })
 
     return {
       exception: {
@@ -366,7 +366,7 @@ async function retrieveStream(identifier, title) {
   }
 
   if (body.errors) {
-    debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: body.errors[0].error_message })
+    debugLog('retrieveStream', 4, { type: 3, sourceName: 'SoundCloud', query: title, message: body.errors[0].error_message })
 
     return {
       exception: {
@@ -382,7 +382,7 @@ async function retrieveStream(identifier, title) {
   let url = `${transcoding.url}?client_id=${sourceInfo.clientId}`
 
   if (transcoding.snipped && config.search.sources.soundcloud.fallbackIfSnipped) {
-    debugLog('retrieveStream', 4, { type: 2, sourceName: 'SoundCloud', query: title, message: `Track is snipped, falling back to: ${config.search.fallbackSearchSource}.` })
+    debugLog('retrieveStream', 4, { type: 3, sourceName: 'SoundCloud', query: title, message: `Track is snipped, falling back to: ${config.search.fallbackSearchSource}.` })
 
     const search = await searchWithDefault(title, true)
 
