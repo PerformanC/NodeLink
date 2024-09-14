@@ -97,6 +97,11 @@ class NodeLinkStream {
     this.stream.removeListener(event, listener)
   }
 
+  removeAllListeners() {
+    this.listeners.forEach(({ event, listener }) => this.stream.removeListener(event, listener))
+    this.listeners = []
+  }
+
   read() {
     return this.stream?.read()
   }
