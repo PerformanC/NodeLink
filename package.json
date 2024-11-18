@@ -7,7 +7,7 @@
   "dependencies": {
     "@flat/lame": "github:FlatIO/node-lame",
     "@performanc/pwsl-server": "github:performanc/internals#PWSL-server",
-    "@performanc/voice": "^2.0.4",
+    "@performanc/voice": "^2.1.0",
     "node-libsamplerate": "github:ThePedroo/node-libsamplerate",
     "opusscript": "^0.0.8",
     "prism-media": "^1.3.5",

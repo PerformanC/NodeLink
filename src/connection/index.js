@@ -50,8 +50,8 @@ if (config.search.sources.soundcloud.enabled && config.search.sources.soundcloud
 if (![ 'high', 'medium', 'low', 'lowest' ].includes(config.audio.quality))
   throw new Error('Audio quality must be either "high", "medium", "low" or "lowest".')
 
-if (![ 'xsalsa20_poly1305', 'xsalsa20_poly1305_suffix', 'xsalsa20_poly1305_lite' ].includes(config.audio.encryption))
-  throw new Error('Encryption must be either "xsalsa20_poly1305", "xsalsa20_poly1305_suffix" or "xsalsa20_poly1305_lite".')
+if (![ 'aead_aes256_gcm_rtpsize', 'aead_xchacha20_poly1305_rtpsize', 'xsalsa20_poly1305_lite' ].includes(config.audio.encryption))
+  throw new Error('Encryption must be either "aead_aes256_gcm_rtpsize" or "aead_xchacha20_poly1305_rtpsize"')
 
 if (typeof config.voiceReceive.timeout !== 'number')
   throw new Error('Voice receive timeout must be a number.')

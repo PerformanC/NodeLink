@@ -30,6 +30,9 @@ Performant LavaLink replacement written in Node.js.
 > For most sources FFmpeg isn't required. It is currently required for timescale, seek and endTime filter. Required for `local` and `http` sources.
 
 > [!NOTE]
+> Sodium libraries are only required if you use `aead_xchacha20_poly1305_rtpsize` encryption mode.
+
+> [!NOTE]
 > Dependencies marked with an asterisk (*) are dependencies maintained by PerformanC or one of its members.
 
 ## Installation

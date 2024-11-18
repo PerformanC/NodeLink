@@ -169,7 +169,7 @@ export default {
   },
   audio: {
     quality: 'high',
-    encryption: 'xsalsa20_poly1305_lite',
+    encryption: 'aead_aes256_gcm_rtpsize',
     resamplingQuality: 'best' // best, medium, fastest, zero order holder, linear
   },
   voiceReceive: {
