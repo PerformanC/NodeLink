@@ -1,7 +1,7 @@
 export default {
   version: {
     major: '2',
-    minor: '2',
+    minor: '3',
     patch: '0',
     preRelease: ''
   },
