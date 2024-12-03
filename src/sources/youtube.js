@@ -338,9 +338,7 @@ async function loadFrom(query, type) {
 
       const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         body: {
-          context: {
-            client: ytContext.client
-          },
+          context: ytContext,
           videoId: identifier,
           contentCheckOk: true,
           racyCheckOk: true
@@ -411,9 +409,7 @@ async function loadFrom(query, type) {
       
       const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         body: {
-          context: {
-            client: ytContext.client
-          },
+          context: ytContext,
           playlistId: /(?<=list=)[\w-]+/.exec(query)[0],
           contentCheckOk: true,
           racyCheckOk: true
@@ -518,10 +514,8 @@ async function loadFrom(query, type) {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
       
       const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
-        body: {
-          context: {
-            client: ytContext.client
-          },
+        body: {  
+          context: ytContext,
           videoId: /shorts\/([a-zA-Z0-9_-]+)/.exec(query)[1],
           contentCheckOk: true,
           racyCheckOk: true
@@ -612,9 +606,7 @@ async function retrieveStream(identifier, type, title) {
     
     const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
       body: {
-        context: {
-          client: ytContext.client
-        },
+        context: ytContext,
         videoId: identifier,
         contentCheckOk: true,
         racyCheckOk: true
