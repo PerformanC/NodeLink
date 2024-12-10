@@ -711,7 +711,7 @@ function loadLyrics(decodedTrack, language) {
       },
       method: 'POST',
       disableBodyCompression: true
-    });
+    })
 
     if (video.error) {
       debugLog('loadlyrics', 4, { type: 2, sourceName: _getSourceName(decodedTrack.sourceName), track: { title: decodedTrack.title, author: decodedTrack.author }, message: video.error.message })
