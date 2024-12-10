@@ -329,6 +329,7 @@ async function loadFrom(query, type) {
 
   if (!config.search.sources.youtube.bypassAgeRestriction)
     _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'IOS')
+  
   switch (checkURLType(query, type)) {
     case constants.YouTube.video: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
@@ -345,7 +346,6 @@ async function loadFrom(query, type) {
         method: 'POST',
         disableBodyCompression: true
       })
-
 
       if (video.error) {
         debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: _getSourceName(type), query, message: video.error.message })
@@ -402,8 +402,10 @@ async function loadFrom(query, type) {
     }
     case constants.YouTube.playlist: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: _getSourceName(type), query })
+      
       let identifier = /v=([^&]+)/.exec(query)
       if (identifier) identifier = identifier[1]
+      
       const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         body: {
           context: ytContext,
@@ -414,7 +416,20 @@ async function loadFrom(query, type) {
         method: 'POST',
         disableBodyCompression: true
       })
+      
+      if (playlist.error) {
+        debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: playlist.error.message })
 
+        return {
+          loadType: 'error',
+          data: {
+            message: playlist.error.message,
+            severity: 'common',
+            cause: 'Unknown'
+          }
+        }
+      }
+      
       let contentsRoot = null
       
       if (config.search.sources.youtube.bypassAgeRestriction) contentsRoot = playlist.contents.singleColumnWatchNextResults.playlist
@@ -508,6 +523,7 @@ async function loadFrom(query, type) {
     }
     case constants.YouTube.shorts: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
+      
       const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         body: {  
           context: ytContext,
