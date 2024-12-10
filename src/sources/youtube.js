@@ -14,9 +14,9 @@ const ytContext = {
       clientName: 'ANDROID',
       clientVersion: '19.47.41',
     } : {
-        clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
-        clientVersion: '2.0',
-        userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
+      clientName: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+      clientVersion: '2.0',
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/111.0'
     }),
     screenDensityFloat: 1,
     screenHeightPoints: 1080,
@@ -329,7 +329,6 @@ async function loadFrom(query, type) {
 
   if (!config.search.sources.youtube.bypassAgeRestriction)
     _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'IOS')
-  
   switch (checkURLType(query, type)) {
     case constants.YouTube.video: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
@@ -345,7 +344,7 @@ async function loadFrom(query, type) {
         },
         method: 'POST',
         disableBodyCompression: true
-      });
+      })
 
 
       if (video.error) {
@@ -403,10 +402,8 @@ async function loadFrom(query, type) {
     }
     case constants.YouTube.playlist: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: _getSourceName(type), query })
-      
       let identifier = /v=([^&]+)/.exec(query)
       if (identifier) identifier = identifier[1]
-      
       const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         body: {
           context: ytContext,
@@ -416,8 +413,7 @@ async function loadFrom(query, type) {
         },
         method: 'POST',
         disableBodyCompression: true
-      });
-      console.log(playlist)
+      })
 
       let contentsRoot = null
       
@@ -512,7 +508,6 @@ async function loadFrom(query, type) {
     }
     case constants.YouTube.shorts: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
-      
       const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         body: {  
           context: ytContext,
@@ -536,7 +531,6 @@ async function loadFrom(query, type) {
           }
         }
       }
-      
       if (short.playabilityStatus.status !== 'OK') {
         const errorMessage = short.playabilityStatus.reason || short.playabilityStatus.messages[0]
 
