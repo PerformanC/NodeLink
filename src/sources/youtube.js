@@ -522,7 +522,7 @@ async function loadFrom(query, type) {
         },
         method: 'POST',
         disableBodyCompression: true
-      });
+      })
 
       if (short.error) {
         debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: 'YouTube Shorts', query, message: short.error.message })
