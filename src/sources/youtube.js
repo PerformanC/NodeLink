@@ -329,11 +329,11 @@ async function loadFrom(query, type) {
 
   if (!config.search.sources.youtube.bypassAgeRestriction)
     _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'IOS')
-  
+
   switch (checkURLType(query, type)) {
     case constants.YouTube.video: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: _getSourceName(type), query })
-      
+
       const identifier = (/v=([^&]+)/.exec(query) || /youtu\.be\/([^?]+)/.exec(query))[1]
 
       const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
@@ -364,7 +364,7 @@ async function loadFrom(query, type) {
         const errorMessage = video.playabilityStatus.reason || video.playabilityStatus.messages[0]
 
         debugLog('loadtracks', 4, { type: 3, loadType: 'track', sourceName: _getSourceName(type), query, message: errorMessage })
-        
+
         return {
           loadType: 'error',
           data: {
@@ -402,10 +402,10 @@ async function loadFrom(query, type) {
     }
     case constants.YouTube.playlist: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'playlist', sourceName: _getSourceName(type), query })
-      
+
       let identifier = /v=([^&]+)/.exec(query)
       if (identifier) identifier = identifier[1]
-      
+
       const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         body: {
           context: ytContext,
@@ -416,7 +416,7 @@ async function loadFrom(query, type) {
         method: 'POST',
         disableBodyCompression: true
       })
-      
+
       if (playlist.error) {
         debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: playlist.error.message })
 
@@ -429,26 +429,26 @@ async function loadFrom(query, type) {
           }
         }
       }
-      
+
       let contentsRoot = null
-      
+
       if (config.search.sources.youtube.bypassAgeRestriction) contentsRoot = playlist.contents.singleColumnWatchNextResults.playlist
       else contentsRoot = type === 'ytmusic' ? playlist.contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs[0].tabRenderer.content.musicQueueRenderer : playlist.contents.singleColumnWatchNextResults
 
       if (!(type === 'ytmusic' && !config.search.sources.youtube.bypassAgeRestriction ? contentsRoot.content : contentsRoot)) {
         debugLog('loadtracks', 4, { type: 3, loadType: 'playlist', sourceName: _getSourceName(type), query, message: 'No matches found.' })
-      
+
         return {
           loadType: 'empty',
           data: {}
         }
       }
-    
+
       const tracks = []
       let selectedTrack = 0
 
       let playlistContent = null
-      
+
       if (config.search.sources.youtube.bypassAgeRestriction) playlistContent = contentsRoot.playlist.contents
       else playlistContent = type === 'ytmusic' ? contentsRoot.content.playlistPanelRenderer.contents : contentsRoot.playlist?.playlist?.contents
 
@@ -503,7 +503,7 @@ async function loadFrom(query, type) {
       }
 
       let playlistName = null
-      
+
       if (config.search.sources.youtube.bypassAgeRestriction) playlistName = contentsRoot.playlist.title
       else playlistName = type === 'ytmusic' ? contentsRoot.header.musicQueueHeaderRenderer.subtitle.runs[0].text : contentsRoot.playlist.playlist.title
 
@@ -523,7 +523,7 @@ async function loadFrom(query, type) {
     }
     case constants.YouTube.shorts: {
       debugLog('loadtracks', 4, { type: 1, loadType: 'track', sourceName: 'YouTube Shorts', query })
-      
+
       const { body: short } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         body: {  
           context: ytContext,
@@ -547,6 +547,7 @@ async function loadFrom(query, type) {
           }
         }
       }
+
       if (short.playabilityStatus.status !== 'OK') {
         const errorMessage = short.playabilityStatus.reason || short.playabilityStatus.messages[0]
 
@@ -613,7 +614,7 @@ async function retrieveStream(identifier, type, title) {
 
   if (!config.search.sources.youtube.bypassAgeRestriction)
     _switchClient(type === 'ytmusic' ? 'ANDROID_MUSIC' : 'IOS')
-    
+
     const { body: videos } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
       body: {
         context: ytContext,
@@ -709,7 +710,7 @@ function loadLyrics(decodedTrack, language) {
   return new Promise(async (resolve) => {
     if (!config.search.sources.youtube.bypassAgeRestriction)
       _switchClient(decodedTrack.sourceName === 'ytmusic' ? 'ANDROID_MUSIC' : 'IOS')
-    
+
     const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
       body: {
         context: {
