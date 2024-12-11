@@ -713,9 +713,7 @@ function loadLyrics(decodedTrack, language) {
 
     const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
       body: {
-        context: {
-          client: ytContext.client
-        },
+        context: ytContext,
         videoId: decodedTrack.identifier,
         contentCheckOk: true,
         racyCheckOk: true
