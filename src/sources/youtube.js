@@ -624,7 +624,7 @@ async function retrieveStream(identifier, type, title) {
       },
       method: 'POST',
       disableBodyCompression: true
-    });
+    })
 
   if (!videos) {
     debugLog('retrieveStream', 4, { type: 3, sourceName: _getSourceName(type), query: title, message: 'Failed to load results.' })
