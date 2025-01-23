@@ -345,7 +345,7 @@ async function loadFrom(query, type) {
 
       const { body: video } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/player`, {
         headers: {
-          'User-Agent': ytContext.client.userAgent,
+          'User-Agent': ytContext.client.userAgent
         },
         body: {
           context: ytContext,
@@ -418,7 +418,7 @@ async function loadFrom(query, type) {
 
       const { body: playlist } = await makeRequest(`https://${_getBaseHostRequest(type)}/youtubei/v1/next`, {
         headers: {
-          'User-Agent': ytContext.client.userAgent,
+          'User-Agent': ytContext.client.userAgent
         },
         body: {
           context: ytContext,
