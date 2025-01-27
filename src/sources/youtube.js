@@ -63,14 +63,14 @@ function _getBaseHost(type) {
 function _switchClient(newClient) {
   if (newClient === 'ANDROID') {
     ytContext.client.clientName = 'ANDROID',
-    ytContext.client.clientVersion = '20.03.35',
-    ytContext.client.userAgent = 'com.google.android.youtube/20.03.35 (Linux; U; Android 14 gzip)',
-    ytContext.client.deviceMake = 'Google',
-    ytContext.client.deviceModel = 'Pixel 6',
-    ytContext.client.osName = 'Android',
-    ytContext.client.osVersion = '14',
-    ytContext.client.hl = 'en',
-    ytContext.client.gl = 'US',
+    ytContext.client.clientVersion = '20.03.35'
+    ytContext.client.userAgent = 'com.google.android.youtube/20.03.35 (Linux; U; Android 14 gzip)'
+    ytContext.client.deviceMake = 'Google'
+    ytContext.client.deviceModel = 'Pixel 6'
+    ytContext.client.osName = 'Android'
+    ytContext.client.osVersion = '14'
+    ytContext.client.hl = 'en'
+    ytContext.client.gl = 'US'
     ytContext.client.androidSdkVersion = '30'
   } else if (newClient === 'ANDROID_MUSIC') {
     ytContext.client.clientName = 'ANDROID_MUSIC'
