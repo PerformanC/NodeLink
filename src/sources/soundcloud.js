@@ -21,6 +21,7 @@ export default class {
 
     this.clientId = this.nodelink.options?.sources?.clientId ?? null
   }
+
   async setup() {
     if (this.clientId) return true
     try {
@@ -106,7 +107,9 @@ export default class {
     }
     return true
   }
+
   match() {}
+
   async search(query) {
     const req = await http1makeRequest(
       `https://api-v2.soundcloud.com/search?q=${encodeURI(query)}&variant_ids=&facet=model&user_id=992000-167630-994991-450103&client_id=${this.clientId}&limit=${this.nodelink.options.maxSearchResults}&offset=0&linked_partitioning=1&app_version=1679652891&app_locale=en`
@@ -145,7 +148,7 @@ export default class {
       )
     for (const item of body.collection) {
       if (item.kind !== 'track') continue
-      const track = this.buildTrack(item)
+      const track = this._buildTrack(item)
       tracks.push(track)
     }
 
@@ -159,6 +162,7 @@ export default class {
       data: tracks
     }
   }
+
   async resolve(url) {
     const request = await http1makeRequest(
       `https://api-v2.soundcloud.com/resolve?url=${encodeURIComponent(url)}&client_id=${this.clientId}`
@@ -194,7 +198,7 @@ export default class {
     if (body.kind === 'track') {
       return {
         loadType: 'track',
-        data: this.buildTrack(body)
+        data: this._buildTrack(body)
       }
     }
 
@@ -229,27 +233,7 @@ export default class {
       if (completeTracks.length > this.nodelink.options.maxAlbumPlaylistLength)
         completeTracks.length = this.nodelink.options.maxAlbumPlaylistLength
 
-      const tracks = completeTracks.map((item) => {
-        const info = {
-          identifier: item.id.toString(),
-          isSeekable: true,
-          author: item.user.username,
-          length: item.duration,
-          isStream: false,
-          position: 0,
-          title: item.title,
-          uri: item.permalink_url,
-          artworkUrl: item.artwork_url,
-          isrc: item.publisher_metadata?.isrc || null,
-          sourceName: 'soundcloud'
-        }
-
-        return {
-          encoded: encodeTrack(info),
-          info,
-          playlistInfo: {}
-        }
-      })
+      const tracks = completeTracks.map((item) => this._buildTrack(item))
 
       return {
         loadType: 'playlist',
@@ -266,19 +250,20 @@ export default class {
 
     return { loadType: 'empty', data: {} }
   }
-  buildTrack(item) {
+
+  _buildTrack(item) {
     const info = {
-      identifier: item.id.toString(),
-      isSeekable: true,
+      title: item.title,
       author: item.user.username,
       length: item.duration,
+      identifier: item.id.toString(),
+      isSeekable: true,
       isStream: false,
-      position: 0,
-      title: item.title,
       uri: item.permalink_url,
-      artworkUrl: item.artwork_url,
+      artworkUrl: item.artwork_url || null,
       isrc: item.publisher_metadata?.isrc || null,
-      sourceName: 'soundcloud'
+      sourceName: 'soundcloud',
+      position: 0
     }
 
     return {
@@ -324,32 +309,69 @@ export default class {
       }
     }
 
+    const mp3Transcoding = body.media.transcodings.find(
+      (transcoding) =>
+        transcoding.format.protocol === 'progressive' &&
+        transcoding.format.mime_type === 'audio/mpeg'
+    )
+
     const oggOpus = body.media.transcodings.find(
       (transcoding) =>
+        transcoding.format.protocol === 'hls' &&
         transcoding.format.mime_type === 'audio/ogg; codecs="opus"'
     )
 
-    const transcoding = oggOpus || body.media.transcodings[0]
+    const transcoding = mp3Transcoding || oggOpus || body.media.transcodings[0]
+
+    if (!transcoding) {
+      return {
+        exception: {
+          message: 'No valid transcoding found',
+          severity: 'fault',
+          cause: 'Unknown'
+        }
+      }
+    }
+
     let url = `${transcoding.url}?client_id=${this.clientId}`
 
     if (transcoding.format.protocol === 'hls') {
-      url = await http1makeRequest(url)
-      url = url.body.url
+      const urlReq = await http1makeRequest(url)
+      if (urlReq.body?.url) {
+        url = urlReq.body.url
+      } else {
+        return {
+          exception: {
+            message: 'Failed to resolve HLS stream URL',
+            severity: 'fault',
+            cause: 'Unknown'
+          }
+        }
+      }
+    } else if (transcoding.format.protocol === 'progressive') {
+      const urlReq = await http1makeRequest(url)
+      if (urlReq.body?.url) {
+        url = urlReq.body.url
+      } else {
+        return {
+          exception: {
+            message: 'Failed to resolve progressive stream URL',
+            severity: 'fault',
+            cause: 'Unknown'
+          }
+        }
+      }
     }
 
-    // In previous versions, there was a parameter for automatic fallback if the track was "snipped", searching in another configured source (e.g., YouTube) if `config.search.sources.soundcloud.fallbackIfSnipped` was enabled.
-    // The code would perform a new search by the track title using the default source and return the alternative URL.
-    // Since there is currently no other source implemented for alternative search, this functionality will not be implemented at this time.
-
-    let format = 'opus'
+    let format = 'arbitrary'
     if (transcoding.format.mime_type) {
       const mimeType = transcoding.format.mime_type.toLowerCase()
-      if (mimeType.includes('opus')) {
-        format = 'ogg/opus'
-      } else if (mimeType.includes('mpeg')) {
-        format = 'audio/mpeg'
+      if (mimeType.includes('mpeg')) {
+        format = 'mp3'
+      } else if (mimeType.includes('opus')) {
+        format = 'opus'
       } else if (mimeType.includes('aac')) {
-        format = 'audio/aac'
+        format = 'aac'
       }
     }
 
@@ -359,9 +381,49 @@ export default class {
       format
     }
   }
+
   async loadStream(track, url, protocol, additionalData) {
-    const stream = PassThrough()
-    loadHLS(url, stream, false, true)
+    const stream = new PassThrough()
+
+    if (protocol === 'progressive') {
+      try {
+        const response = await http1makeRequest(url, {
+          method: 'GET',
+          streamOnly: true
+        })
+
+        if (response.error) {
+          stream.destroy(new Error(`Failed to load stream: ${response.error.message}`))
+          return { stream }
+        }
+
+        response.stream.pipe(stream)
+
+        response.stream.on('error', (err) => {
+          logger('error', 'Sources', `Progressive stream error: ${err.message}`)
+          if (!stream.destroyed) {
+            stream.destroy(err)
+          }
+        })
+
+        response.stream.on('end', () => {
+          stream.emit('finishBuffering')
+        })
+      } catch (err) {
+        logger('error', 'Sources', `Failed to load progressive stream: ${err.message}`)
+        stream.destroy(err)
+      }
+    } else if (protocol === 'hls') {
+      loadHLS(url, stream, false, true).catch((err) => {
+        logger('error', 'Sources', `HLS stream error: ${err.message}`)
+        if (!stream.destroyed) {
+          stream.destroy(err)
+        }
+      })
+    } else {
+      stream.destroy(new Error(`Unsupported protocol: ${protocol}`))
+    }
+
     return { stream }
   }
 }
