@@ -171,18 +171,20 @@ class NodelinkServer {
   }
 
   _validateConfig() {
-    validateProperty(
-      this.options,
-      (options) =>
-        options.server.port && typeof options.server.port === 'number',
-      'Port must be a number'
-    )
-    validateProperty(
-      this.options,
-      (options) =>
-        options.server.host && typeof options.server.host === 'string',
-      'Host must be a string'
-    )
+    validateProperty({
+      value: this.options.server.port,
+      path: 'server.port',
+      expected: 'number (1–65535)',
+      validator: (value) => typeof value === 'number'
+    })
+
+    validateProperty({
+      value: this.options.server.host,
+      path: 'server.host',
+      expected: 'string',
+      validator: (value) => typeof value === 'string'
+    })
+
   }
 
   _setupSocketEvents() {
@@ -255,8 +257,7 @@ class NodelinkServer {
             logger(
               'info',
               'Server',
-              `\x1b[36m${clientInfo.name}\x1b[0m/\x1b[32mv${clientInfo.version}\x1b[0m disconnected with code ${code} and reason: ${
-                reason || 'without reason'
+              `\x1b[36m${clientInfo.name}\x1b[0m/\x1b[32mv${clientInfo.version}\x1b[0m disconnected with code ${code} and reason: ${reason || 'without reason'
               }`
             )
 
@@ -388,7 +389,7 @@ class NodelinkServer {
                     cb(Buffer.from(buf))
                     if (reqShim._endCb) reqShim._endCb()
                   })
-                  .catch(() => {})
+                  .catch(() => { })
               }
               if (event === 'end') reqShim._endCb = cb
             }
@@ -826,7 +827,7 @@ class NodelinkServer {
         try {
           try {
             handle.pause?.()
-          } catch (e) {}
+          } catch (e) { }
           this.server.emit('connection', handle)
         } catch (err) {
           logger(
@@ -836,7 +837,7 @@ class NodelinkServer {
           )
           try {
             handle.destroy?.()
-          } catch (e) {}
+          } catch (e) { }
         }
       })
     } else {

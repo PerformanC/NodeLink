@@ -199,11 +199,27 @@ function logger(level, ...args) {
 
 const verifyDiscordID = (id) => DISCORD_ID_REGEX.test(String(id))
 
-function validateProperty(property, validator, errorMessage) {
-  if (!validator(property)) {
-    throw new Error(errorMessage)
+function validateProperty({ value, path, expected, validator }) {
+  if (value === undefined || value === null) {
+    throw new Error(
+      `Configuration error:\n` +
+      `- Property: ${path}\n` +
+      `- Problem: missing required value\n` +
+      `- Expected: ${expected}\n\n` +
+      `Please define ${path} in your config.js file.`
+    )
+  }
+
+  if (!validator(value)) {
+    throw new Error(
+      `Configuration error:\n` +
+      `- Property: ${path}\n` +
+      `- Received: ${JSON.stringify(value)} (${typeof value})\n` +
+      `- Expected: ${expected}`
+    )
   }
 }
+
 
 function parseSemver(version) {
   const match = SEMVER_PATTERN.exec(version)
