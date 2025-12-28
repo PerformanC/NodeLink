@@ -64,6 +64,62 @@ function formatNumber(num) {
   return String(num)
 }
 
+function _buildReadableTime(units) {
+  if (units.years > 0)
+    return `${units.years} year${units.years > 1 ? 's' : ''} ago`
+  if (units.months > 0)
+    return `${units.months} month${units.months > 1 ? 's' : ''} ago`
+  if (units.weeks > 0)
+    return `${units.weeks} week${units.weeks > 1 ? 's' : ''} ago`
+  if (units.days > 0) return `${units.days} day${units.days > 1 ? 's' : ''} ago`
+  if (units.hours > 0)
+    return `${units.hours} hour${units.hours > 1 ? 's' : ''} ago`
+  if (units.minutes > 0)
+    return `${units.minutes} minute${units.minutes > 1 ? 's' : ''} ago`
+  if (units.seconds > 0)
+    return `${units.seconds} second${units.seconds > 1 ? 's' : ''} ago`
+  return 'just now'
+}
+
+function _buildPublishedAtFromTimestamp(timestamp, originalText) {
+  const diff = Date.now() - timestamp
+  const diffAbs = Math.abs(diff)
+  const resultUnits = {
+    years: 0,
+    months: 0,
+    weeks: 0,
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0
+  }
+
+  if (diffAbs >= TIME_UNIT_MULTIPLIERS.year) {
+    resultUnits.years = Math.floor(diffAbs / TIME_UNIT_MULTIPLIERS.year)
+  } else if (diffAbs >= TIME_UNIT_MULTIPLIERS.month) {
+    resultUnits.months = Math.floor(diffAbs / TIME_UNIT_MULTIPLIERS.month)
+  } else if (diffAbs >= TIME_UNIT_MULTIPLIERS.week) {
+    resultUnits.weeks = Math.floor(diffAbs / TIME_UNIT_MULTIPLIERS.week)
+  } else if (diffAbs >= TIME_UNIT_MULTIPLIERS.day) {
+    resultUnits.days = Math.floor(diffAbs / TIME_UNIT_MULTIPLIERS.day)
+  } else if (diffAbs >= TIME_UNIT_MULTIPLIERS.hour) {
+    resultUnits.hours = Math.floor(diffAbs / TIME_UNIT_MULTIPLIERS.hour)
+  } else if (diffAbs >= TIME_UNIT_MULTIPLIERS.minute) {
+    resultUnits.minutes = Math.floor(diffAbs / TIME_UNIT_MULTIPLIERS.minute)
+  } else {
+    resultUnits.seconds = Math.floor(diffAbs / TIME_UNIT_MULTIPLIERS.second)
+  }
+
+  return {
+    original: originalText,
+    timestamp: Math.floor(timestamp),
+    date: new Date(timestamp).toISOString(),
+    readable: _buildReadableTime(resultUnits),
+    compact: `${resultUnits.years}y ${resultUnits.months}mo ${resultUnits.weeks}w ${resultUnits.days}d ${resultUnits.hours}h ${resultUnits.minutes}m ${resultUnits.seconds}s`,
+    ago: resultUnits
+  }
+}
+
 function parsePublishedAt(publishedText) {
   if (!publishedText) return null
 
