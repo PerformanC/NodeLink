@@ -7,4 +7,3 @@ logs
 Dockerfile
 docker-compose.yml
 biome.json
-commitlint.config.mjs
