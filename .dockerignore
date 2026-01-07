@@ -6,4 +6,3 @@ logs
 .vscode
 Dockerfile
 docker-compose.yml
-biome.json
