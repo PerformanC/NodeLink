@@ -6,6 +6,5 @@ logs
 .vscode
 Dockerfile
 docker-compose.yml
-LICENSE
 biome.json
 commitlint.config.mjs
