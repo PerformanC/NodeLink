@@ -45,12 +45,11 @@ export default class SpotifySource {
       /https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?(track|album|playlist|artist|episode|show)\/([a-zA-Z0-9]+)/
     ]
     this.priority = 95
-
     this.accessToken = null
     this.tokenExpiry = null
     this.clientId = null
     this.clientSecret = null
-    this.externalAuthUrl = null
+    this.resolveEndpoint = null
     this.playlistLoadLimit = 0
     this.playlistPageLoadConcurrency = BATCH_SIZE_DEFAULT
     this.albumLoadLimit = 0
@@ -58,71 +57,63 @@ export default class SpotifySource {
     this.market = 'US'
     this.tokenInitialized = false
     this.allowExplicit = true
-    this.anonymousToken = null
   }
 
   async setup() {
     this.accessToken = this.nodelink.credentialManager.get(
       'spotify_access_token'
     )
-    this.anonymousToken = this.nodelink.credentialManager.get(
-      'spotify_anonymous_token'
+
+    this.clientId = this.config.sources.spotify?.clientId
+    this.clientSecret = this.config.sources.spotify?.clientSecret
+    this.resolveEndpoint =
+      this.config.sources.spotify?.resolveEndpoint || null
+    this.playlistLoadLimit = this.config.sources.spotify?.playlistLoadLimit ?? 0
+    this.playlistPageLoadConcurrency =
+      this.config.sources.spotify?.playlistPageLoadConcurrency ??
+      BATCH_SIZE_DEFAULT
+    this.albumLoadLimit = this.config.sources.spotify?.albumLoadLimit ?? 0
+    this.albumPageLoadConcurrency =
+      this.config.sources.spotify?.albumPageLoadConcurrency ??
+      BATCH_SIZE_DEFAULT
+    this.market = this.config.sources.spotify?.market || 'US'
+    this.allowExplicit = this.config.sources.spotify?.allowExplicit ?? true
+
+    logger(
+      'info',
+      'Spotify',
+      `Resolve endpoint configured: ${this.resolveEndpoint}`
     )
 
     const hasOfficialConfig =
       this.config.sources.spotify?.clientId &&
       this.config.sources.spotify?.clientSecret
-    const hasAnonymousConfig = this.config.sources.spotify?.externalAuthUrl
 
-    const missingOfficial = hasOfficialConfig && !this.accessToken
-    const missingAnonymous = hasAnonymousConfig && !this.anonymousToken
-
-    if (!missingOfficial && !missingAnonymous) {
-      if (this.accessToken || this.anonymousToken) {
-        this.tokenInitialized = true
-        return true
-      }
+    if (this.accessToken && hasOfficialConfig) {
+      this.tokenInitialized = true
+      return true
     }
 
     try {
-      this.clientId = this.config.sources.spotify?.clientId
-      this.clientSecret = this.config.sources.spotify?.clientSecret
-      this.externalAuthUrl = this.config.sources.spotify?.externalAuthUrl
-      this.playlistLoadLimit =
-        this.config.sources.spotify?.playlistLoadLimit ?? 0
-      this.playlistPageLoadConcurrency =
-        this.config.sources.spotify?.playlistPageLoadConcurrency ??
-        BATCH_SIZE_DEFAULT
-      this.albumLoadLimit = this.config.sources.spotify?.albumLoadLimit ?? 0
-      this.albumPageLoadConcurrency =
-        this.config.sources.spotify?.albumPageLoadConcurrency ??
-        BATCH_SIZE_DEFAULT
-      this.market = this.config.sources.spotify?.market || 'US'
-      this.allowExplicit = this.config.sources.spotify?.allowExplicit ?? true
-
-      if (!this.externalAuthUrl && (!this.clientId || !this.clientSecret)) {
+      if (!this.clientId || !this.clientSecret) {
         logger(
           'warn',
           'Spotify',
-          'Neither externalAuthUrl nor Client ID/Secret provided. Disabling source.'
+          'Client ID/Secret not provided. Disabling source.'
         )
         return false
       }
 
       const success = await this._refreshToken()
       if (success) {
-        logger(
-          'info',
-          'Spotify',
-          `Tokens initialized successfully. Official: ${!!this.accessToken}, Anonymous: ${!!this.anonymousToken}`
-        )
+        logger('info', 'Spotify', 'Token initialized successfully.')
       }
       return success
     } catch (e) {
       logger(
         'error',
         'Spotify',
-        `Error initializing Spotify tokens: ${e.message}`
+        `Error initializing Spotify token: ${e.message}`
       )
       return false
     }
@@ -139,104 +130,47 @@ export default class SpotifySource {
   }
 
   async _refreshToken() {
-    let success = false
+    if (!this.clientId || !this.clientSecret) {
+      return false
+    }
 
-    if (this.externalAuthUrl && !this.anonymousToken) {
-      try {
-        const response = await http1makeRequest(this.externalAuthUrl, {
-          headers: { Accept: 'application/json' },
-          disableBodyCompression: true
-        })
+    try {
+      const auth = Buffer.from(
+        `${this.clientId}:${this.clientSecret}`
+      ).toString('base64')
 
-        const { body: tokenData, error, statusCode } = response
+      const {
+        body: tokenData,
+        error,
+        statusCode
+      } = await http1makeRequest('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: 'grant_type=client_credentials',
+        disableBodyCompression: true
+      })
 
-        if (!error && statusCode === 200 && tokenData?.accessToken) {
-          this.anonymousToken = tokenData.accessToken
-          const expiresMs = tokenData.accessTokenExpirationTimestampMs
-            ? tokenData.accessTokenExpirationTimestampMs - Date.now()
-            : 3600000
-
-          if (!this.accessToken) {
-            this.tokenExpiry = Date.now() + Math.max(expiresMs, 60000)
-          }
-
-          this.nodelink.credentialManager.set(
-            'spotify_anonymous_token',
-            this.anonymousToken,
-            Math.max(expiresMs, 60000)
-          )
-          success = true
-        } else {
-          logger(
-            'warn',
-            'Spotify',
-            `Failed to fetch anonymous token: ${statusCode}`
-          )
-        }
-      } catch (e) {
-        logger(
-          'error',
-          'Spotify',
-          `Anonymous token refresh failed: ${e.message}`
+      if (!error && statusCode === 200) {
+        this.accessToken = tokenData.access_token
+        this.tokenExpiry = Date.now() + tokenData.expires_in * 1000
+        this.nodelink.credentialManager.set(
+          'spotify_access_token',
+          this.accessToken,
+          tokenData.expires_in * 1000
         )
+        this.tokenInitialized = true
+        return true
+      } else {
+        logger('error', 'Spotify', `Failed to refresh token: ${statusCode}`)
+        return false
       }
-    } else if (this.anonymousToken) {
-      success = true
+    } catch (e) {
+      logger('error', 'Spotify', `Token refresh failed: ${e.message}`)
+      return false
     }
-
-    if (this.clientId && this.clientSecret && !this.accessToken) {
-      try {
-        const auth = Buffer.from(
-          `${this.clientId}:${this.clientSecret}`
-        ).toString('base64')
-
-        const {
-          body: tokenData,
-          error,
-          statusCode
-        } = await http1makeRequest('https://accounts.spotify.com/api/token', {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${auth}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: 'grant_type=client_credentials',
-          disableBodyCompression: true
-        })
-
-        if (!error && statusCode === 200) {
-          this.accessToken = tokenData.access_token
-          this.tokenExpiry = Date.now() + tokenData.expires_in * 1000
-          this.nodelink.credentialManager.set(
-            'spotify_access_token',
-            this.accessToken,
-            tokenData.expires_in * 1000
-          )
-          success = true
-        } else {
-          logger(
-            'error',
-            'Spotify',
-            `Failed to refresh official token: ${statusCode}`
-          )
-        }
-      } catch (e) {
-        logger(
-          'error',
-          'Spotify',
-          `Official token refresh failed: ${e.message}`
-        )
-      }
-    } else if (this.accessToken) {
-      success = true
-    }
-
-    if (!this.accessToken && this.anonymousToken) {
-      this.accessToken = this.anonymousToken
-    }
-
-    this.tokenInitialized = success
-    return success
   }
 
   async _apiRequest(path) {
@@ -285,183 +219,103 @@ export default class SpotifySource {
     }
   }
 
-  async _internalApiRequest(operation, variables) {
-    if (!this.tokenInitialized || !this._isTokenValid()) {
-      await this.setup()
-    }
-
-    const token = this.anonymousToken || this.accessToken
-
-    if (!token) {
-      throw new Error('No token available for internal API request.')
-    }
-
+  async _resolvePlaylistViaEndpoint(playlistUrl) {
     try {
-      const { body, statusCode, headers } = await http1makeRequest(
-        SPOTIFY_INTERNAL_API_URL,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'App-Platform': 'WebPlayer',
-            'Spotify-App-Version': '1.2.81.104.g225ec0e6',
-            'Content-Type': 'application/json; charset=utf-8'
-          },
-          body: {
-            variables,
-            operationName: operation.name,
-            extensions: {
-              persistedQuery: {
-                version: 1,
-                sha256Hash: operation.hash
-              }
-            }
-          },
-          disableBodyCompression: true
-        }
-      )
+      const encodedUrl = encodeURIComponent(playlistUrl)
 
-      if (statusCode === 429) {
-        const retryAfter = headers['retry-after']
-          ? parseInt(headers['retry-after'], 10)
-          : 5
+      // We use the /playlist/full endpoint to get all tracks in one go.
+      const url = `${this.resolveEndpoint}/playlist/full?url=${encodedUrl}`
+
+      const { body, statusCode, error } = await http1makeRequest(url, {
+        headers: { Accept: 'application/json' },
+        disableBodyCompression: true
+      })
+
+      if (error) {
+        logger('error', 'Spotify', `Error from endpoint: ${error}`)
+        return null
+      }
+
+      if (statusCode !== 200) {
         logger(
           'warn',
           'Spotify',
-          `Internal API Rate limited. Retrying after ${retryAfter} seconds.`
-        )
-        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000))
-        return this._internalApiRequest(operation, variables)
-      }
-
-      if (statusCode === 401) {
-        this.tokenInitialized = false
-        return this._internalApiRequest(operation, variables)
-      }
-
-      if (statusCode !== 200 || body.errors) {
-        logger(
-          'error',
-          'Spotify',
-          `Internal API error: ${statusCode} - ${JSON.stringify(body.errors || body)}`
+          `Failed to resolve playlist via endpoint: ${statusCode}`
         )
         return null
       }
 
-      return body.data
+      if (!body) {
+        logger('warn', 'Spotify', 'Empty response body from endpoint')
+        return null
+      }
+
+      // Check if tracks exist in the response
+      if (!body.tracks || !body.tracks.items) {
+        logger('warn', 'Spotify', `Invalid response structure from endpoint`)
+        return null
+      }
+
+      const tracks = []
+      const totalItems = body.tracks.items.length
+
+      for (const item of body.tracks.items) {
+        const trackData = item.track
+        if (!trackData || !trackData.id) {
+          continue
+        }
+
+        const isExplicit = trackData.explicit || false
+        let trackUri = trackData.external_urls?.spotify || ''
+        if (trackUri) {
+          trackUri += `${trackUri.includes('?') ? '&' : '?'}explicit=${isExplicit}`
+        }
+
+        const trackInfo = {
+          identifier: trackData.id,
+          isSeekable: true,
+          author: trackData.artists?.map((a) => a.name).join(', ') || 'Unknown',
+          length: trackData.duration_ms || 0,
+          isStream: false,
+          position: 0,
+          title: trackData.name || 'Unknown Track',
+          uri: trackUri,
+          artworkUrl: trackData.album?.images?.[0]?.url || null,
+          isrc: trackData.external_ids?.isrc || null,
+          sourceName: 'spotify'
+        }
+
+        tracks.push({
+          encoded: encodeTrack(trackInfo),
+          info: trackInfo,
+          pluginInfo: {}
+        })
+      }
+
+      logger(
+        'info',
+        'Spotify',
+        `Successfully processed ${tracks.length} tracks from endpoint`
+      )
+
+      return {
+        loadType: 'playlist',
+        data: {
+          info: {
+            name: body.name || 'Spotify Playlist',
+            selectedTrack: 0
+          },
+          tracks
+        }
+      }
     } catch (e) {
       logger(
         'error',
         'Spotify',
-        `Error in Spotify internalApiRequest: ${e.message}`
+        `Error resolving playlist via endpoint: ${e.message}`
       )
+      logger('error', 'Spotify', `Stack trace: ${e.stack}`)
       return null
-    }
-  }
-
-  async _fetchInternalPaginatedData(
-    operation,
-    uri,
-    totalItems,
-    limit,
-    maxPages,
-    concurrency,
-    extraVars = {}
-  ) {
-    const allItems = []
-    let pagesToFetch = Math.ceil(totalItems / limit)
-
-    if (maxPages > 0) {
-      pagesToFetch = Math.min(pagesToFetch, maxPages)
-    }
-
-    const requests = []
-    for (let i = 1; i < pagesToFetch; i++) {
-      requests.push({
-        ...extraVars,
-        uri,
-        offset: i * limit,
-        limit
-      })
-    }
-
-    if (requests.length === 0) return allItems
-
-    for (let i = 0; i < requests.length; i += concurrency) {
-      const batch = requests.slice(i, i + concurrency)
-      let attempts = 0
-      while (attempts < 3) {
-        try {
-          this.nodelink.sendHeartbeat?.()
-          const results = await Promise.all(
-            batch.map((vars) => this._internalApiRequest(operation, vars))
-          )
-          for (const data of results) {
-            const items =
-              data?.playlistV2?.content?.items ||
-              data?.albumUnion?.tracksV2?.items
-            if (items) {
-              allItems.push(...items)
-            }
-          }
-          break
-        } catch (e) {
-          attempts++
-          if (attempts >= 3) {
-            logger(
-              'warn',
-              'Spotify',
-              `Failed to fetch a batch of internal pages after 3 attempts: ${e.message}`
-            )
-          } else {
-            await new Promise((r) => setTimeout(r, 1500))
-          }
-        }
-      }
-    }
-
-    return allItems
-  }
-
-  _buildTrackFromInternal(item, artworkUrl = null) {
-    if (!item?.uri) return null
-
-    const id = item.uri.split(':').pop()
-    const isExplicit =
-      item.contentRating?.label === 'EXPLICIT' || item.explicit === true
-
-    let trackUri = `https://open.spotify.com/track/${id}`
-    trackUri += `?explicit=${isExplicit}`
-
-    const trackInfo = {
-      identifier: id,
-      isSeekable: true,
-      author:
-        item.artists?.items?.map((a) => a.profile?.name || a.name).join(', ') ||
-        item.firstArtist?.items[0]?.profile?.name ||
-        item.otherArtists.items.map((a) => a.profile.name).join(', ') ||
-        'Unknown',
-      length:
-        item.duration?.totalMilliseconds ||
-        item.trackDuration?.totalMilliseconds ||
-        0,
-      isStream: false,
-      position: 0,
-      title: item.name,
-      uri: trackUri,
-      artworkUrl:
-        artworkUrl ||
-        item.albumOfTrack?.coverArt?.sources?.[0]?.url ||
-        item.album?.images?.[0]?.url ||
-        null,
-      isrc: item.externalIds?.isrc || null,
-      sourceName: 'spotify'
-    }
-
-    return {
-      encoded: encodeTrack(trackInfo),
-      info: trackInfo,
-      pluginInfo: {}
     }
   }
 
@@ -552,30 +406,6 @@ export default class SpotifySource {
     try {
       const limit = this.config.maxSearchResults || 10
 
-      if (this.externalAuthUrl) {
-        const data = await this._internalApiRequest(QUERIES.searchDesktop, {
-          searchTerm: query,
-          offset: 0,
-          limit,
-          numberOfTopResults: 5,
-          includeAudiobooks: false,
-          includeArtistHasConcertsField: false,
-          includePreReleases: false
-        })
-
-        if (!data?.searchV2) {
-          return { loadType: 'empty', data: {} }
-        }
-
-        const results = this._processInternalSearchResults(
-          data.searchV2,
-          searchType
-        )
-        return results.length === 0
-          ? { loadType: 'empty', data: {} }
-          : { loadType: 'search', data: results }
-      }
-
       const typeMap = {
         track: 'track',
         album: 'album',
@@ -645,13 +475,10 @@ export default class SpotifySource {
           }
         }
 
-        const token = this.anonymousToken || this.accessToken
-        if (!token) throw new Error('No token available for mix request')
-
         const { body: rjson, statusCode } = await http1makeRequest(
           `${SPOTIFY_CLIENT_API_URL}/inspiredby-mix/v2/seed_to_playlist/spotify:${seedType}:${seed}?response-format=json`,
           {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: `Bearer ${this.accessToken}` },
             disableBodyCompression: true
           }
         )
@@ -685,85 +512,6 @@ export default class SpotifySource {
     } catch (e) {
       return { exception: { message: e.message, severity: 'fault' } }
     }
-  }
-
-  _processInternalSearchResults(searchV2, searchType) {
-    const results = []
-
-    if (searchType === 'track' && searchV2.tracksV2?.items) {
-      for (const item of searchV2.tracksV2.items) {
-        const track = this._buildTrackFromInternal(item.item.data)
-        if (track) results.push(track)
-      }
-    } else if (searchType === 'album' && searchV2.albumsV2?.items) {
-      for (const item of searchV2.albumsV2.items) {
-        const album = item.data
-        const info = {
-          title: album.name,
-          author: album.artists.items.map((a) => a.profile.name).join(', '),
-          length: 0,
-          identifier: album.uri.split(':').pop(),
-          isSeekable: true,
-          isStream: false,
-          uri: `https://open.spotify.com/album/${album.uri.split(':').pop()}`,
-          artworkUrl: album.coverArt?.sources?.[0]?.url || null,
-          isrc: null,
-          sourceName: 'spotify',
-          position: 0
-        }
-        results.push({
-          encoded: encodeTrack(info),
-          info,
-          pluginInfo: { type: 'album' }
-        })
-      }
-    } else if (searchType === 'playlist' && searchV2.playlists?.items) {
-      for (const item of searchV2.playlists.items) {
-        const playlist = item.data
-        const info = {
-          title: playlist.name,
-          author: playlist.ownerV2?.data?.name || 'Unknown',
-          length: 0,
-          identifier: playlist.uri.split(':').pop(),
-          isSeekable: true,
-          isStream: false,
-          uri: `https://open.spotify.com/playlist/${playlist.uri.split(':').pop()}`,
-          artworkUrl: playlist.images?.items?.[0]?.sources?.[0]?.url || null,
-          isrc: null,
-          sourceName: 'spotify',
-          position: 0
-        }
-        results.push({
-          encoded: encodeTrack(info),
-          info,
-          pluginInfo: { type: 'playlist' }
-        })
-      }
-    } else if (searchType === 'artist' && searchV2.artists?.items) {
-      for (const item of searchV2.artists.items) {
-        const artist = item.data
-        const info = {
-          title: artist.profile.name,
-          author: 'Spotify',
-          length: 0,
-          identifier: artist.uri.split(':').pop(),
-          isSeekable: false,
-          isStream: false,
-          uri: `https://open.spotify.com/artist/${artist.uri.split(':').pop()}`,
-          artworkUrl: artist.visuals?.avatarImage?.sources?.[0]?.url || null,
-          isrc: null,
-          sourceName: 'spotify',
-          position: 0
-        }
-        results.push({
-          encoded: encodeTrack(info),
-          info,
-          pluginInfo: { type: 'artist' }
-        })
-      }
-    }
-
-    return results
   }
 
   _processOfficialSearchResults(data, spotifyType) {
@@ -886,21 +634,6 @@ export default class SpotifySource {
   }
 
   async _resolveTrack(id) {
-    if (this.externalAuthUrl) {
-      const data = await this._internalApiRequest(QUERIES.getTrack, {
-        uri: `spotify:track:${id}`
-      })
-      if (!data?.trackUnion || data.trackUnion.__typename === 'NotFound') {
-        return {
-          exception: { message: 'Track not found.', severity: 'common' }
-        }
-      }
-      return {
-        loadType: 'track',
-        data: this._buildTrackFromInternal(data.trackUnion)
-      }
-    }
-
     const data = await this._apiRequest(`/tracks/${id}?market=${this.market}`)
     if (!data) {
       return {
@@ -911,53 +644,6 @@ export default class SpotifySource {
   }
 
   async _resolveAlbum(id) {
-    if (this.externalAuthUrl) {
-      const data = await this._internalApiRequest(QUERIES.getAlbum, {
-        uri: `spotify:album:${id}`,
-        locale: 'en',
-        offset: 0,
-        limit: 300
-      })
-
-      if (!data?.albumUnion || data.albumUnion.__typename === 'NotFound') {
-        return {
-          exception: { message: 'Album not found.', severity: 'common' }
-        }
-      }
-
-      const allItems = [...data.albumUnion.tracksV2.items]
-      const totalTracks = data.albumUnion.tracksV2.totalCount
-      if (totalTracks > 300) {
-        const additionalItems = await this._fetchInternalPaginatedData(
-          QUERIES.getAlbum,
-          `spotify:album:${id}`,
-          totalTracks,
-          300,
-          this.albumLoadLimit,
-          this.albumPageLoadConcurrency,
-          { locale: 'en' }
-        )
-        allItems.push(...additionalItems)
-      }
-
-      const tracks = allItems
-        .map((item) =>
-          this._buildTrackFromInternal(
-            item.track,
-            data.albumUnion.coverArt.sources[0].url
-          )
-        )
-        .filter(Boolean)
-
-      return {
-        loadType: 'playlist',
-        data: {
-          info: { name: data.albumUnion.name, selectedTrack: 0 },
-          tracks
-        }
-      }
-    }
-
     const albumData = await this._apiRequest(
       `/albums/${id}?market=${this.market}`
     )
@@ -1009,44 +695,35 @@ export default class SpotifySource {
   }
 
   async _resolvePlaylist(id) {
-    if (this.externalAuthUrl) {
-      const data = await this._internalApiRequest(QUERIES.getPlaylist, {
-        uri: `spotify:playlist:${id}`,
-        offset: 0,
-        limit: 100,
-        enableWatchFeedEntrypoint: false
-      })
 
-      if (!data?.playlistV2 || data.playlistV2.__typename === 'NotFound') {
-        return {
-          exception: { message: 'Playlist not found.', severity: 'common' }
-        }
-      }
-
-      const allItems = [...data.playlistV2.content.items]
-      const totalTracks = data.playlistV2.content.totalCount
-      const additionalItems = await this._fetchInternalPaginatedData(
-        QUERIES.getPlaylist,
-        `spotify:playlist:${id}`,
-        totalTracks,
-        100,
-        this.playlistLoadLimit,
-        this.playlistPageLoadConcurrency,
-        { enableWatchFeedEntrypoint: false }
+    // The resolveEndpoint must be configured to resolve playlists.
+    if (this.resolveEndpoint) {
+      logger(
+        'info',
+        'Spotify',
+        `Attempting to use resolveEndpoint for playlist ${id}`
       )
-      allItems.push(...additionalItems)
-
-      const tracks = allItems
-        .map((item) => this._buildTrackFromInternal(item.itemV2.data))
-        .filter(Boolean)
-
-      return {
-        loadType: 'playlist',
-        data: {
-          info: { name: data.playlistV2.name, selectedTrack: 0 },
-          tracks
-        }
+      const playlistUrl = `https://open.spotify.com/playlist/${id}`
+      const result = await this._resolvePlaylistViaEndpoint(playlistUrl)
+      if (result) {
+        logger(
+          'info',
+          'Spotify',
+          `Loaded ${result.data.tracks.length} tracks from playlist "${result.data.info.name}" via resolveEndpoint.`
+        )
+        return result
       }
+      logger(
+        'warn',
+        'Spotify',
+        `Failed to load playlist via resolveEndpoint, falling back to API`
+      )
+    } else {
+      logger(
+        'warn',
+        'Spotify',
+        `resolveEndpoint is not configured, using regular API`
+      )
     }
 
     const fields =
@@ -1088,7 +765,7 @@ export default class SpotifySource {
     logger(
       'info',
       'Spotify',
-      `Loaded ${tracks.length} of ${totalTracks} tracks from playlist "${playlistData.name}".`
+      `Loaded ${tracks.length} of ${totalTracks} tracks from playlist "${playlistData.name}" via API.`
     )
 
     return {
@@ -1101,35 +778,6 @@ export default class SpotifySource {
   }
 
   async _resolveArtist(id) {
-    if (this.externalAuthUrl) {
-      const data = await this._internalApiRequest(QUERIES.getArtist, {
-        uri: `spotify:artist:${id}`,
-        locale: 'en',
-        includePrerelease: true
-      })
-
-      if (!data?.artistUnion || data.artistUnion.__typename === 'NotFound') {
-        return {
-          exception: { message: 'Artist not found.', severity: 'common' }
-        }
-      }
-
-      const tracks = data.artistUnion.discography.topTracks.items
-        .map((item) => this._buildTrackFromInternal(item.track))
-        .filter(Boolean)
-
-      return {
-        loadType: 'playlist',
-        data: {
-          info: {
-            name: `${data.artistUnion.profile.name}'s Top Tracks`,
-            selectedTrack: 0
-          },
-          tracks
-        }
-      }
-    }
-
     const artist = await this._apiRequest(`/artists/${id}`)
     if (!artist) {
       return {
@@ -1172,11 +820,7 @@ export default class SpotifySource {
           decodedTrack.isrc = trackData.external_ids.isrc
         }
       } catch (e) {
-        logger(
-          'debug',
-          'Spotify',
-          `Failed to fetch ISRC for ${decodedTrack.identifier} via API: ${e.message}`
-        )
+        // Ignore errors fetching ISRC
       }
     }
 
