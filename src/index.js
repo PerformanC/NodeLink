@@ -4,7 +4,6 @@ import http from 'node:http'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import WebSocketServer from '@performanc/pwsl-server'
-
 import requestHandler from './api/index.js'
 import connectionManager from './managers/connectionManager.js'
 import CredentialManager from './managers/credentialManager.js'
@@ -335,6 +334,16 @@ class NodelinkServer extends EventEmitter {
         (v) => Number.isInteger(v) && v > 0
       )
 
+    const isValidUrl = (value) => {
+      if (typeof value !== 'string') return false
+      try {
+        new URL(value)
+        return true
+      } catch {
+        return false
+      }
+    }
+
     validateProperty(
       this.options.server.port,
       'server.port',
@@ -485,6 +494,7 @@ class NodelinkServer extends EventEmitter {
     const applemusic = this.options.sources?.applemusic
     const tidal = this.options.sources?.tidal
     const jiosaavn = this.options.sources?.jiosaavn
+    const audius = this.options.sources?.audius
 
     if (spotify?.enabled) {
       validateNonNegativeInt(
@@ -516,6 +526,15 @@ class NodelinkServer extends EventEmitter {
         'clientId and clientSecret must be set together',
         (v) => v === true
       )
+
+      if (spotify.resolveEndpoint !== undefined) {
+        validateProperty(
+          spotify.resolveEndpoint,
+          'sources.spotify.resolveEndpoint',
+          'string (valid URL if provided)',
+          (v) => typeof v === 'string' && (v === '' || isValidUrl(v))
+        )
+      }
     }
 
     if (applemusic?.enabled) {
@@ -559,6 +578,36 @@ class NodelinkServer extends EventEmitter {
           (v) => typeof v === 'string' && (v === '' || v.trim().length > 0)
         )
       }
+
+      if (audius?.enabled) {
+        if (
+          audius.appName !== undefined &&
+          typeof audius.appName !== 'string'
+        ) {
+          throw new Error('sources.audius.appName must be a string')
+        }
+      }
+
+      if (audius.apiKey !== undefined && typeof audius.apiKey !== 'string') {
+        throw new Error('sources.audius.apiKey must be a string')
+      }
+
+      if (
+        audius.apiSecret !== undefined &&
+        typeof audius.apiSecret !== 'string'
+      ) {
+        throw new Error('sources.audius.apiSecret must be a string')
+      }
+
+      validateNonNegativeInt(
+        audius.playlistLoadLimit,
+        'sources.audius.playlistLoadLimit'
+      )
+
+      validateNonNegativeInt(
+        audius.albumLoadLimit,
+        'sources.audius.albumLoadLimit'
+      )
     }
 
     if (jiosaavn?.enabled) {
