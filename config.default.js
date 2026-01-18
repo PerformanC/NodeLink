@@ -217,7 +217,7 @@ export default {
       enabled: true,
       clientId: '',
       clientSecret: '',
-      externalAuthUrl: 'http://get.1lucas1apk.fun/spotify/gettoken', // URL to external token provider (e.g. http://localhost:8080/api/token - use https://github.com/topi314/spotify-tokener or https://github.com/1Lucas1apk/gettoken)
+      resolveEndpoint: 'https://solif-vert.vercel.app', // You can host your own here: https://github.com/idMJA/solify 
       market: 'US',
       playlistLoadLimit: 1, // 0 means no limit (loads all tracks), 1 = 100 tracks, 2 = 100 and so on!
       playlistPageLoadConcurrency: 10, // How many pages to load simultaneously
