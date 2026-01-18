@@ -67,8 +67,7 @@ export default class SpotifySource {
     this.clientId = this.config.sources.spotify?.clientId
     this.clientSecret = this.config.sources.spotify?.clientSecret
     this.resolveEndpoint =
-      this.config.sources.spotify?.resolveEndpoint ||
-      'https://solif-vert.vercel.app'
+      this.config.sources.spotify?.resolveEndpoint || null
     this.playlistLoadLimit = this.config.sources.spotify?.playlistLoadLimit ?? 0
     this.playlistPageLoadConcurrency =
       this.config.sources.spotify?.playlistPageLoadConcurrency ??
