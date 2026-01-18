@@ -110,6 +110,51 @@ export default class ShazamSource {
         return (space === -1 ? srcset : srcset.slice(0, space)) || null
       }
 
+      const parseTimeToMs = (timeStr) => {
+        if (!timeStr) return 0
+
+        const isoMatch = timeStr.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/)
+        if (isoMatch) {
+          const hours = parseInt(isoMatch[1] || '0', 10)
+          const minutes = parseInt(isoMatch[2] || '0', 10)
+          const seconds = parseFloat(isoMatch[3] || '0')
+          return Math.round((hours * 3600 + minutes * 60 + seconds) * 1000)
+        }
+
+        const parts = timeStr.split(':').map(Number)
+        if (parts.some(isNaN)) return 0
+
+        if (parts.length === 3) {
+          return (parts[0] * 3600 + parts[1] * 60 + parts[2]) * 1000
+        } else if (parts.length === 2) {
+          return (parts[0] * 60 + parts[1]) * 1000
+        } else if (parts.length === 1) {
+          return parts[0] * 1000
+        }
+
+        return 0
+      }
+
+      const extractDurationFromHtml = () => {
+        const endTimeRegex = /\\?"endTime\\?"\s*:\s*\\?"([^"\\]+)\\?"/g
+        let maxDuration = 0
+        let match
+
+        while ((match = endTimeRegex.exec(html)) !== null) {
+          const duration = parseTimeToMs(match[1])
+          if (duration > maxDuration) {
+            maxDuration = duration
+          }
+        }
+
+        return maxDuration
+      }
+
+      const extractIsrcFromHtml = () => {
+        const isrcMatch = html.match(/\\?"isrc\\?"\s*:\s*\\?"([A-Z]{2}[A-Z0-9]{3}\d{7})\\?"/)
+        return isrcMatch ? isrcMatch[1] : null
+      }
+
       const appleMusicUrl = extractHrefStartingAt(
         'href="https://www.shazam.com/applemusic/song/'
       )
@@ -128,17 +173,20 @@ export default class ShazamSource {
       const cleanUrl = url.endsWith('/') ? url.slice(0, -1) : url
       const identifier = cleanUrl.slice(cleanUrl.lastIndexOf('/') + 1)
 
+      const duration = extractDurationFromHtml()
+      const isrc = extractIsrcFromHtml()
+
       const trackInfo = {
         identifier,
         isSeekable: true,
         author: artist,
-        length: 0,
+        length: duration,
         isStream: false,
         position: 0,
         title,
         uri: url,
         artworkUrl,
-        isrc: null,
+        isrc,
         sourceName: 'shazam',
         appleMusicUrl
       }
