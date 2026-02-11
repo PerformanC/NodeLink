@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import crypto from 'node:crypto'
 import { PassThrough } from 'node:stream'
-import BlowfishCBC from '../decrypters/blowfish-cbc.js'
+import BlowfishCBC from '../decrypters/blowfish-cbc.ts'
 import {
   encodeTrack,
   http1makeRequest,
