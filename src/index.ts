@@ -88,12 +88,12 @@ const getProfilerApi = async (): Promise<ProfilerApiModule> => {
   return profilerApiPromise
 }
 
-const memoryTraceEnabled =
-  process.env['NODELINK_MEMORY_TRACE']?.toLowerCase() === 'true'
+const { NODELINK_MEMORY_TRACE: memoryTraceEnv } = process.env
+const memoryTraceEnabled = memoryTraceEnv?.toLowerCase() === 'true'
 
 type ProfilerRealtimeStore = {
   snapshots: Array<Record<string, unknown>>
-  lastAllocTop: Record<string, unknown> | null
+  lastAllocTop: object | null
   updatedAt: number
 }
 
@@ -905,7 +905,7 @@ class NodelinkServer extends EventEmitter {
         let tickInFlight = false
         let allocInFlight = false
         let lastAllocAt = 0
-        let lastAllocReport: Record<string, unknown> | null = null
+        let lastAllocReport: object | null = null
         const realtimeStore = getProfilerRealtimeStore()
         if (realtimeStore.lastAllocTop && !lastAllocReport) {
           lastAllocReport = realtimeStore.lastAllocTop
@@ -921,9 +921,15 @@ class NodelinkServer extends EventEmitter {
           }
         >()
 
+        const requestHeaders = request.headers as
+          | { host?: string | string[] }
+          | undefined
+        const requestHost = Array.isArray(requestHeaders?.host)
+          ? requestHeaders.host[0]
+          : requestHeaders?.host
         const url = new URL(
           request.url || '/v4/profiler/socket',
-          `http://${request.headers?.['host'] || 'localhost'}`
+          `http://${requestHost || 'localhost'}`
         )
         const intervalMs = Math.min(
           15000,

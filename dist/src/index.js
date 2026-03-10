@@ -38,7 +38,8 @@ const getProfilerApi = async () => {
     }
     return profilerApiPromise;
 };
-const memoryTraceEnabled = process.env['NODELINK_MEMORY_TRACE']?.toLowerCase() === 'true';
+const { NODELINK_MEMORY_TRACE: memoryTraceEnv } = process.env;
+const memoryTraceEnabled = memoryTraceEnv?.toLowerCase() === 'true';
 const PROFILER_HISTORY_MAX = 240;
 const getProfilerRealtimeStore = () => {
     const g = globalThis;
@@ -668,7 +669,11 @@ class NodelinkServer extends EventEmitter {
                 lastAllocReport = realtimeStore.lastAllocTop;
             }
             const prevById = new Map();
-            const url = new URL(request.url || '/v4/profiler/socket', `http://${request.headers?.['host'] || 'localhost'}`);
+            const requestHeaders = request.headers;
+            const requestHost = Array.isArray(requestHeaders?.host)
+                ? requestHeaders.host[0]
+                : requestHeaders?.host;
+            const url = new URL(request.url || '/v4/profiler/socket', `http://${requestHost || 'localhost'}`);
             const intervalMs = Math.min(15000, Math.max(700, Number(url.searchParams.get('intervalMs') || 2000)));
             const allocDurationMs = Math.min(15000, Math.max(1000, Number(url.searchParams.get('allocDurationMs') || 3000)));
             const allocEveryRaw = Number(url.searchParams.get('allocEveryMs') || 0);

@@ -34,12 +34,20 @@ export default class SourcesManager {
         const processSource = async (name, mod) => {
             const isYouTube = name === 'youtube' || name.includes('YouTube.js');
             const sourceKey = isYouTube ? 'youtube' : name;
+            const youtubeKey = 'youtube';
+            const sourceConfig = this.nodelink.options.sources;
             const enabled = isYouTube
-                ? this.nodelink.options.sources?.['youtube']?.enabled
-                : !!this.nodelink.options.sources?.[sourceKey]?.enabled;
+                ? sourceConfig?.[youtubeKey]
+                    ?.enabled
+                : !!sourceConfig?.[sourceKey]?.enabled;
             if (!enabled)
                 return;
-            const Mod = (mod['default'] || mod);
+            const importedModule = mod;
+            const Mod = importedModule.default;
+            if (!Mod) {
+                logger('warn', 'Sources', `Invalid source module export for: ${sourceKey}`);
+                return;
+            }
             const instance = new Mod(this.nodelink);
             if (instance.setup && (await instance.setup())) {
                 this.sources.set(sourceKey, instance);
@@ -80,17 +88,29 @@ export default class SourcesManager {
                 .map(([key]) => key.toLowerCase());
             const uniqueEnabled = Array.from(new Set(enabledSourceKeys));
             const sourceEntries = uniqueEnabled.map((sourceKey) => {
-                const filePath = sourceKey === 'youtube'
-                    ? path.join(sourcesDir, 'youtube', 'YouTube.js')
-                    : path.join(sourcesDir, `${sourceKey}.js`);
-                return { sourceKey, filePath };
+                const fileCandidates = sourceKey === 'youtube'
+                    ? [
+                        path.join(sourcesDir, 'youtube', 'YouTube.js'),
+                        path.join(sourcesDir, 'youtube', 'YouTube.ts')
+                    ]
+                    : [
+                        path.join(sourcesDir, `${sourceKey}.js`),
+                        path.join(sourcesDir, `${sourceKey}.ts`)
+                    ];
+                return { sourceKey, fileCandidates };
             });
-            await Promise.all(sourceEntries.map(async ({ sourceKey, filePath }) => {
-                try {
-                    await fs.access(filePath);
+            await Promise.all(sourceEntries.map(async ({ sourceKey, fileCandidates }) => {
+                let filePath = null;
+                for (const candidatePath of fileCandidates) {
+                    try {
+                        await fs.access(candidatePath);
+                        filePath = candidatePath;
+                        break;
+                    }
+                    catch { }
                 }
-                catch {
-                    logger('warn', 'Sources', `Enabled source "${sourceKey}" has no entry file at ${filePath}`);
+                if (!filePath) {
+                    logger('warn', 'Sources', `Enabled source "${sourceKey}" has no entry file at ${fileCandidates[0]} or ${fileCandidates[1]}`);
                     return;
                 }
                 try {

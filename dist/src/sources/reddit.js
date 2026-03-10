@@ -5,16 +5,56 @@ const REDDIT_BASE = 'https://www.reddit.com';
 const COMMENTS_REGEX = /\/comments\/([^/?]+)/;
 const VIDEO_REGEX = /\/video\/([^/?]+)/;
 const SHARE_REGEX = /\/r\/([^/]+)\/s\/([^/?]+)/;
-async function resolveRedirectingUrl(url, headers) {
-    const res = await makeRequest(url, { method: 'HEAD', headers });
-    const location = res?.headers?.location;
-    if (!location)
-        return null;
-    const finalUrl = new URL(location, url).toString();
-    const match = COMMENTS_REGEX.exec(finalUrl);
-    return match ? match[1] : null;
+/**
+ * Extracts a redirect target from the helper response headers.
+ *
+ * @param headers - Response headers returned by the request helper.
+ * @returns Redirect location, or `null` when the header is missing.
+ */
+function getLocationHeader(headers) {
+    const location = headers?.location;
+    if (Array.isArray(location)) {
+        return location[0] ?? null;
+    }
+    return typeof location === 'string' ? location : null;
 }
+/**
+ * Resolves a short Reddit URL into the canonical post id.
+ *
+ * @param url - Redirecting Reddit URL.
+ * @param headers - Request headers forwarded to the helper.
+ * @returns Canonical Reddit post id, or `null` when no redirect target exists.
+ */
+async function resolveRedirectingUrl(url, headers) {
+    const response = await makeRequest(url, { method: 'HEAD', headers });
+    const location = getLocationHeader(response.headers);
+    if (!location) {
+        return null;
+    }
+    const finalUrl = new URL(location, url).toString();
+    return COMMENTS_REGEX.exec(finalUrl)?.[1] ?? null;
+}
+/**
+ * Reddit source implementation.
+ */
 export default class RedditSource {
+    /**
+     * Runtime worker context used by the source implementation.
+     */
+    nodelink;
+    /**
+     * URL patterns supported by this source.
+     */
+    patterns;
+    /**
+     * Match priority used by the source manager.
+     */
+    priority;
+    /**
+     * Creates a new Reddit source wrapper.
+     *
+     * @param nodelink - Worker runtime used by the source implementation.
+     */
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.patterns = [
@@ -24,12 +64,19 @@ export default class RedditSource {
         ];
         this.priority = 65;
     }
+    /**
+     * Initializes the source.
+     *
+     * @returns `true` once the source has been registered.
+     */
     async setup() {
         return true;
     }
-    isLinkMatch(link) {
-        return this.patterns.some((pattern) => pattern.test(link));
-    }
+    /**
+     * Reddit does not support text search in this source.
+     *
+     * @returns Exception payload describing the unsupported operation.
+     */
     async search() {
         return {
             exception: {
@@ -38,114 +85,255 @@ export default class RedditSource {
             }
         };
     }
+    /**
+     * Resolves a Reddit post URL into a single playable track.
+     *
+     * @param url - Candidate Reddit URL.
+     * @returns Track payload or an exception payload when the post cannot be
+     * resolved into playable media.
+     */
     async resolve(url) {
-        const params = this._parseUrl(url);
-        const result = await this._getRedditTrack(params);
-        if (result.error) {
+        const params = this.parseUrl(url);
+        const result = await this.getRedditTrack(params);
+        if ('error' in result) {
             return {
-                exception: { message: result.error, severity: 'fault' }
+                exception: {
+                    message: result.error,
+                    severity: 'fault'
+                }
             };
         }
-        const track = this._buildTrack({
-            identifier: params.id || params.shortId || params.shareId,
+        const track = this.buildTrack({
+            identifier: result.resolvedId ||
+                params.id ||
+                params.shortId ||
+                params.shareId ||
+                url,
             title: result.title || 'Reddit Video',
-            author: result.author || params.sub || 'Reddit',
+            author: result.author || 'Reddit',
             uri: url,
             length: result.duration || -1,
             isSeekable: true,
             isStream: false,
             artworkUrl: result.thumbnail,
-            pluginInfo: result
+            pluginInfo: {
+                typeId: result.typeId,
+                urls: result.urls,
+                type: result.type,
+                audioFilename: result.audioFilename,
+                filename: result.filename
+            }
         });
         return { loadType: 'track', data: track };
     }
-    _parseUrl(url) {
-        let match = VIDEO_REGEX.exec(url);
-        if (match)
-            return { shortId: match[1] };
-        match = COMMENTS_REGEX.exec(url);
-        if (match)
-            return { id: match[1] };
-        match = SHARE_REGEX.exec(url);
-        if (match)
-            return { sub: match[1], shareId: match[2] };
+    /**
+     * Resolves the direct media URL for a Reddit track.
+     *
+     * @param track - Decoded Reddit track information.
+     * @returns Direct media URL descriptor or an exception payload when the post
+     * cannot be re-resolved.
+     */
+    async getTrackUrl(track) {
+        const result = await this.getRedditTrack(this.parseUrl(track.uri));
+        if ('error' in result) {
+            return { exception: { message: result.error, severity: 'fault' } };
+        }
+        if (result.typeId === 'tunnel') {
+            const audioUrl = result.urls[1];
+            return {
+                url: audioUrl,
+                protocol: 'https',
+                format: 'mp3'
+            };
+        }
+        const directUrl = Array.isArray(result.urls) ? result.urls[0] : result.urls;
+        return {
+            url: directUrl,
+            protocol: 'https',
+            format: 'mp4'
+        };
+    }
+    /**
+     * Opens a Reddit media stream from a direct media URL.
+     *
+     * @param decodedTrack - Decoded track metadata being played.
+     * @param url - Direct Reddit media URL.
+     * @returns Playable stream payload or an exception payload when the upstream
+     * request fails.
+     */
+    async loadStream(decodedTrack, url) {
+        logger('debug', 'Sources', `Loading Reddit stream for "${decodedTrack.title}"`);
+        try {
+            const response = await makeRequest(url, {
+                method: 'GET',
+                streamOnly: true
+            });
+            if (response.error || !response.stream) {
+                throw new Error(response.error || 'Failed to get stream, no stream object returned.');
+            }
+            if (response.statusCode !== 200) {
+                throw new Error(`Reddit returned status ${response.statusCode}`);
+            }
+            const stream = new PassThrough();
+            response.stream.pipe(stream);
+            const type = url.endsWith('.mp3') ? 'mp3' : 'mp4';
+            return { stream, type };
+        }
+        catch (error) {
+            return {
+                exception: {
+                    message: error instanceof Error ? error.message : 'Failed to load stream.',
+                    severity: 'common',
+                    cause: 'Upstream'
+                }
+            };
+        }
+    }
+    /**
+     * Parses a Reddit URL into the identifier components used by this source.
+     *
+     * @param url - Candidate Reddit URL.
+     * @returns Parsed Reddit URL components.
+     */
+    parseUrl(url) {
+        const videoMatch = VIDEO_REGEX.exec(url);
+        if (videoMatch?.[1]) {
+            return { shortId: videoMatch[1] };
+        }
+        const commentsMatch = COMMENTS_REGEX.exec(url);
+        if (commentsMatch?.[1]) {
+            return { id: commentsMatch[1] };
+        }
+        const shareMatch = SHARE_REGEX.exec(url);
+        if (shareMatch?.[1] && shareMatch[2]) {
+            return { sub: shareMatch[1], shareId: shareMatch[2] };
+        }
         return {};
     }
-    async _getRedditTrack(params) {
-        const headers = { 'user-agent': USER_AGENT, accept: 'application/json' };
+    /**
+     * Fetches and resolves the Reddit media metadata for a given URL parameter
+     * set.
+     *
+     * @param params - Parsed Reddit URL components.
+     * @returns Resolved Reddit media payload or an `{ error }` result when media
+     * resolution fails.
+     */
+    async getRedditTrack(params) {
+        const headers = {
+            'user-agent': USER_AGENT,
+            accept: 'application/json'
+        };
         let currentParams = { ...params };
         if (currentParams.shortId) {
             const id = await resolveRedirectingUrl(`${REDDIT_BASE}/video/${currentParams.shortId}`, headers);
-            if (id)
+            if (id) {
                 currentParams = { id };
+            }
         }
-        if (!currentParams.id && currentParams.shareId) {
+        if (!currentParams.id && currentParams.shareId && currentParams.sub) {
             const id = await resolveRedirectingUrl(`${REDDIT_BASE}/r/${currentParams.sub}/s/${currentParams.shareId}`, headers);
-            if (id)
+            if (id) {
                 currentParams = { ...currentParams, id };
+            }
         }
-        if (!currentParams.id)
+        if (!currentParams.id) {
             return { error: 'fetch.short_link' };
-        const res = await makeRequest(`${REDDIT_BASE}/comments/${currentParams.id}.json`, { method: 'GET', headers });
-        if (res.error || res.statusCode !== 200 || !Array.isArray(res.body)) {
+        }
+        const response = await makeRequest(`${REDDIT_BASE}/comments/${currentParams.id}.json`, { method: 'GET', headers });
+        if (response.error ||
+            response.statusCode !== 200 ||
+            !Array.isArray(response.body)) {
             return { error: 'fetch.fail' };
         }
-        const data = res.body[0]?.data?.children?.[0]?.data;
-        if (!data)
+        const postData = this.getPostData(response.body);
+        if (!postData) {
             return { error: 'fetch.fail' };
-        const sourceId = currentParams.sub
-            ? `${currentParams.sub.toLowerCase()}_${currentParams.id}`
-            : currentParams.id;
-        // Handle GIF redirects
-        if (data.url?.endsWith('.gif'))
+        }
+        if (postData.url?.endsWith('.gif')) {
             return { error: 'gifs are not supported' };
-        const redditVideo = data.secure_media?.reddit_video;
-        if (!redditVideo)
+        }
+        const redditVideo = postData.secure_media?.reddit_video;
+        if (!redditVideo?.fallback_url) {
             return { error: 'fetch.empty' };
-        const video = redditVideo.fallback_url?.split('?')[0];
-        if (!video)
+        }
+        const videoUrl = redditVideo.fallback_url.split('?')[0];
+        if (!videoUrl) {
             return { error: 'fetch.empty' };
-        const audioUrl = await this._findAudioUrl(video);
+        }
+        const audioUrl = await this.findAudioUrl(videoUrl);
+        const author = typeof postData.author === 'string' && postData.author.length > 0
+            ? `u/${postData.author}`
+            : 'Reddit';
+        const thumbnail = postData.thumbnail || postData.preview?.images?.[0]?.source?.url || null;
         const commonData = {
-            title: data.title || 'Reddit Video',
-            author: `u/${data.author}` || 'Reddit',
-            thumbnail: data.thumbnail || data.preview?.images?.[0]?.source?.url || null,
+            resolvedId: currentParams.id,
+            title: postData.title || 'Reddit Video',
+            author,
+            thumbnail,
             duration: (redditVideo.duration || 0) * 1000
         };
         if (!audioUrl) {
             return {
                 typeId: 'redirect',
-                urls: video,
+                urls: videoUrl,
                 ...commonData
             };
         }
+        const sourceId = currentParams.sub
+            ? `${currentParams.sub.toLowerCase()}_${currentParams.id}`
+            : currentParams.id;
         return {
             typeId: 'tunnel',
             type: 'merge',
-            urls: [video, audioUrl],
+            urls: [videoUrl, audioUrl],
             audioFilename: `reddit_${sourceId}_audio`,
             filename: `reddit_${sourceId}.mp4`,
             ...commonData
         };
     }
-    async _findAudioUrl(videoUrl) {
-        const baseUrl = videoUrl.split('_')[0];
+    /**
+     * Extracts the Reddit post data block from the listing response.
+     *
+     * @param responseBody - Parsed JSON body returned by Reddit.
+     * @returns Reddit post payload, or `null` when the expected listing shape is
+     * missing.
+     */
+    getPostData(responseBody) {
+        const firstListing = responseBody[0];
+        return firstListing.data?.children?.[0]?.data ?? null;
+    }
+    /**
+     * Looks for the best matching audio URL alongside a Reddit DASH video URL.
+     *
+     * @param videoUrl - Direct Reddit fallback video URL.
+     * @returns Matching audio URL, or `null` when no accessible audio variant is
+     * found.
+     */
+    async findAudioUrl(videoUrl) {
+        const baseUrl = videoUrl.split('_')[0] ?? videoUrl;
+        const dashPrefix = videoUrl.split('DASH')[0] ?? videoUrl;
         const audioVariants = [
-            videoUrl.includes('.mp4')
-                ? `${baseUrl}_audio.mp4`
-                : `${videoUrl.split('DASH')[0]}audio`,
+            videoUrl.includes('.mp4') ? `${baseUrl}_audio.mp4` : `${dashPrefix}audio`,
             `${baseUrl}_AUDIO_128.mp4`,
             `${baseUrl}_audio.mp3`,
             `${baseUrl}_AUDIO_128.mp3`
         ];
         for (const audioUrl of audioVariants) {
-            const res = await makeRequest(audioUrl, { method: 'HEAD' });
-            if (res.statusCode === 200)
+            const response = await makeRequest(audioUrl, { method: 'HEAD' });
+            if (response.statusCode === 200) {
                 return audioUrl;
+            }
         }
         return null;
     }
-    _buildTrack(partialInfo) {
+    /**
+     * Builds the encoded track payload for a Reddit post.
+     *
+     * @param partialInfo - Track metadata and plugin payload used by the encoder.
+     * @returns Track payload compatible with the shared encoder and source
+     * manager contracts.
+     */
+    buildTrack(partialInfo) {
         const track = {
             identifier: partialInfo.identifier,
             isSeekable: !partialInfo.isStream,
@@ -157,49 +345,13 @@ export default class RedditSource {
             uri: partialInfo.uri,
             artworkUrl: partialInfo.artworkUrl,
             isrc: null,
-            sourceName: 'reddit'
+            sourceName: 'reddit',
+            details: []
         };
         return {
             encoded: encodeTrack(track),
             info: track,
-            pluginInfo: partialInfo.pluginInfo || {}
+            pluginInfo: partialInfo.pluginInfo
         };
-    }
-    async getTrackUrl(track) {
-        const params = this._parseUrl(track.uri);
-        const result = await this._getRedditTrack(params);
-        if (result.error) {
-            return { exception: { message: result.error, severity: 'fault' } };
-        }
-        const url = result.typeId === 'tunnel' ? result.urls[1] : result.urls;
-        const format = result.typeId === 'tunnel' ? 'mp3' : 'mp4';
-        return { url, protocol: 'https', format };
-    }
-    async loadStream(decodedTrack, url, _protocol, _additionalData) {
-        logger('debug', 'Sources', `Loading Reddit stream for "${decodedTrack.title}"`);
-        try {
-            const response = await makeRequest(url, {
-                method: 'GET',
-                streamOnly: true
-            });
-            if (response.error || !response.stream) {
-                throw (response.error ||
-                    new Error('Failed to get stream, no stream object returned.'));
-            }
-            const stream = new PassThrough();
-            response.stream.pipe(stream);
-            const type = url.endsWith('.mp3') ? 'mp3' : 'mp4';
-            return { stream, type };
-        }
-        catch (err) {
-            logger('error', 'Sources', `Failed to load Reddit stream: ${err.message}`);
-            return {
-                exception: {
-                    message: err.message,
-                    severity: 'common',
-                    cause: 'Upstream'
-                }
-            };
-        }
     }
 }

@@ -5,6 +5,14 @@ import { sendErrorResponse } from "../utils.js";
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+/**
+ * Loads the CSS bundle used by the profiler UI page.
+ *
+ * The loader checks authored and compiled locations first and falls back to a
+ * tiny inline stylesheet when none of them are available.
+ *
+ * @returns CSS source used by the generated HTML page.
+ */
 function loadUiCss() {
     const candidates = [
         path.resolve(process.cwd(), 'src/profiler/ui.css'),
@@ -24,6 +32,12 @@ function loadUiCss() {
   `;
 }
 const uiCss = loadUiCss();
+/**
+ * Reads the profiler endpoint access configuration from the runtime options.
+ *
+ * @param nodelink - Router-facing NodeLink runtime.
+ * @returns Explicit configuration with fallback secret and boolean flags.
+ */
 function getEndpointConfig(nodelink) {
     const endpoint = nodelink.options?.cluster?.endpoint || {};
     const code = typeof endpoint.code === 'string' && endpoint.code.length > 0
@@ -35,6 +49,15 @@ function getEndpointConfig(nodelink) {
         code
     };
 }
+/**
+ * Builds the complete profiler UI HTML page.
+ *
+ * The page embeds the access code directly into the client bootstrap so all
+ * follow-up requests and socket connections reuse the validated secret.
+ *
+ * @param code - Profiler access code already validated by the route.
+ * @returns Full HTML document served by the endpoint.
+ */
 function buildPage(code) {
     const safeCode = JSON.stringify(code);
     return `<!doctype html>
@@ -2005,7 +2028,7 @@ function buildPage(code) {
         for (const row of (data.snippet || [])) {
           const n = String(row.number).padStart(5, ' ')
           const hitClass = row.number === data.line ? 'snippet-line-hit' : ''
-          out.push('<span class=\"' + hitClass + '\">' + n + ' | ' + String(row.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>')
+          out.push('<span class="' + hitClass + '">' + n + ' | ' + String(row.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</span>')
         }
         snippet.innerHTML = out.join('\\n')
       } catch (e) {
@@ -2307,6 +2330,22 @@ function buildPage(code) {
 </body>
 </html>`;
 }
+/**
+ * Serves the standalone profiler UI page.
+ *
+ * Access is restricted to loopback clients unless external profiler access is
+ * explicitly enabled, and the request must include the configured profiler
+ * code.
+ *
+ * @param nodelink - Router-facing NodeLink runtime.
+ * @param req - Incoming API request.
+ * @param res - Outgoing API response.
+ * @param _sendResponse - Router helper, unused because this route writes the
+ * HTML response directly.
+ * @param parsedUrl - Parsed request URL.
+ * @returns Nothing. The HTML page or an error response is sent as a side
+ * effect.
+ */
 async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
     const endpointConfig = getEndpointConfig(nodelink);
     if (!endpointConfig.patchEnabled) {
@@ -2327,7 +2366,8 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
     });
     res.end(html);
 }
-export default {
+const profilerUiRoute = {
     handler,
     methods: ['GET']
 };
+export default profilerUiRoute;

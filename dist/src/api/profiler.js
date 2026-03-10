@@ -5,9 +5,44 @@ import os from 'node:os';
 import v8 from 'node:v8';
 import { sendErrorResponse, sendResponse } from "../utils.js";
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
-const profilerBaseDir = process.env['NODELINK_PROFILER_DIR'] || '.profiles';
+const { NODELINK_PROFILER_DIR: profilerDirectoryEnv } = process.env;
+const profilerBaseDir = profilerDirectoryEnv || '.profiles';
 let activeMasterCpu = null;
 let activeMasterHeapSampling = null;
+/**
+ * Returns whether the provided value is a plain JSON-compatible object.
+ *
+ * @param value - Candidate value.
+ * @returns `true` when the value can be accessed through string keys.
+ */
+function isObjectRecord(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+/**
+ * Normalizes arbitrary object-like values to the profiler payload contract.
+ *
+ * @param value - Candidate payload value.
+ * @returns Parsed profiler payload, or an empty payload when the value cannot
+ * be indexed safely.
+ */
+function toProfilerPayload(value) {
+    return isObjectRecord(value) ? { ...value } : {};
+}
+/**
+ * Narrows the router runtime to the fields used by the profiler route.
+ *
+ * @param nodelink - Router-facing runtime instance.
+ * @returns Typed profiler runtime view.
+ */
+function getProfilerRuntime(nodelink) {
+    return nodelink;
+}
+/**
+ * Normalizes the profiler endpoint access configuration.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @returns Explicit endpoint configuration with fallback secret.
+ */
 function getEndpointConfig(nodelink) {
     const endpoint = nodelink.options?.cluster?.endpoint || {};
     const code = typeof endpoint.code === 'string' && endpoint.code.length > 0
@@ -19,6 +54,12 @@ function getEndpointConfig(nodelink) {
         code
     };
 }
+/**
+ * Parses a whole number from request payload fields.
+ *
+ * @param value - Raw numeric field.
+ * @returns Parsed integer, or `null` when the value is invalid.
+ */
 function normalizeNumber(value) {
     if (typeof value === 'number' && Number.isInteger(value))
         return value;
@@ -29,6 +70,17 @@ function normalizeNumber(value) {
     }
     return null;
 }
+/**
+ * Resolves a playback worker identifier from the supported request fields.
+ *
+ * Resolution order matches the legacy JavaScript endpoint: `clusterId`,
+ * `workerId`, public `id`, and finally process `pid`.
+ *
+ * @param manager - Worker manager runtime.
+ * @param payload - Parsed profiler payload.
+ * @returns Matching cluster worker identifier, or `null` when no worker
+ * matches the payload.
+ */
 function resolveWorkerId(manager, payload) {
     const clusterId = normalizeNumber(payload.clusterId ?? payload.workerId);
     if (clusterId !== null && manager.workersById.has(clusterId)) {
@@ -49,6 +101,15 @@ function resolveWorkerId(manager, payload) {
     }
     return null;
 }
+/**
+ * Returns the IPC timeout budget for a profiler action.
+ *
+ * Heavier actions receive a larger timeout to account for inspector work and
+ * filesystem writes.
+ *
+ * @param action - Requested profiler action.
+ * @returns Timeout in milliseconds.
+ */
 function getTimeoutForAction(action) {
     switch (action) {
         case 'heapSnapshot':
@@ -67,6 +128,13 @@ function getTimeoutForAction(action) {
             return 30 * 1000;
     }
 }
+/**
+ * Flattens a heap sampling profile into aggregated callsite totals.
+ *
+ * @param profile - Heap sampling profile returned by the inspector.
+ * @param limit - Optional maximum number of entries to return.
+ * @returns Sorted callsite summary ordered by descending retained bytes.
+ */
 function summarizeHeapSamplingProfile(profile, limit = null) {
     const head = profile?.head;
     if (!head)
@@ -108,6 +176,15 @@ function summarizeHeapSamplingProfile(profile, limit = null) {
     }
     return entries;
 }
+/**
+ * Validates whether the current request may access the profiler endpoints.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @param req - Incoming API request.
+ * @param suppliedCode - Access code provided by the caller.
+ * @returns Access validation result with an error message when access is
+ * denied.
+ */
 function validateAccess(nodelink, req, suppliedCode) {
     const endpointConfig = getEndpointConfig(nodelink);
     if (!endpointConfig.patchEnabled) {
@@ -125,6 +202,12 @@ function validateAccess(nodelink, req, suppliedCode) {
     }
     return { ok: true };
 }
+/**
+ * Sanitizes a user-provided profile name for safe filesystem usage.
+ *
+ * @param value - Raw profile name.
+ * @returns Filesystem-safe profile label.
+ */
 function sanitizeProfileName(value) {
     if (!value)
         return '';
@@ -134,11 +217,27 @@ function sanitizeProfileName(value) {
         .replace(/^-+|-+$/g, '')
         .slice(0, 80);
 }
+/**
+ * Converts bytes to megabytes rounded to two decimal places.
+ *
+ * @param value - Byte count to convert.
+ * @returns Rounded megabyte value.
+ */
 function bytesToMB(value) {
     return Math.round((Number(value || 0) / 1024 / 1024) * 100) / 100;
 }
+/**
+ * Parses the action scope used by snapshot collection helpers.
+ *
+ * @param payload - Parsed profiler request payload.
+ * @returns Scope flags describing which runtimes must be queried.
+ */
 function parseScope(payload) {
-    const scope = typeof payload.scope === 'string' ? payload.scope : 'all';
+    const scope = payload.scope === 'master' ||
+        payload.scope === 'workers' ||
+        payload.scope === 'sourceWorkers'
+        ? payload.scope
+        : 'all';
     return {
         scope,
         includeMaster: scope === 'all' || scope === 'master',
@@ -146,6 +245,11 @@ function parseScope(payload) {
         includeSourceWorkers: scope === 'all' || scope === 'sourceWorkers'
     };
 }
+/**
+ * Returns the active resource breakdown for the master process.
+ *
+ * @returns Resource counters keyed by resource name.
+ */
 function getMasterActiveResources() {
     const list = typeof process.getActiveResourcesInfo === 'function'
         ? process.getActiveResourcesInfo()
@@ -155,6 +259,11 @@ function getMasterActiveResources() {
         counters[item] = (counters[item] || 0) + 1;
     return counters;
 }
+/**
+ * Returns the active handle breakdown for the master process.
+ *
+ * @returns Handle counters keyed by constructor name.
+ */
 function getMasterActiveHandles() {
     const getter = process;
     if (typeof getter._getActiveHandles !== 'function')
@@ -167,6 +276,11 @@ function getMasterActiveHandles() {
     }
     return counters;
 }
+/**
+ * Returns V8 heap space statistics for the master process.
+ *
+ * @returns Serialized heap space entries.
+ */
 function getMasterHeapSpaces() {
     return v8.getHeapSpaceStatistics().map((space) => ({
         spaceName: space.space_name,
@@ -176,8 +290,15 @@ function getMasterHeapSpaces() {
         physicalSpaceSize: space.physical_space_size
     }));
 }
+/**
+ * Builds the extended master runtime context used by the profiler UI.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @returns Serialized runtime context for the master process.
+ */
 function getMasterRuntimeContext(nodelink) {
-    const traceStore = globalThis.__nodelinkTraceStore || {
+    const globalTrace = globalThis;
+    const traceStore = globalTrace.__nodelinkTraceStore || {
         requests: [],
         events: []
     };
@@ -263,6 +384,14 @@ function getMasterRuntimeContext(nodelink) {
         mapSizes: masterMapSizes
     };
 }
+/**
+ * Builds the output file path for master profiler artifacts.
+ *
+ * @param kind - Artifact category.
+ * @param extension - Output file extension.
+ * @param label - Optional human-readable label.
+ * @returns Absolute or relative artifact path inside the profiler directory.
+ */
 async function buildProfilerFilePath(kind, extension, label) {
     await fsPromises.mkdir(profilerBaseDir, { recursive: true });
     const safeLabel = sanitizeProfileName(label);
@@ -274,16 +403,31 @@ async function buildProfilerFilePath(kind, extension, label) {
     const suffix = safeLabel ? `-${safeLabel}` : '';
     return `${profilerBaseDir}/master-${process.pid}-${kind}-${stamp}${suffix}.${extension}`;
 }
+/**
+ * Executes an inspector command and resolves its callback result.
+ *
+ * @param session - Connected inspector session.
+ * @param method - Inspector method name.
+ * @param params - Optional inspector parameters.
+ * @returns Serialized inspector response payload.
+ */
 function inspectorPost(session, method, params) {
     return new Promise((resolve, reject) => {
         session.post(method, params ?? {}, (error, result) => {
             if (error)
                 reject(error);
             else
-                resolve(result ?? {});
+                resolve(isObjectRecord(result) ? result : {});
         });
     });
 }
+/**
+ * Executes a profiler action against the master process.
+ *
+ * @param action - Requested profiler action.
+ * @param payload - Parsed profiler request payload.
+ * @returns Serialized master command result.
+ */
 async function runMasterProfilerCommand(action, payload) {
     if (action === 'status') {
         return {
@@ -359,7 +503,8 @@ async function runMasterProfilerCommand(action, payload) {
         const { session, startedAt, name } = activeMasterCpu;
         const result = await inspectorPost(session, 'Profiler.stop');
         const outputPath = await buildProfilerFilePath('cpu', 'cpuprofile', sanitizeProfileName(payload.name) || name || undefined);
-        await fsPromises.writeFile(outputPath, JSON.stringify(result['profile']));
+        const cpuStopResult = result;
+        await fsPromises.writeFile(outputPath, JSON.stringify(cpuStopResult.profile));
         try {
             session.disconnect();
         }
@@ -451,7 +596,10 @@ async function runMasterProfilerCommand(action, payload) {
         }
         catch { }
         activeMasterHeapSampling = null;
-        const profile = result?.profile || {};
+        const heapSamplingResult = result;
+        const profile = isObjectRecord(heapSamplingResult.profile)
+            ? heapSamplingResult.profile
+            : {};
         const topSites = summarizeHeapSamplingProfile(profile);
         return {
             success: true,
@@ -464,6 +612,16 @@ async function runMasterProfilerCommand(action, payload) {
     }
     return { success: false, error: `Unsupported profiler action: ${action}` };
 }
+/**
+ * Executes a profiler action across one or more playback workers.
+ *
+ * @param manager - Worker manager runtime.
+ * @param workers - Target worker list.
+ * @param action - Requested profiler action.
+ * @param payload - Parsed profiler payload.
+ * @returns Serialized worker command results preserving worker identity
+ * metadata.
+ */
 async function runWorkerProfilerCommand(manager, workers, action, payload) {
     const timeoutMs = getTimeoutForAction(action);
     const commandPayload = {
@@ -481,6 +639,18 @@ async function runWorkerProfilerCommand(manager, workers, action, payload) {
     }));
     return settled.map((item, index) => {
         const worker = workers[index];
+        if (!worker) {
+            return {
+                clusterId: -1,
+                uniqueId: -1,
+                pid: null,
+                error: item.status === 'rejected' && item.reason instanceof Error
+                    ? item.reason.message
+                    : item.status === 'rejected'
+                        ? String(item.reason)
+                        : 'Worker resolution failed.'
+            };
+        }
         const identity = {
             clusterId: worker.id,
             uniqueId: manager.workerUniqueId.get(worker.id) || worker.id,
@@ -494,15 +664,24 @@ async function runWorkerProfilerCommand(manager, workers, action, payload) {
         };
     });
 }
+/**
+ * Collects a profiler snapshot for the requested action and scope.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @param action - Requested profiler action.
+ * @param payload - Parsed profiler payload.
+ * @returns Aggregated snapshot payload spanning the selected runtimes.
+ */
 async function collectActionSnapshot(nodelink, action, payload) {
-    const { scope, includeMaster, includeWorkers, includeSourceWorkers } = parseScope(payload);
+    const safePayload = toProfilerPayload(payload);
+    const { scope, includeMaster, includeWorkers, includeSourceWorkers } = parseScope(safePayload);
     const output = {
         action,
         scope,
         timestamp: Date.now()
     };
     if (includeMaster) {
-        output.master = await runMasterProfilerCommand(action, payload);
+        output.master = await runMasterProfilerCommand(action, safePayload);
         if (action === 'status' && output.master?.success) {
             output.master.runtime = getMasterRuntimeContext(nodelink);
         }
@@ -514,13 +693,13 @@ async function collectActionSnapshot(nodelink, action, payload) {
             output.workersError = 'Cluster workers are not enabled.';
         }
         else {
-            const requestedWorkerId = resolveWorkerId(manager, payload || {});
+            const requestedWorkerId = resolveWorkerId(manager, safePayload);
             const workers = requestedWorkerId === null
                 ? manager.workers.filter((worker) => worker?.isConnected?.())
                 : manager.workers.filter((worker) => worker?.id === requestedWorkerId);
             output.workers =
                 workers.length > 0
-                    ? await runWorkerProfilerCommand(manager, workers, action, payload)
+                    ? await runWorkerProfilerCommand(manager, workers, action, safePayload)
                     : [];
         }
     }
@@ -532,11 +711,21 @@ async function collectActionSnapshot(nodelink, action, payload) {
                 'Specialized source workers are not enabled or do not support profiling.';
         }
         else {
-            output.sourceWorkers = await sourceManager.executeAll('profilerCommand', { action, ...(payload ?? {}) }, { timeoutMs: getTimeoutForAction(action), parseJson: true });
+            output.sourceWorkers = await sourceManager.executeAll('profilerCommand', { action, ...safePayload }, { timeoutMs: getTimeoutForAction(action), parseJson: true });
         }
     }
     return output;
 }
+/**
+ * Runs the full sequential profiler collection flow.
+ *
+ * The sequence captures status, forces GC, captures status again, and finally
+ * writes a heap snapshot.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @param payload - Parsed profiler payload.
+ * @returns Aggregated multi-step report.
+ */
 async function collectAllSequence(nodelink, payload) {
     const before = await collectActionSnapshot(nodelink, 'status', payload);
     const gc = await collectActionSnapshot(nodelink, 'forceGc', payload);
@@ -555,18 +744,27 @@ async function collectAllSequence(nodelink, payload) {
         }
     };
 }
+/**
+ * Collects the top allocation sites by running a temporary heap sampling
+ * session.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @param payload - Parsed profiler payload.
+ * @returns Aggregated report containing the start and stop snapshots.
+ */
 async function collectAllocationTopSites(nodelink, payload) {
-    const durationMs = typeof payload.durationMs === 'number' &&
-        Number.isFinite(payload.durationMs) &&
-        payload.durationMs > 0
-        ? Math.min(120000, Math.max(1000, Math.floor(payload.durationMs)))
+    const safePayload = toProfilerPayload(payload);
+    const durationMs = typeof safePayload.durationMs === 'number' &&
+        Number.isFinite(safePayload.durationMs) &&
+        safePayload.durationMs > 0
+        ? Math.min(120000, Math.max(1000, Math.floor(safePayload.durationMs)))
         : 10000;
-    const started = await collectActionSnapshot(nodelink, 'heapSamplingStart', payload);
+    const started = await collectActionSnapshot(nodelink, 'heapSamplingStart', safePayload);
     await new Promise((resolve) => setTimeout(resolve, durationMs));
-    const stopped = await collectActionSnapshot(nodelink, 'heapSamplingStop', payload);
+    const stopped = await collectActionSnapshot(nodelink, 'heapSamplingStop', safePayload);
     return {
         action: 'allocTop',
-        scope: parseScope(payload).scope,
+        scope: parseScope(safePayload).scope,
         startedAt: started.timestamp,
         finishedAt: Date.now(),
         durationMs,
@@ -576,13 +774,19 @@ async function collectAllocationTopSites(nodelink, payload) {
         }
     };
 }
+/**
+ * Flattens an aggregated snapshot into per-process rows.
+ *
+ * @param snapshot - Aggregated profiler snapshot.
+ * @returns Process rows used by the anomaly detector and UI helpers.
+ */
 function extractProcesses(snapshot) {
     const all = [];
     if (snapshot?.master?.memory) {
         all.push({
             kind: 'master',
             id: `master:${snapshot.master.pid}`,
-            pid: snapshot.master.pid,
+            pid: snapshot.master.pid ?? null,
             memory: snapshot.master.memory,
             heapSpaces: snapshot.master.heapSpaces || snapshot.master.runtime?.heapSpaces || []
         });
@@ -608,7 +812,7 @@ function extractProcesses(snapshot) {
         all.push({
             kind: 'sourceWorker',
             id: `source:${item.pid}`,
-            pid: item.pid,
+            pid: item.pid ?? null,
             memory: mem,
             clusterId: item.clusterId,
             heapSpaces: item?.response?.heapSpaces || []
@@ -616,6 +820,13 @@ function extractProcesses(snapshot) {
     }
     return all;
 }
+/**
+ * Detects suspicious memory growth patterns between two profiler snapshots.
+ *
+ * @param snapshot - Current profiler snapshot.
+ * @param prevById - Rolling process state keyed by stable process id.
+ * @returns Warning entries describing suspicious growth patterns.
+ */
 function detectAnomalies(snapshot, prevById) {
     const warnings = [];
     const now = Date.now();
@@ -687,8 +898,18 @@ function detectAnomalies(snapshot, prevById) {
     }
     return warnings;
 }
+/**
+ * Merges body and query parameters into the normalized profiler payload.
+ *
+ * Query fields only fill missing payload keys so explicit JSON body values win
+ * over query parameters.
+ *
+ * @param req - Incoming API request.
+ * @param parsedUrl - Parsed request URL.
+ * @returns Normalized profiler payload.
+ */
 function getRequestPayload(req, parsedUrl) {
-    const bodyPayload = req.body && typeof req.body === 'object' ? req.body : {};
+    const bodyPayload = isObjectRecord(req.body) ? req.body : {};
     const payload = { ...bodyPayload };
     const scope = parsedUrl.searchParams.get('scope');
     if (scope && !payload.scope)
@@ -708,6 +929,16 @@ function getRequestPayload(req, parsedUrl) {
     return payload;
 }
 export { collectActionSnapshot, detectAnomalies, collectAllocationTopSites };
+/**
+ * Streams periodic profiler snapshots over Server-Sent Events.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @param req - Incoming API request.
+ * @param res - Outgoing API response.
+ * @param parsedUrl - Parsed request URL.
+ * @param payload - Parsed profiler payload.
+ * @returns Nothing. The SSE stream is written directly to the response.
+ */
 async function handleSseStream(nodelink, req, res, parsedUrl, payload) {
     const intervalMs = Math.min(15000, Math.max(700, Number(parsedUrl.searchParams.get('intervalMs') || 2000)));
     const allocDurationMs = Math.min(15000, Math.max(1000, Number(parsedUrl.searchParams.get('allocDurationMs') || 3000)));
@@ -715,13 +946,18 @@ async function handleSseStream(nodelink, req, res, parsedUrl, payload) {
     const allocEveryMs = Number.isFinite(allocEveryRaw) && allocEveryRaw > 0
         ? Math.min(120000, Math.max(5000, Math.floor(allocEveryRaw)))
         : 0;
+    const write = res.write?.bind(res);
+    if (!write) {
+        sendErrorResponse(req, res, 500, 'Internal Server Error', 'Streaming responses are not supported by the active runtime.', parsedUrl.pathname);
+        return;
+    }
     res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive',
         'X-Accel-Buffering': 'no'
     });
-    res.write(': connected\n\n');
+    write(': connected\n\n');
     const prevById = new Map();
     let allocInFlight = false;
     let lastAllocAt = 0;
@@ -766,13 +1002,13 @@ async function handleSseStream(nodelink, req, res, parsedUrl, payload) {
                 warnings,
                 allocTop: lastAllocReport
             };
-            res.write(`event: snapshot\n`);
-            res.write(`data: ${JSON.stringify(event)}\n\n`);
+            write(`event: snapshot\n`);
+            write(`data: ${JSON.stringify(event)}\n\n`);
         }
         catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            res.write(`event: error\n`);
-            res.write(`data: ${JSON.stringify({ message: msg, timestamp: Date.now() })}\n\n`);
+            write(`event: error\n`);
+            write(`data: ${JSON.stringify({ message: msg, timestamp: Date.now() })}\n\n`);
         }
     };
     if (allocEveryMs > 0)
@@ -784,13 +1020,25 @@ async function handleSseStream(nodelink, req, res, parsedUrl, payload) {
             refreshAllocTop().catch(() => { });
         }, allocEveryMs)
         : null;
-    req.on('close', () => {
+    const closeAwareRequest = req;
+    closeAwareRequest.on?.('close', () => {
         clearInterval(timer);
         if (allocTimer)
             clearInterval(allocTimer);
     });
 }
-async function handleRequest(nodelink, req, res, parsedUrl, action, payload) {
+/**
+ * Dispatches a non-streaming profiler request to the appropriate collector.
+ *
+ * @param nodelink - Typed profiler runtime.
+ * @param req - Incoming API request.
+ * @param res - Outgoing API response.
+ * @param parsedUrl - Parsed request URL.
+ * @param action - Requested profiler action.
+ * @param payload - Parsed profiler payload.
+ * @returns Nothing. The JSON response is written directly to the response.
+ */
+async function handleRequest(nodelink, req, res, _parsedUrl, action, payload) {
     if (action === 'all') {
         const report = await collectAllSequence(nodelink, payload);
         return sendResponse(req, res, report, 200);
@@ -802,35 +1050,51 @@ async function handleRequest(nodelink, req, res, parsedUrl, action, payload) {
     const snapshot = await collectActionSnapshot(nodelink, action, payload);
     return sendResponse(req, res, snapshot, 200);
 }
+/**
+ * Handles the profiler HTTP endpoint.
+ *
+ * `GET` supports snapshot retrieval and SSE streaming.
+ * `POST` executes the action provided in the request payload.
+ *
+ * @param nodelink - Router-facing NodeLink runtime.
+ * @param req - Incoming API request.
+ * @param res - Outgoing API response.
+ * @param _sendResponse - Router helper, unused because this module relies on
+ * the shared response utilities directly.
+ * @param parsedUrl - Parsed request URL.
+ * @returns Nothing. A response is always sent as a side effect.
+ */
 async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
+    const runtime = getProfilerRuntime(nodelink);
     const bodyPayload = getRequestPayload(req, parsedUrl);
     const queryCode = parsedUrl.searchParams.get('code');
     const headerCode = req.headers?.['x-nodelink-code'] || req.headers?.['x-worker-code'];
     const suppliedCode = bodyPayload.code ||
         queryCode ||
         (Array.isArray(headerCode) ? headerCode[0] : headerCode);
-    const access = validateAccess(nodelink, req, suppliedCode);
+    const access = validateAccess(runtime, req, suppliedCode);
     if (!access.ok) {
-        return sendErrorResponse(req, res, 403, 'Forbidden', access.error, parsedUrl.pathname);
+        return sendErrorResponse(req, res, 403, 'Forbidden', access.error ?? 'Profiler access denied.', parsedUrl.pathname);
     }
     if (req.method === 'GET') {
         const stream = parsedUrl.searchParams.get('stream') === 'true';
         if (stream) {
-            return handleSseStream(nodelink, req, res, parsedUrl, bodyPayload);
+            return handleSseStream(runtime, req, res, parsedUrl, bodyPayload);
         }
         const action = parsedUrl.searchParams.get('action') || 'status';
-        return handleRequest(nodelink, req, res, parsedUrl, action, bodyPayload);
+        return handleRequest(runtime, req, res, parsedUrl, action, bodyPayload);
     }
     if (req.method === 'POST') {
         const action = bodyPayload.action;
         if (typeof action !== 'string' || action.length === 0) {
             return sendErrorResponse(req, res, 400, 'Bad Request', 'Profiler action is required.', parsedUrl.pathname);
         }
-        return handleRequest(nodelink, req, res, parsedUrl, action, bodyPayload);
+        return handleRequest(runtime, req, res, parsedUrl, action, bodyPayload);
     }
     return sendErrorResponse(req, res, 405, 'Method Not Allowed', 'Method must be GET or POST.', parsedUrl.pathname);
 }
-export default {
+const profilerRoute = {
     handler,
     methods: ['GET', 'POST']
 };
+export default profilerRoute;
