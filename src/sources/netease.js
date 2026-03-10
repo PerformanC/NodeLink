@@ -95,6 +95,7 @@ export default class NeteaseSource {
               }
             })()
           : body
+
       if (error || statusCode !== 200 || !parsedBody) {
         return {
           exception: {
@@ -104,12 +105,45 @@ export default class NeteaseSource {
         }
       }
 
-      const results = this._mapSearchResults(parsedBody, searchType)
+      let results = this._mapSearchResults(parsedBody, searchType)
+
+      // For track searches, attempt to fetch better artwork via batch details endpoint
+      if (searchType === 'track' && results.length) {
+        const ids = results.map((r) => r.info.identifier).filter(Boolean)
+        const detailMap = await this._batchFetchDetails(ids)
+
+        results = results.map((r) => {
+          const detail = detailMap[r.info.identifier]
+          const artworkUrl = detail?.album?.picUrl || r.info.artworkUrl || null
+          if (artworkUrl !== r.info.artworkUrl) {
+            r.info.artworkUrl = artworkUrl
+            r.encoded = encodeTrack(r.info)
+          }
+          return r
+        })
+      }
+
       return results.length
         ? { loadType: 'search', data: results }
         : { loadType: 'empty', data: {} }
     } catch (e) {
       return { exception: { message: e.message, severity: 'fault' } }
+    }
+  }
+
+  async _batchFetchDetails(ids) {
+    if (!ids.length) return {}
+    try {
+      const idsParam = `[${ids.join(',')}]`
+      const { body, statusCode, error } = await http1makeRequest(
+        `https://music.163.com/api/song/detail/?id=${ids[0]}&ids=${idsParam}`,
+        { method: 'GET', headers: GET_HEADERS }
+      )
+      if (error || statusCode !== 200 || !body) return {}
+      const songs = body?.songs || []
+      return Object.fromEntries(songs.map((s) => [String(s.id), s]))
+    } catch {
+      return {}
     }
   }
 
