@@ -975,6 +975,21 @@ async function _internalHttp1Request(urlString, options = {}) {
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false
+    let hardTimeout = null
+    const rejectOnce = (error) => {
+      if (settled) return
+      settled = true
+      if (hardTimeout) clearTimeout(hardTimeout)
+      reject(error)
+    }
+    const resolveOnce = (value) => {
+      if (settled) return
+      settled = true
+      if (hardTimeout) clearTimeout(hardTimeout)
+      resolve(value)
+    }
+
     const req = lib.request(reqOptions, (res) => {
       const { statusCode, headers: respHeaders } = res
 
@@ -997,7 +1012,7 @@ async function _internalHttp1Request(urlString, options = {}) {
           method: nextMethod,
           body: nextBody
         }
-        resolve(http1makeRequest(nextUrl, nextOptions))
+        resolveOnce(http1makeRequest(nextUrl, nextOptions))
         return
       }
 
@@ -1014,18 +1029,18 @@ async function _internalHttp1Request(urlString, options = {}) {
       }
 
       res.on('error', (err) =>
-        reject(new Error(`Response error for ${urlString}: ${err.message}`))
+        rejectOnce(new Error(`Response error for ${urlString}: ${err.message}`))
       )
       if (finalStream !== res) {
         finalStream.on('error', (err) =>
-          reject(
+          rejectOnce(
             new Error(`Decompression error for ${urlString}: ${err.message}`)
           )
         )
       }
 
       if (streamOnly) {
-        resolve({ statusCode, headers: respHeaders, stream: finalStream })
+        resolveOnce({ statusCode, headers: respHeaders, stream: finalStream })
         return
       }
 
@@ -1036,7 +1051,7 @@ async function _internalHttp1Request(urlString, options = {}) {
           const responseBuffer = Buffer.concat(chunks)
 
           if (options.responseType === 'buffer') {
-            resolve({ statusCode, headers: respHeaders, body: responseBuffer })
+            resolveOnce({ statusCode, headers: respHeaders, body: responseBuffer })
             return
           }
 
@@ -1045,9 +1060,9 @@ async function _internalHttp1Request(urlString, options = {}) {
             .toLowerCase()
             .startsWith('application/json')
           const responseBody = isJson && text ? JSON.parse(text) : text
-          resolve({ statusCode, headers: respHeaders, body: responseBody })
+          resolveOnce({ statusCode, headers: respHeaders, body: responseBody })
         } catch (err) {
-          reject(
+          rejectOnce(
             new Error(
               `Error processing response body for ${urlString}: ${err.message}`
             )
@@ -1056,12 +1071,20 @@ async function _internalHttp1Request(urlString, options = {}) {
       })
     })
 
-    req.on('error', (err) => reject(err))
+    req.on('error', (err) => rejectOnce(err))
     req.on('timeout', () => {
       req.destroy(
         new Error(`Request timed out after ${timeout}ms for ${urlString}`)
       )
     })
+    if (timeout > 0) {
+      hardTimeout = setTimeout(() => {
+        req.destroy(
+          new Error(`Request hard timeout after ${timeout}ms for ${urlString}`)
+        )
+      }, timeout)
+      hardTimeout.unref?.()
+    }
 
     if (payloadBuffer) {
       req.end(payloadBuffer)

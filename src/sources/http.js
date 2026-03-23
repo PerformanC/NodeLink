@@ -113,7 +113,36 @@ export default class HttpSource {
         validApplicationTypes.includes(contentType) ||
         contentType === ''
 
-      let data = await http1makeRequest(url, { method: 'HEAD' })
+      const httpConfig = this.nodelink.options?.sources?.http || {}
+      const configuredResolveTimeout =
+        Number(httpConfig.resolveTimeoutMs) > 0
+          ? Number(httpConfig.resolveTimeoutMs)
+          : 7000
+      const clusterTimeout =
+        Number(this.nodelink.options?.cluster?.commandTimeout) > 0
+          ? Number(this.nodelink.options.cluster.commandTimeout)
+          : null
+      const resolveTimeout = clusterTimeout
+        ? Math.min(configuredResolveTimeout, Math.max(1000, clusterTimeout - 500))
+        : configuredResolveTimeout
+      const configuredHeadTimeout =
+        Number(httpConfig.headTimeoutMs) > 0 ? Number(httpConfig.headTimeoutMs) : 2500
+      const headTimeout = Math.min(configuredHeadTimeout, resolveTimeout)
+      const optimisticOnProbeFailure =
+        httpConfig.optimisticOnProbeFailure !== false
+      const resolveStartedAt = Date.now()
+      const getRemainingTimeout = () =>
+        Math.max(250, resolveTimeout - (Date.now() - resolveStartedAt))
+
+      const headRequestDefaults = {
+        timeout: headTimeout,
+        maxRetries: 0
+      }
+
+      let data = await http1makeRequest(url, {
+        method: 'HEAD',
+        ...headRequestDefaults
+      })
       const headContentType = data.headers?.['content-type'] || ''
       const headOk =
         !data.error &&
@@ -121,21 +150,64 @@ export default class HttpSource {
         isValidMediaType(headContentType)
 
       if (!headOk) {
+        const remainingTimeout = getRemainingTimeout()
+        if (remainingTimeout <= 250) {
+          if (optimisticOnProbeFailure) {
+            return {
+              loadType: 'track',
+              data: this.buildTrack(url, data.headers || {}, true)
+            }
+          }
+          return {
+            exception: {
+              message: `Resolve timeout budget exceeded for ${url}`,
+              severity: 'common'
+            }
+          }
+        }
+
         const getData = await http1makeRequest(url, {
           method: 'GET',
-          streamOnly: true
+          streamOnly: true,
+          headers: {
+            'Icy-MetaData': '1'
+          },
+          timeout: remainingTimeout,
+          maxRetries: 0
         })
         if (getData?.stream) getData.stream.destroy()
         data = getData
       }
 
       if (data.error) {
+        if (optimisticOnProbeFailure) {
+          logger(
+            'warn',
+            'HTTP Source',
+            `Probe failed for ${url}, using optimistic track: ${data.error.message}`
+          )
+          return {
+            loadType: 'track',
+            data: this.buildTrack(url, {}, true)
+          }
+        }
         return {
           exception: { message: data.error.message, severity: 'common' }
         }
       }
 
       if ((data.statusCode || 0) >= 400) {
+        if (optimisticOnProbeFailure) {
+          logger(
+            'warn',
+            'HTTP Source',
+            `Probe HTTP ${data.statusCode} for ${url}, using optimistic track`
+          )
+          return {
+            loadType: 'track',
+            data: this.buildTrack(url, data.headers || {}, true)
+          }
+        }
         return {
           exception: {
             message: `HTTP error ${data.statusCode} while resolving`,
@@ -150,6 +222,12 @@ export default class HttpSource {
       const isValidMedia = isValidMediaType(contentType)
 
       if (!isValidMedia) {
+        if (optimisticOnProbeFailure && contentType === '') {
+          return {
+            loadType: 'track',
+            data: this.buildTrack(url, headers, true)
+          }
+        }
         return {
           exception: {
             message: `Unsupported content type: ${contentType}`,
@@ -165,6 +243,19 @@ export default class HttpSource {
         data: this.buildTrack(url, headers, isStream)
       }
     } catch (err) {
+      const optimisticOnProbeFailure =
+        this.nodelink.options?.sources?.http?.optimisticOnProbeFailure !== false
+      if (optimisticOnProbeFailure) {
+        logger(
+          'warn',
+          'HTTP Source',
+          `Resolve exception for ${url}, using optimistic track: ${err.message}`
+        )
+        return {
+          loadType: 'track',
+          data: this.buildTrack(url, {}, true)
+        }
+      }
       return {
         exception: {
           message: `Failed to resolve URL: ${err.message}`,
