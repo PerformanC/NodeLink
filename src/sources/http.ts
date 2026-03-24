@@ -253,10 +253,43 @@ export default class HttpSource {
         validAudioPrefixes.some((prefix) => contentType.startsWith(prefix)) ||
         validApplicationTypes.includes(contentType) ||
         contentType === ''
+      const rawHttpConfig = this.nodelink.options?.sources?.['http']
+      const httpConfig =
+        rawHttpConfig && typeof rawHttpConfig === 'object'
+          ? (rawHttpConfig as Record<string, unknown>)
+          : {}
+      const rawClusterConfig = this.nodelink.options?.cluster
+      const clusterConfig =
+        rawClusterConfig && typeof rawClusterConfig === 'object'
+          ? (rawClusterConfig as Record<string, unknown>)
+          : {}
+      const configuredResolveTimeout =
+        Number(httpConfig['resolveTimeoutMs']) > 0
+          ? Number(httpConfig['resolveTimeoutMs'])
+          : 7000
+      const clusterTimeout =
+        Number(clusterConfig['commandTimeout']) > 0
+          ? Number(clusterConfig['commandTimeout'])
+          : null
+      const resolveTimeout = clusterTimeout
+        ? Math.min(configuredResolveTimeout, Math.max(1000, clusterTimeout - 500))
+        : configuredResolveTimeout
+      const configuredHeadTimeout =
+        Number(httpConfig['headTimeoutMs']) > 0
+          ? Number(httpConfig['headTimeoutMs'])
+          : 2500
+      const headTimeout = Math.min(configuredHeadTimeout, resolveTimeout)
+      const optimisticOnProbeFailure =
+        httpConfig['optimisticOnProbeFailure'] !== false
+      const resolveStartedAt = Date.now()
+      const getRemainingTimeout = (): number =>
+        Math.max(250, resolveTimeout - (Date.now() - resolveStartedAt))
 
       let data = await http1makeRequest(url, {
         method: 'HEAD',
-        headers: requestHeaders
+        headers: requestHeaders,
+        timeout: headTimeout,
+        maxRetries: 0
       })
 
       const headContentType = headerToString(
@@ -268,10 +301,34 @@ export default class HttpSource {
         isValidMediaType(headContentType)
 
       if (!headOk) {
+        const remainingTimeout = getRemainingTimeout()
+        if (remainingTimeout <= 250) {
+          if (optimisticOnProbeFailure) {
+            return {
+              loadType: 'track',
+              data: this.buildTrack(
+                url,
+                (data.headers as HttpResponseHeaders | undefined) || {},
+                true
+              )
+            }
+          }
+          return {
+            exception: {
+              message: `Resolve timeout budget exceeded for ${url}`,
+              severity: 'common'
+            }
+          }
+        }
         const getData = await http1makeRequest(url, {
           method: 'GET',
           streamOnly: true,
-          headers: requestHeaders
+          headers: {
+            ...requestHeaders,
+            'Icy-MetaData': '1'
+          },
+          timeout: remainingTimeout,
+          maxRetries: 0
         })
         const previewStream = getData?.stream as Readable | undefined
         if (previewStream && typeof previewStream.destroy === 'function') {
@@ -281,12 +338,38 @@ export default class HttpSource {
       }
 
       if (data.error) {
+        if (optimisticOnProbeFailure) {
+          logger(
+            'warn',
+            'HTTP Source',
+            `Probe failed for ${url}, using optimistic track: ${String(data.error)}`
+          )
+          return {
+            loadType: 'track',
+            data: this.buildTrack(url, {}, true)
+          }
+        }
         return {
           exception: { message: String(data.error), severity: 'common' }
         }
       }
 
       if ((data.statusCode || 0) >= 400) {
+        if (optimisticOnProbeFailure) {
+          logger(
+            'warn',
+            'HTTP Source',
+            `Probe HTTP ${data.statusCode} for ${url}, using optimistic track`
+          )
+          return {
+            loadType: 'track',
+            data: this.buildTrack(
+              url,
+              (data.headers as HttpResponseHeaders | undefined) || {},
+              true
+            )
+          }
+        }
         return {
           exception: {
             message: `HTTP error ${data.statusCode} while resolving`,
@@ -300,6 +383,12 @@ export default class HttpSource {
         (headers as Record<string, unknown>)?.['content-type']
       )
       if (!isValidMediaType(contentType)) {
+        if (optimisticOnProbeFailure && contentType === '') {
+          return {
+            loadType: 'track',
+            data: this.buildTrack(url, headers, true)
+          }
+        }
         return {
           exception: {
             message: `Unsupported content type: ${contentType}`,
@@ -320,6 +409,24 @@ export default class HttpSource {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      const rawHttpConfig = this.nodelink.options?.sources?.['http']
+      const httpConfig =
+        rawHttpConfig && typeof rawHttpConfig === 'object'
+          ? (rawHttpConfig as Record<string, unknown>)
+          : {}
+      const optimisticOnProbeFailure =
+        httpConfig['optimisticOnProbeFailure'] !== false
+      if (optimisticOnProbeFailure) {
+        logger(
+          'warn',
+          'HTTP Source',
+          `Resolve exception for ${url}, using optimistic track: ${message}`
+        )
+        return {
+          loadType: 'track',
+          data: this.buildTrack(url, {}, true)
+        }
+      }
       return {
         exception: {
           message: `Failed to resolve URL: ${message}`,
