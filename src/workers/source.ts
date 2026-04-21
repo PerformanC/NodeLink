@@ -143,7 +143,8 @@ if (isMainThread) {
         config,
         silentLogs: specConfig.silentLogs ?? false,
         threadId: threadNumber
-      } satisfies WorkerData
+      } satisfies WorkerData,
+      execArgv: process.execArgv
     }) as MicroWorker
 
     worker.ready = false
