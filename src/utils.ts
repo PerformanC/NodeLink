@@ -1658,6 +1658,17 @@ async function makeRequest(
     return http1makeRequest(urlString, options)
   }
 
+  // global-http-proxy: fall back to server-wide proxy when no per-request proxy is set
+  const globalProxyCfg = finalNodeLink?.options?.server?.httpProxy
+  if (globalProxyCfg?.enabled && globalProxyCfg.url) {
+    const globalProxy: HttpProxyConfig = {
+      url: globalProxyCfg.url,
+      username: globalProxyCfg.username,
+      password: globalProxyCfg.password
+    }
+    return http1makeRequest(urlString, { ...options, proxy: globalProxy })
+  }
+
   const localAddress = finalNodeLink?.routePlanner?.getIP?.() ?? undefined
 
   try {

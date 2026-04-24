@@ -1,4 +1,5 @@
 import { PassThrough } from 'node:stream'
+import { readFileSync } from 'node:fs'
 import HLSHandler from '../../playback/hls/HLSHandler.ts'
 import type {
   PreviousSessionState,
@@ -216,6 +217,9 @@ export default class YouTubeSource {
   /** YouTube innertube request context sent with every API call (device info, locale, visitor data). */
   private ytContext: YouTubeContext
 
+  /** Cookie string parsed from cookiePath at startup, sent with every YouTube request. */
+  private cookieHeader: string | null
+
   // -- Public fields consumed by the framework --
 
   /** Additional source names this source can proxy through (e.g. `['ytmusic']`). */
@@ -252,6 +256,7 @@ export default class YouTubeSource {
     this.clients = {}
     this.oauth = null
     this.visitorDataInterval = null
+    this.cookieHeader = null
     this.cipherManager = new CipherManager(nodelink)
     this.liveChat = new YouTubeLiveChat(nodelink, {
       getProxy: this.getProxy.bind(this),
@@ -334,6 +339,39 @@ export default class YouTubeSource {
       `Initialized clients: ${Object.keys(this.clients).join(', ')}`
     )
 
+    // cookiePath: parse cookies.txt and attach to every request
+    const cookiePath = this.config.cookiePath
+    if (cookiePath) {
+      try {
+        const raw = readFileSync(cookiePath, 'utf8').trim()
+        let cookieHeader: string
+
+        if (raw.includes('\t')) {
+          cookieHeader = raw
+            .split('\n')
+            .filter((line) => line && !line.startsWith('#'))
+            .map((line) => {
+              const parts = line.split('\t')
+              if (parts.length >= 7) return `${parts[5]}=${parts[6]}`
+              return null
+            })
+            .filter(Boolean)
+            .join('; ')
+        } else {
+          cookieHeader = raw.replace(/;\s*$/, '')
+        }
+
+        if (cookieHeader) {
+          this.cookieHeader = cookieHeader
+          logger('info', 'YouTube', `Loaded cookies from ${cookiePath}`)
+        } else {
+          logger('warn', 'YouTube', `cookiePath set but no cookies parsed from ${cookiePath}`)
+        }
+      } catch (e) {
+        logger('error', 'YouTube', `Failed to read cookiePath "${cookiePath}": ${(e as Error).message}`)
+      }
+    }
+
     await this._fetchVisitorData()
     await this.cipherManager.getCachedPlayerScript()
     await this.cipherManager.checkCipherServerStatus()
@@ -401,7 +439,7 @@ export default class YouTubeSource {
       } = await makeRequest('https://www.youtube.com/embed', {
         method: 'GET',
         headers: {
-          Cookie: 'YSC=cz5kYp3ZuIE; VISITOR_INFO1_LIVE=U-0T5oUyzf8;'
+          Cookie: this.cookieHeader ?? 'YSC=cz5kYp3ZuIE; VISITOR_INFO1_LIVE=U-0T5oUyzf8;'
         }
       })
 

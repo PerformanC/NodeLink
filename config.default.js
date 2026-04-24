@@ -3,7 +3,13 @@ export default {
     host: '0.0.0.0',
     port: 3000,
     password: 'youshallnotpass',
-    useBunServer: false // set to true to use Bun.serve websocket (experimental)
+    useBunServer: false, // set to true to use Bun.serve websocket (experimental)
+    httpProxy: {
+      enabled: false, // route all outbound HTTP requests through a proxy
+      url: '', // e.g. 'http://user:pass@host:3128' or 'socks5://host:1080'
+      username: '',
+      password: ''
+    }
   },
   cluster: {
     enabled: true, // active cluster (or use env CLUSTER_ENABLED)
@@ -374,6 +380,7 @@ export default {
           }
         }
       },
+      cookiePath: '', // (optional) path to a Netscape cookies.txt file for authenticated YouTube requests
       cipher: {
         url: 'https://cipher.kikkia.dev/api',
         token: null
