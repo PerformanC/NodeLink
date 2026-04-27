@@ -43,7 +43,7 @@ class MonochromeSource {
             'https://singapore-1.monochrome.tf',
             'https://ohio-1.monochrome.tf',
             'https://frankfurt-1.monochrome.tf',
-            'https://hifi.geeked.wtf',
+           // 'https://hifi.geeked.wtf',
             'https://eu-central.monochrome.tf',
             'https://us-west.monochrome.tf',
             'https://api.monochrome.tf',
