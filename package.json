@@ -1,6 +1,6 @@
 {
   "name": "nodelink",
-  "version": "3.8.0-dev.20260422.1",
+  "version": "3.8.1-dev.20260430.1",
   "scripts": {
     "build": "tsc --incremental false",
     "start": "node --dns-result-order=ipv4first --import tsx src/index.ts",
