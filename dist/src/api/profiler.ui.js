@@ -94,6 +94,7 @@ function buildPage(code) {
       <div class="card"><div class="label">Trace Buffer</div><div id="traceCount" class="big">0</div><div class="sub">network + events</div></div>
       <div class="card"><div class="label">Players Active</div><div id="playersActive" class="big">0</div><div class="sub">across workers</div></div>
       <div class="card"><div class="label">Heap Pressure</div><div id="heapPressure" class="big">0.0%</div><div class="sub">heapUsed/heapTotal</div></div>
+      <div class="card"><div class="label">V8 Internal</div><div id="v8Internal" class="big">0 MB</div><div class="sub">v8 gap</div></div>
     </div>
 
     <div class="mem-ribbon-wrap">
@@ -611,7 +612,17 @@ function buildPage(code) {
 
       const safeRss = Math.max(rss, 1)
       const heapReservedFree = Math.max(0, allocated - used)
-      const trackedNative = Math.max(0, Math.max(external, arrayBuffers))
+      const trackedNative = Math.max(0, external + arrayBuffers)
+
+      let v8HeapTotal = 0
+      for (const p of procs) {
+        const spaces = p?.heapSpaces || p?.runtime?.heapSpaces || []
+        for (const s of spaces) {
+          v8HeapTotal += Number(s?.spaceSize || 0)
+        }
+      }
+      const v8Internal = Math.max(0, allocated - v8HeapTotal)
+
       const unattributed = Math.max(0, rss - used - heapReservedFree - trackedNative)
 
       const usedPct = Math.max(0, Math.min(100, (used / safeRss) * 100))
@@ -655,6 +666,9 @@ function buildPage(code) {
       if (memHeroMachineRssMetric) memHeroMachineRssMetric.textContent = fmtBytes(rss) + ' · ' + machineRssPct.toFixed(1) + '%'
       if (memHeroMachineOtherMetric) memHeroMachineOtherMetric.textContent = fmtBytes(machineOtherAbs) + ' · ' + machineOtherPct.toFixed(1) + '%'
       if (memHeroMachineFreeMetric) memHeroMachineFreeMetric.textContent = fmtBytes(machineFree) + ' · ' + machineFreePct.toFixed(1) + '%'
+
+      const v8InternalEl = document.getElementById('v8Internal')
+      if (v8InternalEl) v8InternalEl.textContent = fmtBytes(v8Internal) + ' · ' + ((v8Internal / Math.max(rss, 1)) * 100).toFixed(1) + '%'
 
       const masterRss = Number(snapshot?.master?.memory?.rss || 0)
       let workersRss = 0
@@ -1376,13 +1390,13 @@ function buildPage(code) {
       for (const w of (snapshot?.workers || [])) {
         const bp = w?.response?.workersContext?.bufferPool
         if (!bp) continue
-        
-        const rejectionRate = (bp.releaseCalls || 0) > 0 
+
+        const rejectionRate = (bp.releaseCalls || 0) > 0
           ? ((bp.rejectedReleases || 0) / bp.releaseCalls * 100).toFixed(1)
           : '0.0'
-        const rejectionLevel = parseFloat(rejectionRate) > 30 ? 'warn' : 
+        const rejectionLevel = parseFloat(rejectionRate) > 30 ? 'warn' :
                                parseFloat(rejectionRate) > 10 ? 'neutral' : 'ok'
-        
+
         rows.push({
           text:
             '<span class="tag">worker ' + (w.pid || '-') + '</span>' +
@@ -1433,12 +1447,12 @@ function buildPage(code) {
 
     function renderDebugInternals(snapshot) {
       const rows = []
-      
+
       for (const w of (snapshot?.workers || [])) {
         const dbg = w?.response?.debugInternals
         if (!dbg) continue
         const pid = w.pid || '-'
-        
+
         if (dbg.sourceManager) {
           const sm = dbg.sourceManager
           rows.push({
@@ -1449,7 +1463,7 @@ function buildPage(code) {
               '<span class="tag">patterns: ' + (sm.patternMapLength ?? '-') + '</span>'
           })
         }
-        
+
         if (dbg.trackCache) {
           const tc = dbg.trackCache
           rows.push({
@@ -1458,7 +1472,7 @@ function buildPage(code) {
               '<span class="tag">max: ' + (tc.maxEntries ?? '-') + '</span>'
           })
         }
-        
+
         if (dbg.credentials) {
           const cr = dbg.credentials
           rows.push({
@@ -1467,7 +1481,7 @@ function buildPage(code) {
               '<span class="tag">expired: ' + (cr.expiredEntries ?? '-') + '</span>'
           })
         }
-        
+
         if (dbg.connection) {
           const cn = dbg.connection
           rows.push({
@@ -1477,7 +1491,7 @@ function buildPage(code) {
               '<span class="tag">interval: ' + (cn.hasInterval ? 'yes' : 'no') + '</span>'
           })
         }
-        
+
         if (dbg.extensions) {
           const ex = dbg.extensions
           rows.push({
@@ -1488,7 +1502,7 @@ function buildPage(code) {
               (ex.customFilterNames?.length ? '<span class="muted">[' + ex.customFilterNames.join(', ') + ']</span>' : '')
           })
         }
-        
+
         if (dbg.httpAgents) {
           const ha = dbg.httpAgents
           rows.push({
@@ -1500,12 +1514,12 @@ function buildPage(code) {
           })
         }
       }
-      
+
       for (const s of (snapshot?.sourceWorkers || [])) {
         const dbg = s?.response?.debugInternals
         if (!dbg) continue
         const pid = s.pid || '-'
-        
+
         if (dbg.sourceManager) {
           const sm = dbg.sourceManager
           rows.push({
@@ -1516,7 +1530,7 @@ function buildPage(code) {
               '<span class="tag">patterns: ' + (sm.patternMapLength ?? '-') + '</span>'
           })
         }
-        
+
         if (dbg.trackCache) {
           const tc = dbg.trackCache
           rows.push({
@@ -1525,7 +1539,7 @@ function buildPage(code) {
               '<span class="tag">max: ' + (tc.maxEntries ?? '-') + '</span>'
           })
         }
-        
+
         if (dbg.credentials) {
           const cr = dbg.credentials
           rows.push({
@@ -1534,7 +1548,7 @@ function buildPage(code) {
               '<span class="tag">expired: ' + (cr.expiredEntries ?? '-') + '</span>'
           })
         }
-        
+
         if (dbg.httpAgents) {
           const ha = dbg.httpAgents
           rows.push({
@@ -1546,7 +1560,7 @@ function buildPage(code) {
           })
         }
       }
-      
+
       setList(debugInternals, rows, '', 0)
     }
 
@@ -1557,17 +1571,17 @@ function buildPage(code) {
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
         return (n / 1024 / 1024).toFixed(2) + ' MB'
       }
-      
+
       for (const w of (snapshot?.workers || [])) {
         const ipc = w?.response?.debugInternals?.ipcTracker
         if (!ipc) continue
         const pid = w.pid || '-'
-        
+
         rows.push({
           text: '<b>Worker ' + pid + ' - Sent</b>',
           level: 'ok'
         })
-        
+
         const sentSorted = (ipc.sent || []).slice(0, 10)
         for (const s of sentSorted) {
           rows.push({
@@ -1578,12 +1592,12 @@ function buildPage(code) {
               '<span class="tag">max: ' + fmtBytes(s.maxBytes) + '</span>'
           })
         }
-        
+
         rows.push({
           text: '<b>Worker ' + pid + ' - Received</b>',
           level: 'ok'
         })
-        
+
         const recvSorted = (ipc.received || []).slice(0, 10)
         for (const r of recvSorted) {
           rows.push({
@@ -1595,11 +1609,11 @@ function buildPage(code) {
           })
         }
       }
-      
+
       if (rows.length === 0) {
         rows.push({ text: 'No IPC traffic data yet.' })
       }
-      
+
       setList(ipcTraffic, rows, '', 0)
     }
 
