@@ -517,7 +517,7 @@ export class PoTokenManager {
         url: 'https://www.youtube.com/',
         referrer: 'https://www.youtube.com/',
         userAgent: PO_CONFIG.userAgent
-      }
+      } as import('jsdom').ConstructorOptions
     )
     this._applyDomGlobals(this._dom)
 
