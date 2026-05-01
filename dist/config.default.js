@@ -486,7 +486,10 @@ export default {
         },
         googledrive: {
             enabled: true
-        }
+        },
+        tiktok: {
+            enabled: true,
+        },
     },
     lyrics: {
         fallbackSource: 'genius',
