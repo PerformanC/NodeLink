@@ -406,9 +406,17 @@ export default class CipherManager implements ICipherManager {
 
     const parsedBody = (body ?? {}) as YouTubeCipherServiceResponse
     if (error || statusCode !== 200 || !parsedBody.sts) {
-      throw new Error(
-        `Failed to get STS: ${error || parsedBody.message || 'Invalid response'}`
+      const detail =
+        error ||
+        parsedBody.message ||
+        (typeof body === 'object' ? JSON.stringify(body) : body) ||
+        'Invalid response'
+      logger(
+        'error',
+        'YouTube-Cipher',
+        `Failed to get STS from cipher service (Status: ${statusCode ?? 'unknown'}): ${detail}`
       )
+      throw new Error(`Failed to get STS: ${detail}`)
     }
 
     logger('debug', 'YouTube-Cipher', `Received STS: ${parsedBody.sts}`)
@@ -581,18 +589,26 @@ export default class CipherManager implements ICipherManager {
       Date.now() - startTime
     )
 
+    const parsedBody = (body ?? {}) as YouTubeCipherServiceResponse
+    if (error || statusCode !== 200 || !parsedBody.resolved_url) {
+      const detail =
+        error ||
+        parsedBody.message ||
+        (typeof body === 'object' ? JSON.stringify(body) : body) ||
+        'Invalid response'
+      logger(
+        'error',
+        'YouTube-Cipher',
+        `Failed to resolve URL via cipher service (Status: ${statusCode ?? 'unknown'}): ${detail}`
+      )
+      throw new Error(`Failed to resolve URL: ${detail}`)
+    }
+
     logger(
       'debug',
       'YouTube-Cipher',
-      `Received from cipher service (Status: ${statusCode})`
+      `Received from cipher service (Status: ${statusCode}): ${parsedBody.resolved_url}`
     )
-
-    const parsedBody = (body ?? {}) as YouTubeCipherServiceResponse
-    if (error || statusCode !== 200 || !parsedBody.resolved_url) {
-      throw new Error(
-        `Failed to resolve URL: ${error || parsedBody.message || 'Invalid response'}`
-      )
-    }
 
     logger(
       'debug',
@@ -646,9 +662,8 @@ export default class CipherManager implements ICipherManager {
 
     const watchPage = typeof body === 'string' ? body : ''
     if (error || statusCode !== 200 || !watchPage) {
-      throw new Error(
-        `Failed to fetch watch page for player script: ${error || statusCode || 'unknown'}`
-      )
+      const reason = error || `Status ${statusCode ?? 'unknown'}`
+      throw new Error(`Failed to fetch watch page for player script: ${reason}`)
     }
 
     const jsUrlMatch = watchPage.match(/"jsUrl":"([^"]+)"/)
