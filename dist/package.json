@@ -1,6 +1,6 @@
 {
     "name": "nodelink",
-    "version": "3.8.1-dev.20260430.1",
+    "version": "3.8.1-dev.20260501.1",
     "scripts": {
         "build": "tsc --incremental false",
         "start": "node --dns-result-order=ipv4first --import tsx src/index.ts",
@@ -24,16 +24,16 @@
         "@toddynnn/symphonia-decoder": "1.0.6",
         "@toddynnn/voice-opus": "^1.0.1",
         "fastest-validator": "^1.19.1",
-        "jsdom": "^29.0.2",
+        "jsdom": "^29.1.1",
         "mp4box": "^2.3.0",
         "prom-client": "^15.1.3",
         "proxy-agent": "^8.0.1"
     },
     "devDependencies": {
-        "@biomejs/biome": "^2.4.12",
+        "@biomejs/biome": "^2.4.13",
         "@commitlint/cli": "20.5.0",
         "@commitlint/config-conventional": "20.5.0",
-        "@types/bun": "^1.3.12",
+        "@types/bun": "^1.3.13",
         "@types/jsdom": "^28.0.1",
         "@types/node": "^25.6.0",
         "dotenv": "^17.4.2",

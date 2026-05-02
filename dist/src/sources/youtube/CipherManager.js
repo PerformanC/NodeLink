@@ -272,7 +272,12 @@ export default class CipherManager {
         this.reportProxyStatus(proxy, !error && statusCode === 200, statusCode ?? 500, Date.now() - startTime);
         const parsedBody = (body ?? {});
         if (error || statusCode !== 200 || !parsedBody.sts) {
-            throw new Error(`Failed to get STS: ${error || parsedBody.message || 'Invalid response'}`);
+            const detail = error ||
+                parsedBody.message ||
+                (typeof body === 'object' ? JSON.stringify(body) : body) ||
+                'Invalid response';
+            logger('error', 'YouTube-Cipher', `Failed to get STS from cipher service (Status: ${statusCode ?? 'unknown'}): ${detail}`);
+            throw new Error(`Failed to get STS: ${detail}`);
         }
         logger('debug', 'YouTube-Cipher', `Received STS: ${parsedBody.sts}`);
         this.stsCache.set(playerUrl, parsedBody.sts);
@@ -387,11 +392,16 @@ export default class CipherManager {
         }
         const { body, error, statusCode } = response;
         this.reportProxyStatus(proxy, !error && statusCode === 200, statusCode ?? 500, Date.now() - startTime);
-        logger('debug', 'YouTube-Cipher', `Received from cipher service (Status: ${statusCode})`);
         const parsedBody = (body ?? {});
         if (error || statusCode !== 200 || !parsedBody.resolved_url) {
-            throw new Error(`Failed to resolve URL: ${error || parsedBody.message || 'Invalid response'}`);
+            const detail = error ||
+                parsedBody.message ||
+                (typeof body === 'object' ? JSON.stringify(body) : body) ||
+                'Invalid response';
+            logger('error', 'YouTube-Cipher', `Failed to resolve URL via cipher service (Status: ${statusCode ?? 'unknown'}): ${detail}`);
+            throw new Error(`Failed to resolve URL: ${detail}`);
         }
+        logger('debug', 'YouTube-Cipher', `Received from cipher service (Status: ${statusCode}): ${parsedBody.resolved_url}`);
         logger('debug', 'YouTube-Cipher', `Resolved URL: ${parsedBody.resolved_url}`);
         return parsedBody.resolved_url;
     }
@@ -430,7 +440,8 @@ export default class CipherManager {
         this.reportProxyStatus(proxy, !error && statusCode === 200, statusCode ?? 500, Date.now() - startTime);
         const watchPage = typeof body === 'string' ? body : '';
         if (error || statusCode !== 200 || !watchPage) {
-            throw new Error(`Failed to fetch watch page for player script: ${error || statusCode || 'unknown'}`);
+            const reason = error || `Status ${statusCode ?? 'unknown'}`;
+            throw new Error(`Failed to fetch watch page for player script: ${reason}`);
         }
         const jsUrlMatch = watchPage.match(/"jsUrl":"([^"]+)"/);
         const scriptUrl = jsUrlMatch?.[1];

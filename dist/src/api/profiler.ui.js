@@ -614,6 +614,7 @@ function buildPage(code) {
       const heapReservedFree = Math.max(0, allocated - used)
       const trackedNative = Math.max(0, external + arrayBuffers)
 
+      // V8 heap spaces sum
       let v8HeapTotal = 0
       for (const p of procs) {
         const spaces = p?.heapSpaces || p?.runtime?.heapSpaces || []
@@ -1390,13 +1391,13 @@ function buildPage(code) {
       for (const w of (snapshot?.workers || [])) {
         const bp = w?.response?.workersContext?.bufferPool
         if (!bp) continue
-
-        const rejectionRate = (bp.releaseCalls || 0) > 0
+        
+        const rejectionRate = (bp.releaseCalls || 0) > 0 
           ? ((bp.rejectedReleases || 0) / bp.releaseCalls * 100).toFixed(1)
           : '0.0'
-        const rejectionLevel = parseFloat(rejectionRate) > 30 ? 'warn' :
+        const rejectionLevel = parseFloat(rejectionRate) > 30 ? 'warn' : 
                                parseFloat(rejectionRate) > 10 ? 'neutral' : 'ok'
-
+        
         rows.push({
           text:
             '<span class="tag">worker ' + (w.pid || '-') + '</span>' +
@@ -1447,12 +1448,12 @@ function buildPage(code) {
 
     function renderDebugInternals(snapshot) {
       const rows = []
-
+      
       for (const w of (snapshot?.workers || [])) {
         const dbg = w?.response?.debugInternals
         if (!dbg) continue
         const pid = w.pid || '-'
-
+        
         if (dbg.sourceManager) {
           const sm = dbg.sourceManager
           rows.push({
@@ -1463,7 +1464,7 @@ function buildPage(code) {
               '<span class="tag">patterns: ' + (sm.patternMapLength ?? '-') + '</span>'
           })
         }
-
+        
         if (dbg.trackCache) {
           const tc = dbg.trackCache
           rows.push({
@@ -1472,7 +1473,7 @@ function buildPage(code) {
               '<span class="tag">max: ' + (tc.maxEntries ?? '-') + '</span>'
           })
         }
-
+        
         if (dbg.credentials) {
           const cr = dbg.credentials
           rows.push({
@@ -1481,7 +1482,7 @@ function buildPage(code) {
               '<span class="tag">expired: ' + (cr.expiredEntries ?? '-') + '</span>'
           })
         }
-
+        
         if (dbg.connection) {
           const cn = dbg.connection
           rows.push({
@@ -1491,7 +1492,7 @@ function buildPage(code) {
               '<span class="tag">interval: ' + (cn.hasInterval ? 'yes' : 'no') + '</span>'
           })
         }
-
+        
         if (dbg.extensions) {
           const ex = dbg.extensions
           rows.push({
@@ -1502,7 +1503,7 @@ function buildPage(code) {
               (ex.customFilterNames?.length ? '<span class="muted">[' + ex.customFilterNames.join(', ') + ']</span>' : '')
           })
         }
-
+        
         if (dbg.httpAgents) {
           const ha = dbg.httpAgents
           rows.push({
@@ -1514,12 +1515,12 @@ function buildPage(code) {
           })
         }
       }
-
+      
       for (const s of (snapshot?.sourceWorkers || [])) {
         const dbg = s?.response?.debugInternals
         if (!dbg) continue
         const pid = s.pid || '-'
-
+        
         if (dbg.sourceManager) {
           const sm = dbg.sourceManager
           rows.push({
@@ -1530,7 +1531,7 @@ function buildPage(code) {
               '<span class="tag">patterns: ' + (sm.patternMapLength ?? '-') + '</span>'
           })
         }
-
+        
         if (dbg.trackCache) {
           const tc = dbg.trackCache
           rows.push({
@@ -1539,7 +1540,7 @@ function buildPage(code) {
               '<span class="tag">max: ' + (tc.maxEntries ?? '-') + '</span>'
           })
         }
-
+        
         if (dbg.credentials) {
           const cr = dbg.credentials
           rows.push({
@@ -1548,7 +1549,7 @@ function buildPage(code) {
               '<span class="tag">expired: ' + (cr.expiredEntries ?? '-') + '</span>'
           })
         }
-
+        
         if (dbg.httpAgents) {
           const ha = dbg.httpAgents
           rows.push({
@@ -1560,7 +1561,7 @@ function buildPage(code) {
           })
         }
       }
-
+      
       setList(debugInternals, rows, '', 0)
     }
 
@@ -1571,17 +1572,17 @@ function buildPage(code) {
         if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
         return (n / 1024 / 1024).toFixed(2) + ' MB'
       }
-
+      
       for (const w of (snapshot?.workers || [])) {
         const ipc = w?.response?.debugInternals?.ipcTracker
         if (!ipc) continue
         const pid = w.pid || '-'
-
+        
         rows.push({
           text: '<b>Worker ' + pid + ' - Sent</b>',
           level: 'ok'
         })
-
+        
         const sentSorted = (ipc.sent || []).slice(0, 10)
         for (const s of sentSorted) {
           rows.push({
@@ -1592,12 +1593,12 @@ function buildPage(code) {
               '<span class="tag">max: ' + fmtBytes(s.maxBytes) + '</span>'
           })
         }
-
+        
         rows.push({
           text: '<b>Worker ' + pid + ' - Received</b>',
           level: 'ok'
         })
-
+        
         const recvSorted = (ipc.received || []).slice(0, 10)
         for (const r of recvSorted) {
           rows.push({
@@ -1609,11 +1610,11 @@ function buildPage(code) {
           })
         }
       }
-
+      
       if (rows.length === 0) {
         rows.push({ text: 'No IPC traffic data yet.' })
       }
-
+      
       setList(ipcTraffic, rows, '', 0)
     }
 
