@@ -82,6 +82,21 @@ export class VolumeTransformer extends Transform {
             })
             : null;
     }
+    setAGCEnabled(enabled) {
+        if (enabled && !this.agc) {
+            ;
+            this.agc =
+                new LoudnessNormalizer({
+                    sampleRate: this.sampleRate,
+                    channels: this.channels,
+                    targetLoudness: -14
+                });
+        }
+        else if (!enabled && this.agc) {
+            ;
+            this.agc = null;
+        }
+    }
     _getFadeCurveValue(progress) {
         const clamped = Math.min(1, Math.max(0, progress));
         switch (this.fadeCurve) {

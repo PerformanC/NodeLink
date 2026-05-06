@@ -73,9 +73,11 @@ type ProfilerApiModule = typeof import('./api/profiler.ts')
 let profilerApiPromise: Promise<ProfilerApiModule> | null = null
 
 const isRuntimeAtLeast = (current: string, minimum: string): boolean =>
-  current.replace(/^v/, '').localeCompare(minimum.replace(/^v/, ''), undefined, {
-    numeric: true
-  }) >= 0
+  current
+    .replace(/^v/, '')
+    .localeCompare(minimum.replace(/^v/, ''), undefined, {
+      numeric: true
+    }) >= 0
 
 type NodeLtsCacheEntry = {
   version: string
@@ -85,7 +87,8 @@ type NodeLtsCacheEntry = {
 const NODE_LTS_CREDENTIAL_KEY = 'runtime.node.latestLts'
 const NODE_LTS_CREDENTIAL_TTL_MS = 24 * 60 * 60 * 1000
 const NODE_LTS_MEMORY_TTL_MS = 10 * 60 * 1000
-let latestNodeLtsCache: { value: string | null; expiresAt: number } | null = null
+let latestNodeLtsCache: { value: string | null; expiresAt: number } | null =
+  null
 
 const getLatestNodeLtsVersion = async (
   credentialManager: CredentialManager | null

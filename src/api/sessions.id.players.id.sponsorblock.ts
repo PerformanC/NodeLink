@@ -26,7 +26,9 @@ interface SponsorBlockPlayerManager {
    */
   updateSponsorBlock: (
     guildId: string,
-    updates: Partial<Omit<PlayerSponsorBlockState, 'segments' | 'lastSkippedUuid'>>
+    updates: Partial<
+      Omit<PlayerSponsorBlockState, 'segments' | 'lastSkippedUuid'>
+    >
   ) => void
 
   /**
@@ -175,13 +177,27 @@ async function handlePatchSponsorBlock(
 ): Promise<void> {
   const session = runtime.sessions.get(pathParams.sessionId)
   if (!session) {
-    sendErrorResponse(req, res, 404, 'Not Found', "The provided sessionId doesn't exist.", req.url || '')
+    sendErrorResponse(
+      req,
+      res,
+      404,
+      'Not Found',
+      "The provided sessionId doesn't exist.",
+      req.url || ''
+    )
     return
   }
 
   const body = req.body as Partial<PlayerSponsorBlockState>
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    sendErrorResponse(req, res, 400, 'Bad Request', 'Invalid body', req.url || '')
+    sendErrorResponse(
+      req,
+      res,
+      400,
+      'Bad Request',
+      'Invalid body',
+      req.url || ''
+    )
     return
   }
 
@@ -192,9 +208,15 @@ async function handlePatchSponsorBlock(
       actionTypes: body.actionTypes,
       skipMarginMs: body.skipMarginMs
     })
-    sendResponse(req, res, session.players.getSponsorBlock(pathParams.guildId), 200)
+    sendResponse(
+      req,
+      res,
+      session.players.getSponsorBlock(pathParams.guildId),
+      200
+    )
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Player not found'
+    const errorMessage =
+      error instanceof Error ? error.message : 'Player not found'
     sendErrorResponse(req, res, 404, 'Not Found', errorMessage, req.url || '')
   }
 }
@@ -211,21 +233,41 @@ async function handlePostSponsorBlock(
 ): Promise<void> {
   const session = runtime.sessions.get(pathParams.sessionId)
   if (!session) {
-    sendErrorResponse(req, res, 404, 'Not Found', "The provided sessionId doesn't exist.", req.url || '')
+    sendErrorResponse(
+      req,
+      res,
+      404,
+      'Not Found',
+      "The provided sessionId doesn't exist.",
+      req.url || ''
+    )
     return
   }
 
   const body = req.body as { segments: SponsorBlockSegment[] }
   if (!body?.segments || !Array.isArray(body.segments)) {
-    sendErrorResponse(req, res, 400, 'Bad Request', 'Invalid segments array', req.url || '')
+    sendErrorResponse(
+      req,
+      res,
+      400,
+      'Bad Request',
+      'Invalid segments array',
+      req.url || ''
+    )
     return
   }
 
   try {
     session.players.setSponsorBlockSegments(pathParams.guildId, body.segments)
-    sendResponse(req, res, session.players.getSponsorBlock(pathParams.guildId), 200)
+    sendResponse(
+      req,
+      res,
+      session.players.getSponsorBlock(pathParams.guildId),
+      200
+    )
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Player not found'
+    const errorMessage =
+      error instanceof Error ? error.message : 'Player not found'
     sendErrorResponse(req, res, 404, 'Not Found', errorMessage, req.url || '')
   }
 }
@@ -241,7 +283,14 @@ async function handleDeleteSponsorBlock(
 ): Promise<void> {
   const session = runtime.sessions.get(pathParams.sessionId)
   if (!session) {
-    sendErrorResponse(req, res, 404, 'Not Found', "The provided sessionId doesn't exist.", req.url || '')
+    sendErrorResponse(
+      req,
+      res,
+      404,
+      'Not Found',
+      "The provided sessionId doesn't exist.",
+      req.url || ''
+    )
     return
   }
 
@@ -250,7 +299,8 @@ async function handleDeleteSponsorBlock(
     res.writeHead(204)
     res.end()
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Player not found'
+    const errorMessage =
+      error instanceof Error ? error.message : 'Player not found'
     sendErrorResponse(req, res, 404, 'Not Found', errorMessage, req.url || '')
   }
 }
@@ -267,13 +317,29 @@ async function handler(
 ): Promise<void> {
   const runtime = getSponsorBlockRuntime(nodelink)
   if (!runtime) {
-    sendErrorResponse(req, res, 500, 'Internal Server Error', 'SponsorBlock runtime contract is incomplete.', parsedUrl.pathname, true)
+    sendErrorResponse(
+      req,
+      res,
+      500,
+      'Internal Server Error',
+      'SponsorBlock runtime contract is incomplete.',
+      parsedUrl.pathname,
+      true
+    )
     return
   }
 
   const pathParams = getPathParams(parsedUrl)
   if (!pathParams) {
-    sendErrorResponse(req, res, 400, 'Bad Request', 'Invalid path parameters', parsedUrl.pathname, true)
+    sendErrorResponse(
+      req,
+      res,
+      400,
+      'Bad Request',
+      'Invalid path parameters',
+      parsedUrl.pathname,
+      true
+    )
     return
   }
 
@@ -297,7 +363,14 @@ async function handler(
     return
   }
 
-  sendErrorResponse(req, res, 405, 'Method Not Allowed', 'Method Not Allowed', parsedUrl.pathname)
+  sendErrorResponse(
+    req,
+    res,
+    405,
+    'Method Not Allowed',
+    'Method Not Allowed',
+    parsedUrl.pathname
+  )
 }
 
 const sponsorBlockRoute: ApiRouteModule = {

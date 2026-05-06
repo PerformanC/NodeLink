@@ -26,7 +26,9 @@ import { parseVoiceFrameHeader } from "./voice/voiceFrames.js";
 import { createVoiceRelay } from "./voice/voiceRelay.js";
 let requestHandlerPromise = null;
 let profilerApiPromise = null;
-const isRuntimeAtLeast = (current, minimum) => current.replace(/^v/, '').localeCompare(minimum.replace(/^v/, ''), undefined, {
+const isRuntimeAtLeast = (current, minimum) => current
+    .replace(/^v/, '')
+    .localeCompare(minimum.replace(/^v/, ''), undefined, {
     numeric: true
 }) >= 0;
 const NODE_LTS_CREDENTIAL_KEY = 'runtime.node.latestLts';

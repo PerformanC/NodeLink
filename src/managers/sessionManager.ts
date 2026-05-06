@@ -130,7 +130,11 @@ export default class SessionManager {
   public pause(sessionId: string): void {
     // [feat] session-resuming: guard double-pause and clear stale socket
     if (this.resumableSessions.has(sessionId)) {
-      logger('debug', 'SessionManager', `Session ${sessionId} is already paused.`)
+      logger(
+        'debug',
+        'SessionManager',
+        `Session ${sessionId} is already paused.`
+      )
       return
     }
 

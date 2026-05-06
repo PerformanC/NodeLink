@@ -132,18 +132,10 @@ export interface AudioResource {
     style: import('./processing.types.ts').ScratchStyle
   ): void
   checkScratchEffectCompleted?(): boolean
-  /**
-   * Reports the current effective playback rate (combining all filters and effects).
-   */
   getEffectiveRate?: () => number
-  /**
-   * Returns the current RMS level of the audio stream.
-   */
   getRMS?: () => number
-  /**
-   * Returns true if the audio stream is currently silent.
-   */
   isSilent?: () => boolean
+  setLoudnessNormalizer?(enabled: boolean): void
   destroy(): void
   stream?: VoiceAudioStream | null
 }

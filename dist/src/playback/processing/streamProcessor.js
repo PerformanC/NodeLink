@@ -392,6 +392,10 @@ class BaseAudioResource {
         voiceStream.getEffectiveRate = () => this.getEffectiveRate();
         voiceStream.getRMS = () => this.getRMS();
         voiceStream.isSilent = () => this.isSilent();
+        voiceStream.setFadeVolume = (volume) => this.setFadeVolume(volume);
+        voiceStream.fadeTo = (volume, durationMs, curve) => this.fadeTo(volume, durationMs, curve);
+        voiceStream.tapeTo = (durationMs, type, curve) => this.tapeTo(durationMs, type, curve);
+        voiceStream.setLoudnessNormalizer = (enabled) => this.setLoudnessNormalizer(enabled);
         this.stream = voiceStream;
     }
     _end() {
@@ -447,6 +451,8 @@ class BaseAudioResource {
     checkScratchEffectCompleted() {
         return false;
     }
+    tapeTo(_durationMs, _type, _curve) { }
+    setLoudnessNormalizer(_enabled) { }
     setVolume(volume) {
         if (!this.pipes)
             return;
@@ -2053,6 +2059,19 @@ class StreamAudioResource extends BaseAudioResource {
         const flowController = this.pipes.find((p) => p instanceof FlowController);
         if (flowController) {
             flowController.scratchTo(durationMs, style);
+        }
+    }
+    setLoudnessNormalizer(enabled) {
+        if (!this.pipes)
+            return;
+        const volumeTransformer = this.pipes.find((p) => p instanceof VolumeTransformer);
+        if (volumeTransformer) {
+            volumeTransformer.setAGCEnabled(enabled);
+            return;
+        }
+        const flowController = this.pipes.find((p) => p instanceof FlowController);
+        if (flowController) {
+            flowController.setLoudnessNormalizer(enabled);
         }
     }
     _createPCMOutputPipeline(pcmStream, volume, enableAGC = true) {

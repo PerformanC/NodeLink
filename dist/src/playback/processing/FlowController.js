@@ -100,6 +100,12 @@ export class FlowController extends Transform {
     checkScratchEffectCompleted() {
         return this.scratch.checkEffectCompleted();
     }
+    setLoudnessNormalizer(enabled) {
+        if ('setAGCEnabled' in this.volume &&
+            typeof this.volume.setAGCEnabled === 'function') {
+            this.volume.setAGCEnabled(enabled);
+        }
+    }
     /**
      * Updates filters in the pipeline via the FlowController.
      * Note: FlowController currently doesn't manage filters itself,

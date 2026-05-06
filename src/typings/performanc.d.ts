@@ -104,27 +104,28 @@ declare module '@performanc/voice' {
   import type { Readable } from 'node:stream'
 
   export interface VoiceConnectionState {
-    status:
-      | 'connecting'
-      | 'connected'
-      | 'disconnected'
-      | 'destroyed'
-      | 'reconnecting'
+    status: 'connecting' | 'connected' | 'disconnected' | 'destroyed'
+    reason?: string
     code?: number
     closeReason?: string
   }
 
   export interface VoicePlayerState {
-    status: 'idle' | 'playing' | 'paused'
+    status: 'idle' | 'playing'
     reason?: string
   }
 
   export interface VoiceStatistics {
     packetsExpected: number
+    packetsSent: number
+    packetsLost: number
     [key: string]: number | undefined
   }
 
   export interface VoiceUdpInfo {
+    ssrc?: number
+    ip?: string
+    port?: number
     secretKey?: Uint8Array | Buffer
   }
 
@@ -135,20 +136,27 @@ declare module '@performanc/voice' {
     setFilters(filters: unknown): void
     setFadeVolume?(volume: number): void
     fadeTo?(volume: number, durationMs: number, curve?: string): void
+    tapeTo?(durationMs: number, type: 'start' | 'stop', curve?: string): void
+    scratchTo?(durationMs: number, style: string): void
+    checkTapeRampCompleted?(): boolean
+    checkScratchEffectCompleted?(): boolean
+    getEffectiveRate?(): number
     setLoudnessNormalizer?(enabled: boolean): void
+    canStop?: boolean
     destroy(): void
-    pause?(reason?: string): void
-    unpause?(reason?: string): void
-    stop?(reason?: string): void
     read?(): unknown
   }
 
   export interface VoiceConnection extends EventEmitter {
+    guildId: string
+    userId: string
     channelId?: string | null
-    udpInfo?: VoiceUdpInfo
+    udpInfo?: VoiceUdpInfo | null
     statistics?: VoiceStatistics
-    ping?: number
+    ping: number
     audioStream?: VoiceAudioStream | null
+    voiceServer: { token: string; endpoint: string } | null
+    stuckTimeout: number
 
     on(
       event: 'stateChange',
@@ -165,7 +173,7 @@ declare module '@performanc/voice' {
       ) => void
     ): this
     on(event: 'error', listener: (error: Error) => void): this
-    on(event: 'audioStream', listener: (stream: VoiceAudioStream) => void): this
+    on(event: 'stuck', listener: () => void): this
     on(
       event: 'speakStart',
       listener: (userId: string, ssrc: number) => void
@@ -178,18 +186,22 @@ declare module '@performanc/voice' {
 
     play(resource: unknown): VoiceAudioStream | null | undefined
     stop(reason?: string): void
-    pause?(reason?: string): void
-    unpause?(reason?: string): void
+    pause(reason?: string): void
+    unpause(reason?: string): void
     destroy(): void
     voiceStateUpdate(state: { session_id: string }): void
-    voiceServerUpdate(update: { token: string; endpoint: string }): void
-    connect(callback?: () => void): void
+    voiceServerUpdate(update: {
+      token: string
+      endpoint: string
+      channel_id?: string
+    }): void
+    connect(callback?: () => void, reconnection?: boolean): void
   }
 
   export interface JoinVoiceChannelOptions {
     guildId: string
     userId: string
-    channelId: string
+    channelId?: string | null
     encryption?: string | null
   }
 

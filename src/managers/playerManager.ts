@@ -5,11 +5,11 @@ import type {
   FiltersState,
   NodeLink as PlaybackNodeLink,
   Session as PlaybackSession,
+  PlayerSponsorBlockState,
   PlayerStateJSON,
   PlayerTrack,
   PlayerVoiceState,
   PlayPayload,
-  PlayerSponsorBlockState,
   SponsorBlockSegment
 } from '../typings/playback/player.types.ts'
 import { logger } from '../utils.ts'
@@ -948,7 +948,11 @@ export default class PlayerManager {
     guildId: string
   ): Promise<PlayerCommandResponse | undefined> {
     if (this.isCluster) {
-      return this.runClusterPlayerCommand(guildId, 'clearSponsorBlock', []) as any
+      return this.runClusterPlayerCommand(
+        guildId,
+        'clearSponsorBlock',
+        []
+      ) as any
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))

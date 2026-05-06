@@ -87,6 +87,7 @@ export class Player {
     _isStopping = false;
     _pausedAtPosition = undefined;
     stuckRecoveryCount = 0;
+    _positionAtRecoveryStart = 0;
     static MAX_STUCK_RECOVERY_ATTEMPTS = 3;
     constructor(options) {
         if (!options.nodelink ||
@@ -228,6 +229,8 @@ export class Player {
             channelId: this.voice.channelId || this.guildId,
             encryption: this.nodelink.options?.audio?.encryption ?? null
         });
+        this.connection.stuckTimeout =
+            Math.max(this.nodelink.options.trackStuckThresholdMs, 30000) + 5000;
         this.connection.on('stateChange', (_, s) => {
             logger('debug', 'Player', `Voice connection state change for guild ${this.guildId} in session ${this.session.id}: ${s.status}`);
             this._onConn(s);
@@ -237,20 +240,10 @@ export class Player {
             logger('error', 'Player', `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`, err);
             this._onError(err);
         });
-        this.connection.on('audioStream', (audioStream) => {
-            const dataHandler = () => {
-                this._lastStreamDataTime = Date.now();
-                if (this.isLyricsSubscribed && !this.isPaused && this.track) {
-                    this._syncLyrics();
-                }
-            };
-            audioStream.on('data', dataHandler);
-            audioStream.once('close', () => {
-                audioStream.off('data', dataHandler);
-            });
-            audioStream.once('end', () => {
-                audioStream.off('data', dataHandler);
-            });
+        this.connection.on('stuck', () => {
+            if (this.destroying)
+                return;
+            logger('warn', 'Player', `Voice library detected stuck stream for guild ${this.guildId}`);
         });
         if (this.nodelink.voiceRelay?.attach) {
             this.nodelink.voiceRelay.attach(this.connection, this.guildId);
@@ -262,6 +255,7 @@ export class Player {
     _onConn(state) {
         if (this.destroying)
             return;
+        const previousStatus = this.connStatus;
         this.connStatus = state.status;
         if (state.status === 'connected') {
             logger('info', 'Player', `Voice connection established for guild ${this.guildId} in session ${this.session.id}`);
@@ -275,17 +269,31 @@ export class Player {
                 logger('debug', 'Player', `Unpaused track on reconnection for guild ${this.guildId}`);
             }
         }
-        else if (state.status === 'reconnecting') {
-            logger('info', 'Player', `Voice connection is reconnecting for guild ${this.guildId}`);
-            this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
-                guildId: this.guildId,
-                voice: { ...this.voice }
-            });
+        else if (state.status === 'connecting') {
+            if (previousStatus !== 'disconnected' || this.connection?.audioStream) {
+                logger('info', 'Player', `Voice connection is reconnecting for guild ${this.guildId}`);
+                this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
+                    guildId: this.guildId,
+                    voice: { ...this.voice }
+                });
+            }
         }
         else if (state.status === 'disconnected') {
+            const reason = state.reason;
+            if (reason === 'reconnect_circuit_breaker') {
+                logger('error', 'Player', `Voice connection circuit breaker triggered for guild ${this.guildId}. Too many reconnection attempts.`);
+                this.emitEvent(GatewayEvents.TRACK_EXCEPTION, {
+                    track: this.track,
+                    exception: {
+                        message: 'Voice reconnection circuit breaker triggered',
+                        severity: 'fault',
+                        cause: 'RECONNECT_CIRCUIT_BREAKER'
+                    }
+                });
+            }
             this.emitEvent(GatewayEvents.WEBSOCKET_CLOSED, {
                 code: state.code,
-                reason: state.closeReason,
+                reason: state.closeReason ?? state.reason,
                 byRemote: true
             });
         }
@@ -368,12 +376,13 @@ export class Player {
         else if (state.status === 'playing' &&
             this.track &&
             !this._isSeeking &&
-            (['requested', 'reconnected', 'seamless_bridge'].includes(state.reason ?? '') ||
+            (['requested', 'reconnected', 'unpaused'].includes(state.reason ?? '') ||
                 this._pendingTrackStartFade)) {
             const wasResuming = this._isResuming;
             this._isResuming = false;
             this.isPaused = false;
-            if (wasResuming && state.reason !== 'seamless_bridge') {
+            this._lastStreamDataTime = Date.now();
+            if (wasResuming) {
                 this._fading('trackEndSchedule', {
                     startPosition: this._pausedAtPosition ?? this._realPosition()
                 });
@@ -386,8 +395,15 @@ export class Player {
                 this._emitTrackStart().catch((err) => this._onError(err));
             }
         }
-        else if (state.status === 'paused') {
+        else if (state.status === 'idle' && state.reason === 'paused') {
             this.isPaused = true;
+        }
+        else if (state.status === 'idle' && state.reason === 'reconnecting') {
+            logger('info', 'Player', `Voice library reports reconnecting for guild ${this.guildId}`);
+            this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
+                guildId: this.guildId,
+                voice: { ...this.voice }
+            });
         }
     }
     /**
@@ -502,14 +518,17 @@ export class Player {
         catch {
             // Ignore cleanup errors
         }
+        if (audioStream.destroyed) {
+            if (conn)
+                conn.audioStream = null;
+            return;
+        }
         try {
             audioStream.destroy?.();
         }
         catch (err) {
             logger('debug', 'Player', `Failed to destroy audio stream during ${context} for guild ${this.guildId}: ${err?.message ?? String(err)}`);
         }
-        if (conn)
-            conn.audioStream = null;
     }
     /**
      * Optionally runs forced GC after finish for leak diagnostics.
@@ -743,7 +762,8 @@ export class Player {
         const position = this._realPosition();
         if (this.sponsorBlock.enabled && this.track) {
             // Periodic log to verify position and sb state
-            if (Math.abs(position - this._lastPosition) > 1000 || this._lastPosition === 0) {
+            if (Math.abs(position - this._lastPosition) > 1000 ||
+                this._lastPosition === 0) {
                 logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Current position: ${Math.round(position)}ms, Segments: ${this.sponsorBlock.segments.length}, LastSkipped: ${this.sponsorBlock.lastSkippedUuid}`);
             }
         }
@@ -803,8 +823,7 @@ export class Player {
                         this._resetTrack();
                         return false;
                     }
-                    if (this.stuckRecoveryCount >=
-                        Player.MAX_STUCK_RECOVERY_ATTEMPTS) {
+                    if (this.stuckRecoveryCount >= Player.MAX_STUCK_RECOVERY_ATTEMPTS) {
                         logger('error', 'Player', `Player for guild ${this.guildId} exceeded max recovery attempts (${Player.MAX_STUCK_RECOVERY_ATTEMPTS}). Stopping track.`);
                         this.emitEvent(GatewayEvents.TRACK_STUCK, {
                             guildId: this.guildId,
@@ -828,6 +847,7 @@ export class Player {
                     });
                     this._isRecovering = true;
                     this.stuckRecoveryCount++;
+                    this._positionAtRecoveryStart = position;
                     this.seek(this._lastPosition, this.track.endTime, true)
                         .then((success) => {
                         if (success) {
@@ -865,8 +885,12 @@ export class Player {
         }
         if (position !== this._lastPosition) {
             this._lastStreamDataTime = Date.now();
-            if (this.stuckRecoveryCount > 0)
-                this.stuckRecoveryCount = 0;
+            if (this.stuckRecoveryCount > 0) {
+                const meaningfulAdvance = 2000;
+                if (position - this._positionAtRecoveryStart >= meaningfulAdvance) {
+                    this.stuckRecoveryCount = 0;
+                }
+            }
         }
         this._lastPosition = position;
         this._syncLyrics();
@@ -913,7 +937,9 @@ export class Player {
                 time: Date.now(),
                 position,
                 connected: this.connStatus === 'connected',
-                ping: this.connection.ping ?? 0
+                ping: this.connection && this.connection.ping >= 0
+                    ? this.connection.ping
+                    : 0
             }
         }));
         return true;
@@ -989,7 +1015,9 @@ export class Player {
                 const { fetchSponsorBlockSegments } = await import("../utils.js");
                 fetchSponsorBlockSegments(videoId, this.sponsorBlock.categories, this.sponsorBlock.actionTypes, sbConfig?.api)
                     .then((segments) => {
-                    if (this.destroying || !this.track || this.track.info.identifier !== videoId) {
+                    if (this.destroying ||
+                        !this.track ||
+                        this.track.info.identifier !== videoId) {
                         logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Ignoring fetched segments for ${videoId} (track changed or player destroyed)`);
                         return;
                     }
@@ -1720,6 +1748,9 @@ export class Player {
                 this.connection.channelId = this.voice.channelId;
             }
             this.connection?.voiceStateUpdate({ session_id: this.voice.sessionId });
+            if (force && this.connection?.voiceServer) {
+                this.connection.voiceServer = null;
+            }
             this.connection?.voiceServerUpdate({
                 token: this.voice.token,
                 endpoint: this.voice.endpoint
@@ -2092,7 +2123,9 @@ export class Player {
                 time: Date.now(),
                 position: this._realPosition(),
                 connected: this.connStatus === 'connected',
-                ping: this.connection?.ping ?? 0
+                ping: this.connection && this.connection.ping >= 0
+                    ? this.connection.ping
+                    : 0
             },
             voice: { ...this.voice }
         };

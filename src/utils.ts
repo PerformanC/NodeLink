@@ -43,7 +43,7 @@ import type {
 
 declare const __BUILD_GIT_INFO__: GitInfo | undefined
 
-const isBun = typeof process !== "undefined" && process.versions?.bun;
+const isBun = typeof process !== 'undefined' && process.versions?.bun
 
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
@@ -1679,8 +1679,12 @@ async function makeRequest(
   // Note: bun v1.3.12, crashes with "authority" argument must be a type of string, object or URL. received type Number (825110816)
   // Crashes the source worker ^^, could be related to monochrome's request or anything else that uses http/2
   // UPDATE: Bun v1.3.13 has fixed this crash, since it was released today as this commit, i will be checking the version but can be removed later.
-  if (isBun && process.versions.bun.localeCompare('1.3.13', undefined, { numeric: true }) < 0) {
-    return http1makeRequest(urlString, options);
+  if (
+    isBun &&
+    process.versions.bun.localeCompare('1.3.13', undefined, { numeric: true }) <
+      0
+  ) {
+    return http1makeRequest(urlString, options)
   }
 
   if (options.proxy) {
@@ -2313,7 +2317,11 @@ async function fetchSponsorBlockSegments(
 
   const url = `${apiBase.replace(/\/+$/, '')}/api/skipSegments/${prefix}?${params.toString()}`
 
-  logger('debug', 'SponsorBlock', `Fetching segments for video ${videoId} (prefix: ${prefix}) from ${url}`)
+  logger(
+    'debug',
+    'SponsorBlock',
+    `Fetching segments for video ${videoId} (prefix: ${prefix}) from ${url}`
+  )
 
   try {
     const startTime = Date.now()
@@ -2321,25 +2329,41 @@ async function fetchSponsorBlockSegments(
     const duration = Date.now() - startTime
 
     if (result.statusCode !== 200) {
-      logger('warn', 'SponsorBlock', `API returned status ${result.statusCode} for video ${videoId} after ${duration}ms`)
+      logger(
+        'warn',
+        'SponsorBlock',
+        `API returned status ${result.statusCode} for video ${videoId} after ${duration}ms`
+      )
       return []
     }
 
     if (!Array.isArray(result.body)) {
-      logger('debug', 'SponsorBlock', `No segments found for prefix ${prefix} (Status: ${result.statusCode}, Duration: ${duration}ms)`)
+      logger(
+        'debug',
+        'SponsorBlock',
+        `No segments found for prefix ${prefix} (Status: ${result.statusCode}, Duration: ${duration}ms)`
+      )
       return []
     }
 
-    const videoMatch = (result.body as Array<{ videoID: string; segments: any[] }>).find(
-      (entry) => entry.videoID === videoId
-    )
+    const videoMatch = (
+      result.body as Array<{ videoID: string; segments: any[] }>
+    ).find((entry) => entry.videoID === videoId)
 
     if (!videoMatch?.segments) {
-      logger('debug', 'SponsorBlock', `No exact match for video ${videoId} in prefix results (Results: ${result.body.length}, Duration: ${duration}ms)`)
+      logger(
+        'debug',
+        'SponsorBlock',
+        `No exact match for video ${videoId} in prefix results (Results: ${result.body.length}, Duration: ${duration}ms)`
+      )
       return []
     }
 
-    logger('debug', 'SponsorBlock', `Successfully loaded ${videoMatch.segments.length} segments for video ${videoId} in ${duration}ms`)
+    logger(
+      'debug',
+      'SponsorBlock',
+      `Successfully loaded ${videoMatch.segments.length} segments for video ${videoId} in ${duration}ms`
+    )
 
     return videoMatch.segments.map((s) => ({
       uuid: s.UUID,
@@ -2353,7 +2377,12 @@ async function fetchSponsorBlockSegments(
       description: s.description || ''
     }))
   } catch (error) {
-    logger('warn', 'SponsorBlock', `Failed to fetch segments for video ${videoId}:`, error)
+    logger(
+      'warn',
+      'SponsorBlock',
+      `Failed to fetch segments for video ${videoId}:`,
+      error
+    )
     return []
   }
 }

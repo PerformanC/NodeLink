@@ -124,6 +124,19 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
       : null
   }
 
+  public setAGCEnabled(enabled: boolean): void {
+    if (enabled && !this.agc) {
+      ;(this as unknown as { agc: LoudnessNormalizer | null }).agc =
+        new LoudnessNormalizer({
+          sampleRate: this.sampleRate,
+          channels: this.channels,
+          targetLoudness: -14
+        })
+    } else if (!enabled && this.agc) {
+      ;(this as unknown as { agc: LoudnessNormalizer | null }).agc = null
+    }
+  }
+
   private _getFadeCurveValue(progress: number): number {
     const clamped = Math.min(1, Math.max(0, progress))
     switch (this.fadeCurve) {

@@ -47,7 +47,12 @@ import type {
   WorkerNodeLink,
   WorkerPlayer
 } from '../typings/workers/worker.types.ts'
-import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from '../utils.ts'
+import {
+  applyEnvOverrides,
+  cleanupHttpAgents,
+  initLogger,
+  logger
+} from '../utils.ts'
 import { createVoiceRelay } from '../voice/voiceRelay.ts'
 import {
   createHeadQueue,

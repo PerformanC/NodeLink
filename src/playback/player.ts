@@ -150,6 +150,7 @@ export class Player {
   private _isStopping = false
   private _pausedAtPosition: number | undefined = undefined
   public stuckRecoveryCount = 0
+  private _positionAtRecoveryStart = 0
   private static MAX_STUCK_RECOVERY_ATTEMPTS = 3
 
   constructor(options: PlayerOptions) {
@@ -331,6 +332,8 @@ export class Player {
       channelId: this.voice.channelId || this.guildId,
       encryption: this.nodelink.options?.audio?.encryption ?? null
     })
+    this.connection.stuckTimeout =
+      Math.max(this.nodelink.options.trackStuckThresholdMs, 30000) + 5000
     this.connection.on(
       'stateChange',
       (_: VoiceConnectionState | null, s: VoiceConnectionState) => {
@@ -356,20 +359,13 @@ export class Player {
       )
       this._onError(err)
     })
-    this.connection.on('audioStream', (audioStream: VoiceAudioStream) => {
-      const dataHandler = () => {
-        this._lastStreamDataTime = Date.now()
-        if (this.isLyricsSubscribed && !this.isPaused && this.track) {
-          this._syncLyrics()
-        }
-      }
-      audioStream.on('data', dataHandler)
-      audioStream.once('close', () => {
-        audioStream.off('data', dataHandler)
-      })
-      audioStream.once('end', () => {
-        audioStream.off('data', dataHandler)
-      })
+    this.connection.on('stuck', () => {
+      if (this.destroying) return
+      logger(
+        'warn',
+        'Player',
+        `Voice library detected stuck stream for guild ${this.guildId}`
+      )
     })
 
     if (this.nodelink.voiceRelay?.attach) {
@@ -382,6 +378,7 @@ export class Player {
    */
   private _onConn(state: VoiceConnectionState): void {
     if (this.destroying) return
+    const previousStatus = this.connStatus
     this.connStatus = state.status
     if (state.status === 'connected') {
       logger(
@@ -402,20 +399,38 @@ export class Player {
           `Unpaused track on reconnection for guild ${this.guildId}`
         )
       }
-    } else if (state.status === 'reconnecting') {
-      logger(
-        'info',
-        'Player',
-        `Voice connection is reconnecting for guild ${this.guildId}`
-      )
-      this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
-        guildId: this.guildId,
-        voice: { ...this.voice }
-      })
+    } else if (state.status === 'connecting') {
+      if (previousStatus !== 'disconnected' || this.connection?.audioStream) {
+        logger(
+          'info',
+          'Player',
+          `Voice connection is reconnecting for guild ${this.guildId}`
+        )
+        this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
+          guildId: this.guildId,
+          voice: { ...this.voice }
+        })
+      }
     } else if (state.status === 'disconnected') {
+      const reason = state.reason
+      if (reason === 'reconnect_circuit_breaker') {
+        logger(
+          'error',
+          'Player',
+          `Voice connection circuit breaker triggered for guild ${this.guildId}. Too many reconnection attempts.`
+        )
+        this.emitEvent(GatewayEvents.TRACK_EXCEPTION, {
+          track: this.track,
+          exception: {
+            message: 'Voice reconnection circuit breaker triggered',
+            severity: 'fault',
+            cause: 'RECONNECT_CIRCUIT_BREAKER'
+          }
+        })
+      }
       this.emitEvent(GatewayEvents.WEBSOCKET_CLOSED, {
         code: state.code,
-        reason: state.closeReason,
+        reason: state.closeReason ?? state.reason,
         byRemote: true
       })
     } else if (state.status === 'destroyed') {
@@ -550,16 +565,15 @@ export class Player {
       state.status === 'playing' &&
       this.track &&
       !this._isSeeking &&
-      (['requested', 'reconnected', 'seamless_bridge'].includes(
-        state.reason ?? ''
-      ) ||
+      (['requested', 'reconnected', 'unpaused'].includes(state.reason ?? '') ||
         this._pendingTrackStartFade)
     ) {
       const wasResuming = this._isResuming
       this._isResuming = false
       this.isPaused = false
+      this._lastStreamDataTime = Date.now()
 
-      if (wasResuming && state.reason !== 'seamless_bridge') {
+      if (wasResuming) {
         this._fading('trackEndSchedule', {
           startPosition: this._pausedAtPosition ?? this._realPosition()
         })
@@ -570,8 +584,18 @@ export class Player {
         this._fading('trackStart')
         this._emitTrackStart().catch((err) => this._onError(err))
       }
-    } else if (state.status === 'paused') {
+    } else if (state.status === 'idle' && state.reason === 'paused') {
       this.isPaused = true
+    } else if (state.status === 'idle' && state.reason === 'reconnecting') {
+      logger(
+        'info',
+        'Player',
+        `Voice library reports reconnecting for guild ${this.guildId}`
+      )
+      this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
+        guildId: this.guildId,
+        voice: { ...this.voice }
+      })
     }
   }
 
@@ -741,6 +765,11 @@ export class Player {
       // Ignore cleanup errors
     }
 
+    if (audioStream.destroyed) {
+      if (conn) conn.audioStream = null
+      return
+    }
+
     try {
       audioStream.destroy?.()
     } catch (err) {
@@ -752,8 +781,6 @@ export class Player {
         }`
       )
     }
-
-    if (conn) conn.audioStream = null
   }
 
   /**
@@ -1086,8 +1113,15 @@ export class Player {
 
     if (this.sponsorBlock.enabled && this.track) {
       // Periodic log to verify position and sb state
-      if (Math.abs(position - this._lastPosition) > 1000 || this._lastPosition === 0) {
-         logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Current position: ${Math.round(position)}ms, Segments: ${this.sponsorBlock.segments.length}, LastSkipped: ${this.sponsorBlock.lastSkippedUuid}`)
+      if (
+        Math.abs(position - this._lastPosition) > 1000 ||
+        this._lastPosition === 0
+      ) {
+        logger(
+          'debug',
+          'Player',
+          `[SponsorBlock][${this.guildId}] Current position: ${Math.round(position)}ms, Segments: ${this.sponsorBlock.segments.length}, LastSkipped: ${this.sponsorBlock.lastSkippedUuid}`
+        )
       }
     }
 
@@ -1178,10 +1212,7 @@ export class Player {
             return false
           }
 
-          if (
-            this.stuckRecoveryCount >=
-            Player.MAX_STUCK_RECOVERY_ATTEMPTS
-          ) {
+          if (this.stuckRecoveryCount >= Player.MAX_STUCK_RECOVERY_ATTEMPTS) {
             logger(
               'error',
               'Player',
@@ -1216,6 +1247,7 @@ export class Player {
           )
           this._isRecovering = true
           this.stuckRecoveryCount++
+          this._positionAtRecoveryStart = position
 
           this.seek(this._lastPosition, this.track.endTime, true)
             .then((success) => {
@@ -1263,10 +1295,15 @@ export class Player {
       }
     }
 
-  if (position !== this._lastPosition) {
-    this._lastStreamDataTime = Date.now()
-    if (this.stuckRecoveryCount > 0) this.stuckRecoveryCount = 0
-  }
+    if (position !== this._lastPosition) {
+      this._lastStreamDataTime = Date.now()
+      if (this.stuckRecoveryCount > 0) {
+        const meaningfulAdvance = 2000
+        if (position - this._positionAtRecoveryStart >= meaningfulAdvance) {
+          this.stuckRecoveryCount = 0
+        }
+      }
+    }
 
     this._lastPosition = position
     this._syncLyrics()
@@ -1299,17 +1336,30 @@ export class Player {
         this.seek(segment.end)
           .then((success) => {
             if (success) {
-              logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Successfully jumped to ${segment.end}ms`)
+              logger(
+                'debug',
+                'Player',
+                `[SponsorBlock][${this.guildId}] Successfully jumped to ${segment.end}ms`
+              )
               this.emitEvent(GatewayEvents.SPONSORBLOCK_SEGMENT_SKIPPED, {
                 segment,
                 skippedMs
               })
             } else {
-              logger('warn', 'Player', `[SponsorBlock][${this.guildId}] Failed to jump to ${segment.end}ms for segment ${segment.uuid}`)
+              logger(
+                'warn',
+                'Player',
+                `[SponsorBlock][${this.guildId}] Failed to jump to ${segment.end}ms for segment ${segment.uuid}`
+              )
             }
           })
           .catch((err) => {
-            logger('error', 'Player', `[SponsorBlock][${this.guildId}] Error while seeking to segment end:`, err)
+            logger(
+              'error',
+              'Player',
+              `[SponsorBlock][${this.guildId}] Error while seeking to segment end:`,
+              err
+            )
           })
         return true
       }
@@ -1325,7 +1375,10 @@ export class Player {
           time: Date.now(),
           position,
           connected: this.connStatus === 'connected',
-          ping: this.connection.ping ?? 0
+          ping:
+            this.connection && this.connection.ping >= 0
+              ? this.connection.ping
+              : 0
         }
       })
     )
@@ -1440,7 +1493,11 @@ export class Player {
       const sbConfig = this.nodelink.options.sponsorblock
 
       if (this.sponsorBlock.enabled) {
-        logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Initiating segment fetch for video ${videoId}`)
+        logger(
+          'debug',
+          'Player',
+          `[SponsorBlock][${this.guildId}] Initiating segment fetch for video ${videoId}`
+        )
         const { fetchSponsorBlockSegments } = await import('../utils.ts')
         fetchSponsorBlockSegments(
           videoId,
@@ -1449,12 +1506,24 @@ export class Player {
           sbConfig?.api
         )
           .then((segments) => {
-            if (this.destroying || !this.track || this.track.info.identifier !== videoId) {
-              logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Ignoring fetched segments for ${videoId} (track changed or player destroyed)`)
+            if (
+              this.destroying ||
+              !this.track ||
+              this.track.info.identifier !== videoId
+            ) {
+              logger(
+                'debug',
+                'Player',
+                `[SponsorBlock][${this.guildId}] Ignoring fetched segments for ${videoId} (track changed or player destroyed)`
+              )
               return
             }
             this.sponsorBlock.segments = segments
-            logger('info', 'Player', `[SponsorBlock][${this.guildId}] Applied ${segments.length} segments for video ${videoId}`)
+            logger(
+              'info',
+              'Player',
+              `[SponsorBlock][${this.guildId}] Applied ${segments.length} segments for video ${videoId}`
+            )
             if (segments.length > 0) {
               this.emitEvent(GatewayEvents.SPONSORBLOCK_SEGMENTS_LOADED, {
                 segments
@@ -1465,10 +1534,19 @@ export class Player {
             }
           })
           .catch((err) => {
-            logger('error', 'Player', `[SponsorBlock][${this.guildId}] Error fetching segments for ${videoId}:`, err)
+            logger(
+              'error',
+              'Player',
+              `[SponsorBlock][${this.guildId}] Error fetching segments for ${videoId}:`,
+              err
+            )
           })
       } else {
-        logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Auto-skip disabled, skipping segment fetch for ${videoId}`)
+        logger(
+          'debug',
+          'Player',
+          `[SponsorBlock][${this.guildId}] Auto-skip disabled, skipping segment fetch for ${videoId}`
+        )
       }
     }
 
@@ -2482,6 +2560,9 @@ export class Player {
         this.connection.channelId = this.voice.channelId
       }
       this.connection?.voiceStateUpdate({ session_id: this.voice.sessionId })
+      if (force && this.connection?.voiceServer) {
+        this.connection.voiceServer = null
+      }
       this.connection?.voiceServerUpdate({
         token: this.voice.token,
         endpoint: this.voice.endpoint
@@ -2750,7 +2831,8 @@ export class Player {
       Omit<PlayerSponsorBlockState, 'segments' | 'lastSkippedUuid'>
     >
   ): void {
-    if (updates.enabled !== undefined) this.sponsorBlock.enabled = updates.enabled
+    if (updates.enabled !== undefined)
+      this.sponsorBlock.enabled = updates.enabled
     if (updates.categories !== undefined)
       this.sponsorBlock.categories = updates.categories
     if (updates.actionTypes !== undefined)
@@ -2956,7 +3038,10 @@ export class Player {
         time: Date.now(),
         position: this._realPosition(),
         connected: this.connStatus === 'connected',
-        ping: this.connection?.ping ?? 0
+        ping:
+          this.connection && this.connection.ping >= 0
+            ? this.connection.ping
+            : 0
       },
       voice: { ...this.voice }
     }

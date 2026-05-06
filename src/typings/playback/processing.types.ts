@@ -50,6 +50,7 @@ export interface IVolumeTransformer extends Transform {
   readonly channels: number
   setVolume(volume: number): void
   process(chunk: Buffer): Buffer
+  setAGCEnabled?(enabled: boolean): void
 }
 
 /**

@@ -603,6 +603,14 @@ class BaseAudioResource {
         getEffectiveRate?: () => number
         getRMS?: () => number
         isSilent?: () => boolean
+        setFadeVolume?: (volume: number) => void
+        fadeTo?: (volume: number, durationMs: number, curve?: string) => void
+        tapeTo?: (
+          durationMs: number,
+          type: 'start' | 'stop',
+          curve?: string
+        ) => void
+        setLoudnessNormalizer?: (enabled: boolean) => void
       }
     voiceStream.setVolume = (volume: number) => this.setVolume(volume)
     voiceStream.setFilters = (filters: FiltersState) => this.setFilters(filters)
@@ -616,6 +624,16 @@ class BaseAudioResource {
     voiceStream.getEffectiveRate = () => this.getEffectiveRate()
     voiceStream.getRMS = () => this.getRMS()
     voiceStream.isSilent = () => this.isSilent()
+    voiceStream.setFadeVolume = (volume: number) => this.setFadeVolume(volume)
+    voiceStream.fadeTo = (volume: number, durationMs: number, curve?: string) =>
+      this.fadeTo(volume, durationMs, curve)
+    voiceStream.tapeTo = (
+      durationMs: number,
+      type: 'start' | 'stop',
+      curve?: string
+    ) => this.tapeTo(durationMs, type, curve)
+    voiceStream.setLoudnessNormalizer = (enabled: boolean) =>
+      this.setLoudnessNormalizer(enabled)
     this.stream = voiceStream
   }
 
@@ -703,6 +721,10 @@ class BaseAudioResource {
   checkScratchEffectCompleted(): boolean {
     return false
   }
+
+  tapeTo(_durationMs: number, _type: 'start' | 'stop', _curve?: string): void {}
+
+  setLoudnessNormalizer(_enabled: boolean): void {}
 
   setVolume(volume: number): void {
     if (!this.pipes) return
@@ -2694,7 +2716,11 @@ class StreamAudioResource extends BaseAudioResource {
     return flowController?.checkScratchEffectCompleted() ?? false
   }
 
-  tapeTo(durationMs: number, type: 'start' | 'stop', curve?: string): void {
+  override tapeTo(
+    durationMs: number,
+    type: 'start' | 'stop',
+    curve?: string
+  ): void {
     if (!this.pipes) return
 
     const flowController = this.pipes.find(
@@ -2716,6 +2742,25 @@ class StreamAudioResource extends BaseAudioResource {
     ) as FlowController | undefined
     if (flowController) {
       flowController.scratchTo(durationMs, style)
+    }
+  }
+
+  override setLoudnessNormalizer(enabled: boolean): void {
+    if (!this.pipes) return
+
+    const volumeTransformer = this.pipes.find(
+      (p) => p instanceof VolumeTransformer
+    ) as VolumeTransformer | undefined
+    if (volumeTransformer) {
+      volumeTransformer.setAGCEnabled(enabled)
+      return
+    }
+
+    const flowController = this.pipes.find(
+      (p) => p instanceof FlowController
+    ) as FlowController | undefined
+    if (flowController) {
+      flowController.setLoudnessNormalizer(enabled)
     }
   }
 
