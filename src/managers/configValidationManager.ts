@@ -55,8 +55,11 @@ const VALID_METRICS_AUTH_TYPES = new Set(['Bearer', 'Basic'])
 
 export default class ConfigValidationManager {
   private warnings: ValidationWarning[] = []
+  private options: NodelinkConfig
 
-  constructor(private options: NodelinkConfig) {}
+  constructor(options: NodelinkConfig) {
+    this.options = options
+  }
 
   validate(): void {
     this.warnings = []

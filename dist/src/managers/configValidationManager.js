@@ -38,8 +38,8 @@ const VALID_ROUTE_STRATEGIES = new Set([
 ]);
 const VALID_METRICS_AUTH_TYPES = new Set(['Bearer', 'Basic']);
 export default class ConfigValidationManager {
-    options;
     warnings = [];
+    options;
     constructor(options) {
         this.options = options;
     }
