@@ -19,17 +19,6 @@ const OPUS_CTL = {
   DTX: 4016
 }
 
-const parsePositiveIntEnv = (key: string, fallback: number): number => {
-  const raw = process.env[key]
-  if (!raw) return fallback
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-const RING_SIZE = parsePositiveIntEnv(
-  'NODELINK_OPUS_ENCODER_RING_BYTES',
-  512 * 1024
-)
 let ACTIVE_LIB: OpusLibrary | null = null
 
 const _getLib = (): OpusLibrary => {
@@ -109,10 +98,7 @@ export class Encoder extends Transform {
   private lib: OpusLibrary
   private frameSize: number
   private frameBytes: number
-  private ring: Buffer | null
-  private swap: Buffer | null
-  private writePos: number
-  private readPos: number
+  private leftover: Buffer | null
 
   constructor({
     rate = 48000,
@@ -132,10 +118,7 @@ export class Encoder extends Transform {
     this.lib = lib
     this.frameSize = frameSize
     this.frameBytes = frameSize * channels * 2
-    this.ring = bufferPool.acquire(RING_SIZE)
-    this.swap = bufferPool.acquire(this.frameBytes)
-    this.writePos = 0
-    this.readPos = 0
+    this.leftover = null
   }
 
   override _transform(
@@ -147,68 +130,64 @@ export class Encoder extends Transform {
       cb()
       return
     }
-    if (!this.ring || !this.swap) {
+    if (!this.enc) {
       cb(new Error('Encoder destroyed.'))
       return
     }
 
-    let wp = this.writePos
-    let rp = this.readPos
-    const total = chunk.length
-    let remaining = total
+    let buf: Buffer
+    let pooledBuf: Buffer | null = null
 
-    while (remaining > 0) {
-      const space = RING_SIZE - wp
-      const canWrite = remaining < space ? remaining : space
-      chunk.copy(this.ring, wp, total - remaining, total - remaining + canWrite)
-      remaining -= canWrite
-      wp += canWrite
-      if (wp === RING_SIZE) wp = 0
+    if (this.leftover?.length) {
+      const totalLen = this.leftover.length + chunk.length
+      pooledBuf = bufferPool.acquire(totalLen)
+      this.leftover.copy(pooledBuf, 0)
+      chunk.copy(pooledBuf, this.leftover.length)
+      bufferPool.release(this.leftover)
+      this.leftover = null
+      buf = pooledBuf
+    } else {
+      buf = chunk
     }
 
-    while (true) {
-      const available = wp >= rp ? wp - rp : RING_SIZE - rp + wp
-      if (available < this.frameBytes) break
+    const frames = Math.floor(buf.length / this.frameBytes)
+    const consumed = frames * this.frameBytes
 
-      let frame: Buffer
-      const end = rp + this.frameBytes
-
-      if (end <= RING_SIZE) {
-        frame = this.ring.subarray(rp, end)
-      } else {
-        const first = RING_SIZE - rp
-        this.ring.copy(this.swap, 0, rp, RING_SIZE)
-        this.ring.copy(this.swap, first, 0, this.frameBytes - first)
-        frame = this.swap.subarray(0, this.frameBytes)
-      }
+    for (let i = 0; i < frames; i++) {
+      const off = i * this.frameBytes
+      const frame = buf.subarray(off, off + this.frameBytes)
 
       try {
-        if (!this.enc) throw new Error('Encoder not ready.')
+        const encoded =
+          this.lib.name === 'opusscript'
+            ? this.enc.encode(frame, this.frameSize)
+            : this.enc.encode(frame)
 
-        if (this.lib.name === 'opusscript') {
-          this.push(this.enc.encode(frame, this.frameSize))
-        } else {
-          this.push(this.enc.encode(frame))
-        }
+        this.push(encoded)
       } catch (e) {
-        this.writePos = wp
-        this.readPos = rp
+        this.leftover = null
+        if (pooledBuf) bufferPool.release(pooledBuf)
         cb(e instanceof Error ? e : new Error(String(e)))
         return
       }
-
-      rp += this.frameBytes
-      if (rp >= RING_SIZE) rp -= RING_SIZE
     }
 
-    this.writePos = wp
-    this.readPos = rp
+    if (consumed < buf.length) {
+      const remaining = buf.subarray(consumed)
+      this.leftover = bufferPool.acquire(remaining.length)
+      remaining.copy(this.leftover, 0, 0, remaining.length)
+    }
+
+    // Release the temporary concatenation buffer back to the pool
+    if (pooledBuf) bufferPool.release(pooledBuf)
     cb()
   }
 
   override _flush(cb: (err?: Error) => void): void {
-    this.writePos = 0
-    this.readPos = 0
+    if (this.leftover) {
+      bufferPool.release(this.leftover)
+      this.leftover = null
+    }
     cb()
   }
 
@@ -217,13 +196,9 @@ export class Encoder extends Transform {
       this.enc.delete()
     }
     this.enc = null
-    if (this.ring) {
-      bufferPool.release(this.ring)
-      this.ring = null
-    }
-    if (this.swap) {
-      bufferPool.release(this.swap)
-      this.swap = null
+    if (this.leftover) {
+      bufferPool.release(this.leftover)
+      this.leftover = null
     }
     cb(err)
   }

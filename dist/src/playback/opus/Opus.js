@@ -8,14 +8,6 @@ const OPUS_CTL = {
     PLP: 4014,
     DTX: 4016
 };
-const parsePositiveIntEnv = (key, fallback) => {
-    const raw = process.env[key];
-    if (!raw)
-        return fallback;
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-};
-const RING_SIZE = parsePositiveIntEnv('NODELINK_OPUS_ENCODER_RING_BYTES', 512 * 1024);
 let ACTIVE_LIB = null;
 const _getLib = () => {
     if (ACTIVE_LIB)
@@ -76,10 +68,7 @@ export class Encoder extends Transform {
     lib;
     frameSize;
     frameBytes;
-    ring;
-    swap;
-    writePos;
-    readPos;
+    leftover;
     constructor({ rate = 48000, channels = 2, frameSize = 960, application = 'audio' } = {}) {
         super({ readableObjectMode: true });
         const { instance, lib } = _createInstance(rate, channels, application);
@@ -87,75 +76,65 @@ export class Encoder extends Transform {
         this.lib = lib;
         this.frameSize = frameSize;
         this.frameBytes = frameSize * channels * 2;
-        this.ring = bufferPool.acquire(RING_SIZE);
-        this.swap = bufferPool.acquire(this.frameBytes);
-        this.writePos = 0;
-        this.readPos = 0;
+        this.leftover = null;
     }
     _transform(chunk, _encoding, cb) {
         if (!chunk?.length) {
             cb();
             return;
         }
-        if (!this.ring || !this.swap) {
+        if (!this.enc) {
             cb(new Error('Encoder destroyed.'));
             return;
         }
-        let wp = this.writePos;
-        let rp = this.readPos;
-        const total = chunk.length;
-        let remaining = total;
-        while (remaining > 0) {
-            const space = RING_SIZE - wp;
-            const canWrite = remaining < space ? remaining : space;
-            chunk.copy(this.ring, wp, total - remaining, total - remaining + canWrite);
-            remaining -= canWrite;
-            wp += canWrite;
-            if (wp === RING_SIZE)
-                wp = 0;
+        let buf;
+        let pooledBuf = null;
+        if (this.leftover?.length) {
+            const totalLen = this.leftover.length + chunk.length;
+            pooledBuf = bufferPool.acquire(totalLen);
+            this.leftover.copy(pooledBuf, 0);
+            chunk.copy(pooledBuf, this.leftover.length);
+            bufferPool.release(this.leftover);
+            this.leftover = null;
+            buf = pooledBuf;
         }
-        while (true) {
-            const available = wp >= rp ? wp - rp : RING_SIZE - rp + wp;
-            if (available < this.frameBytes)
-                break;
-            let frame;
-            const end = rp + this.frameBytes;
-            if (end <= RING_SIZE) {
-                frame = this.ring.subarray(rp, end);
-            }
-            else {
-                const first = RING_SIZE - rp;
-                this.ring.copy(this.swap, 0, rp, RING_SIZE);
-                this.ring.copy(this.swap, first, 0, this.frameBytes - first);
-                frame = this.swap.subarray(0, this.frameBytes);
-            }
+        else {
+            buf = chunk;
+        }
+        const frames = Math.floor(buf.length / this.frameBytes);
+        const consumed = frames * this.frameBytes;
+        for (let i = 0; i < frames; i++) {
+            const off = i * this.frameBytes;
+            const frame = buf.subarray(off, off + this.frameBytes);
             try {
-                if (!this.enc)
-                    throw new Error('Encoder not ready.');
-                if (this.lib.name === 'opusscript') {
-                    this.push(this.enc.encode(frame, this.frameSize));
-                }
-                else {
-                    this.push(this.enc.encode(frame));
-                }
+                const encoded = this.lib.name === 'opusscript'
+                    ? this.enc.encode(frame, this.frameSize)
+                    : this.enc.encode(frame);
+                this.push(encoded);
             }
             catch (e) {
-                this.writePos = wp;
-                this.readPos = rp;
+                this.leftover = null;
+                if (pooledBuf)
+                    bufferPool.release(pooledBuf);
                 cb(e instanceof Error ? e : new Error(String(e)));
                 return;
             }
-            rp += this.frameBytes;
-            if (rp >= RING_SIZE)
-                rp -= RING_SIZE;
         }
-        this.writePos = wp;
-        this.readPos = rp;
+        if (consumed < buf.length) {
+            const remaining = buf.subarray(consumed);
+            this.leftover = bufferPool.acquire(remaining.length);
+            remaining.copy(this.leftover, 0, 0, remaining.length);
+        }
+        // Release the temporary concatenation buffer back to the pool
+        if (pooledBuf)
+            bufferPool.release(pooledBuf);
         cb();
     }
     _flush(cb) {
-        this.writePos = 0;
-        this.readPos = 0;
+        if (this.leftover) {
+            bufferPool.release(this.leftover);
+            this.leftover = null;
+        }
         cb();
     }
     _destroy(err, cb) {
@@ -163,13 +142,9 @@ export class Encoder extends Transform {
             this.enc.delete();
         }
         this.enc = null;
-        if (this.ring) {
-            bufferPool.release(this.ring);
-            this.ring = null;
-        }
-        if (this.swap) {
-            bufferPool.release(this.swap);
-            this.swap = null;
+        if (this.leftover) {
+            bufferPool.release(this.leftover);
+            this.leftover = null;
         }
         cb(err);
     }
