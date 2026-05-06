@@ -488,8 +488,8 @@ export default {
             enabled: true
         },
         tiktok: {
-            enabled: true,
-        },
+            enabled: true
+        }
     },
     lyrics: {
         fallbackSource: 'genius',
@@ -532,7 +532,7 @@ export default {
     },
     audio: {
         quality: 'high', // high, medium, low, lowest
-        encryption: 'aead_aes256_gcm_rtpsize',
+        encryption: 'aead_xchacha20_poly1305_rtpsize', // aead_aes256_gcm_rtpsize or aead_xchacha20_poly1305_rtpsize
         resamplingQuality: 'best', // best, medium, fastest, zero order holder, linear
         loudnessNormalizer: false, // Enable/disable AGC globally
         lookaheadMs: 5, // Limiter lookahead buffer in milliseconds
