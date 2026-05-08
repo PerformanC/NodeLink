@@ -214,6 +214,9 @@ export default class HttpSource {
             let data = await http1makeRequest(url, {
                 method: 'HEAD',
                 headers: requestHeaders
+            }).catch((err) => {
+                logger('warn', 'HTTP Source', `HEAD request failed for URL: ${url} with error: ${err.message} - falling back to GET request (this is expected for some servers that do not support HEAD)`);
+                return { error: err };
             });
             const headContentType = headerToString(data.headers?.['content-type']);
             const headOk = !data.error &&
