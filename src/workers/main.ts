@@ -1099,13 +1099,14 @@ const sendProcessMessage = (
   }
 }
 
-const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, NODE_UNIQUE_ID } =
+const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, WORKER_CLUSTER_ID } =
   process.env as NodeJS.ProcessEnv & {
     EVENT_SOCKET_PATH?: string
     COMMAND_SOCKET_PATH?: string
-    NODE_UNIQUE_ID?: string
+    WORKER_CLUSTER_ID?: string
   }
 
+let WORKER_CLUSTER_ID_OVERRIDE = ''
 let eventSocket: net.Socket | null = null
 let eventSocketPath = EVENT_SOCKET_PATH
 let eventReconnectTimer: NodeJS.Timeout | null = null
@@ -1174,12 +1175,31 @@ const handleSocketDisconnect = (
   scheduleReconnect(socketType)
 }
 
+const sendEventHello = (): boolean => {
+  if (!eventSocket || eventSocket.destroyed) return false
+  const payload = v8.serialize({ pid: process.pid })
+  const header = Buffer.alloc(6)
+  header.writeUInt8(0, 0)
+  header.writeUInt8(0, 1)
+  header.writeUInt32BE(payload.length, 2)
+  try {
+    eventSocket.cork()
+    const okHeader = eventSocket.write(header)
+    const okPayload = eventSocket.write(payload)
+    eventSocket.uncork()
+    return okHeader && okPayload
+  } catch {
+    return false
+  }
+}
+
 const connectEventSocket = (): void => {
   if (!eventSocketPath) return
 
   const socket = net.createConnection(eventSocketPath, () => {
     eventSocket = socket
     clearReconnectTimer('event')
+    sendEventHello()
     logger('info', 'Worker', 'Connected to Master event socket')
   })
   socket.on('error', () => {
@@ -1694,7 +1714,7 @@ function startTimers(hibernating = false): void {
         elapsedMs > 0 ? (cpuUsage.user + cpuUsage.system) / 1000 / elapsedMs : 0
 
       const mem = process.memoryUsage()
-      const workerIdEnv = NODE_UNIQUE_ID
+      const resolvedClusterId = WORKER_CLUSTER_ID_OVERRIDE || WORKER_CLUSTER_ID
       const eluP50 = hndl.percentile(50) / 1e6
       const eluP95 = hndl.percentile(95) / 1e6
       const eluP99 = hndl.percentile(99) / 1e6
@@ -1710,7 +1730,7 @@ function startTimers(hibernating = false): void {
       }
 
       const stats = {
-        workerId: parseInt(workerIdEnv ?? '0', 10) + 1,
+        workerId: resolvedClusterId ? parseInt(resolvedClusterId, 10) : 0,
         isHibernating,
         players: localPlayers,
         playingPlayers: localPlayingPlayers,
@@ -2409,6 +2429,12 @@ process.on('message', (msg: unknown) => {
     ipcMessageTracker.trackReceived(message.type, message)
   }
 
+  if (message.type === 'clusterId') {
+    WORKER_CLUSTER_ID_OVERRIDE = String(
+      (message as { clusterId?: number }).clusterId ?? ''
+    )
+    return
+  }
   if (message.type === 'ping') {
     if (process.connected) {
       try {

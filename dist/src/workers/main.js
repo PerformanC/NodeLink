@@ -745,7 +745,8 @@ const sendProcessMessage = (payload, onError) => {
         return false;
     }
 };
-const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, NODE_UNIQUE_ID } = process.env;
+const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, WORKER_CLUSTER_ID } = process.env;
+let WORKER_CLUSTER_ID_OVERRIDE = '';
 let eventSocket = null;
 let eventSocketPath = EVENT_SOCKET_PATH;
 let eventReconnectTimer = null;
@@ -809,12 +810,32 @@ const handleSocketDisconnect = (socketType, socket) => {
     notifySocketDisconnected(socketType);
     scheduleReconnect(socketType);
 };
+const sendEventHello = () => {
+    if (!eventSocket || eventSocket.destroyed)
+        return false;
+    const payload = v8.serialize({ pid: process.pid });
+    const header = Buffer.alloc(6);
+    header.writeUInt8(0, 0);
+    header.writeUInt8(0, 1);
+    header.writeUInt32BE(payload.length, 2);
+    try {
+        eventSocket.cork();
+        const okHeader = eventSocket.write(header);
+        const okPayload = eventSocket.write(payload);
+        eventSocket.uncork();
+        return okHeader && okPayload;
+    }
+    catch {
+        return false;
+    }
+};
 const connectEventSocket = () => {
     if (!eventSocketPath)
         return;
     const socket = net.createConnection(eventSocketPath, () => {
         eventSocket = socket;
         clearReconnectTimer('event');
+        sendEventHello();
         logger('info', 'Worker', 'Connected to Master event socket');
     });
     socket.on('error', () => {
@@ -1244,7 +1265,7 @@ function startTimers(hibernating = false) {
             lastCpuUsage = process.cpuUsage();
             const nodelinkLoad = elapsedMs > 0 ? (cpuUsage.user + cpuUsage.system) / 1000 / elapsedMs : 0;
             const mem = process.memoryUsage();
-            const workerIdEnv = NODE_UNIQUE_ID;
+            const resolvedClusterId = WORKER_CLUSTER_ID_OVERRIDE || WORKER_CLUSTER_ID;
             const eluP50 = hndl.percentile(50) / 1e6;
             const eluP95 = hndl.percentile(95) / 1e6;
             const eluP99 = hndl.percentile(99) / 1e6;
@@ -1258,7 +1279,7 @@ function startTimers(hibernating = false) {
                 }
             }
             const stats = {
-                workerId: parseInt(workerIdEnv ?? '0', 10) + 1,
+                workerId: resolvedClusterId ? parseInt(resolvedClusterId, 10) : 0,
                 isHibernating,
                 players: localPlayers,
                 playingPlayers: localPlayingPlayers,
@@ -1771,6 +1792,10 @@ process.on('message', (msg) => {
     const message = msg;
     if (message.type) {
         ipcMessageTracker.trackReceived(message.type, message);
+    }
+    if (message.type === 'clusterId') {
+        WORKER_CLUSTER_ID_OVERRIDE = String(message.clusterId ?? '');
+        return;
     }
     if (message.type === 'ping') {
         if (process.connected) {
