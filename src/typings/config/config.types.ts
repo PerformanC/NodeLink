@@ -531,6 +531,12 @@ export interface MonochromeSourceConfig extends SourceConfigBase {
   streamingInstances?: string[]
 
   /**
+   * List of Qobuz proxy instances used as fallback for stream resolution.
+   * @remarks These endpoints expose `/api/get-music` and `/api/download-music` to resolve Qobuz tracks.
+   */
+  qobuzInstances?: string[]
+
+  /**
    * Preferred audio quality.
    * @remarks
    * - `HI_RES_LOSSLESS`: Highest available quality (FLAC Hi-Res).
