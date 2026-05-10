@@ -1327,7 +1327,10 @@ class AACDecoderStream extends Transform {
     this.ringBuffer.dispose()
     this.pendingChunks.length = 0
     if (this.decoder) this.decoder.free?.()
-    if (this.resampler) this.resampler.destroy?.()
+    if (this.resampler) {
+      this.resampler.destroy?.()
+      this.resampler = null
+    }
     super._destroy(err, cb)
   }
 
@@ -1572,7 +1575,10 @@ class AACDecoderStream extends Transform {
       } catch (_err) {}
     }
 
-    if (this.resampler) this.resampler.destroy?.()
+    if (this.resampler) {
+      this.resampler.destroy?.()
+      this.resampler = null
+    }
     if (this.decoder) this.decoder.destroy?.()
     callback()
   }
