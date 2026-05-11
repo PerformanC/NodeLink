@@ -358,4 +358,20 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
       callback(error as Error)
     }
   }
+
+  override _destroy(
+    _err: Error | null,
+    cb: (error?: Error | null) => void
+  ): void {
+    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+    ;(this as any).lookaheadBuffer = null
+    // biome-ignore lint/suspicious/noExplicitAny: checking runtime method existence
+    if (this.agc && typeof (this.agc as any).destroy === 'function') {
+      // biome-ignore lint/suspicious/noExplicitAny: calling dynamically-discovered destroy
+      ;(this.agc as any).destroy()
+    }
+    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release reference
+    ;(this as any).agc = null
+    cb(null)
+  }
 }

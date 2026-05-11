@@ -20,7 +20,7 @@ const parsePositiveIntEnv = (key: string, fallback: number): number => {
 }
 const BUFFER_SIZE = parsePositiveIntEnv(
   'NODELINK_WEBM_DEMUX_RING_BYTES',
-  2 * 1024 * 1024
+  512 * 1024
 )
 
 const TAGS: Readonly<Record<string, boolean>> = Object.freeze({

@@ -56,6 +56,12 @@ export default class FloatFifoBuffer {
     this._frames = 0
   }
 
+  public destroy(): void {
+    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+    ;(this as any)._buffer = null
+    this._frames = 0
+  }
+
   /**
    * Calculates the starting sample index.
    */

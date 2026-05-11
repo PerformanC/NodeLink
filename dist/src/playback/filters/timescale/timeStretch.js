@@ -66,6 +66,10 @@ export default class TimeStretch {
         this._inputPos = 0;
         this._prevOverlap = null;
     }
+    destroy() {
+        this._buffer.destroy();
+        this._prevOverlap = null;
+    }
     /**
      * Processes new audio samples.
      * @param samples - The input Float32Array of samples.

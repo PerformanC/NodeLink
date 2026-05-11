@@ -10,7 +10,7 @@ const parsePositiveIntEnv = (key, fallback) => {
     const parsed = Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
-const BUFFER_SIZE = parsePositiveIntEnv('NODELINK_WEBM_DEMUX_RING_BYTES', 2 * 1024 * 1024);
+const BUFFER_SIZE = parsePositiveIntEnv('NODELINK_WEBM_DEMUX_RING_BYTES', 512 * 1024);
 const TAGS = Object.freeze({
     '1a45dfa3': true,
     18538067: true,

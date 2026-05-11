@@ -270,4 +270,19 @@ export class VolumeTransformer extends Transform {
             callback(error);
         }
     }
+    _destroy(_err, cb) {
+        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+        ;
+        this.lookaheadBuffer = null;
+        // biome-ignore lint/suspicious/noExplicitAny: checking runtime method existence
+        if (this.agc && typeof this.agc.destroy === 'function') {
+            // biome-ignore lint/suspicious/noExplicitAny: calling dynamically-discovered destroy
+            ;
+            this.agc.destroy();
+        }
+        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release reference
+        ;
+        this.agc = null;
+        cb(null);
+    }
 }

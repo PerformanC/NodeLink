@@ -105,7 +105,7 @@ const parsePositiveIntEnv = (key: string, fallback: number): number => {
 
 const AAC_BUFFER_SIZE: number = parsePositiveIntEnv(
   'NODELINK_AAC_RING_BYTES',
-  2 * 1024 * 1024
+  512 * 1024
 )
 
 const AUDIO_CONSTANTS: AudioConstants = Object.freeze({
@@ -677,6 +677,7 @@ class BaseAudioResource {
       pipe.removeAllListeners?.()
     }
 
+    this.pipes.length = 0
     this.stream = null
     this.pipes = null
   }

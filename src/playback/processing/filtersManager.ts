@@ -289,4 +289,21 @@ export class FiltersManager extends Transform implements IFiltersManager {
     }
     return filters as FilterSettings
   }
+
+  override _destroy(
+    _err: Error | null,
+    cb: (error?: Error | null) => void
+  ): void {
+    for (const name in this.filterInstances) {
+      const instance = this.filterInstances[name]
+      // biome-ignore lint/suspicious/noExplicitAny: checking runtime method existence
+      if (instance && typeof (instance as any).destroy === 'function') {
+        // biome-ignore lint/suspicious/noExplicitAny: calling dynamically-discovered destroy
+        ;(instance as any).destroy()
+      }
+      delete this.filterInstances[name]
+    }
+    this.activeFilters = []
+    cb(null)
+  }
 }

@@ -37,6 +37,11 @@ class InterpDelayLine {
         this.buf.fill(0);
         this.w = 0;
     }
+    destroy() {
+        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+        ;
+        this.buf = null;
+    }
     write(x) {
         this.buf[this.w] = x;
         this.w = (this.w + 1) % this.buf.length;
@@ -336,5 +341,11 @@ export default class Phonograph extends AnimatableFilter {
         this.env = 0;
         this.agcGain = 1;
         return Buffer.alloc(0);
+    }
+    destroy() {
+        this.delay.destroy();
+        this.r1.destroy();
+        this.r2.destroy();
+        this.r3.destroy();
     }
 }

@@ -214,6 +214,7 @@ export interface AudioMixer {
     layersPCM: Map<string, { buffer: Buffer; volume: number }>
   ) => Buffer
   hasActiveLayers: () => boolean
+  destroy: () => this
   on: (
     event: 'mixStarted' | 'mixEnded' | 'mixError',
     listener: (data: {

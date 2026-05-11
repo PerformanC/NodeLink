@@ -267,4 +267,14 @@ export class AudioMixer extends Readable {
             this.removeLayer(id, reason);
         return ids.length;
     }
+    /**
+     * Destroys the mixer: clears all layers, removes all listeners,
+     * and ends the Readable stream.
+     */
+    destroy() {
+        this.clearLayers('DESTROYED');
+        this.removeAllListeners();
+        super.destroy();
+        return this;
+    }
 }

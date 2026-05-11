@@ -179,4 +179,10 @@ export default class Chorus extends AnimatableFilter {
 
     return Buffer.alloc(0)
   }
+
+  public destroy(): void {
+    for (const delay of this.delays) {
+      delay.destroy()
+    }
+  }
 }

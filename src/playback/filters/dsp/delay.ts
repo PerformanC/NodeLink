@@ -47,4 +47,9 @@ export default class DelayLine {
   public clear(): void {
     this.buffer.fill(0)
   }
+
+  public destroy(): void {
+    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+    ;(this as any).buffer = null
+  }
 }

@@ -174,4 +174,10 @@ export class FlowController extends Transform {
         }
         callback();
     }
+    _destroy(_err, cb) {
+        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+        ;
+        this.pendingBuffer = null;
+        cb(null);
+    }
 }

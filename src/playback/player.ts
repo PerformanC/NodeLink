@@ -2632,6 +2632,13 @@ export class Player {
     this.emitEvent(GatewayEvents.PLAYER_DESTROYED, {
       guildId: this.guildId
     })
+
+    if (this.audioMixer) {
+      this.audioMixer.destroy()
+      this.audioMixer = null
+    }
+    this._audioMixerInitPromise = null
+
     this._resetTrack()
     this.connStatus = 'destroyed'
     this.volumePercent = this.nodelink.options?.defaultVolume ?? 100

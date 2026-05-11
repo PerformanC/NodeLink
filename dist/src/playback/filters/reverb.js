@@ -51,6 +51,12 @@ class CombFilter {
         this.filterStore = 0;
         this.writeIndex = 0;
     }
+    destroy() {
+        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+        ;
+        this.buffer = null;
+        this.filterStore = 0;
+    }
 }
 /**
  * Applies a Freeverb/Schroeder-based reverb effect.
@@ -264,5 +270,21 @@ export default class Reverb extends AnimatableFilter {
         this.wetHPAccL = 0;
         this.wetHPAccR = 0;
         return Buffer.alloc(0);
+    }
+    destroy() {
+        for (const comb of [
+            ...this.combFiltersL,
+            ...this.combFiltersR,
+            ...this.customCombsL,
+            ...this.customCombsR
+        ]) {
+            comb.destroy();
+        }
+        this.combFiltersL = [];
+        this.combFiltersR = [];
+        this.customCombsL = [];
+        this.customCombsR = [];
+        this.allpassBuffersL = [];
+        this.allpassBuffersR = [];
     }
 }

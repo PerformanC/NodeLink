@@ -236,4 +236,13 @@ export class FlowController extends Transform {
 
     callback()
   }
+
+  override _destroy(
+    _err: Error | null,
+    cb: (error?: Error | null) => void
+  ): void {
+    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+    ;(this as any).pendingBuffer = null
+    cb(null)
+  }
 }

@@ -47,7 +47,7 @@ const parsePositiveIntEnv = (key, fallback) => {
     const parsed = Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
-const AAC_BUFFER_SIZE = parsePositiveIntEnv('NODELINK_AAC_RING_BYTES', 2 * 1024 * 1024);
+const AAC_BUFFER_SIZE = parsePositiveIntEnv('NODELINK_AAC_RING_BYTES', 512 * 1024);
 const AUDIO_CONSTANTS = Object.freeze({
     pcmFloatFactor: 32767,
     maxDecodesPerTick: 5,
@@ -420,6 +420,7 @@ class BaseAudioResource {
             pipe.destroy?.();
             pipe.removeAllListeners?.();
         }
+        this.pipes.length = 0;
         this.stream = null;
         this.pipes = null;
     }

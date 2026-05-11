@@ -125,7 +125,11 @@ export default class ShazamSource {
             if (!this.patterns.some((pattern) => pattern.test(url))) {
                 return { loadType: 'empty', data: {} };
             }
-            const { body, statusCode, error } = await http1makeRequest(url);
+            const { body, statusCode, error } = await http1makeRequest(url, {
+                headers: {
+                    "sec-ch-ua": "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\""
+                }
+            });
             if (error || statusCode !== 200) {
                 return { loadType: 'empty', data: {} };
             }

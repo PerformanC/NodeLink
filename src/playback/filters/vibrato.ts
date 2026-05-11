@@ -118,4 +118,9 @@ export default class Vibrato extends AnimatableFilter {
     this.lfo.phase = 0
     return Buffer.alloc(0)
   }
+
+  public destroy(): void {
+    this.leftDelay.destroy()
+    this.rightDelay.destroy()
+  }
 }

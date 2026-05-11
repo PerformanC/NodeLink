@@ -117,4 +117,8 @@ export default class Echo extends AnimatableFilter {
         this.delayLineR.clear();
         return Buffer.alloc(0);
     }
+    destroy() {
+        this.delayLineL.destroy();
+        this.delayLineR.destroy();
+    }
 }

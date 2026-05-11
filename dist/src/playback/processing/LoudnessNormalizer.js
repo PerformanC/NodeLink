@@ -214,4 +214,10 @@ export class LoudnessNormalizer {
         this._releaseAlpha = fround(Math.exp(-1 / (releaseTime * sr)));
         this._energyAlpha = fround(Math.exp(-1 / (shortTermTime * sr)));
     }
+    destroy() {
+        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+        ;
+        this._channelBuffer = null;
+        this.filters = [];
+    }
 }

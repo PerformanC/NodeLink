@@ -59,6 +59,12 @@ class CombFilter {
     this.filterStore = 0
     this.writeIndex = 0
   }
+
+  public destroy(): void {
+    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
+    ;(this as any).buffer = null
+    this.filterStore = 0
+  }
 }
 
 /**
@@ -364,5 +370,22 @@ export default class Reverb extends AnimatableFilter {
     this.wetHPAccR = 0
 
     return Buffer.alloc(0)
+  }
+
+  public destroy(): void {
+    for (const comb of [
+      ...this.combFiltersL,
+      ...this.combFiltersR,
+      ...this.customCombsL,
+      ...this.customCombsR
+    ]) {
+      comb.destroy()
+    }
+    this.combFiltersL = []
+    this.combFiltersR = []
+    this.customCombsL = []
+    this.customCombsR = []
+    this.allpassBuffersL = []
+    this.allpassBuffersR = []
   }
 }

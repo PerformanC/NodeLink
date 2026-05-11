@@ -156,4 +156,9 @@ export default class Chorus extends AnimatableFilter {
             lfos[3].phase = (3 * Math.PI) / 2;
         return Buffer.alloc(0);
     }
+    destroy() {
+        for (const delay of this.delays) {
+            delay.destroy();
+        }
+    }
 }

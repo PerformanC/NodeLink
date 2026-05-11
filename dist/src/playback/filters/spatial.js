@@ -91,4 +91,8 @@ export default class Spatial extends AnimatableFilter {
         this.rightDelay.clear();
         return Buffer.alloc(0);
     }
+    destroy() {
+        this.leftDelay.destroy();
+        this.rightDelay.destroy();
+    }
 }

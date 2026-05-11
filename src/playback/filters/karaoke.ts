@@ -377,4 +377,9 @@ export default class Karaoke extends AnimatableFilter {
     this._prevGain = MAX_OUTPUT_GAIN
     return Buffer.alloc(0)
   }
+
+  public destroy(): void {
+    this._bufL = null
+    this._bufR = null
+  }
 }

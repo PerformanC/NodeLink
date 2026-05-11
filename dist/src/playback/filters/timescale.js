@@ -217,4 +217,7 @@ export default class Timescale extends AnimatableFilter {
         this._reset();
         return floatToInt16Buffer(combined);
     }
+    destroy() {
+        this._timeStretch.destroy();
+    }
 }
