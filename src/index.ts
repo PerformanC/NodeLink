@@ -19,6 +19,7 @@ import {
   getVersion,
   initLogger,
   logger,
+  makeRequest,
   parseClient,
   verifyDiscordID
 } from './utils.ts'
@@ -598,6 +599,26 @@ class NodelinkServer extends EventEmitter {
       'Server',
       `git branch: ${this.gitInfo.branch}, commit: ${this.gitInfo.commit}, committed on: ${new Date(this.gitInfo.commitTime).toISOString()}`
     )
+
+    // global-http-proxy: log proxy and test connectivity at startup
+    const proxyCfg = options?.server?.httpProxy
+    if (proxyCfg?.enabled && proxyCfg.url) {
+      logger('info', 'Proxy', `HTTP proxy enabled: ${proxyCfg.url}`)
+      this._testProxyConnectivity(proxyCfg.url)
+    }
+  }
+
+  /** @internal */
+  private _testProxyConnectivity(proxyUrl: string): void {
+    makeRequest('http://connectivitycheck.gstatic.com/generate_204', {
+      proxy: { url: proxyUrl }
+    })
+      .then(() => {
+        logger('info', 'Proxy', `Connected successfully via ${proxyUrl}`)
+      })
+      .catch((err: Error) => {
+        logger('warn', 'Proxy', `Proxy connectivity check failed (${proxyUrl}): ${err.message}`)
+      })
   }
 
   /**

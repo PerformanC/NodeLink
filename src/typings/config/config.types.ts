@@ -32,6 +32,17 @@ export interface ServerConfig {
    * @experimental
    */
   useBunServer?: boolean
+
+  /**
+   * Global HTTP proxy for all outbound NodeLink requests.
+   * Supports http, https, and socks5 URLs.
+   */
+  httpProxy?: {
+    enabled: boolean
+    url: string
+    username?: string
+    password?: string
+  }
 }
 
 /**

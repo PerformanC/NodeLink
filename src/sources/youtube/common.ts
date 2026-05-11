@@ -3111,9 +3111,11 @@ export abstract class BaseClient {
    * @internal
    */
   _getQualityPriority(): Record<string, number[]> {
+    // 774 = Opus ~260-360 kbps (premium HQ, requires cookiePath)
+    // 141 = AAC 256 kbps (premium HQ fallback, requires cookiePath)
     return {
-      high: [251, 250, 140],
-      medium: [250, 140],
+      high: [774, 141, 251, 250, 140],
+      medium: [141, 251, 250, 140],
       low: [249, 250, 140],
       lowest: [249, 139]
     }

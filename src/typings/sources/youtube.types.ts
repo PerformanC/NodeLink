@@ -866,6 +866,13 @@ export interface YouTubeSourceConfig {
   resolveExternalLinks?: boolean
   /** When `true`, fetches channel information (avatar, subscriber count) during Holo resolution. */
   fetchChannelInfo?: boolean
+  /**
+   * Path to a Netscape-format cookies.txt file for YouTube.
+   * When provided, the cookies are parsed at startup and attached to every
+   * YouTube request, allowing access to age-restricted videos and reducing
+   * bot-detection friction when using a real account's cookies.
+   */
+  cookiePath?: string
   /** Allow additional unknown configuration keys for forward compatibility. */
   [key: string]: unknown
 }

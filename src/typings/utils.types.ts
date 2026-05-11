@@ -353,6 +353,17 @@ export interface NodelinkRuntime {
   routePlanner?: RoutePlannerRuntime
   /** Optional stats manager instance. */
   statsManager?: StatsManager
+  /** Global HTTP proxy server options. */
+  options?: {
+    server?: {
+      httpProxy?: {
+        enabled: boolean
+        url: string
+        username?: string
+        password?: string
+      }
+    }
+  }
 }
 
 /**
