@@ -153,7 +153,7 @@ export default class GoogleTTSSource {
     this.nodelink = nodelink
     this.config = this.getConfig()
     this.language = this.config.language ?? 'en-US'
-    this.searchTerms = ['gtts', 'speak']
+    this.searchTerms = ['gtts', 'speak', 'tts']
     this.baseUrl = 'https://translate.google.com'
     this.priority = 50
   }

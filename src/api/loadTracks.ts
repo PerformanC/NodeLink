@@ -99,6 +99,9 @@ function parseIdentifier(
     if (groups.source === 'search') {
       return { kind: 'unifiedSearch', query: groups.query }
     }
+    if (groups.source.toLowerCase() === 'isrc') {
+      return { kind: 'search', source: normalizeDefaultSearchSource(defaultSearchSource), query: groups.query }
+    }
     return { kind: 'search', source: groups.source, query: groups.query }
   }
 

@@ -630,7 +630,7 @@ export default class DeezerSource {
   /**
    * Search aliases handled by this source.
    */
-  public readonly searchTerms = ['dzsearch']
+  public readonly searchTerms = ['dzsearch', 'dzisrc']
 
   /**
    * Recommendation aliases handled by this source.

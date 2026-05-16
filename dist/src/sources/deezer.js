@@ -34,7 +34,7 @@ export default class DeezerSource {
     /**
      * Search aliases handled by this source.
      */
-    searchTerms = ['dzsearch'];
+    searchTerms = ['dzsearch', 'dzisrc'];
     /**
      * Recommendation aliases handled by this source.
      */

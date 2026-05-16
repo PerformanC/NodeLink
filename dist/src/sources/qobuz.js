@@ -54,7 +54,7 @@ export default class QobuzSource {
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.config = nodelink.options;
-        this.searchTerms = ['qbsearch'];
+        this.searchTerms = ['qbsearch', 'qbisrc'];
         this.recommendationTerm = ['qbrec'];
         this.patterns = [
             /https?:\/\/(?:www\.|play\.|open\.)?qobuz\.com\/(?:(?:[a-z]{2}-[a-z]{2}\/)?(track|album|playlist|artist)\/(?:.+?\/)?([a-zA-Z0-9]+)|(playlist)\/(\d+))/
