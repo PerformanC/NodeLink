@@ -474,7 +474,7 @@ class MonochromeSource implements SourceInstance {
       }
     }
 
-    // 3. Collection resolution (Album/Playlist) with exaustive pagination
+    // 3. Collection resolution (Album/Playlist) with exhaustive pagination
     const collectionMatch = url.match(/(album|playlist)\/([a-f0-9-]+|\d+)/)
     if (collectionMatch) {
       const type = collectionMatch[1] || ''
