@@ -420,6 +420,12 @@ export default {
       playlistLoadLimit: 100,
       albumLoadLimit: 100
     },
+    boomplay: {
+      enabled: true,
+      playlistLoadLimit: 100,
+      albumLoadLimit: 100,
+      cookie: '', // go to: https://www.boomplay.com -> devtools -> application -> storage -> cookies -> boomplay.com -> copy cookie header value and paste here (optional)
+    },
     tidal: {
       enabled: true,
       token: 'token_here', //manually | or "token_here" to get a token automatically, get from tidal web player devtools; using login google account
