@@ -208,7 +208,7 @@ export default class SongLinkSource {
      */
     async search(query, _sourceTerm, _searchType = 'track') {
         try {
-            const maxSearchRaw = this.nodelink.options.maxSearchResults;
+            const maxSearchRaw = this.nodelink.options.search.maxResults;
             const limit = typeof maxSearchRaw === 'number' && Number.isFinite(maxSearchRaw)
                 ? maxSearchRaw
                 : 10;

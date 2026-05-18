@@ -57,7 +57,7 @@ function getTrackStreamRuntime(nodelink) {
  * @returns Promise that resolves once the response has been written.
  */
 async function handler(nodelink, req, res, sendResponse, parsedUrl) {
-    if (!nodelink.options.enableTrackStreamEndpoint) {
+    if (!nodelink.options.api.enableTrackStreamEndpoint) {
         sendErrorResponse(req, res, 404, 'Not Found', 'The requested route was not found.', parsedUrl.pathname);
         return;
     }

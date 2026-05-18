@@ -136,7 +136,7 @@ export default class TidalSource {
             return this.getRecommendations(query);
         }
         try {
-            const limit = this.asNumber(this.nodelink.options.maxSearchResults) ?? 10;
+            const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10;
             const data = await this.getJson('search', {
                 query,
                 limit,

@@ -1,3 +1,4 @@
+import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import { logger } from '../utils.ts'
 
 /**
@@ -21,7 +22,7 @@ interface RoutePlannerIpBlockConfig {
 interface RoutePlannerConfig {
   strategy?: RoutePlannerStrategy | string
   bannedIpCooldown?: number
-  ipBlocks?: RoutePlannerIpBlockConfig[]
+  ipBlocks?: Array<RoutePlannerIpBlockConfig | string>
 }
 
 /**
@@ -40,9 +41,37 @@ interface RoutePlannerBlock {
  * Minimal NodeLink runtime context used by the route planner manager.
  * @public
  */
-type RoutePlannerManagerContext = {
-  options: Record<string, unknown> & {
-    routePlanner?: RoutePlannerConfig
+export type RoutePlannerManagerContext = {
+  options: NodelinkConfig
+}
+
+const normalizeIpBlocks = (
+  blocks: Array<RoutePlannerIpBlockConfig | string> | undefined
+): RoutePlannerIpBlockConfig[] => {
+  if (!Array.isArray(blocks)) return []
+  return blocks
+    .map((block) => {
+      if (typeof block === 'string') return { cidr: block }
+      if (block && typeof block === 'object' && typeof block.cidr === 'string') {
+        return block
+      }
+      return null
+    })
+    .filter((block): block is RoutePlannerIpBlockConfig => block !== null)
+}
+
+type ResolvedRoutePlannerConfig = Omit<RoutePlannerConfig, 'ipBlocks'> & {
+  ipBlocks?: RoutePlannerIpBlockConfig[]
+}
+
+const resolveConfig = (nodelink: RoutePlannerManagerContext): ResolvedRoutePlannerConfig => {
+  const cfg =
+    nodelink.options.network?.routePlanner ??
+    nodelink.options.routePlanner ??
+    {}
+  return {
+    ...cfg,
+    ipBlocks: normalizeIpBlocks(cfg.ipBlocks)
   }
 }
 
@@ -61,7 +90,7 @@ const BIGINT_MAX_SAFE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER)
  */
 export default class RoutePlannerManager {
   public readonly nodelink: RoutePlannerManagerContext
-  private readonly config: RoutePlannerConfig
+  private readonly config: ResolvedRoutePlannerConfig
   public readonly blocks: RoutePlannerBlock[]
   public readonly bannedIps: Map<string, number>
   public readonly bannedBlocks: Map<string, number>
@@ -73,7 +102,7 @@ export default class RoutePlannerManager {
    */
   constructor(nodelink: RoutePlannerManagerContext) {
     this.nodelink = nodelink
-    this.config = nodelink.options.routePlanner ?? {}
+    this.config = resolveConfig(nodelink)
     this.blocks = []
     this.bannedIps = new Map()
     this.bannedBlocks = new Map()
@@ -90,6 +119,13 @@ export default class RoutePlannerManager {
    */
   public get ipBlocks(): RoutePlannerBlock[] {
     return this.blocks
+  }
+
+  /**
+   * Compatibility alias used by shutdown paths.
+   */
+  public dispose(): void {
+    this.freeAll()
   }
 
   /**

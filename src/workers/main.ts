@@ -18,6 +18,7 @@ import RoutePlannerManager from '../managers/routePlannerManager.ts'
 import SourceManager from '../managers/sourceManager.ts'
 import StatsManager from '../managers/statsManager.ts'
 import TrackCacheManager from '../managers/trackCacheManager.ts'
+import { migrateConfig } from '../modules/config/configMigration.ts'
 import { getWebmOpusProfilerStats } from '../playback/demuxers/WebmOpus.ts'
 import { bufferPool } from '../playback/structs/BufferPool.ts'
 import type { NodelinkConfig as NodeLinkConfig } from '../typings/config/config.types.ts'
@@ -106,13 +107,60 @@ try {
 let config: NodeLinkConfig
 const resolveRootConfigUrl = (fileName: string): string =>
   pathToFileURL(resolvePath(process.cwd(), fileName)).href
-try {
-  config = (await import(resolveRootConfigUrl('config.js')))
-    .default as unknown as NodeLinkConfig
-} catch {
-  config = (await import(resolveRootConfigUrl('config.default.js')))
-    .default as unknown as NodeLinkConfig
+const resolveConfigExport = (
+  importedModule: Record<string, unknown>,
+  fileName: string
+): Record<string, unknown> => {
+  const candidate = (
+    importedModule as {
+      default?: unknown
+      config?: unknown
+    }
+  ).default ?? (
+    importedModule as {
+      default?: unknown
+      config?: unknown
+    }
+  ).config
+
+  if (
+    candidate &&
+    typeof candidate === 'object' &&
+    Object.keys(candidate as Record<string, unknown>).length > 0
+  ) {
+    return candidate as Record<string, unknown>
+  }
+
+  throw new Error(
+    `[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`
+  )
 }
+
+const loadConfig = async (): Promise<NodeLinkConfig> => {
+  const candidates = ['config.ts', 'config.js', 'config.default.ts', 'config.default.js']
+
+  for (const fileName of candidates) {
+    try {
+      const module = await import(resolveRootConfigUrl(fileName))
+      const raw = resolveConfigExport(module as Record<string, unknown>, fileName)
+      return migrateConfig(raw) as NodeLinkConfig
+    } catch (error) {
+      const err = error as { code?: string; message?: string }
+      const isNotFound =
+        err.code === 'ERR_MODULE_NOT_FOUND' ||
+        err.code === 'ENOENT' ||
+        err.message?.includes('Cannot find module')
+      if (isNotFound) continue
+      throw error
+    }
+  }
+
+  throw new Error(
+    '[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).'
+  )
+}
+
+config = await loadConfig()
 applyEnvOverrides(config as unknown as Record<string, unknown>)
 
 const HIBERNATION_ENABLED = config.cluster?.hibernation?.enabled !== false
@@ -1547,8 +1595,8 @@ const nodelink: WorkerNodeLink = {
 } as unknown as WorkerNodeLink
 
 const createdVoiceRelay = createVoiceRelay({
-  enabled: config.voiceReceive?.enabled,
-  format: config.voiceReceive?.format,
+  enabled: config.playback.voiceReceive?.enabled,
+  format: config.playback.voiceReceive?.format,
   sendFrame: (frame: Buffer) => sendEventBinaryFrame(8, frame),
   logger
 })
@@ -1590,13 +1638,13 @@ function startTimers(hibernating = false): void {
 
   const updateInterval = hibernating
     ? 60000
-    : (config?.playerUpdateInterval ?? 5000)
+    : (config?.playback.playerUpdateInterval ?? 5000)
   const statsInterval = hibernating
     ? 120000
-    : config?.metrics?.enabled
+    : config?.api.metrics?.enabled
       ? 5000
-      : (config?.statsUpdateInterval ?? 30000)
-  const zombieThreshold = config?.zombieThresholdMs ?? 60000
+      : (config?.playback.statsUpdateInterval ?? 30000)
+  const zombieThreshold = config?.playback.zombieThresholdMs ?? 60000
 
   playerUpdateTimer = setInterval(() => {
     if (!process.connected) return

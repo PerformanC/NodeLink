@@ -196,7 +196,7 @@ export default class YandexMusicSource {
             });
             if (!data)
                 return { loadType: 'empty', data: {} };
-            const limit = this.nodelink.options.maxSearchResults || 10;
+            const limit = this.nodelink.options.search.maxResults || 10;
             if (searchType === 'album') {
                 const albums = (data.albums?.results || [])
                     .filter((item) => this.allowUnavailable || item.available)
@@ -387,7 +387,7 @@ export default class YandexMusicSource {
                     streamOnly: true,
                     headers,
                     localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
             };
             let response = await requestStream(url);
@@ -813,7 +813,7 @@ export default class YandexMusicSource {
                 'X-Yandex-Music-Client': CLIENT_HEADER
             },
             localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-            proxy: this.config.proxy
+            proxy: this.config.network.proxy
         });
         if (res.statusCode !== 200) {
             throw new Error(`Yandex API returned HTTP ${res.statusCode} for ${path}`);

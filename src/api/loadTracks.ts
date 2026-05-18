@@ -193,7 +193,7 @@ async function handler(
 
   const target = parseIdentifier(
     identifier,
-    nodelink.options.defaultSearchSource
+    nodelink.options.search.defaultSource
   )
   const workerRequest = buildWorkerRequest(target)
   const runtime = nodelink as LoadTracksRuntime

@@ -171,6 +171,13 @@ export default class PluginManager {
     PluginHookName,
     Array<(...args: unknown[]) => void>
   >
+  /** Tracks which hooks belong to which plugin for cleanup. */
+  private readonly pluginHooks: Map<
+    string,
+    Set<{ name: PluginHookName; callback: (...args: unknown[]) => void }>
+  >
+  /** Tracks the current plugin being initialized to associate hooks correctly. */
+  private executingPluginName: string | null = null
 
   /**
    * Creates a new plugin manager instance.
@@ -185,6 +192,7 @@ export default class PluginManager {
     this.pluginsDir = path.join(process.cwd(), 'plugins')
     this.loadedPlugins = new Map()
     this.hooks = new Map()
+    this.pluginHooks = new Map()
   }
 
   /**
@@ -221,10 +229,58 @@ export default class PluginManager {
     name: PluginHookName,
     callback: (...args: unknown[]) => void
   ): void {
+    if (this.executingPluginName) {
+      if (!this.pluginHooks.has(this.executingPluginName)) {
+        this.pluginHooks.set(this.executingPluginName, new Set())
+      }
+      this.pluginHooks.get(this.executingPluginName)?.add({ name, callback })
+    }
+
     if (!this.hooks.has(name)) {
       this.hooks.set(name, [])
     }
     this.hooks.get(name)?.push(callback)
+  }
+
+  /**
+   * Unloads a plugin by removing its hooks and cache entry.
+   * @param name - The name of the plugin to unload.
+   * @public
+   */
+  public unloadPlugin(name: string): void {
+    const pluginHooks = this.pluginHooks.get(name)
+    if (pluginHooks) {
+      for (const { name: hookName, callback } of pluginHooks) {
+        const list = this.hooks.get(hookName)
+        if (list) {
+          const index = list.indexOf(callback)
+          if (index !== -1) list.splice(index, 1)
+        }
+      }
+      this.pluginHooks.delete(name)
+    }
+
+    this.loadedPlugins.delete(name)
+    logger('info', 'PluginManager', `Unloaded plugin: ${name}`)
+  }
+
+  /**
+   * Reloads a specific plugin.
+   * @param name - Name of the plugin.
+   * @param contextType - Process context.
+   * @public
+   */
+  public async reloadPlugin(
+    name: string,
+    contextType: PluginContextType
+  ): Promise<void> {
+    const def = this.config.find((d) => d.name === name)
+    if (!def) {
+      throw new Error(`Plugin '${name}' not found in configuration.`)
+    }
+
+    this.unloadPlugin(name)
+    await this._loadPlugin(def, contextType, true)
   }
 
   /**
@@ -416,17 +472,19 @@ export default class PluginManager {
    * Loads a single plugin definition and executes its entrypoint.
    * @param def - Plugin definition from config.
    * @param contextType - Current runtime context identifier.
+   * @param forceReload - Whether to bypass cache and use timestamp for reloading.
    * @internal
    */
   private async _loadPlugin(
     def: PluginDefinition,
-    contextType: PluginContextType
+    contextType: PluginContextType,
+    forceReload = false
   ): Promise<void> {
     const { name, source, path: localPath, package: packageName } = def
 
     if (!name || name.trim().length === 0) return
 
-    if (this.loadedPlugins.has(name)) {
+    if (!forceReload && this.loadedPlugins.has(name)) {
       const cached = this.loadedPlugins.get(name)
       if (!cached) return
 
@@ -517,7 +575,10 @@ export default class PluginManager {
 
       if (!entryPoint) return
 
-      const fileUrl = pathToFileURL(entryPoint).href
+      let fileUrl = pathToFileURL(entryPoint).href
+      if (forceReload) {
+        fileUrl += `?t=${Date.now()}`
+      }
       const importedModule: unknown = await import(fileUrl)
       const pluginModule = this._coercePluginModule(importedModule)
 
@@ -534,7 +595,12 @@ export default class PluginManager {
         meta: pluginMeta
       })
 
-      await this._executePlugin(pluginModule, name, contextType, pluginMeta)
+      this.executingPluginName = name
+      try {
+        await this._executePlugin(pluginModule, name, contextType, pluginMeta)
+      } finally {
+        this.executingPluginName = null
+      }
 
       const author = `\x1b[36m${pluginMeta.author}\x1b[0m`
       const pluginName = `\x1b[1m\x1b[32m${name}\x1b[0m`
@@ -545,7 +611,11 @@ export default class PluginManager {
 
       const creditString = `[${author}] ${pluginName} ${version}${topic}`
 
-      logger('info', 'PluginManager', `Loaded: ${creditString}`)
+      logger(
+        'info',
+        'PluginManager',
+        `${forceReload ? 'Reloaded' : 'Loaded'}: ${creditString}`
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       logger(

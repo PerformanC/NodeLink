@@ -215,7 +215,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       const params = new URLSearchParams({
         q: searchQuery,
         client_id: this.clientId ?? '',
-        limit: String(this.nodelink.options.maxSearchResults ?? 50),
+        limit: String(this.nodelink.options.search.maxResults ?? 50),
         offset: '0',
         linked_partitioning: '1'
       })
@@ -300,7 +300,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processUsers(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const users: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && users.length < max; i++) {
@@ -341,7 +341,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processAlbums(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const albums: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && albums.length < max; i++) {
@@ -382,7 +382,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processPlaylists(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const playlists: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && playlists.length < max; i++) {
@@ -423,7 +423,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processAll(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const results: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && results.length < max; i++) {
@@ -585,7 +585,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       }
     }
 
-    const limit = this.nodelink.options.maxAlbumPlaylistLength ?? 100
+    const limit = this.nodelink.options.playback.maxPlaylistLength ?? 100
     const neededIds = ids.slice(0, Math.max(0, limit - complete.length))
 
     if (neededIds.length > 0) {
@@ -638,7 +638,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processTracks(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const tracks: SoundCloudTrackDataResult[] = []
 
     if (!Array.isArray(collection)) return []

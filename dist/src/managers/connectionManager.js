@@ -54,7 +54,7 @@ export default class ConnectionManager {
     _lastPingMs;
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = nodelink.options.connection || {};
+        this.config = nodelink.options.network.connection || {};
         this.interval = null;
         this.status = 'unknown';
         this.metrics = { timestamp: Date.now() };
@@ -82,6 +82,12 @@ export default class ConnectionManager {
             clearInterval(this.interval);
             this.interval = null;
         }
+    }
+    /**
+     * Stops the monitor and releases resources.
+     */
+    destroy() {
+        this.stop();
     }
     /**
      * Runs a full connectivity check and updates metrics.

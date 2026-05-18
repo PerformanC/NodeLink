@@ -1,10 +1,13 @@
 import cluster from 'node:cluster'
 import { EventEmitter } from 'node:events'
+import fs from 'node:fs'
 import http from 'node:http'
 import { resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import WebSocketServer from '@performanc/pwsl-server'
 
+import { migrateConfig } from './modules/config/configMigration.ts'
+import ProxyManager from './managers/proxyManager.ts'
 import RoutePlannerManager from './managers/routePlannerManager.ts'
 import SessionManager from './managers/sessionManager.ts'
 import StatsManager from './managers/statsManager.ts'
@@ -288,34 +291,80 @@ const getTrackCacheManagerClass = async (): Promise<
 }
 
 let config: NodelinkConfig
-const resolveRootConfigUrl = (fileName: string): string =>
-  pathToFileURL(resolvePath(process.cwd(), fileName)).href
 
-try {
-  config = (await import(resolveRootConfigUrl('config.js')))
-    .default as unknown as NodelinkConfig
-} catch (e) {
-  const error = e as ConfigLoadError
-  if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT') {
-    try {
-      config = (await import(resolveRootConfigUrl('config.default.js')))
-        .default as unknown as NodelinkConfig
-      console.log(
-        '[WARN] Config: config.js not found, using config.default.js. It is recommended to create a config.js file for your own configuration.'
-      )
-    } catch (e2) {
-      console.error(
-        '[ERROR] Config: Failed to load config.default.js. Please make sure it exists.'
-      )
-      throw e2
+const loadConfig = async (): Promise<NodelinkConfig> => {
+  const resolveRootConfigUrl = (fileName: string): string =>
+    pathToFileURL(resolvePath(process.cwd(), fileName)).href
+  const resolveConfigExport = (
+    importedModule: Record<string, unknown>,
+    fileName: string
+  ): Record<string, unknown> => {
+    const candidate = (
+      importedModule as {
+        default?: unknown
+        config?: unknown
+      }
+    ).default ?? (
+      importedModule as {
+        default?: unknown
+        config?: unknown
+      }
+    ).config
+
+    if (
+      candidate &&
+      typeof candidate === 'object' &&
+      Object.keys(candidate as Record<string, unknown>).length > 0
+    ) {
+      return candidate as Record<string, unknown>
     }
-  } else {
-    throw e
+
+    throw new Error(
+      `[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`
+    )
   }
+
+  const candidates = [
+    'config.ts',
+    'config.js',
+    'config.default.ts',
+    'config.default.js'
+  ]
+
+  for (const fileName of candidates) {
+    try {
+      const module = await import(resolveRootConfigUrl(fileName))
+      const imported = resolveConfigExport(
+        module as Record<string, unknown>,
+        fileName
+      )
+      if (fileName.startsWith('config.default')) {
+        console.log(`[INFO] Config: Loaded fallback configuration from ${fileName}`)
+      } else {
+        console.log(`[INFO] Config: Loaded configuration from ${fileName}`)
+      }
+      return migrateConfig(imported) as NodelinkConfig
+    } catch (e) {
+      const error = e as ConfigLoadError
+      const isNotFound =
+        error.code === 'ERR_MODULE_NOT_FOUND' ||
+        error.code === 'ENOENT' ||
+        error.message?.includes('Cannot find module')
+      if (isNotFound) continue
+      throw e
+    }
+  }
+
+  console.error(
+    '[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).'
+  )
+  throw new Error('No valid configuration file found.')
 }
 
+config = await loadConfig()
+
 // Apply environment variable overrides after config is loaded
-applyEnvOverrides(config)
+applyEnvOverrides(config as unknown as Record<string, unknown>)
 
 const clusterEnabled =
   // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires index signature access
@@ -471,6 +520,7 @@ class NodelinkServer extends EventEmitter {
   lyrics: LyricsManager | null
   meanings: MeaningManager | null
   _sourceInitPromise: Promise<void>
+  proxyManager: ProxyManager | null
   routePlanner: RoutePlannerManager
   credentialManager: CredentialManager | null
   trackCacheManager: TrackCacheManager | null
@@ -533,6 +583,7 @@ class NodelinkServer extends EventEmitter {
 
     this.routePlanner = new RoutePlannerManager(this)
     memoryTrace('constructor:after-route-planner')
+    this.proxyManager = null
     this.credentialManager = null
     memoryTrace('constructor:after-credential-manager')
     this.trackCacheManager = null
@@ -570,8 +621,8 @@ class NodelinkServer extends EventEmitter {
 
     this.voiceSockets = new Map()
     this.voiceRelay = createVoiceRelay({
-      enabled: options.voiceReceive?.enabled || false,
-      format: options.voiceReceive?.format || 'pcm',
+      enabled: options.playback.voiceReceive?.enabled || false,
+      format: options.playback.voiceReceive?.format || 'pcm',
       sendFrame: (frame: Buffer) => this.handleVoiceFrame(frame),
       logger
     }) as unknown as VoiceRelay
@@ -662,13 +713,13 @@ class NodelinkServer extends EventEmitter {
       .then(([CredentialManagerClass, TrackCacheManagerClass]) => {
         if (!this.credentialManager) {
           this.credentialManager = new CredentialManagerClass(
-            this as unknown as { options: Record<string, unknown> }
+            this as unknown as { options: NodelinkConfig }
           ) as unknown as CredentialManager
         }
 
         if (!this.trackCacheManager) {
           this.trackCacheManager = new TrackCacheManagerClass(
-            this as unknown as { options: Record<string, unknown> }
+            this as unknown as { options: NodelinkConfig }
           ) as unknown as TrackCacheManager
         }
       })
@@ -1520,7 +1571,7 @@ class NodelinkServer extends EventEmitter {
             )
 
             if (voiceMatch) {
-              if (!self.options.voiceReceive?.enabled) {
+              if (!self.options.playback.voiceReceive?.enabled) {
                 try {
                   wrapper.close(1008, 'Voice receive disabled')
                 } catch {}
@@ -1853,7 +1904,7 @@ class NodelinkServer extends EventEmitter {
             return rejectUpgrade(400, 'Bad Request', 'Invalid User-Id header.')
           }
 
-          if (voiceMatch && !this.options.voiceReceive?.enabled) {
+          if (voiceMatch && !this.options.playback.voiceReceive?.enabled) {
             return rejectUpgrade(
               404,
               'Not Found',
@@ -1947,7 +1998,7 @@ class NodelinkServer extends EventEmitter {
       ) => {
         socket.guildId = guildId
 
-        if (!this.options.voiceReceive?.enabled) {
+        if (!this.options.playback.voiceReceive?.enabled) {
           try {
             socket.close(1008, 'Voice receive disabled')
           } catch {}
@@ -2111,16 +2162,16 @@ class NodelinkServer extends EventEmitter {
     if (this._globalUpdater) return
     const updateInterval = Math.max(
       1,
-      this.options?.playerUpdateInterval ?? 5000
+      this.options?.playback.playerUpdateInterval ?? 5000
     )
     const statsSendInterval = Math.max(
       1,
-      this.options?.statsUpdateInterval ?? 30000
+      this.options?.playback.statsUpdateInterval ?? 30000
     )
-    const metricsInterval = this.options?.metrics?.enabled
+    const metricsInterval = this.options?.api.metrics?.enabled
       ? 5000
       : statsSendInterval
-    const zombieThreshold = this.options?.zombieThresholdMs ?? 60000
+    const zombieThreshold = this.options?.playback.zombieThresholdMs ?? 60000
 
     this._globalUpdater = setInterval(() => {
       for (const session of this.sessions.values()) {
@@ -2543,9 +2594,9 @@ class NodelinkServer extends EventEmitter {
     if (this._globalUpdater) return
     const statsSendInterval = Math.max(
       1,
-      this.options?.statsUpdateInterval ?? 30000
+      this.options?.playback.statsUpdateInterval ?? 30000
     )
-    const metricsInterval = this.options?.metrics?.enabled
+    const metricsInterval = this.options?.api.metrics?.enabled
       ? 5000
       : statsSendInterval
 
@@ -2858,6 +2909,13 @@ if (clusterEnabled && cluster.isPrimary) {
       await nserver.trackCacheManager?.forceSave()
 
       nserver.sourceWorkerManager?.destroy?.()
+      nserver.workerManager?.destroy?.()
+      nserver.connectionManager?.destroy?.()
+      nserver.proxyManager?.destroy?.()
+      nserver.routePlanner?.dispose?.()
+      nserver.credentialManager?.destroy?.()
+      nserver.trackCacheManager?.destroy?.()
+
       await nserver._cleanupWebSocketServer()
 
       if ((nserver.server as http.Server)?.listening) {

@@ -33,13 +33,8 @@ export default class MonochromeLyrics implements LyricsSourceInstance {
    */
   constructor(nodelink: LyricsManagerContext) {
     this.nodelink = nodelink
-    const sources = nodelink.options?.sources as
-      | Record<string, { enabled?: boolean }>
-      | undefined
-    const config =
-      (sources?.monochrome as unknown as MonochromeSourceConfig) || {
-        enabled: false
-      }
+    const sources = nodelink.options.sources
+    const config = sources.monochrome
 
     const defaultUrls = [
       'https://eu-central.monochrome.tf',

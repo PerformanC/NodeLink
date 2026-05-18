@@ -1687,7 +1687,7 @@ async function makeRequest(
     return http1makeRequest(urlString, options)
   }
 
-  if (options.proxy) {
+  if (options.network?.proxy) {
     return http1makeRequest(urlString, options)
   }
 
@@ -2140,11 +2140,11 @@ function applyEnvOverrides(
  * @returns Best matching candidate or null.
  * @public
  */
-function getBestMatch(
-  list: BestMatchCandidate[],
+export function getBestMatch<T extends BestMatchCandidate>(
+  list: T[],
   original: BestMatchTrackInfo,
   options: BestMatchOptions = {}
-): BestMatchCandidate | null {
+): T | null {
   const { durationTolerance = 0.15, allowExplicit = true } = options
 
   const normalize = (str: string): string => {
@@ -2396,7 +2396,6 @@ export {
   encodeTrack,
   fetchSponsorBlockSegments,
   generateRandomLetters,
-  getBestMatch,
   getGitInfo,
   getStats,
   getVersion,

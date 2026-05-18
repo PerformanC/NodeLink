@@ -1370,7 +1370,7 @@ async function makeRequest(urlString, options, nodelink) {
             0) {
         return http1makeRequest(urlString, options);
     }
-    if (options.proxy) {
+    if (options.network.proxy) {
         return http1makeRequest(urlString, options);
     }
     const localAddress = finalNodeLink?.routePlanner?.getIP?.() ?? undefined;

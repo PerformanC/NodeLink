@@ -129,7 +129,7 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
         return sendErrorResponse(req, res, 400, 'missing identifier parameter', IDENTIFIER_REQUIRED_MESSAGE, parsedUrl.pathname, true);
     }
     logger('debug', 'Tracks', `Loading tracks with identifier: "${identifier}"`);
-    const target = parseIdentifier(identifier, nodelink.options.defaultSearchSource);
+    const target = parseIdentifier(identifier, nodelink.options.search.defaultSource);
     const workerRequest = buildWorkerRequest(target);
     const runtime = nodelink;
     try {

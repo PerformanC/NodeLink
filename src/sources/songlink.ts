@@ -1,3 +1,4 @@
+import type { NodelinkConfig, SourcesRegistry } from '../typings/config/config.types.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -270,7 +271,7 @@ export default class SongLinkSource {
     _searchType = 'track'
   ): Promise<SourceResult> {
     try {
-      const maxSearchRaw = this.nodelink.options.maxSearchResults
+      const maxSearchRaw = this.nodelink.options.search?.maxResults
       const limit =
         typeof maxSearchRaw === 'number' && Number.isFinite(maxSearchRaw)
           ? maxSearchRaw

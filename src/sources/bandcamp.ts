@@ -32,6 +32,9 @@ interface BandcampRuntimeOptions {
    * Maximum number of tracks returned for search operations.
    */
   maxSearchResults?: number
+  search?: {
+    maxResults?: number
+  }
 }
 
 /**
@@ -869,8 +872,8 @@ export default class BandcampSource {
    * @returns A positive integer limit used when parsing search results.
    */
   private getMaxSearchResults(): number {
-    const options = this.nodelink.options as BandcampRuntimeOptions
-    const limit = options.maxSearchResults
+    const options = this.nodelink.options
+    const limit = options.search.maxResults
 
     return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
       ? limit

@@ -631,14 +631,14 @@ export default class QobuzSource {
      * @returns Max search size.
      */
     getMaxSearchResults() {
-        return this.asNumber(this.config.maxSearchResults) ?? 10;
+        return this.asNumber(this.config.search.maxResults) ?? 10;
     }
     /**
      * Reads max playlist/album load size from runtime config.
      * @returns Max playlist size.
      */
     getMaxAlbumPlaylistLength() {
-        return this.asNumber(this.config.maxAlbumPlaylistLength) ?? 100;
+        return this.asNumber(this.config.playback.maxPlaylistLength) ?? 100;
     }
     /**
      * Converts unknown search results into TrackInfo list.

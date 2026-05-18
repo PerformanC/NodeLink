@@ -270,7 +270,7 @@ export default class PandoraSource {
             types: ['TR'],
             listener: null,
             start: 0,
-            count: this.options.maxSearchResults ?? 10,
+            count: this.options.search.maxResults ?? 10,
             annotate: true,
             searchTime: 0,
             annotationRecipe: 'CLASS_OF_2019'
@@ -424,7 +424,7 @@ export default class PandoraSource {
      * @internal
      */
     getMaxPlaylistLength() {
-        return this.options.maxAlbumPlaylistLength ?? 100;
+        return this.options.playback.maxPlaylistLength ?? 100;
     }
     /**
      * Resolves an artist, album, or track by ID.

@@ -2399,7 +2399,7 @@ class StreamAudioResource extends BaseAudioResource {
     this._validateInputStream(stream)
 
     const resamplingQuality =
-      nodelink.options.audio?.resamplingQuality || 'fastest'
+      nodelink.options.playback.audio?.resamplingQuality || 'fastest'
     const normalizedType = normalizeFormat(type)
 
     this.pipes = [stream]
@@ -2607,8 +2607,8 @@ class StreamAudioResource extends BaseAudioResource {
       type: 's16le',
       volume,
       enableAGC,
-      lookaheadMs: nodelink.options.audio?.lookaheadMs,
-      gateThresholdLUFS: nodelink.options.audio?.gateThresholdLUFS
+      lookaheadMs: nodelink.options.playback.audio?.lookaheadMs,
+      gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
     })
     const fadeTransformer = new FadeTransformer({
       type: 's16le',
@@ -2628,7 +2628,7 @@ class StreamAudioResource extends BaseAudioResource {
     const silenceDetector = new SilenceDetector({
       sampleRate: AUDIO_CONFIG.sampleRate,
       channels: AUDIO_CONFIG.channels,
-      thresholdDb: nodelink.options.audio?.automix?.silenceThresholdDb ?? -40
+      thresholdDb: nodelink.options.playback.audio?.automix?.silenceThresholdDb ?? -40
     })
 
     const flowController = new FlowController(
@@ -2781,8 +2781,8 @@ class StreamAudioResource extends BaseAudioResource {
         type: 's16le',
         volume,
         enableAGC,
-        lookaheadMs: this.nodelink?.options?.audio?.lookaheadMs,
-        gateThresholdLUFS: this.nodelink?.options?.audio?.gateThresholdLUFS
+        lookaheadMs: this.nodelink?.options?.playback.audio?.lookaheadMs,
+        gateThresholdLUFS: this.nodelink?.options?.playback.audio?.gateThresholdLUFS
       })
 
       pipeline(pcmStream, volumeTransformer, (err: Error | null): void => {
@@ -2995,7 +2995,7 @@ export const createPCMStream = (
   filters: FiltersState = {}
 ): Transform => {
   const resamplingQuality =
-    nodelink.options.audio?.resamplingQuality || 'fastest'
+    nodelink.options.playback.audio?.resamplingQuality || 'fastest'
   const normalizedType = normalizeFormat(type)
 
   const streams: (Readable | Transform)[] = [stream]

@@ -141,10 +141,10 @@ export default class LetrasMusSource {
         this.patterns = [LETRAS_PATTERN];
         const options = nodelink.options;
         this.maxSearchResults =
-            typeof options.maxSearchResults === 'number' &&
-                Number.isInteger(options.maxSearchResults) &&
-                options.maxSearchResults > 0
-                ? options.maxSearchResults
+            typeof options.search.maxResults === 'number' &&
+                Number.isInteger(options.search.maxResults) &&
+                options.search.maxResults > 0
+                ? options.search.maxResults
                 : 10;
     }
     /**

@@ -24,7 +24,7 @@ export default class RoutePlannerManager {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = nodelink.options.routePlanner ?? {};
+        this.config = nodelink.options.network.routePlanner ?? {};
         this.blocks = [];
         this.bannedIps = new Map();
         this.bannedBlocks = new Map();

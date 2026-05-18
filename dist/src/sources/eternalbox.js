@@ -129,7 +129,7 @@ export default class EternalboxSource {
             return this.resolve(this._buildJukeboxUrl(query));
         }
         const limit = this.config.searchResults ||
-            this.nodelink.options.maxSearchResults ||
+            this.nodelink.options.search.maxResults ||
             10;
         const url = `${this.baseUrl}/api/analysis/search?query=${encodeURIComponent(query)}&results=${limit}`;
         try {

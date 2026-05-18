@@ -48,7 +48,7 @@ export default class RateLimitManager {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = this._resolveConfig(nodelink.options?.rateLimit);
+        this.config = this._resolveConfig(nodelink.options?.api.rateLimit);
         this.store = new Map();
         this.cleanupInterval = setInterval(() => this._cleanup(), this._resolveCleanupInterval());
         this.cleanupInterval.unref?.();

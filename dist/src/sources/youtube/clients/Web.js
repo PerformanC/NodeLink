@@ -117,7 +117,7 @@ export default class Web extends BaseClient {
             logger('debug', 'YouTube-Web', `No matches found on ${sourceName} for: ${query}`);
             return { loadType: 'empty', data: {} };
         }
-        const maxResults = this.config.maxSearchResults || 10;
+        const maxResults = this.config.search.maxResults || 10;
         if (videos.length > maxResults) {
             let count = 0;
             videos = videos.filter((video) => {
@@ -130,7 +130,7 @@ export default class Web extends BaseClient {
             });
         }
         for (const videoData of videos) {
-            const track = await buildTrack(videoData, sourceName, null, null, this.config.enableHoloTracks);
+            const track = await buildTrack(videoData, sourceName, null, null, this.config.experimental.enableHoloTracks);
             if (track) {
                 tracks.push(track);
             }

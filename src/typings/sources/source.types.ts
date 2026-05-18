@@ -5,6 +5,7 @@
 
 import type { Readable } from 'node:stream'
 import type { Worker as NodeWorker } from 'node:worker_threads'
+import type { NodelinkConfig } from '../config/config.types.ts'
 import type {
   StatsMetricsPayload,
   StatsSnapshot,
@@ -544,16 +545,7 @@ export interface SourceInstance {
  */
 export interface WorkerNodeLink {
   /** Configuration options */
-  options: Record<string, unknown> & {
-    sources?: Record<string, { enabled?: boolean } | undefined>
-    audio?: {
-      loudnessNormalizer?: boolean
-      resamplingQuality?: string
-    }
-    metrics?: {
-      enabled?: boolean
-    }
-  }
+  options: NodelinkConfig
   /** Logger function */
   logger: LoggerFn
   /** Source manager instance */
@@ -568,6 +560,8 @@ export interface WorkerNodeLink {
   trackCacheManager?: TrackCacheManager
   /** Route planner manager instance */
   routePlanner?: RoutePlannerManager
+  /** Proxy manager instance */
+  proxyManager?: import('../../managers/proxyManager.ts').default
   /** Stats manager instance */
   statsManager?: StatsManager
   /** Global plugin manager for hook execution. */
@@ -819,7 +813,7 @@ export interface RoutePlannerManager {
   /** Initialize route planner */
   initialize?: () => Promise<void>
   /** Dispose route planner */
-  dispose?: () => Promise<void>
+  dispose?: () => void | Promise<void>
   /** Get an IP address */
   getIP?: () => string | null | undefined
 }

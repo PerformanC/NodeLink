@@ -53,7 +53,7 @@ export default class SegmentFetcher {
     constructor(options = {}) {
         this.headers = options.headers || {};
         this.localAddress = options.localAddress || null;
-        this.proxy = options.proxy || null;
+        this.proxy = options.network.proxy || null;
         this.onResolveUrl = options.onResolveUrl || null;
         this.keyMap = new Map();
     }

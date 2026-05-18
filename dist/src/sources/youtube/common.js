@@ -1345,7 +1345,7 @@ export async function buildHoloTrack(trackInfo, itemData, itemType, fullApiRespo
     accessibilityLabel =
         accessibilityLabel ||
             `${trackInfo.title} by ${channelData.name || trackInfo.author}`;
-    if (config.fetchChannelInfo && channelData.id && makeRequestFn) {
+    if (config.search.fetchChannelInfo && channelData.id && makeRequestFn) {
         try {
             const channelInfo = await fetchChannelInfo(channelData.id, makeRequestFn, fullApiResponse?.responseContext);
             if (channelInfo) {
@@ -1369,7 +1369,7 @@ export async function buildHoloTrack(trackInfo, itemData, itemType, fullApiRespo
     thumbnails.medium = thumbnails.medium || trackInfo.artworkUrl || null;
     thumbnails.high = thumbnails.high || trackInfo.artworkUrl || null;
     let externalLinks = extractExternalLinks(description);
-    if (config.resolveExternalLinks && externalLinks && makeRequestFn) {
+    if (config.search.resolveExternalLinks && externalLinks && makeRequestFn) {
         try {
             externalLinks = await resolveExternalLinks(externalLinks, makeRequestFn);
         }
@@ -1694,9 +1694,9 @@ export class BaseClient {
                 logger('warn', `youtube-${this.name}`, `Video/short ${videoId} not playable: ${message}. Still returning metadata.`);
             }
         }
-        const track = await buildTrack(videoDetails, sourceName, null, playerResponse, !!this.config.enableHoloTracks, {
-            resolveExternalLinks: !!this.config.resolveExternalLinks,
-            fetchChannelInfo: !!this.config.fetchChannelInfo
+        const track = await buildTrack(videoDetails, sourceName, null, playerResponse, !!this.config.experimental.enableHoloTracks, {
+            resolveExternalLinks: !!this.config.search.resolveExternalLinks,
+            fetchChannelInfo: !!this.config.search.fetchChannelInfo
         });
         if (!track) {
             logger('error', `youtube-${this.name}`, `Failed to build track for ${videoId}`);
@@ -1761,11 +1761,11 @@ export class BaseClient {
         }
         const tracks = [];
         let selectedTrack = 0;
-        const maxLength = this.config.maxAlbumPlaylistLength || 100;
+        const maxLength = this.config.playback.maxPlaylistLength || 100;
         for (let i = 0; i < Math.min(playlistContent.length, maxLength); i++) {
             const item = playlistContent[i];
             try {
-                const track = await buildTrack(item, sourceName || 'youtube', null, null, !!this.config.enableHoloTracks, {
+                const track = await buildTrack(item, sourceName || 'youtube', null, null, !!this.config.experimental.enableHoloTracks, {
                     fetchChannelInfo: false,
                     resolveExternalLinks: false
                 });
@@ -1843,12 +1843,12 @@ export class BaseClient {
             return { loadType: 'empty', data: {} };
         }
         const tracks = [];
-        const maxLength = this.config.maxAlbumPlaylistLength || 100;
+        const maxLength = this.config.playback.maxPlaylistLength || 100;
         const shelfContents = shelf.contents;
         for (let i = 0; i < Math.min(shelfContents.length, maxLength); i++) {
             const item = shelfContents[i];
             try {
-                const track = await buildTrack(item, sourceName || 'ytmusic', sourceName, browseResponse, !!this.config.enableHoloTracks, {
+                const track = await buildTrack(item, sourceName || 'ytmusic', sourceName, browseResponse, !!this.config.experimental.enableHoloTracks, {
                     fetchChannelInfo: false,
                     resolveExternalLinks: false
                 });
@@ -1919,7 +1919,7 @@ export class BaseClient {
         }
         else {
             const qualityPriority = this._getQualityPriority();
-            const audioConfig = this.config.audio;
+            const audioConfig = this.config.playback.audio;
             const audioQuality = audioConfig?.quality || 'high';
             targetItags =
                 qualityPriority[audioQuality] || [];

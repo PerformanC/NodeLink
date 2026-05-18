@@ -121,7 +121,7 @@ export default class SoundCloudSource {
             const params = new URLSearchParams({
                 q: searchQuery,
                 client_id: this.clientId ?? '',
-                limit: String(this.nodelink.options.maxSearchResults ?? 50),
+                limit: String(this.nodelink.options.search.maxResults ?? 50),
                 offset: '0',
                 linked_partitioning: '1'
             });
@@ -181,7 +181,7 @@ export default class SoundCloudSource {
         }
     }
     _processUsers(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const users = [];
         for (let i = 0; i < collection.length && users.length < max; i++) {
             const user = collection[i];
@@ -214,7 +214,7 @@ export default class SoundCloudSource {
         return users;
     }
     _processAlbums(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const albums = [];
         for (let i = 0; i < collection.length && albums.length < max; i++) {
             const album = collection[i];
@@ -247,7 +247,7 @@ export default class SoundCloudSource {
         return albums;
     }
     _processPlaylists(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const playlists = [];
         for (let i = 0; i < collection.length && playlists.length < max; i++) {
             const playlist = collection[i];
@@ -280,7 +280,7 @@ export default class SoundCloudSource {
         return playlists;
     }
     _processAll(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const results = [];
         for (let i = 0; i < collection.length && results.length < max; i++) {
             const item = collection[i];
@@ -410,7 +410,7 @@ export default class SoundCloudSource {
                 ids.push(t.id);
             }
         }
-        const limit = this.nodelink.options.maxAlbumPlaylistLength ?? 100;
+        const limit = this.nodelink.options.playback.maxPlaylistLength ?? 100;
         const neededIds = ids.slice(0, Math.max(0, limit - complete.length));
         if (neededIds.length > 0) {
             const chunks = [];
@@ -451,7 +451,7 @@ export default class SoundCloudSource {
         };
     }
     _processTracks(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const tracks = [];
         if (!Array.isArray(collection))
             return [];

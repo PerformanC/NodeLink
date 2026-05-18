@@ -11,6 +11,14 @@ import { logger } from '../utils.ts'
 type DosProtectionContext = {
   options?: {
     dosProtection?: Partial<DosProtectionConfig>
+    api?: {
+      dosProtection?: Partial<DosProtectionConfig>
+      [key: string]: unknown
+    }
+    security?: {
+      dosProtection?: Partial<DosProtectionConfig>
+      [key: string]: unknown
+    }
   }
 }
 
@@ -58,7 +66,11 @@ export default class DosProtectionManager {
    */
   constructor(nodelink: DosProtectionContext) {
     this.nodelink = nodelink
-    this.config = this._resolveConfig(nodelink.options?.dosProtection)
+    this.config = this._resolveConfig(
+      nodelink.options?.api?.dosProtection ??
+      nodelink.options?.security?.dosProtection ??
+      nodelink.options?.dosProtection
+    )
     this.ipRequestCounts = new Map()
     this.cleanupInterval = setInterval(
       () => this._cleanup(),

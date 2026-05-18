@@ -951,7 +951,7 @@ export default class DeezerSource {
      * @returns Maximum number of search results to return.
      */
     getMaxSearchResults() {
-        const limit = this.config.maxSearchResults;
+        const limit = this.config.search.maxResults;
         return typeof limit === 'number' && limit > 0 ? limit : 10;
     }
     /**
@@ -961,7 +961,7 @@ export default class DeezerSource {
      * @returns Maximum collection length for albums, playlists, or artists.
      */
     getMaxCollectionLength(fallback) {
-        const limit = this.config.maxAlbumPlaylistLength;
+        const limit = this.config.playback.maxPlaylistLength;
         return typeof limit === 'number' && limit > 0 ? limit : fallback;
     }
     /**

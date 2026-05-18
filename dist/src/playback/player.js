@@ -100,12 +100,12 @@ export class Player {
         this.session = options.session;
         this.guildId = options.guildId;
         this.volumePercent = this.nodelink.options?.defaultVolume ?? 100;
-        this.fading = this.nodelink.options?.audio?.fading;
+        this.fading = this.nodelink.options?.playback.audio?.fading;
         this.loudnessNormalizer =
-            this.nodelink.options?.audio?.loudnessNormalizer ?? false;
+            this.nodelink.options?.playback.audio?.loudnessNormalizer ?? false;
         this.sponsorBlock = {
-            enabled: this.nodelink.options.sponsorblock?.enabled ?? false,
-            categories: this.nodelink.options.sponsorblock?.categories ?? [
+            enabled: this.nodelink.options.playback.sponsorblock?.enabled ?? false,
+            categories: this.nodelink.options.playback.sponsorblock?.categories ?? [
                 'sponsor',
                 'selfpromo',
                 'interaction',
@@ -115,10 +115,10 @@ export class Player {
                 'music_offtopic',
                 'filler'
             ],
-            actionTypes: this.nodelink.options.sponsorblock?.actionTypes ?? ['skip'],
+            actionTypes: this.nodelink.options.playback.sponsorblock?.actionTypes ?? ['skip'],
             segments: [],
             lastSkippedUuid: null,
-            skipMarginMs: this.nodelink.options.sponsorblock?.skipMarginMs ?? 150
+            skipMarginMs: this.nodelink.options.playback.sponsorblock?.skipMarginMs ?? 150
         };
         logger('debug', 'Player', `New player created for guild ${this.guildId} in session ${this.session.id}`);
         this.emitEvent = (type, payload = {}) => {
@@ -143,7 +143,7 @@ export class Player {
             guildId: this.guildId,
             player: this.toJSON()
         });
-        this.waitEvent = (event, filter, timeout = this.nodelink.options.eventTimeoutMs ?? 15000) => new Promise((resolve, reject) => {
+        this.waitEvent = (event, filter, timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000) => new Promise((resolve, reject) => {
             const handler = (_, payload) => {
                 const typedPayload = payload;
                 if (!filter || filter(typedPayload)) {
@@ -160,7 +160,7 @@ export class Player {
         });
     }
     _getAudioOptions() {
-        return this.nodelink.options.audio;
+        return this.nodelink.options.playback.audio;
     }
     _getFilterTransitions() {
         return this._getAudioOptions()?.filterTransitions;
@@ -175,7 +175,7 @@ export class Player {
         if (this.audioMixer)
             return;
         const { AudioMixer: Mixer } = await import("./processing/AudioMixer.js");
-        this.audioMixer = new Mixer(this.nodelink.options?.mix ?? {
+        this.audioMixer = new Mixer(this.nodelink.options?.playback.mix ?? {
             enabled: true,
             defaultVolume: 0.8,
             maxLayersMix: 5,
@@ -227,10 +227,10 @@ export class Player {
             guildId: this.guildId,
             userId: this.session.userId,
             channelId: this.voice.channelId || this.guildId,
-            encryption: this.nodelink.options?.audio?.encryption ?? null
+            encryption: this.nodelink.options?.playback.audio?.encryption ?? null
         });
         this.connection.stuckTimeout =
-            Math.max(this.nodelink.options.trackStuckThresholdMs, 30000) + 5000;
+            Math.max(this.nodelink.options.playback.trackStuckThresholdMs, 30000) + 5000;
         this.connection.on('stateChange', (_, s) => {
             logger('debug', 'Player', `Voice connection state change for guild ${this.guildId} in session ${this.session.id}: ${s.status}`);
             this._onConn(s);
@@ -324,7 +324,7 @@ export class Player {
         }
         if (state.status === 'idle' && state.reason === 'stuck') {
             logger('warn', 'Player', `Track became stuck for guild ${this.guildId}. Triggering immediate recovery.`);
-            this._stuckTime = this.nodelink.options.trackStuckThresholdMs + 1;
+            this._stuckTime = this.nodelink.options.playback.trackStuckThresholdMs + 1;
             this._sendUpdate();
             return;
         }
@@ -611,7 +611,7 @@ export class Player {
     async _resolveTrackForEvent(track) {
         if (!track)
             return null;
-        if (!this.nodelink.options.enableHoloTracks) {
+        if (!this.nodelink.options.experimental.enableHoloTracks) {
             return track;
         }
         try {
@@ -619,8 +619,8 @@ export class Player {
             const resolveHoloTrack = source?.resolveHoloTrack;
             if (typeof resolveHoloTrack === 'function') {
                 const holoTrack = await resolveHoloTrack.call(source, track, {
-                    fetchChannelInfo: this.nodelink.options.fetchChannelInfo,
-                    resolveExternalLinks: this.nodelink.options.resolveExternalLinks
+                    fetchChannelInfo: this.nodelink.options.search.fetchChannelInfo,
+                    resolveExternalLinks: this.nodelink.options.search.resolveExternalLinks
                 });
                 return holoTrack || track;
             }
@@ -668,7 +668,7 @@ export class Player {
      * Fetches an audio resource for playback.
      */
     async _fetchResource(info, urlData, startTime) {
-        if (this.nodelink.options?.mix?.enabled !== false) {
+        if (this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
         }
         await getStreamProcessor();
@@ -767,7 +767,7 @@ export class Player {
                 logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Current position: ${Math.round(position)}ms, Segments: ${this.sponsorBlock.segments.length}, LastSkipped: ${this.sponsorBlock.lastSkippedUuid}`);
             }
         }
-        const threshold = this.nodelink.options.trackStuckThresholdMs;
+        const threshold = this.nodelink.options.playback.trackStuckThresholdMs;
         if (threshold > 0 &&
             !this.isUpdatingTrack &&
             !this._isStopping &&
@@ -775,7 +775,7 @@ export class Player {
             !this._isResuming &&
             !this.isPaused) {
             if (this._lastPosition === position) {
-                this._stuckTime += this.nodelink.options.playerUpdateInterval;
+                this._stuckTime += this.nodelink.options.playback.playerUpdateInterval;
                 if (this._stuckTime >= threshold &&
                     !this._isRecovering &&
                     this.connStatus === 'connected') {
@@ -1009,7 +1009,7 @@ export class Player {
             this.sponsorBlock.segments = [];
             this.sponsorBlock.lastSkippedUuid = null;
             const videoId = this.track.info.identifier;
-            const sbConfig = this.nodelink.options.sponsorblock;
+            const sbConfig = this.nodelink.options.playback.sponsorblock;
             if (this.sponsorBlock.enabled) {
                 logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Initiating segment fetch for video ${videoId}`);
                 const { fetchSponsorBlockSegments } = await import("../utils.js");
@@ -1278,7 +1278,7 @@ export class Player {
      * Seeks using seekable-stream helper for compatible sources.
      */
     async _seekeableSeek(position, endTime) {
-        if (this.nodelink.options?.mix?.enabled !== false) {
+        if (this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
         }
         await getStreamProcessor();
@@ -1830,7 +1830,7 @@ export class Player {
         await this._ensureAudioMixer();
         if (!this.audioMixer)
             throw new Error('AudioMixer not initialized');
-        const mixConfig = this.nodelink?.options?.mix ?? {
+        const mixConfig = this.nodelink?.options?.playback.mix ?? {
             enabled: true,
             defaultVolume: 0.8,
             maxLayersMix: 5

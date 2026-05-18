@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { NodelinkConfig, SourcesRegistry } from '../typings/config/config.types.ts'
 import type {
   SourceManagerLike,
   TrackFormat,
@@ -16,7 +17,7 @@ import type {
   TrackStreamResult,
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
-import { logger } from '../utils.ts'
+import { getBestMatch, logger } from '../utils.ts'
 
 /**
  * Context object required by the SourcesManager for operation.
@@ -24,32 +25,7 @@ import { logger } from '../utils.ts'
  */
 export interface SourcesManagerContext {
   /** Global NodeLink configuration options. */
-  options: {
-    /** Map of source-specific configurations. */
-    sources?: Record<string, { enabled?: boolean } | undefined>
-    /** Default source(s) used for keyword searches. */
-    defaultSearchSource?: string | string[]
-    /** List of sources used for multi-source search. */
-    unifiedSearchSources?: string[]
-    /** Maximum number of search results to return. */
-    maxSearchResults?: number
-    /** Maximum track count for album and playlist loading. */
-    maxAlbumPlaylistLength?: number
-    /** Default playback volume for new tracks. */
-    defaultVolume?: number
-    /** Whether to enable advanced source-native seeking. */
-    enableHoloTracks?: boolean
-    /** Whether to fetch supplemental channel metadata. */
-    fetchChannelInfo?: boolean
-    /** Whether to resolve external links within metadata. */
-    resolveExternalLinks?: boolean
-    /** Audio processing configuration. */
-    audio?: {
-      /** Global loudness normalization preference. */
-      loudnessNormalizer?: boolean
-    }
-    [key: string]: unknown
-  }
+  options: NodelinkConfig
   /** Global statistics manager for metric recording. */
   statsManager?: {
     /** Increments success counter for a specific source. */
@@ -144,13 +120,10 @@ export default class SourcesManager implements SourceManagerLike {
     ): Promise<void> => {
       const isYouTube = name === 'youtube' || name.includes('YouTube.ts')
       const sourceKey = isYouTube ? 'youtube' : name
-      const youtubeKey = 'youtube'
       const sourceConfig = this.nodelink.options.sources
 
-      const enabled = isYouTube
-        ? (sourceConfig?.[youtubeKey] as { enabled?: boolean } | undefined)
-            ?.enabled
-        : !!sourceConfig?.[sourceKey]?.enabled
+      const enabled =
+        sourceConfig[sourceKey as keyof SourcesRegistry]?.enabled
 
       if (!enabled) return
 
@@ -206,11 +179,10 @@ export default class SourcesManager implements SourceManagerLike {
     try {
       await fs.access(sourcesDir)
 
-      const enabledSourceKeys = Object.entries(
-        this.nodelink.options.sources || {}
-      )
-        .filter(([, cfg]) => !!cfg?.enabled)
-        .map(([key]) => key.toLowerCase())
+      const sources = this.nodelink.options.sources
+      const enabledSourceKeys = (Object.keys(sources) as Array<keyof SourcesRegistry>)
+        .filter((key) => sources[key]?.enabled)
+        .map((key) => key.toLowerCase())
 
       const uniqueEnabled = Array.from(new Set(enabledSourceKeys))
       const sourceEntries = uniqueEnabled.map((sourceKey) => {
@@ -386,11 +358,15 @@ export default class SourcesManager implements SourceManagerLike {
    * @public
    */
   public async searchWithDefault(query: string): Promise<SourceResult> {
+    const configuredDefaultSource =
+      this.nodelink.options.search?.defaultSource ??
+      this.nodelink.options.defaultSearchSource ??
+      'youtube'
     const defaultSources = Array.isArray(
-      this.nodelink.options.defaultSearchSource
+      configuredDefaultSource
     )
-      ? this.nodelink.options.defaultSearchSource
-      : [this.nodelink.options.defaultSearchSource]
+      ? configuredDefaultSource
+      : [configuredDefaultSource]
 
     for (const source of defaultSources) {
       try {
@@ -421,9 +397,11 @@ export default class SourcesManager implements SourceManagerLike {
    * @public
    */
   public async unifiedSearch(query: string): Promise<SourceResult> {
-    const searchSources = (this.nodelink.options.unifiedSearchSources || [
-      'youtube'
-    ]) as string[]
+    const searchSources = (
+      this.nodelink.options.search?.unifiedSources ??
+      this.nodelink.options.unifiedSearchSources ??
+      ['youtube']
+    ) as string[]
     logger(
       'debug',
       'Sources',
@@ -528,13 +506,15 @@ export default class SourcesManager implements SourceManagerLike {
    * @param track - The normalized track metadata.
    * @param itag - Optional YouTube-specific itag override.
    * @param isRecovering - Whether this is a recovery attempt.
+   * @param isUpscaling - Whether this is an upscale attempt.
    * @returns A promise resolving to the URL result.
    * @public
    */
   public async getTrackUrl(
     track: TrackInfo | TrackInfoExtended,
     itag?: number,
-    isRecovering?: boolean
+    isRecovering?: boolean,
+    isUpscaling?: boolean
   ): Promise<
     TrackUrlResult & {
       protocol?: string
@@ -543,6 +523,49 @@ export default class SourcesManager implements SourceManagerLike {
       additionalData?: Record<string, unknown>
     }
   > {
+    // ISRC Upscale: If track has ISRC and is from YouTube, try high-quality sources first.
+    if (
+      track.isrc &&
+      !isUpscaling &&
+      !isRecovering &&
+      (track.sourceName === 'youtube' || track.sourceName === 'ytmusic')
+    ) {
+      const hqSources = ['tidal', 'qobuz', 'applemusic', 'deezer']
+      for (const source of hqSources) {
+        if (!this.sources.has(source)) continue
+
+        try {
+          const searchResult = await this.search(source, track.isrc)
+          if (
+            searchResult.loadType === 'search' &&
+            Array.isArray(searchResult.data) &&
+            searchResult.data.length > 0
+          ) {
+            const match = getBestMatch(searchResult.data, track)
+            if (match) {
+              logger(
+                'info',
+                'Sources',
+                `ISRC Upscale: found match for ${track.isrc} on ${source}. Using high-quality source.`
+              )
+              return (await this.getTrackUrl(
+                match.info,
+                undefined,
+                false,
+                true
+              )) as any
+            }
+          }
+        } catch (e) {
+          logger(
+            'debug',
+            'Sources',
+            `ISRC Upscale attempt failed for ${source}: ${(e as Error).message}`
+          )
+        }
+      }
+    }
+
     const instance = this.sourceMap.get(track.sourceName)
     if (!instance?.getTrackUrl) {
       throw new Error(
@@ -662,7 +685,7 @@ export default class SourcesManager implements SourceManagerLike {
     const sources = this.nodelink.options.sources
     if (sources) {
       for (const sourceName in sources) {
-        if (sources[sourceName]?.enabled) {
+        if (sources[sourceName as keyof SourcesRegistry]?.enabled) {
           enabledNames.push(sourceName)
         }
       }

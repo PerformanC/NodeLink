@@ -1131,8 +1131,8 @@ const nodelink = {
     getMeaningManager
 };
 const createdVoiceRelay = createVoiceRelay({
-    enabled: config.voiceReceive?.enabled,
-    format: config.voiceReceive?.format,
+    enabled: config.playback.voiceReceive?.enabled,
+    format: config.playback.voiceReceive?.format,
     sendFrame: (frame) => sendEventBinaryFrame(8, frame),
     logger
 });
@@ -1168,13 +1168,13 @@ function startTimers(hibernating = false) {
         clearInterval(statsUpdateTimer);
     const updateInterval = hibernating
         ? 60000
-        : (config?.playerUpdateInterval ?? 5000);
+        : (config?.playback.playerUpdateInterval ?? 5000);
     const statsInterval = hibernating
         ? 120000
-        : config?.metrics?.enabled
+        : config?.api.metrics?.enabled
             ? 5000
-            : (config?.statsUpdateInterval ?? 30000);
-    const zombieThreshold = config?.zombieThresholdMs ?? 60000;
+            : (config?.playback.statsUpdateInterval ?? 30000);
+    const zombieThreshold = config?.playback.zombieThresholdMs ?? 60000;
     playerUpdateTimer = setInterval(() => {
         if (!process.connected)
             return;

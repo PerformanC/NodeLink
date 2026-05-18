@@ -1834,7 +1834,7 @@ class StreamAudioResource extends BaseAudioResource {
         super(guildId);
         this.nodelink = nodelink;
         this._validateInputStream(stream);
-        const resamplingQuality = nodelink.options.audio?.resamplingQuality || 'fastest';
+        const resamplingQuality = nodelink.options.playback.audio?.resamplingQuality || 'fastest';
         const normalizedType = normalizeFormat(type);
         this.pipes = [stream];
         const pcmStream = this._createDecoderPipeline(stream, type, normalizedType, resamplingQuality);
@@ -1968,8 +1968,8 @@ class StreamAudioResource extends BaseAudioResource {
             type: 's16le',
             volume,
             enableAGC,
-            lookaheadMs: nodelink.options.audio?.lookaheadMs,
-            gateThresholdLUFS: nodelink.options.audio?.gateThresholdLUFS
+            lookaheadMs: nodelink.options.playback.audio?.lookaheadMs,
+            gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
         });
         const fadeTransformer = new FadeTransformer({
             type: 's16le',
@@ -1988,7 +1988,7 @@ class StreamAudioResource extends BaseAudioResource {
         const silenceDetector = new SilenceDetector({
             sampleRate: AUDIO_CONFIG.sampleRate,
             channels: AUDIO_CONFIG.channels,
-            thresholdDb: nodelink.options.audio?.automix?.silenceThresholdDb ?? -40
+            thresholdDb: nodelink.options.playback.audio?.automix?.silenceThresholdDb ?? -40
         });
         const flowController = new FlowController(volumeTransformer, fadeTransformer, tapeTransformer, scratchTransformer, audioMixer);
         const opusEncoder = new OpusEncoder({
@@ -2085,8 +2085,8 @@ class StreamAudioResource extends BaseAudioResource {
                 type: 's16le',
                 volume,
                 enableAGC,
-                lookaheadMs: this.nodelink?.options?.audio?.lookaheadMs,
-                gateThresholdLUFS: this.nodelink?.options?.audio?.gateThresholdLUFS
+                lookaheadMs: this.nodelink?.options?.playback.audio?.lookaheadMs,
+                gateThresholdLUFS: this.nodelink?.options?.playback.audio?.gateThresholdLUFS
             });
             pipeline(pcmStream, volumeTransformer, (err) => {
                 if (err && !this._destroyed) {
@@ -2186,7 +2186,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
     }
 };
 export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, filters = {}) => {
-    const resamplingQuality = nodelink.options.audio?.resamplingQuality || 'fastest';
+    const resamplingQuality = nodelink.options.playback.audio?.resamplingQuality || 'fastest';
     const normalizedType = normalizeFormat(type);
     const streams = [stream];
     switch (normalizedType) {

@@ -12,6 +12,7 @@ import http from 'node:http';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import WebSocketServer from '@performanc/pwsl-server';
+import { migrateConfig } from "./modules/config/configMigration.js";
 import RoutePlannerManager from "./managers/routePlannerManager.js";
 import SessionManager from "./managers/sessionManager.js";
 import StatsManager from "./managers/statsManager.js";
@@ -154,28 +155,31 @@ const getTrackCacheManagerClass = async () => {
     return trackCacheManagerClassPromise;
 };
 let config;
-const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
-try {
-    config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.js'))))
-        .default;
-}
-catch (e) {
-    const error = e;
-    if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT') {
-        try {
-            config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js'))))
-                .default;
-            console.log('[WARN] Config: config.js not found, using config.default.js. It is recommended to create a config.js file for your own configuration.');
-        }
-        catch (e2) {
-            console.error('[ERROR] Config: Failed to load config.default.js. Please make sure it exists.');
-            throw e2;
-        }
+const loadConfig = async () => {
+    const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
+    try {
+        const imported = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.ts')))).default;
+        console.log('[INFO] Config: Loaded configuration from config.ts');
+        return migrateConfig(imported);
     }
-    else {
+    catch (e) {
+        const error = e;
+        // Handle various error formats for missing modules across different runtimes (Node, Bun, ts-node, tsx)
+        if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT' || error.message?.includes('Cannot find module')) {
+            try {
+                const imported = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.ts')))).default;
+                console.log('[INFO] Config: Loaded fallback configuration from config.default.ts');
+                return migrateConfig(imported);
+            }
+            catch (e2) {
+                console.error('[ERROR] Config: Failed to load configuration (config.ts or config.default.ts).');
+                throw e2;
+            }
+        }
         throw e;
     }
-}
+};
+config = await loadConfig();
 // Apply environment variable overrides after config is loaded
 applyEnvOverrides(config);
 const clusterEnabled = 
@@ -316,6 +320,7 @@ class NodelinkServer extends EventEmitter {
     lyrics;
     meanings;
     _sourceInitPromise;
+    proxyManager;
     routePlanner;
     credentialManager;
     trackCacheManager;
@@ -397,8 +402,8 @@ class NodelinkServer extends EventEmitter {
         };
         this.voiceSockets = new Map();
         this.voiceRelay = createVoiceRelay({
-            enabled: options.voiceReceive?.enabled || false,
-            format: options.voiceReceive?.format || 'pcm',
+            enabled: options.playback.voiceReceive?.enabled || false,
+            format: options.playback.voiceReceive?.format || 'pcm',
             sendFrame: (frame) => this.handleVoiceFrame(frame),
             logger
         });
@@ -1109,7 +1114,7 @@ class NodelinkServer extends EventEmitter {
                         const voiceMatch = url.pathname.match(/^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/);
                         const liveMatch = url.pathname.match(/^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/);
                         if (voiceMatch) {
-                            if (!self.options.voiceReceive?.enabled) {
+                            if (!self.options.playback.voiceReceive?.enabled) {
                                 try {
                                     wrapper.close(1008, 'Voice receive disabled');
                                 }
@@ -1296,7 +1301,7 @@ class NodelinkServer extends EventEmitter {
                     logger('warn', 'Server', `Unauthorized connection attempt from ${clientAddress} - Invalid user ID provided`);
                     return rejectUpgrade(400, 'Bad Request', 'Invalid User-Id header.');
                 }
-                if (voiceMatch && !this.options.voiceReceive?.enabled) {
+                if (voiceMatch && !this.options.playback.voiceReceive?.enabled) {
                     return rejectUpgrade(404, 'Not Found', 'Voice websocket endpoint is disabled.');
                 }
                 for (const key in headers) {
@@ -1334,7 +1339,7 @@ class NodelinkServer extends EventEmitter {
         });
         this.socket?.on('/v4/websocket/voice', (socket, request, _clientInfo, _sessionId, guildId) => {
             socket.guildId = guildId;
-            if (!this.options.voiceReceive?.enabled) {
+            if (!this.options.playback.voiceReceive?.enabled) {
                 try {
                     socket.close(1008, 'Voice receive disabled');
                 }
@@ -1445,12 +1450,12 @@ class NodelinkServer extends EventEmitter {
     _startGlobalUpdater() {
         if (this._globalUpdater)
             return;
-        const updateInterval = Math.max(1, this.options?.playerUpdateInterval ?? 5000);
-        const statsSendInterval = Math.max(1, this.options?.statsUpdateInterval ?? 30000);
-        const metricsInterval = this.options?.metrics?.enabled
+        const updateInterval = Math.max(1, this.options?.playback.playerUpdateInterval ?? 5000);
+        const statsSendInterval = Math.max(1, this.options?.playback.statsUpdateInterval ?? 30000);
+        const metricsInterval = this.options?.api.metrics?.enabled
             ? 5000
             : statsSendInterval;
-        const zombieThreshold = this.options?.zombieThresholdMs ?? 60000;
+        const zombieThreshold = this.options?.playback.zombieThresholdMs ?? 60000;
         this._globalUpdater = setInterval(() => {
             for (const session of this.sessions.values()) {
                 if (!session.players)
@@ -1775,8 +1780,8 @@ class NodelinkServer extends EventEmitter {
     _startMasterMetricsUpdater() {
         if (this._globalUpdater)
             return;
-        const statsSendInterval = Math.max(1, this.options?.statsUpdateInterval ?? 30000);
-        const metricsInterval = this.options?.metrics?.enabled
+        const statsSendInterval = Math.max(1, this.options?.playback.statsUpdateInterval ?? 30000);
+        const metricsInterval = this.options?.api.metrics?.enabled
             ? 5000
             : statsSendInterval;
         let lastStatsSendTime = 0;
@@ -1993,6 +1998,12 @@ else {
             await nserver.credentialManager?.forceSave();
             await nserver.trackCacheManager?.forceSave();
             nserver.sourceWorkerManager?.destroy?.();
+            nserver.workerManager?.destroy?.();
+            nserver.connectionManager?.destroy?.();
+            nserver.proxyManager?.destroy?.();
+            nserver.routePlanner?.dispose?.();
+            nserver.credentialManager?.destroy?.();
+            nserver.trackCacheManager?.destroy?.();
             await nserver._cleanupWebSocketServer();
             if (nserver.server?.listening) {
                 await new Promise((resolve) => nserver.server.close(resolve));

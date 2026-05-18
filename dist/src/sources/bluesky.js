@@ -31,8 +31,8 @@ export default class BlueskySource {
         const options = nodelink.options;
         this.nodelink = nodelink;
         this.config = {
-            maxSearchResults: typeof options.maxSearchResults === 'number'
-                ? options.maxSearchResults
+            maxSearchResults: typeof options.search.maxResults === 'number'
+                ? options.search.maxResults
                 : undefined
         };
         this.searchTerms = ['bksearch'];
@@ -272,7 +272,7 @@ export default class BlueskySource {
     async search(query) {
         logger('debug', 'Bluesky', `Searching for: ${query}`);
         const searchUrl = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}` +
-            `&limit=${this.config.maxSearchResults ?? 10}`;
+            `&limit=${this.config.search.maxResults ?? 10}`;
         const response = await makeRequest(searchUrl, { method: 'GET' });
         const searchResponse = this.getSearchResponse(response.body);
         if (response.error || !searchResponse?.posts) {

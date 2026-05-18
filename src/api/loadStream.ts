@@ -434,7 +434,7 @@ function getStreamProcessorModule(): Promise<StreamProcessorModule> {
   if (!streamProcessorModulePromise) {
     streamProcessorModulePromise = import(
       '../playback/processing/streamProcessor.ts'
-    ) as Promise<StreamProcessorModule>
+    ) as unknown as Promise<StreamProcessorModule>
   }
 
   return streamProcessorModulePromise
@@ -706,7 +706,7 @@ async function handler(
     return
   }
 
-  if (!runtime.options.enableLoadStreamEndpoint) {
+  if (!runtime.options.api.enableLoadStreamEndpoint) {
     sendErrorResponse(
       req,
       res,
@@ -832,7 +832,7 @@ async function handler(
         input.filters,
         {
           streamInfo: urlResult,
-          loudnessNormalizer: runtime.options.audio?.loudnessNormalizer
+          loudnessNormalizer: runtime.options.playback.audio?.loudnessNormalizer
         },
         input.volume / 100,
         null,
@@ -895,7 +895,7 @@ async function handler(
         input.volume / 100,
         null,
         true,
-        runtime.options.audio?.loudnessNormalizer
+        runtime.options.playback.audio?.loudnessNormalizer
       ) as StreamingAudioResource
 
       pcmStream = resource.stream

@@ -68,8 +68,8 @@ export default class GaanaSource {
         ];
         this.priority = 70;
         this.maxSearchResults =
-            this.asNumber(this.nodelink.options.maxSearchResults) ?? 10;
-        const maxAlbumPlaylistLength = this.asNumber(this.nodelink.options.maxAlbumPlaylistLength) ?? 100;
+            this.asNumber(this.nodelink.options.search.maxResults) ?? 10;
+        const maxAlbumPlaylistLength = this.asNumber(this.nodelink.options.playback.maxPlaylistLength) ?? 100;
         this.playlistLoadLimit =
             this.asNumber(this.config.playlistLoadLimit) ?? maxAlbumPlaylistLength;
         this.albumLoadLimit =
@@ -832,7 +832,7 @@ export default class GaanaSource {
      * @returns Proxy configuration object or null.
      */
     getProxyConfig() {
-        const proxy = this.asRecord(this.config.proxy);
+        const proxy = this.asRecord(this.config.network.proxy);
         const url = this.asString(proxy?.url);
         if (!url)
             return undefined;

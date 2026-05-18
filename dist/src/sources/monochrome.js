@@ -353,7 +353,7 @@ class MonochromeSource {
             let name = 'Unknown Collection';
             while (tracks.length < total &&
                 tracks.length <
-                    (this.nodelink.options.maxAlbumPlaylistLength || 1000)) {
+                    (this.nodelink.options.playback.maxPlaylistLength || 1000)) {
                 const res = await this.fetchWithRetry(`/${type}/?id=${id}&offset=${offset}&limit=${limit}`);
                 if (!res)
                     break;

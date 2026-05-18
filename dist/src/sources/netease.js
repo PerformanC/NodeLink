@@ -60,7 +60,7 @@ export default class NeteaseSource {
         ];
         this.priority = 45;
         this.searchTerms = ['ntsearch'];
-        this.maxSearchResults = nodelink.options.maxSearchResults || 10;
+        this.maxSearchResults = nodelink.options.search.maxResults || 10;
     }
     /**
      * Initializes Netease source.

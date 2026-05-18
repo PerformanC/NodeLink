@@ -1017,7 +1017,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolveAlbum(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.maxAlbumPlaylistLength as number) || 1000
+      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Album'
 
@@ -1118,7 +1118,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolvePlaylist(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.maxAlbumPlaylistLength as number) || 1000
+      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Playlist'
 

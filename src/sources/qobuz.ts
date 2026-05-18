@@ -828,7 +828,7 @@ export default class QobuzSource {
    * @returns Max search size.
    */
   private getMaxSearchResults(): number {
-    return this.asNumber(this.config.maxSearchResults) ?? 10
+    return this.asNumber(this.config.search.maxResults) ?? 10
   }
 
   /**
@@ -836,7 +836,7 @@ export default class QobuzSource {
    * @returns Max playlist size.
    */
   private getMaxAlbumPlaylistLength(): number {
-    return this.asNumber(this.config.maxAlbumPlaylistLength) ?? 100
+    return this.asNumber(this.config.playback.maxPlaylistLength) ?? 100
   }
 
   /**

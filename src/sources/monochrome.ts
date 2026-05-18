@@ -56,7 +56,7 @@ class MonochromeSource implements SourceInstance {
    */
   constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
-    const sources = nodelink.options?.sources as
+    const sources = nodelink.options?.sources as unknown as
       | Record<string, { enabled?: boolean }>
       | undefined
     this.config =
@@ -489,7 +489,7 @@ class MonochromeSource implements SourceInstance {
       while (
         tracks.length < total &&
         tracks.length <
-          ((this.nodelink.options.maxAlbumPlaylistLength as number) || 1000)
+          ((this.nodelink.options.playback.maxPlaylistLength as number) || 1000)
       ) {
         const res = await this.fetchWithRetry<
           MonochromeResponse<{

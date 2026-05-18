@@ -279,7 +279,7 @@ export default class MixcloudSource {
           }
         })
         .filter((track) => track.info.uri.length > 0)
-        .slice(0, this.config.maxSearchResults || DEFAULT_MAX_RESULTS)
+        .slice(0, this.config.search.maxResults || DEFAULT_MAX_RESULTS)
 
       if (tracks.length === 0) return this.emptyResult()
 
@@ -415,7 +415,7 @@ export default class MixcloudSource {
       let hasNextPage = true
       let playlistName = 'Mixcloud Playlist'
       const maxTracks =
-        this.config.maxAlbumPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
+        this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
 
       while (hasNextPage && tracks.length < maxTracks) {
         const response = await this._request(queryTemplate(cursor))
@@ -493,7 +493,7 @@ export default class MixcloudSource {
       let hasNextPage = true
       let userDisplayName = username
       const maxTracks =
-        this.config.maxAlbumPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
+        this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
 
       while (hasNextPage && tracks.length < maxTracks) {
         const response = await this._request(queryTemplate(cursor))
