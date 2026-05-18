@@ -1,5 +1,4 @@
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
-import type { TrackCacheEntry } from '../typings/playback/trackCache.types.ts'
 import BaseCacheManager from './baseCacheManager.ts'
 
 const TRACK_CACHE_SALT = 'nodelink-track-salt'
@@ -13,7 +12,7 @@ type TrackCacheContext = {
   options: NodelinkConfig
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+const _isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /**

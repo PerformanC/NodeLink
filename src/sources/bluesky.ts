@@ -37,23 +37,6 @@ interface BlueskySourceConfig {
 }
 
 /**
- * Runtime options subset read by the Bluesky source.
- */
-interface BlueskyRuntimeOptions extends Record<string, unknown> {
-  /**
-   * Global search-result limit used by several sources.
-   */
-  search?: {
-    maxResults?: number
-  }
-  sources?: {
-    bluesky?: {
-      maxSearchResults?: number
-    }
-  }
-}
-
-/**
  * Service entry returned by a DID document or PLC directory response.
  */
 interface BlueskyServiceEntry {

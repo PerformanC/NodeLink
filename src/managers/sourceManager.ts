@@ -1,7 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { NodelinkConfig, SourcesRegistry } from '../typings/config/config.types.ts'
+import type {
+  FeatureToggle,
+  NodelinkConfig,
+  SourceConfigBase,
+  SourcesRegistry
+} from '../typings/config/config.types.ts'
 import type {
   SourceManagerLike,
   TrackFormat,
@@ -122,8 +127,7 @@ export default class SourcesManager implements SourceManagerLike {
       const sourceKey = isYouTube ? 'youtube' : name
       const sourceConfig = this.nodelink.options.sources
 
-      const enabled =
-        sourceConfig[sourceKey as keyof SourcesRegistry]?.enabled
+      const enabled = sourceConfig[sourceKey as keyof SourcesRegistry]?.enabled
 
       if (!enabled) return
 
@@ -180,8 +184,14 @@ export default class SourcesManager implements SourceManagerLike {
       await fs.access(sourcesDir)
 
       const sources = this.nodelink.options.sources
-      const enabledSourceKeys = (Object.keys(sources) as Array<keyof SourcesRegistry>)
-        .filter((key) => sources[key]?.enabled)
+      const enabledSourceKeys = Object.keys(sources)
+        .filter((key) => {
+          const config = sources[key] as
+            | SourceConfigBase
+            | FeatureToggle
+            | undefined
+          return config?.enabled
+        })
         .map((key) => key.toLowerCase())
 
       const uniqueEnabled = Array.from(new Set(enabledSourceKeys))
@@ -358,13 +368,8 @@ export default class SourcesManager implements SourceManagerLike {
    * @public
    */
   public async searchWithDefault(query: string): Promise<SourceResult> {
-    const configuredDefaultSource =
-      this.nodelink.options.search?.defaultSource ??
-      this.nodelink.options.defaultSearchSource ??
-      'youtube'
-    const defaultSources = Array.isArray(
-      configuredDefaultSource
-    )
+    const configuredDefaultSource = this.nodelink.options.search.defaultSource
+    const defaultSources = Array.isArray(configuredDefaultSource)
       ? configuredDefaultSource
       : [configuredDefaultSource]
 
@@ -397,11 +402,7 @@ export default class SourcesManager implements SourceManagerLike {
    * @public
    */
   public async unifiedSearch(query: string): Promise<SourceResult> {
-    const searchSources = (
-      this.nodelink.options.search?.unifiedSources ??
-      this.nodelink.options.unifiedSearchSources ??
-      ['youtube']
-    ) as string[]
+    const searchSources = this.nodelink.options.search.unifiedSources
     logger(
       'debug',
       'Sources',
@@ -548,12 +549,7 @@ export default class SourcesManager implements SourceManagerLike {
                 'Sources',
                 `ISRC Upscale: found match for ${track.isrc} on ${source}. Using high-quality source.`
               )
-              return (await this.getTrackUrl(
-                match.info,
-                undefined,
-                false,
-                true
-              )) as any
+              return await this.getTrackUrl(match.info, undefined, false, true)
             }
           }
         } catch (e) {

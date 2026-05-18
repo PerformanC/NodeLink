@@ -2628,7 +2628,8 @@ class StreamAudioResource extends BaseAudioResource {
     const silenceDetector = new SilenceDetector({
       sampleRate: AUDIO_CONFIG.sampleRate,
       channels: AUDIO_CONFIG.channels,
-      thresholdDb: nodelink.options.playback.audio?.automix?.silenceThresholdDb ?? -40
+      thresholdDb:
+        nodelink.options.playback.audio?.automix?.silenceThresholdDb ?? -40
     })
 
     const flowController = new FlowController(
@@ -2782,7 +2783,8 @@ class StreamAudioResource extends BaseAudioResource {
         volume,
         enableAGC,
         lookaheadMs: this.nodelink?.options?.playback.audio?.lookaheadMs,
-        gateThresholdLUFS: this.nodelink?.options?.playback.audio?.gateThresholdLUFS
+        gateThresholdLUFS:
+          this.nodelink?.options?.playback.audio?.gateThresholdLUFS
       })
 
       pipeline(pcmStream, volumeTransformer, (err: Error | null): void => {

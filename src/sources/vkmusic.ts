@@ -281,7 +281,9 @@ export default class VKMusicSource implements SourceInstance {
     try {
       const res = await this._apiRequest<VKAudioList>('audio.search', {
         q: query,
-        count: String((this.nodelink.options.search.maxResults as number) || 10),
+        count: String(
+          (this.nodelink.options.search.maxResults as number) || 10
+        ),
         extended: '1'
       })
 

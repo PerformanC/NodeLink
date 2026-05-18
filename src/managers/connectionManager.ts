@@ -70,7 +70,8 @@ export default class ConnectionManager {
 
   constructor(nodelink: ConnectionManagerContext) {
     this.nodelink = nodelink
-    this.config = nodelink.options.network?.connection || nodelink.options.connection || {}
+    this.config =
+      nodelink.options.network?.connection || nodelink.options.connection || {}
     this.interval = null
     this.status = 'unknown'
     this.metrics = { timestamp: Date.now() }

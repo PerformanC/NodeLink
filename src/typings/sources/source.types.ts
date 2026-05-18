@@ -5,12 +5,12 @@
 
 import type { Readable } from 'node:stream'
 import type { Worker as NodeWorker } from 'node:worker_threads'
-import type { NodelinkConfig } from '../config/config.types.ts'
 import type {
   StatsMetricsPayload,
   StatsSnapshot,
   WorkerMetricsPayload
 } from '../api/stats.types.ts'
+import type { NodelinkConfig } from '../config/config.types.ts'
 import type {
   CredentialEntry,
   CredentialManagerStats

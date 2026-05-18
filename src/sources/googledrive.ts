@@ -106,8 +106,9 @@ export default class GoogleDriveSource implements SourceInstance {
       cookiesStr = rawCookies.map((c) => String(c).split(';')[0]).join('; ')
     }
 
-    const driveConfig = this.nodelink.options.sources
-      ?.googledrive as GoogleDriveSourceConfig | undefined
+    const driveConfig = this.nodelink.options.sources?.googledrive as
+      | GoogleDriveSourceConfig
+      | undefined
     const userCookies = driveConfig?.cookies
     if (userCookies) {
       cookiesStr = userCookies

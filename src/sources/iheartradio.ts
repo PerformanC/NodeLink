@@ -342,7 +342,6 @@ export default class IheartradioSource {
       options.search?.maxResults > 0
         ? options.search.maxResults
         : 10
-
   }
 
   /**

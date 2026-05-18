@@ -183,10 +183,13 @@ export class Player {
         'music_offtopic',
         'filler'
       ],
-      actionTypes: this.nodelink.options.playback.sponsorblock?.actionTypes ?? ['skip'],
+      actionTypes: this.nodelink.options.playback.sponsorblock?.actionTypes ?? [
+        'skip'
+      ],
       segments: [],
       lastSkippedUuid: null,
-      skipMarginMs: this.nodelink.options.playback.sponsorblock?.skipMarginMs ?? 150
+      skipMarginMs:
+        this.nodelink.options.playback.sponsorblock?.skipMarginMs ?? 150
     }
 
     logger(
@@ -484,7 +487,8 @@ export class Player {
         'Player',
         `Track became stuck for guild ${this.guildId}. Triggering immediate recovery.`
       )
-      this._stuckTime = (this.nodelink.options.playback.trackStuckThresholdMs ?? 0) + 1
+      this._stuckTime =
+        (this.nodelink.options.playback.trackStuckThresholdMs ?? 0) + 1
       this._sendUpdate()
       return
     }
@@ -917,7 +921,8 @@ export class Player {
       if (typeof resolveHoloTrack === 'function') {
         const holoTrack = await resolveHoloTrack.call(source, track, {
           fetchChannelInfo: this.nodelink.options.search.fetchChannelInfo,
-          resolveExternalLinks: this.nodelink.options.search.resolveExternalLinks
+          resolveExternalLinks:
+            this.nodelink.options.search.resolveExternalLinks
         })
         return holoTrack || track
       }
@@ -1138,7 +1143,8 @@ export class Player {
       !this.isPaused
     ) {
       if (this._lastPosition === position) {
-        this._stuckTime += this.nodelink.options.playback.playerUpdateInterval ?? 0
+        this._stuckTime +=
+          this.nodelink.options.playback.playerUpdateInterval ?? 0
         if (
           this._stuckTime >= threshold &&
           !this._isRecovering &&

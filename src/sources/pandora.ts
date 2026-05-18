@@ -559,7 +559,9 @@ export default class PandoraSource implements SourceInstance {
    * @internal
    */
   private getMaxPlaylistLength(): number {
-    return (this.options.playback.maxPlaylistLength as number | undefined) ?? 100
+    return (
+      (this.options.playback.maxPlaylistLength as number | undefined) ?? 100
+    )
   }
 
   /**

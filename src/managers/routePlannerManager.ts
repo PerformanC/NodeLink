@@ -52,7 +52,11 @@ const normalizeIpBlocks = (
   return blocks
     .map((block) => {
       if (typeof block === 'string') return { cidr: block }
-      if (block && typeof block === 'object' && typeof block.cidr === 'string') {
+      if (
+        block &&
+        typeof block === 'object' &&
+        typeof block.cidr === 'string'
+      ) {
         return block
       }
       return null
@@ -64,11 +68,10 @@ type ResolvedRoutePlannerConfig = Omit<RoutePlannerConfig, 'ipBlocks'> & {
   ipBlocks?: RoutePlannerIpBlockConfig[]
 }
 
-const resolveConfig = (nodelink: RoutePlannerManagerContext): ResolvedRoutePlannerConfig => {
-  const cfg =
-    nodelink.options.network?.routePlanner ??
-    nodelink.options.routePlanner ??
-    {}
+const resolveConfig = (
+  nodelink: RoutePlannerManagerContext
+): ResolvedRoutePlannerConfig => {
+  const cfg = nodelink.options.network.routePlanner
   return {
     ...cfg,
     ipBlocks: normalizeIpBlocks(cfg.ipBlocks)

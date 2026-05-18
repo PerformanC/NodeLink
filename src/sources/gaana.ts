@@ -2,8 +2,8 @@ import { createDecipheriv } from 'node:crypto'
 import { PassThrough } from 'node:stream'
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import { parse as parsePlaylist } from '../playback/hls/PlaylistParser.ts'
+import type { GaanaSourceConfig } from '../typings/config/config.types.ts'
 import type { HLSSegment } from '../typings/playback/hls.types.ts'
-import type { GaanaSourceConfig, NodelinkConfig } from '../typings/config/config.types.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -43,7 +43,7 @@ export default class GaanaSource {
   /**
    * Gaana source configuration block.
    */
-  public readonly config: Record<string, unknown>
+  public readonly config: GaanaSourceConfig
 
   /**
    * Search aliases handled by this source.

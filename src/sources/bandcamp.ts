@@ -25,19 +25,6 @@ const STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\\s]+/
 const TRALBUM_REGEX = /data-tralbum=(["'])([\s\S]+?)\1/
 
 /**
- * Runtime options used by the Bandcamp source.
- */
-interface BandcampRuntimeOptions {
-  /**
-   * Maximum number of tracks returned for search operations.
-   */
-  maxSearchResults?: number
-  search?: {
-    maxResults?: number
-  }
-}
-
-/**
  * Minimal Bandcamp track payload used by `data-tralbum`.
  */
 interface BandcampTralbumTrack {

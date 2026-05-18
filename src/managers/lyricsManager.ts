@@ -1,8 +1,8 @@
-import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { alignLyrics } from '../modules/lyricsAligner.ts'
+import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type { SourceResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'
 

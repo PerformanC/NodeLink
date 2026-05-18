@@ -21,7 +21,10 @@ import TrackCacheManager from '../managers/trackCacheManager.ts'
 import { migrateConfig } from '../modules/config/configMigration.ts'
 import { getWebmOpusProfilerStats } from '../playback/demuxers/WebmOpus.ts'
 import { bufferPool } from '../playback/structs/BufferPool.ts'
-import type { NodelinkConfig as NodeLinkConfig } from '../typings/config/config.types.ts'
+import type {
+  JsonValue,
+  NodelinkConfig as NodeLinkConfig
+} from '../typings/config/config.types.ts'
 import type {
   NodeLink,
   TrackInfoExtended
@@ -111,17 +114,19 @@ const resolveConfigExport = (
   importedModule: Record<string, unknown>,
   fileName: string
 ): Record<string, unknown> => {
-  const candidate = (
-    importedModule as {
-      default?: unknown
-      config?: unknown
-    }
-  ).default ?? (
-    importedModule as {
-      default?: unknown
-      config?: unknown
-    }
-  ).config
+  const candidate =
+    (
+      importedModule as {
+        default?: unknown
+        config?: unknown
+      }
+    ).default ??
+    (
+      importedModule as {
+        default?: unknown
+        config?: unknown
+      }
+    ).config
 
   if (
     candidate &&
@@ -137,13 +142,24 @@ const resolveConfigExport = (
 }
 
 const loadConfig = async (): Promise<NodeLinkConfig> => {
-  const candidates = ['config.ts', 'config.js', 'config.default.ts', 'config.default.js']
+  const candidates = [
+    'config.ts',
+    'config.js',
+    'config.default.ts',
+    'config.default.js'
+  ]
 
   for (const fileName of candidates) {
     try {
       const module = await import(resolveRootConfigUrl(fileName))
-      const raw = resolveConfigExport(module as Record<string, unknown>, fileName)
-      return migrateConfig(raw) as NodeLinkConfig
+      const raw = resolveConfigExport(
+        module as Record<string, unknown>,
+        fileName
+      )
+
+      return migrateConfig(
+        raw as Record<string, JsonValue>
+      ) as unknown as NodeLinkConfig
     } catch (error) {
       const err = error as { code?: string; message?: string }
       const isNotFound =

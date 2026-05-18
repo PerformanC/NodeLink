@@ -19,7 +19,10 @@ import type PluginManager from '../managers/pluginManager.ts'
 import type { PluginManagerContext } from '../managers/pluginManager.ts'
 import { migrateConfig } from '../modules/config/configMigration.ts'
 
-import type { NodelinkConfig } from '../typings/config/config.types.ts'
+import type {
+  JsonValue,
+  NodelinkConfig
+} from '../typings/config/config.types.ts'
 import type { NodeLink } from '../typings/playback/player.types.ts'
 import type {
   FrameType,
@@ -106,17 +109,19 @@ if (isMainThread) {
       importedModule: Record<string, unknown>,
       fileName: string
     ): Record<string, unknown> => {
-      const candidate = (
-        importedModule as {
-          default?: unknown
-          config?: unknown
-        }
-      ).default ?? (
-        importedModule as {
-          default?: unknown
-          config?: unknown
-        }
-      ).config
+      const candidate =
+        (
+          importedModule as {
+            default?: unknown
+            config?: unknown
+          }
+        ).default ??
+        (
+          importedModule as {
+            default?: unknown
+            config?: unknown
+          }
+        ).config
 
       if (
         candidate &&
@@ -131,12 +136,20 @@ if (isMainThread) {
       )
     }
 
-    const candidates = ['config.ts', 'config.js', 'config.default.ts', 'config.default.js']
+    const candidates = [
+      'config.ts',
+      'config.js',
+      'config.default.ts',
+      'config.default.js'
+    ]
     for (const fileName of candidates) {
       try {
         const module = await import(resolveRootConfigUrl(fileName))
-        const raw = resolveConfigExport(module as Record<string, unknown>, fileName)
-        return migrateConfig(raw)
+        const raw = resolveConfigExport(
+          module as Record<string, unknown>,
+          fileName
+        )
+        return migrateConfig(raw as Record<string, JsonValue>)
       } catch (error) {
         const err = error as { code?: string; message?: string }
         const isNotFound =

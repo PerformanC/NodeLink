@@ -201,6 +201,12 @@ export interface YouTubeContext {
     osName?: string
 
     /**
+     * UTC offset in minutes relative to GMT.
+     * @example 0, -180, 120
+     */
+    utcOffsetMinutes?: number
+
+    /**
      * Operating system version string.
      * @example '10.0', '13', '14.1'
      */

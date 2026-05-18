@@ -1,4 +1,3 @@
-import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type {
   EndpointCounters,
   SourceStatsEntry,
@@ -6,6 +5,7 @@ import type {
   StatsSnapshot,
   WorkerMetricsPayload
 } from '../typings/api/stats.types.ts'
+import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import { logger } from '../utils.ts'
 
 type PromClientModule = typeof import('prom-client')

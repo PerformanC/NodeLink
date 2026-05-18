@@ -1,16 +1,17 @@
 import cluster from 'node:cluster'
 import { EventEmitter } from 'node:events'
-import fs from 'node:fs'
 import http from 'node:http'
 import { resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import WebSocketServer from '@performanc/pwsl-server'
-
-import { migrateConfig } from './modules/config/configMigration.ts'
-import ProxyManager from './managers/proxyManager.ts'
+import type ProxyManager from './managers/proxyManager.ts'
 import RoutePlannerManager from './managers/routePlannerManager.ts'
 import SessionManager from './managers/sessionManager.ts'
 import StatsManager from './managers/statsManager.ts'
+import {
+  migrateConfig,
+  persistConfig
+} from './modules/config/configMigration.ts'
 import {
   applyEnvOverrides,
   checkForUpdates,
@@ -41,7 +42,10 @@ import type SourceWorkerManager from './managers/sourceWorkerManager.ts'
 import type TrackCacheManager from './managers/trackCacheManager.ts'
 import type WorkerManager from './managers/workerManager.ts'
 import type { ApiMiddlewareExtension } from './typings/api/api.types.ts'
-import type { NodelinkConfig } from './typings/config/config.types.ts'
+import type {
+  JsonValue,
+  NodelinkConfig
+} from './typings/config/config.types.ts'
 import type {
   AudioInterceptorExtension,
   BunSocketData,
@@ -299,17 +303,19 @@ const loadConfig = async (): Promise<NodelinkConfig> => {
     importedModule: Record<string, unknown>,
     fileName: string
   ): Record<string, unknown> => {
-    const candidate = (
-      importedModule as {
-        default?: unknown
-        config?: unknown
-      }
-    ).default ?? (
-      importedModule as {
-        default?: unknown
-        config?: unknown
-      }
-    ).config
+    const candidate =
+      (
+        importedModule as {
+          default?: unknown
+          config?: unknown
+        }
+      ).default ??
+      (
+        importedModule as {
+          default?: unknown
+          config?: unknown
+        }
+      ).config
 
     if (
       candidate &&
@@ -324,41 +330,95 @@ const loadConfig = async (): Promise<NodelinkConfig> => {
     )
   }
 
-  const candidates = [
-    'config.ts',
-    'config.js',
-    'config.default.ts',
-    'config.default.js'
-  ]
-
-  for (const fileName of candidates) {
+  /**
+   * Loads and merges configuration files.
+   * Prioritizes config.ts/js, falls back to config.default.ts/js.
+   * @returns Migrated and merged configuration object.
+   */
+  const loadAndMerge = async (): Promise<NodelinkConfig> => {
+    // 1. Load defaults (Mandatory)
+    let baseConfig: Record<string, unknown> = {}
+    let defaultFileName = 'config.default.ts'
     try {
-      const module = await import(resolveRootConfigUrl(fileName))
-      const imported = resolveConfigExport(
+      const module = await import(resolveRootConfigUrl('config.default.ts'))
+      baseConfig = resolveConfigExport(
         module as Record<string, unknown>,
-        fileName
+        'config.default.ts'
       )
-      if (fileName.startsWith('config.default')) {
-        console.log(`[INFO] Config: Loaded fallback configuration from ${fileName}`)
-      } else {
-        console.log(`[INFO] Config: Loaded configuration from ${fileName}`)
+    } catch {
+      try {
+        const module = await import(resolveRootConfigUrl('config.default.js'))
+        baseConfig = resolveConfigExport(
+          module as Record<string, unknown>,
+          'config.default.js'
+        )
+        defaultFileName = 'config.default.js'
+      } catch {
+        throw new Error(
+          '[ERROR] Config: Base configuration (config.default.ts/js) not found.'
+        )
       }
-      return migrateConfig(imported) as NodelinkConfig
-    } catch (e) {
-      const error = e as ConfigLoadError
-      const isNotFound =
-        error.code === 'ERR_MODULE_NOT_FOUND' ||
-        error.code === 'ENOENT' ||
-        error.message?.includes('Cannot find module')
-      if (isNotFound) continue
-      throw e
     }
+
+    // 2. Try to load user configuration
+    let userConfig: Record<string, unknown> = {}
+    let userFileName: string | null = null
+    const userCandidates = ['config.ts', 'config.js']
+
+    for (const fileName of userCandidates) {
+      try {
+        const module = await import(resolveRootConfigUrl(fileName))
+        userConfig = resolveConfigExport(
+          module as Record<string, unknown>,
+          fileName
+        )
+        userFileName = fileName
+        console.log(`[INFO] Config: Loaded user configuration from ${fileName}`)
+        break
+      } catch (e) {
+        const error = e as ConfigLoadError
+        const isNotFound =
+          error.code === 'ERR_MODULE_NOT_FOUND' ||
+          error.code === 'ENOENT' ||
+          error.message?.includes('Cannot find module')
+        if (isNotFound) continue
+        throw e
+      }
+    }
+
+    if (!userFileName) {
+      console.log(`[INFO] Config: No user configuration found. Using defaults.`)
+    }
+
+    // 3. Merge user config over defaults
+    // We do a deep merge for 'sources', 'lyrics', 'meanings', 'pluginConfig'
+    // and a shallow merge for the rest to keep it simple but functional.
+    const merged = { ...baseConfig }
+    for (const [key, value] of Object.entries(userConfig)) {
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        baseConfig[key] &&
+        typeof baseConfig[key] === 'object' &&
+        !Array.isArray(baseConfig[key])
+      ) {
+        merged[key] = {
+          ...(baseConfig[key] as Record<string, unknown>),
+          ...(value as Record<string, unknown>)
+        }
+      } else {
+        merged[key] = value
+      }
+    }
+
+    const migrated = migrateConfig(merged as Record<string, JsonValue>)
+    await persistConfig(migrated, userFileName ?? defaultFileName)
+
+    return migrated as unknown as NodelinkConfig
   }
 
-  console.error(
-    '[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).'
-  )
-  throw new Error('No valid configuration file found.')
+  return await loadAndMerge()
 }
 
 config = await loadConfig()

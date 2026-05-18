@@ -7,8 +7,7 @@ import type {
 } from '../managers/lyricsManager.ts'
 import type {
   InstanceHealth,
-  MonochromeLyricsResponse,
-  MonochromeSourceConfig
+  MonochromeLyricsResponse
 } from '../typings/sources/monochrome.types.ts'
 import { logger, makeRequest } from '../utils.ts'
 

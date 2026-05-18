@@ -394,7 +394,6 @@ export default class LetrasMusSource {
       options.search?.maxResults > 0
         ? options.search.maxResults
         : 10
-
   }
 
   /**
