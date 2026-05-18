@@ -239,8 +239,8 @@ export interface SymphoniaDecoderLike {
   isProbed: boolean
   /** Pushes new data to the decoder buffer. */
   push(chunk: Buffer): void
-  /** Initializes the decoder after probing. */
-  initialize(): boolean
+  /** Initializes the decoder once enough compressed input is buffered. */
+  initialize(codecRegistryHint?: string | null): boolean
   /** Decodes the next available frame. */
   decode(): DecodeResult | null
   /** Closes the input handle. */
@@ -414,6 +414,8 @@ export interface FadeTransformerOptions {
 export interface SymphoniaDecoderStreamOptions extends TransformOptions {
   /** Desired resampling quality. */
   resamplingQuality?: string
+  /** Optional file-extension hint for Symphonia probing. */
+  codecRegistryHint?: string | null
   /** Stream high water mark in bytes. */
   highWaterMark?: number
 }

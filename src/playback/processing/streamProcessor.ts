@@ -46,7 +46,8 @@ import type {
   ResamplingQuality,
   RingBufferLike,
   SeekableStreamMeta,
-  SymphoniaDecoderLike
+  SymphoniaDecoderLike,
+  SymphoniaDecoderStreamOptions
 } from '../../typings/playback/streamProcessor.types.ts'
 import { http1makeRequest, logger } from '../../utils.ts'
 import FlvDemuxer from '../demuxers/Flv.ts'
@@ -263,6 +264,15 @@ const _isWebmFormat = (type: string): boolean =>
   type.includes('webm') || type.includes('weba')
 
 const _isFlvFormat = (type: string): boolean => type.indexOf('flv') !== -1
+
+const _getSymphoniaCodecHint = (type: string): string | null => {
+  const lowerType = type.toLowerCase()
+  if (lowerType.includes('flac')) return 'flac'
+  if (lowerType.includes('mp3') || lowerType.includes('mpeg')) return 'mp3'
+  if (lowerType.includes('ogg') || lowerType.includes('vorbis')) return 'ogg'
+  if (lowerType.includes('wav') || lowerType.includes('wave')) return 'wav'
+  return null
+}
 const _tightBuffer = (buf: Buffer): Buffer =>
   buf.byteOffset === 0 && buf.byteLength === buf.buffer.byteLength
     ? buf
@@ -581,6 +591,7 @@ class PCMFrameCounter extends Transform {
 class BaseAudioResource {
   pipes: (Readable | Transform)[] | null
   stream: (VoiceAudioStream & Transform) | null
+  canStop?: boolean
   protected _destroyed: boolean
   protected guildId: string
 
@@ -588,12 +599,14 @@ class BaseAudioResource {
     this.guildId = guildId || 'api-stream'
     this.pipes = []
     this.stream = null
+    this.canStop = false
     this._destroyed = false
   }
 
   protected _assignStream(stream: Transform): void {
     const voiceStream = stream as unknown as VoiceAudioStream &
       Transform & {
+        canStop?: boolean
         checkTapeRampCompleted?: () => boolean
         scratchTo?: (
           durationMs: number,
@@ -845,43 +858,33 @@ class BaseAudioResource {
 
 class SymphoniaDecoderStream extends Transform {
   private decoder: SymphoniaDecoderLike | null
-  private resumeInput: ((error?: Error | null) => void) | null
+  private readonly codecRegistryHint: string | null
+  private flushCallback: TransformCallback | null
+  private inputClosed: boolean
   private isFinished: boolean
   private _aborted: boolean
-  private _loopScheduled: boolean
   private _isDecoding: boolean
   private _timeoutId: ReturnType<typeof setTimeout> | null
   private _immediateId: ReturnType<typeof setImmediate> | null
-  private readonly _onResume: () => void
 
-  constructor(
-    options: {
-      highWaterMark?: number
-      objectMode?: boolean
-    } = {}
-  ) {
+  constructor(options: SymphoniaDecoderStreamOptions = {}) {
+    const { codecRegistryHint, ...streamOptions } = options
+
     super({
-      ...options,
-      highWaterMark: AUDIO_CONFIG.highWaterMark,
+      ...streamOptions,
+      highWaterMark: options.highWaterMark ?? AUDIO_CONFIG.highWaterMark,
       objectMode: false
     })
 
     this.decoder = new SymphoniaDecoder() as SymphoniaDecoderLike
-    this.resumeInput = null
+    this.codecRegistryHint = codecRegistryHint ?? null
+    this.flushCallback = null
+    this.inputClosed = false
     this.isFinished = false
     this._aborted = false
-    this._loopScheduled = false
     this._isDecoding = false
     this._timeoutId = null
     this._immediateId = null
-
-    this._onResume = () => {
-      if (!this.isFinished && !this._aborted && this.decoder) {
-        this._scheduleDecode()
-      }
-    }
-
-    this.on('resume', this._onResume)
   }
 
   abort(): void {
@@ -898,7 +901,6 @@ class SymphoniaDecoderStream extends Transform {
       clearImmediate(this._immediateId)
       this._immediateId = null
     }
-    this._loopScheduled = false
   }
 
   _isDecoderValid(): boolean {
@@ -915,132 +917,119 @@ class SymphoniaDecoderStream extends Transform {
       return
     }
 
-    this.decoder.push(chunk)
-    this._scheduleDecode()
-
-    const bufferedBytes = this.decoder?.bufferedBytes ?? 0
-    if (bufferedBytes > BUFFER_THRESHOLDS.maxCompressed) {
-      this.resumeInput = callback
-    } else {
-      callback()
-    }
-  }
-
-  _scheduleDecode(): void {
-    if (
-      this._loopScheduled ||
-      this._isDecoding ||
-      !this._isDecoderValid() ||
-      this.readableFlowing === false
-    )
-      return
-
-    if (this.readableLength >= this.readableHighWaterMark) {
-      this._loopScheduled = true
-      this._timeoutId = setTimeout(() => {
-        this._timeoutId = null
-        this._loopScheduled = false
-        if (this._isDecoderValid()) this._scheduleDecode()
-      }, AUDIO_CONSTANTS.decodeIntervalMs)
-      return
-    }
-
-    this._loopScheduled = true
-
-    this._timeoutId = setTimeout(() => {
-      this._timeoutId = null
-      this._loopScheduled = false
-      if (this._isDecoderValid()) this._decodeLoop()
-    }, AUDIO_CONSTANTS.decodeIntervalMs)
-  }
-
-  async _decodeLoop(): Promise<void> {
-    if (!this._isDecoderValid() || (this.readableFlowing as boolean) === false)
-      return
-    this._isDecoding = true
-
     try {
-      let hasMoreData = true
-
-      while (
-        hasMoreData &&
-        this._isDecoderValid() &&
-        (this.readableFlowing as boolean) !== false &&
-        this.readableLength < this.readableHighWaterMark
-      ) {
-        hasMoreData = this._processAudio()
-
-        if (hasMoreData && this._isDecoderValid()) {
-          await new Promise<void>((resolve) => {
-            this._immediateId = setImmediate(() => {
-              this._immediateId = null
-              resolve()
-            })
-          })
-        }
+      this.decoder.push(chunk)
+      if (!this.decoder.isProbed) {
+        this.decoder.initialize(this.codecRegistryHint)
       }
+      this._scheduleDecode()
+      callback()
     } catch (err) {
-      if (!this._aborted) this.emit('error', err)
-    } finally {
-      this._isDecoding = false
+      callback(err as Error)
     }
+  }
 
-    const bufferedBytes = this.decoder?.bufferedBytes ?? 0
-    if (
-      bufferedBytes > 0 &&
-      this._isDecoderValid() &&
-      (this.readableFlowing as boolean) !== false &&
-      this.readableLength < this.readableHighWaterMark
-    ) {
+  override _read(_size: number): void {
+    super._read(_size)
+
+    if (this._isDecoderValid()) {
       this._scheduleDecode()
     }
   }
 
-  _processAudio(): boolean {
-    if (!this._isDecoderValid()) return false
-    if (this.readableLength >= this.readableHighWaterMark) return true
+  _scheduleDecode(delayMs = 0): void {
+    if (this._immediateId || this._timeoutId || !this._isDecoderValid()) return
+
+    if (delayMs > 0) {
+      this._timeoutId = setTimeout(() => {
+        this._timeoutId = null
+        this._decodeLoop()
+      }, delayMs)
+      return
+    }
+
+    this._immediateId = setImmediate(() => {
+      this._immediateId = null
+      this._decodeLoop()
+    })
+  }
+
+  _decodeLoop(): void {
+    if (this._isDecoding || !this._isDecoderValid()) return
 
     if (!this.decoder?.isProbed) {
       try {
-        if (!this.decoder?.initialize()) return false
+        if (!this.decoder?.initialize(this.codecRegistryHint)) {
+          if (this.inputClosed) this._finishDecode()
+          return
+        }
       } catch (err) {
-        throw new Error(`Symphonia init failed: ${(err as Error).message}`)
+        this._failDecode(err)
+        return
       }
     }
 
-    let decodeCount = 0
-    let hasOutput = false
+    if (this.readableLength >= this.readableHighWaterMark) {
+      this._scheduleDecode(AUDIO_CONSTANTS.decodeIntervalMs)
+      return
+    }
 
-    while (
-      decodeCount < AUDIO_CONSTANTS.maxDecodesPerTick &&
-      this._isDecoderValid() &&
-      this.readableLength < this.readableHighWaterMark
-    ) {
-      const result = this.decoder?.decode()
-      if (!result) break
+    this._isDecoding = true
 
-      const canPush = this.push(result.samples)
-      hasOutput = true
-      decodeCount++
+    try {
+      let decodeCount = 0
 
-      if (this.resumeInput) {
-        const afterBytes = this.decoder?.bufferedBytes ?? 0
-        if (afterBytes < BUFFER_THRESHOLDS.minCompressed) {
-          const cb = this.resumeInput
-          this.resumeInput = null
-          cb()
+      while (
+        decodeCount < AUDIO_CONSTANTS.maxDecodesPerTick &&
+        this._isDecoderValid() &&
+        this.readableLength < this.readableHighWaterMark
+      ) {
+        const result = this.decoder?.decode()
+        if (!result) {
+          if (this.inputClosed) this._finishDecode()
+          return
+        }
+
+        decodeCount++
+        if (result.samples.length === 0) continue
+        if (!this.push(result.samples)) {
+          this._scheduleDecode(AUDIO_CONSTANTS.decodeIntervalMs)
+          return
         }
       }
 
-      if (!canPush) break
+      this._scheduleDecode()
+    } catch (err) {
+      this._failDecode(err)
+    } finally {
+      this._isDecoding = false
     }
+  }
 
-    const remainingBytes = this.decoder?.bufferedBytes ?? 0
-    return hasOutput || remainingBytes > 0
+  _finishDecode(): void {
+    const callback = this.flushCallback
+    this.flushCallback = null
+    this.isFinished = true
+    this._cleanup()
+    callback?.()
+  }
+
+  _failDecode(err: unknown): void {
+    const callback = this.flushCallback
+    this.flushCallback = null
+    this.isFinished = true
+    this._cleanup()
+
+    const error =
+      err instanceof Error ? err : new Error(`Symphonia decode failed: ${err}`)
+    if (callback) {
+      callback(error)
+    } else {
+      this.emit('error', error)
+    }
   }
 
   override _flush(callback: TransformCallback): void {
-    this.isFinished = true
     this._cancelTimers()
 
     if (this._aborted || !this.decoder) {
@@ -1051,18 +1040,24 @@ class SymphoniaDecoderStream extends Transform {
 
     try {
       this.decoder.closeInput()
+      this.inputClosed = true
+      this.flushCallback = callback
 
-      let count = 0
-      while (count < 1000) {
-        const result = this.decoder?.decode()
-        if (!result) break
-        this.push(result.samples)
-        count++
+      if (!this.decoder.initialize(this.codecRegistryHint)) {
+        if ((this.decoder.bufferedBytes ?? 0) === 0) {
+          this._cleanup()
+          callback()
+          return
+        }
+        throw new Error('Symphonia init failed: not enough input data')
       }
-    } catch {}
 
-    this._cleanup()
-    callback()
+      this._decodeLoop()
+    } catch (err) {
+      this.flushCallback = null
+      this._cleanup()
+      callback(err as Error)
+    }
   }
 
   override _destroy(
@@ -1073,10 +1068,10 @@ class SymphoniaDecoderStream extends Transform {
     this.isFinished = true
     this._cancelTimers()
 
-    if (this.resumeInput) {
-      const cb = this.resumeInput
-      this.resumeInput = null
-      cb()
+    if (this.flushCallback) {
+      const cb = this.flushCallback
+      this.flushCallback = null
+      cb(err)
     }
 
     this._cleanup()
@@ -1085,20 +1080,8 @@ class SymphoniaDecoderStream extends Transform {
 
   _cleanup(): void {
     this._cancelTimers()
-    this.removeListener('resume', this._onResume)
-
-    if (this.resumeInput) {
-      const cb = this.resumeInput
-      this.resumeInput = null
-      try {
-        cb()
-      } catch {}
-    }
 
     if (this.decoder) {
-      try {
-        this.decoder.flush()
-      } catch {}
       try {
         this.decoder.free()
       } catch {}
@@ -2452,7 +2435,7 @@ class StreamAudioResource extends BaseAudioResource {
       case SupportedFormats.FLAC:
       case SupportedFormats.OGG_VORBIS:
       case SupportedFormats.WAV:
-        return this._createSymphoniaPipeline(stream)
+        return this._createSymphoniaPipeline(stream, type)
 
       case SupportedFormats.OPUS:
         return this._createOpusPipeline(stream, type)
@@ -2501,7 +2484,9 @@ class StreamAudioResource extends BaseAudioResource {
       streams.push(demuxer)
 
       if (lowerType.includes('mp3') || lowerType.includes('mpeg')) {
-        const decoder = new SymphoniaDecoderStream()
+        const decoder = new SymphoniaDecoderStream({
+          codecRegistryHint: _getSymphoniaCodecHint(lowerType)
+        })
         streams.push(decoder)
 
         this.pipes?.push(...streams.slice(1))
@@ -2549,8 +2534,10 @@ class StreamAudioResource extends BaseAudioResource {
     return decoder
   }
 
-  _createSymphoniaPipeline(stream: Readable): Transform {
-    const decoder = new SymphoniaDecoderStream()
+  _createSymphoniaPipeline(stream: Readable, type: string): Transform {
+    const decoder = new SymphoniaDecoderStream({
+      codecRegistryHint: _getSymphoniaCodecHint(type)
+    })
     this.pipes?.push(decoder)
 
     pipeline(stream, decoder, (err: Error | null): void => {
@@ -2782,9 +2769,8 @@ class StreamAudioResource extends BaseAudioResource {
         type: 's16le',
         volume,
         enableAGC,
-        lookaheadMs: this.nodelink?.options?.playback.audio?.lookaheadMs,
-        gateThresholdLUFS:
-          this.nodelink?.options?.playback.audio?.gateThresholdLUFS
+        lookaheadMs: this.nodelink?.options?.audio?.lookaheadMs,
+        gateThresholdLUFS: this.nodelink?.options?.audio?.gateThresholdLUFS
       })
 
       pipeline(pcmStream, volumeTransformer, (err: Error | null): void => {
@@ -3013,7 +2999,11 @@ export const createPCMStream = (
         streams.push(new MPEGTSDemuxer())
 
         if (lowerType.includes('mp3') || lowerType.includes('mpeg')) {
-          streams.push(new SymphoniaDecoderStream())
+          streams.push(
+            new SymphoniaDecoderStream({
+              codecRegistryHint: _getSymphoniaCodecHint(lowerType)
+            })
+          )
           break
         }
       } else if (_isMp4Format(lowerType)) streams.push(new MP4ToAACStream())
@@ -3040,7 +3030,11 @@ export const createPCMStream = (
     case SupportedFormats.FLAC:
     case SupportedFormats.OGG_VORBIS:
     case SupportedFormats.WAV: {
-      streams.push(new SymphoniaDecoderStream())
+      streams.push(
+        new SymphoniaDecoderStream({
+          codecRegistryHint: _getSymphoniaCodecHint(type)
+        })
+      )
       break
     }
 

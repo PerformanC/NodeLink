@@ -160,6 +160,18 @@ const _isMp4Format = (type) => type.indexOf('mp4') !== -1 ||
     type.indexOf('quicktime') !== -1;
 const _isWebmFormat = (type) => type.includes('webm') || type.includes('weba');
 const _isFlvFormat = (type) => type.indexOf('flv') !== -1;
+const _getSymphoniaCodecHint = (type) => {
+    const lowerType = type.toLowerCase();
+    if (lowerType.includes('flac'))
+        return 'flac';
+    if (lowerType.includes('mp3') || lowerType.includes('mpeg'))
+        return 'mp3';
+    if (lowerType.includes('ogg') || lowerType.includes('vorbis'))
+        return 'ogg';
+    if (lowerType.includes('wav') || lowerType.includes('wave'))
+        return 'wav';
+    return null;
+};
 const _tightBuffer = (buf) => buf.byteOffset === 0 && buf.byteLength === buf.buffer.byteLength
     ? buf
     : Buffer.from(buf);
@@ -374,12 +386,14 @@ class PCMFrameCounter extends Transform {
 class BaseAudioResource {
     pipes;
     stream;
+    canStop;
     _destroyed;
     guildId;
     constructor(guildId) {
         this.guildId = guildId || 'api-stream';
         this.pipes = [];
         this.stream = null;
+        this.canStop = false;
         this._destroyed = false;
     }
     _assignStream(stream) {
@@ -541,34 +555,30 @@ class BaseAudioResource {
 }
 class SymphoniaDecoderStream extends Transform {
     decoder;
-    resumeInput;
+    codecRegistryHint;
+    flushCallback;
+    inputClosed;
     isFinished;
     _aborted;
-    _loopScheduled;
     _isDecoding;
     _timeoutId;
     _immediateId;
-    _onResume;
     constructor(options = {}) {
+        const { codecRegistryHint, ...streamOptions } = options;
         super({
-            ...options,
-            highWaterMark: AUDIO_CONFIG.highWaterMark,
+            ...streamOptions,
+            highWaterMark: options.highWaterMark ?? AUDIO_CONFIG.highWaterMark,
             objectMode: false
         });
         this.decoder = new SymphoniaDecoder();
-        this.resumeInput = null;
+        this.codecRegistryHint = codecRegistryHint ?? null;
+        this.flushCallback = null;
+        this.inputClosed = false;
         this.isFinished = false;
         this._aborted = false;
-        this._loopScheduled = false;
         this._isDecoding = false;
         this._timeoutId = null;
         this._immediateId = null;
-        this._onResume = () => {
-            if (!this.isFinished && !this._aborted && this.decoder) {
-                this._scheduleDecode();
-            }
-        };
-        this.on('resume', this._onResume);
     }
     abort() {
         this._aborted = true;
@@ -583,7 +593,6 @@ class SymphoniaDecoderStream extends Transform {
             clearImmediate(this._immediateId);
             this._immediateId = null;
         }
-        this._loopScheduled = false;
     }
     _isDecoderValid() {
         return this.decoder !== null && !this._aborted && !this.isFinished;
@@ -593,117 +602,109 @@ class SymphoniaDecoderStream extends Transform {
             callback();
             return;
         }
-        this.decoder.push(chunk);
-        this._scheduleDecode();
-        const bufferedBytes = this.decoder?.bufferedBytes ?? 0;
-        if (bufferedBytes > BUFFER_THRESHOLDS.maxCompressed) {
-            this.resumeInput = callback;
-        }
-        else {
+        try {
+            this.decoder.push(chunk);
+            if (!this.decoder.isProbed) {
+                this.decoder.initialize(this.codecRegistryHint);
+            }
+            this._scheduleDecode();
             callback();
         }
+        catch (err) {
+            callback(err);
+        }
     }
-    _scheduleDecode() {
-        if (this._loopScheduled ||
-            this._isDecoding ||
-            !this._isDecoderValid() ||
-            this.readableFlowing === false)
+    _read(_size) {
+        super._read(_size);
+        if (this._isDecoderValid()) {
+            this._scheduleDecode();
+        }
+    }
+    _scheduleDecode(delayMs = 0) {
+        if (this._immediateId || this._timeoutId || !this._isDecoderValid())
             return;
-        if (this.readableLength >= this.readableHighWaterMark) {
-            this._loopScheduled = true;
+        if (delayMs > 0) {
             this._timeoutId = setTimeout(() => {
                 this._timeoutId = null;
-                this._loopScheduled = false;
-                if (this._isDecoderValid())
-                    this._scheduleDecode();
-            }, AUDIO_CONSTANTS.decodeIntervalMs);
+                this._decodeLoop();
+            }, delayMs);
             return;
         }
-        this._loopScheduled = true;
-        this._timeoutId = setTimeout(() => {
-            this._timeoutId = null;
-            this._loopScheduled = false;
-            if (this._isDecoderValid())
-                this._decodeLoop();
-        }, AUDIO_CONSTANTS.decodeIntervalMs);
+        this._immediateId = setImmediate(() => {
+            this._immediateId = null;
+            this._decodeLoop();
+        });
     }
-    async _decodeLoop() {
-        if (!this._isDecoderValid() || this.readableFlowing === false)
+    _decodeLoop() {
+        if (this._isDecoding || !this._isDecoderValid())
             return;
-        this._isDecoding = true;
-        try {
-            let hasMoreData = true;
-            while (hasMoreData &&
-                this._isDecoderValid() &&
-                this.readableFlowing !== false &&
-                this.readableLength < this.readableHighWaterMark) {
-                hasMoreData = this._processAudio();
-                if (hasMoreData && this._isDecoderValid()) {
-                    await new Promise((resolve) => {
-                        this._immediateId = setImmediate(() => {
-                            this._immediateId = null;
-                            resolve();
-                        });
-                    });
+        if (!this.decoder?.isProbed) {
+            try {
+                if (!this.decoder?.initialize(this.codecRegistryHint)) {
+                    if (this.inputClosed)
+                        this._finishDecode();
+                    return;
                 }
             }
+            catch (err) {
+                this._failDecode(err);
+                return;
+            }
+        }
+        if (this.readableLength >= this.readableHighWaterMark) {
+            this._scheduleDecode(AUDIO_CONSTANTS.decodeIntervalMs);
+            return;
+        }
+        this._isDecoding = true;
+        try {
+            let decodeCount = 0;
+            while (decodeCount < AUDIO_CONSTANTS.maxDecodesPerTick &&
+                this._isDecoderValid() &&
+                this.readableLength < this.readableHighWaterMark) {
+                const result = this.decoder?.decode();
+                if (!result) {
+                    if (this.inputClosed)
+                        this._finishDecode();
+                    return;
+                }
+                decodeCount++;
+                if (result.samples.length === 0)
+                    continue;
+                if (!this.push(result.samples)) {
+                    this._scheduleDecode(AUDIO_CONSTANTS.decodeIntervalMs);
+                    return;
+                }
+            }
+            this._scheduleDecode();
         }
         catch (err) {
-            if (!this._aborted)
-                this.emit('error', err);
+            this._failDecode(err);
         }
         finally {
             this._isDecoding = false;
         }
-        const bufferedBytes = this.decoder?.bufferedBytes ?? 0;
-        if (bufferedBytes > 0 &&
-            this._isDecoderValid() &&
-            this.readableFlowing !== false &&
-            this.readableLength < this.readableHighWaterMark) {
-            this._scheduleDecode();
-        }
     }
-    _processAudio() {
-        if (!this._isDecoderValid())
-            return false;
-        if (this.readableLength >= this.readableHighWaterMark)
-            return true;
-        if (!this.decoder?.isProbed) {
-            try {
-                if (!this.decoder?.initialize())
-                    return false;
-            }
-            catch (err) {
-                throw new Error(`Symphonia init failed: ${err.message}`);
-            }
+    _finishDecode() {
+        const callback = this.flushCallback;
+        this.flushCallback = null;
+        this.isFinished = true;
+        this._cleanup();
+        callback?.();
+    }
+    _failDecode(err) {
+        const callback = this.flushCallback;
+        this.flushCallback = null;
+        this.isFinished = true;
+        this._cleanup();
+        const error = err instanceof Error ? err : new Error(`Symphonia decode failed: ${err}`);
+        if (callback) {
+            callback(error);
         }
-        let decodeCount = 0;
-        let hasOutput = false;
-        while (decodeCount < AUDIO_CONSTANTS.maxDecodesPerTick &&
-            this._isDecoderValid() &&
-            this.readableLength < this.readableHighWaterMark) {
-            const result = this.decoder?.decode();
-            if (!result)
-                break;
-            const canPush = this.push(result.samples);
-            hasOutput = true;
-            decodeCount++;
-            if (this.resumeInput) {
-                const afterBytes = this.decoder?.bufferedBytes ?? 0;
-                if (afterBytes < BUFFER_THRESHOLDS.minCompressed) {
-                    const cb = this.resumeInput;
-                    this.resumeInput = null;
-                    cb();
-                }
-            }
-            if (!canPush)
-                break;
+        else {
+            this.emit('error', error);
         }
-        const remainingBytes = this.decoder?.bufferedBytes ?? 0;
-        return hasOutput || remainingBytes > 0;
     }
     _flush(callback) {
-        this.isFinished = true;
         this._cancelTimers();
         if (this._aborted || !this.decoder) {
             this._cleanup();
@@ -712,47 +713,39 @@ class SymphoniaDecoderStream extends Transform {
         }
         try {
             this.decoder.closeInput();
-            let count = 0;
-            while (count < 1000) {
-                const result = this.decoder?.decode();
-                if (!result)
-                    break;
-                this.push(result.samples);
-                count++;
+            this.inputClosed = true;
+            this.flushCallback = callback;
+            if (!this.decoder.initialize(this.codecRegistryHint)) {
+                if ((this.decoder.bufferedBytes ?? 0) === 0) {
+                    this._cleanup();
+                    callback();
+                    return;
+                }
+                throw new Error('Symphonia init failed: not enough input data');
             }
+            this._decodeLoop();
         }
-        catch { }
-        this._cleanup();
-        callback();
+        catch (err) {
+            this.flushCallback = null;
+            this._cleanup();
+            callback(err);
+        }
     }
     _destroy(err, callback) {
         this._aborted = true;
         this.isFinished = true;
         this._cancelTimers();
-        if (this.resumeInput) {
-            const cb = this.resumeInput;
-            this.resumeInput = null;
-            cb();
+        if (this.flushCallback) {
+            const cb = this.flushCallback;
+            this.flushCallback = null;
+            cb(err);
         }
         this._cleanup();
         super._destroy(err, callback);
     }
     _cleanup() {
         this._cancelTimers();
-        this.removeListener('resume', this._onResume);
-        if (this.resumeInput) {
-            const cb = this.resumeInput;
-            this.resumeInput = null;
-            try {
-                cb();
-            }
-            catch { }
-        }
         if (this.decoder) {
-            try {
-                this.decoder.flush();
-            }
-            catch { }
             try {
                 this.decoder.free();
             }
@@ -1863,7 +1856,7 @@ class StreamAudioResource extends BaseAudioResource {
             case SupportedFormats.FLAC:
             case SupportedFormats.OGG_VORBIS:
             case SupportedFormats.WAV:
-                return this._createSymphoniaPipeline(stream);
+                return this._createSymphoniaPipeline(stream, type);
             case SupportedFormats.OPUS:
                 return this._createOpusPipeline(stream, type);
             default:
@@ -1896,7 +1889,9 @@ class StreamAudioResource extends BaseAudioResource {
             const demuxer = new MPEGTSDemuxer();
             streams.push(demuxer);
             if (lowerType.includes('mp3') || lowerType.includes('mpeg')) {
-                const decoder = new SymphoniaDecoderStream();
+                const decoder = new SymphoniaDecoderStream({
+                    codecRegistryHint: _getSymphoniaCodecHint(lowerType)
+                });
                 streams.push(decoder);
                 this.pipes?.push(...streams.slice(1));
                 pipeline(streams, (err) => {
@@ -1930,8 +1925,10 @@ class StreamAudioResource extends BaseAudioResource {
         });
         return decoder;
     }
-    _createSymphoniaPipeline(stream) {
-        const decoder = new SymphoniaDecoderStream();
+    _createSymphoniaPipeline(stream, type) {
+        const decoder = new SymphoniaDecoderStream({
+            codecRegistryHint: _getSymphoniaCodecHint(type)
+        });
         this.pipes?.push(decoder);
         pipeline(stream, decoder, (err) => {
             if (err && !this._destroyed) {
@@ -2085,8 +2082,8 @@ class StreamAudioResource extends BaseAudioResource {
                 type: 's16le',
                 volume,
                 enableAGC,
-                lookaheadMs: this.nodelink?.options?.playback.audio?.lookaheadMs,
-                gateThresholdLUFS: this.nodelink?.options?.playback.audio?.gateThresholdLUFS
+                lookaheadMs: this.nodelink?.options?.audio?.lookaheadMs,
+                gateThresholdLUFS: this.nodelink?.options?.audio?.gateThresholdLUFS
             });
             pipeline(pcmStream, volumeTransformer, (err) => {
                 if (err && !this._destroyed) {
@@ -2199,7 +2196,9 @@ export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, 
             else if (_isMpegtsFormat(lowerType)) {
                 streams.push(new MPEGTSDemuxer());
                 if (lowerType.includes('mp3') || lowerType.includes('mpeg')) {
-                    streams.push(new SymphoniaDecoderStream());
+                    streams.push(new SymphoniaDecoderStream({
+                        codecRegistryHint: _getSymphoniaCodecHint(lowerType)
+                    }));
                     break;
                 }
             }
@@ -2221,7 +2220,9 @@ export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, 
         case SupportedFormats.FLAC:
         case SupportedFormats.OGG_VORBIS:
         case SupportedFormats.WAV: {
-            streams.push(new SymphoniaDecoderStream());
+            streams.push(new SymphoniaDecoderStream({
+                codecRegistryHint: _getSymphoniaCodecHint(type)
+            }));
             break;
         }
         case SupportedFormats.OPUS: {
