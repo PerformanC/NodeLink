@@ -44,7 +44,7 @@ async function handleGetSponsorBlock(req, res, pathParams, runtime, sendResponse
         return;
     }
     try {
-        const state = session.players.getSponsorBlock(pathParams.guildId);
+        const state = await session.players.getSponsorBlock(pathParams.guildId);
         sendResponse(req, res, state, 200);
     }
     catch (error) {
@@ -67,13 +67,17 @@ async function handlePatchSponsorBlock(req, res, pathParams, runtime, sendRespon
         return;
     }
     try {
-        session.players.updateSponsorBlock(pathParams.guildId, {
+        const result = await session.players.updateSponsorBlock(pathParams.guildId, {
             enabled: body.enabled,
             categories: body.categories,
             actionTypes: body.actionTypes,
             skipMarginMs: body.skipMarginMs
         });
-        sendResponse(req, res, session.players.getSponsorBlock(pathParams.guildId), 200);
+        if (result && 'status' in result && result.status !== 200) {
+            sendErrorResponse(req, res, result.status || 500, 'Internal Server Error', result.message || 'Operation failed', req.url || '');
+            return;
+        }
+        sendResponse(req, res, await session.players.getSponsorBlock(pathParams.guildId), 200);
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Player not found';
@@ -95,8 +99,12 @@ async function handlePostSponsorBlock(req, res, pathParams, runtime, sendRespons
         return;
     }
     try {
-        session.players.setSponsorBlockSegments(pathParams.guildId, body.segments);
-        sendResponse(req, res, session.players.getSponsorBlock(pathParams.guildId), 200);
+        const result = await session.players.setSponsorBlockSegments(pathParams.guildId, body.segments);
+        if (result && 'status' in result && result.status !== 200) {
+            sendErrorResponse(req, res, result.status || 500, 'Internal Server Error', result.message || 'Operation failed', req.url || '');
+            return;
+        }
+        sendResponse(req, res, await session.players.getSponsorBlock(pathParams.guildId), 200);
     }
     catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Player not found';
@@ -113,7 +121,7 @@ async function handleDeleteSponsorBlock(req, res, pathParams, runtime) {
         return;
     }
     try {
-        session.players.clearSponsorBlock(pathParams.guildId);
+        await session.players.clearSponsorBlock(pathParams.guildId);
         res.writeHead(204);
         res.end();
     }

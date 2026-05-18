@@ -23,6 +23,7 @@ import RoutePlannerManager from "../managers/routePlannerManager.js";
 import SourceManager from "../managers/sourceManager.js";
 import StatsManager from "../managers/statsManager.js";
 import TrackCacheManager from "../managers/trackCacheManager.js";
+import { migrateConfig } from "../modules/config/configMigration.js";
 import { getWebmOpusProfilerStats } from "../playback/demuxers/WebmOpus.js";
 import { bufferPool } from "../playback/structs/BufferPool.js";
 import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from "../utils.js";
@@ -57,14 +58,42 @@ try {
 catch (_e) { }
 let config;
 const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
-try {
-    config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.js'))))
-        .default;
-}
-catch {
-    config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js'))))
-        .default;
-}
+const resolveConfigExport = (importedModule, fileName) => {
+    const candidate = importedModule.default ??
+        importedModule.config;
+    if (candidate &&
+        typeof candidate === 'object' &&
+        Object.keys(candidate).length > 0) {
+        return candidate;
+    }
+    throw new Error(`[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`);
+};
+const loadConfig = async () => {
+    const candidates = [
+        'config.ts',
+        'config.js',
+        'config.default.ts',
+        'config.default.js'
+    ];
+    for (const fileName of candidates) {
+        try {
+            const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl(fileName)));
+            const raw = resolveConfigExport(module, fileName);
+            return migrateConfig(raw);
+        }
+        catch (error) {
+            const err = error;
+            const isNotFound = err.code === 'ERR_MODULE_NOT_FOUND' ||
+                err.code === 'ENOENT' ||
+                err.message?.includes('Cannot find module');
+            if (isNotFound)
+                continue;
+            throw error;
+        }
+    }
+    throw new Error('[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).');
+};
+config = await loadConfig();
 applyEnvOverrides(config);
 const HIBERNATION_ENABLED = config.cluster?.hibernation?.enabled !== false;
 const HIBERNATION_TIMEOUT = config.cluster?.hibernation?.timeoutMs || 20 * 60 * 1000;

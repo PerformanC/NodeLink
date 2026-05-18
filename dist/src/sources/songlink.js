@@ -104,11 +104,7 @@ export default class SongLinkSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        const sourceConfig = this.nodelink.options.sources?.songlink;
-        this.config =
-            sourceConfig && typeof sourceConfig === 'object'
-                ? sourceConfig
-                : {};
+        this.config = this.nodelink.options.sources.songlink;
         this.searchTerms = ['slsearch'];
         this.patterns = [SONG_LINK_PATTERN];
         this.priority = 95;
@@ -208,7 +204,7 @@ export default class SongLinkSource {
      */
     async search(query, _sourceTerm, _searchType = 'track') {
         try {
-            const maxSearchRaw = this.nodelink.options.search.maxResults;
+            const maxSearchRaw = this.nodelink.options.search?.maxResults;
             const limit = typeof maxSearchRaw === 'number' && Number.isFinite(maxSearchRaw)
                 ? maxSearchRaw
                 : 10;
@@ -565,7 +561,7 @@ export default class SongLinkSource {
      * @returns True when source can be used.
      */
     _isSourceAvailable(sourceName) {
-        const sourceConfig = this.nodelink.options.sources?.[sourceName];
+        const sourceConfig = this.nodelink.options.sources[sourceName];
         if (!sourceConfig?.enabled)
             return false;
         return !!this.nodelink.sources.getSource(sourceName);

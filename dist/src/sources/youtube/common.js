@@ -940,7 +940,7 @@ function getRendererFromItemData(itemData, itemType) {
  * @returns Built track data or null
  * @public
  */
-export async function buildTrack(itemData, itemType, sourceNameOverride = null, fullApiResponse = null, enableHolo = false, config = {}, makeRequestFn = null) {
+export async function buildTrack(itemData, itemType, sourceNameOverride = null, fullApiResponse = null, enableHolo = false, config = { search: {} }, makeRequestFn = null) {
     if (!itemData) {
         logger('warn', 'buildTrack', 'itemData is null or undefined');
         return null;
@@ -1202,7 +1202,7 @@ export async function buildTrack(itemData, itemType, sourceNameOverride = null, 
  * @returns Built holo track data
  * @public
  */
-export async function buildHoloTrack(trackInfo, itemData, itemType, fullApiResponse = null, config = {}, makeRequestFn = null) {
+export async function buildHoloTrack(trackInfo, itemData, itemType, fullApiResponse = null, config = { search: {} }, makeRequestFn = null) {
     const duration = formatDuration(trackInfo.length);
     const sourceName = trackInfo.sourceName;
     const sourceUrl = sourceName === 'ytmusic'
@@ -1696,7 +1696,8 @@ export class BaseClient {
         }
         const track = await buildTrack(videoDetails, sourceName, null, playerResponse, !!this.config.experimental.enableHoloTracks, {
             resolveExternalLinks: !!this.config.search.resolveExternalLinks,
-            fetchChannelInfo: !!this.config.search.fetchChannelInfo
+            fetchChannelInfo: !!this.config.search.fetchChannelInfo,
+            search: {}
         });
         if (!track) {
             logger('error', `youtube-${this.name}`, `Failed to build track for ${videoId}`);
@@ -1761,13 +1762,14 @@ export class BaseClient {
         }
         const tracks = [];
         let selectedTrack = 0;
-        const maxLength = this.config.playback.maxPlaylistLength || 100;
+        const maxLength = this.config.playback?.maxPlaylistLength || 100;
         for (let i = 0; i < Math.min(playlistContent.length, maxLength); i++) {
             const item = playlistContent[i];
             try {
                 const track = await buildTrack(item, sourceName || 'youtube', null, null, !!this.config.experimental.enableHoloTracks, {
                     fetchChannelInfo: false,
-                    resolveExternalLinks: false
+                    resolveExternalLinks: false,
+                    search: {}
                 });
                 if (track) {
                     tracks.push(track);
@@ -1843,14 +1845,15 @@ export class BaseClient {
             return { loadType: 'empty', data: {} };
         }
         const tracks = [];
-        const maxLength = this.config.playback.maxPlaylistLength || 100;
+        const maxLength = this.config.playback?.maxPlaylistLength || 100;
         const shelfContents = shelf.contents;
         for (let i = 0; i < Math.min(shelfContents.length, maxLength); i++) {
             const item = shelfContents[i];
             try {
                 const track = await buildTrack(item, sourceName || 'ytmusic', sourceName, browseResponse, !!this.config.experimental.enableHoloTracks, {
                     fetchChannelInfo: false,
-                    resolveExternalLinks: false
+                    resolveExternalLinks: false,
+                    search: {}
                 });
                 if (track) {
                     tracks.push(track);
@@ -1919,7 +1922,7 @@ export class BaseClient {
         }
         else {
             const qualityPriority = this._getQualityPriority();
-            const audioConfig = this.config.playback.audio;
+            const audioConfig = this.config.playback?.audio;
             const audioQuality = audioConfig?.quality || 'high';
             targetItags =
                 qualityPriority[audioQuality] || [];
@@ -2244,5 +2247,44 @@ export class BaseClient {
             };
         }
         return await this._extractStreamData(playerResult.body, decodedTrack, context, cipherManager, itag);
+    }
+    /**
+     * Fetches the initial visitor data by making a GET request to YouTube.
+     * This is used to initialize the session context.
+     *
+     * @returns The extracted visitor data string, or null if it could not be found.
+     */
+    async getVisitorData() {
+        try {
+            const response = await makeRequest('https://www.youtube.com', {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                },
+                proxy: this.getProxy()
+            });
+            if (response.statusCode !== 200 || !response.body) {
+                return null;
+            }
+            const body = response.body;
+            const match = body.match(/ytcfg\.set\((\{.*?\})\);/);
+            if (match?.[1]) {
+                try {
+                    const ytcfg = JSON.parse(match[1]);
+                    if (ytcfg.VISITOR_DATA) {
+                        return ytcfg.VISITOR_DATA;
+                    }
+                }
+                catch {
+                    // Fallback to regex if JSON parse fails
+                }
+            }
+            const visitorDataMatch = body.match(/"visitorData":"([^"]+)"/);
+            return visitorDataMatch?.[1] || null;
+        }
+        catch (err) {
+            logger('debug', `youtube-${this.name}`, `Failed to fetch visitor data: ${err instanceof Error ? err.message : String(err)}`);
+            return null;
+        }
     }
 }

@@ -9,7 +9,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger } from "../utils.js";
+import { getBestMatch, logger } from "../utils.js";
 /**
  * Central manager for audio source providers.
  * Handles source discovery, dynamic loading, and request routing based on URL patterns or aliases.
@@ -54,12 +54,8 @@ export default class SourcesManager {
         const processSource = async (name, mod) => {
             const isYouTube = name === 'youtube' || name.includes('YouTube.ts');
             const sourceKey = isYouTube ? 'youtube' : name;
-            const youtubeKey = 'youtube';
             const sourceConfig = this.nodelink.options.sources;
-            const enabled = isYouTube
-                ? sourceConfig?.[youtubeKey]
-                    ?.enabled
-                : !!sourceConfig?.[sourceKey]?.enabled;
+            const enabled = sourceConfig[sourceKey]?.enabled;
             if (!enabled)
                 return;
             const importedModule = mod;
@@ -103,9 +99,13 @@ export default class SourcesManager {
         };
         try {
             await fs.access(sourcesDir);
-            const enabledSourceKeys = Object.entries(this.nodelink.options.sources || {})
-                .filter(([, cfg]) => !!cfg?.enabled)
-                .map(([key]) => key.toLowerCase());
+            const sources = this.nodelink.options.sources;
+            const enabledSourceKeys = Object.keys(sources)
+                .filter((key) => {
+                const config = sources[key];
+                return config?.enabled;
+            })
+                .map((key) => key.toLowerCase());
             const uniqueEnabled = Array.from(new Set(enabledSourceKeys));
             const sourceEntries = uniqueEnabled.map((sourceKey) => {
                 const fileCandidates = sourceKey === 'youtube'
@@ -221,9 +221,10 @@ export default class SourcesManager {
      * @public
      */
     async searchWithDefault(query) {
-        const defaultSources = Array.isArray(this.nodelink.options.search.defaultSource)
-            ? this.nodelink.options.search.defaultSource
-            : [this.nodelink.options.search.defaultSource];
+        const configuredDefaultSource = this.nodelink.options.search.defaultSource;
+        const defaultSources = Array.isArray(configuredDefaultSource)
+            ? configuredDefaultSource
+            : [configuredDefaultSource];
         for (const source of defaultSources) {
             try {
                 const result = await this.search(source, query);
@@ -246,9 +247,7 @@ export default class SourcesManager {
      * @public
      */
     async unifiedSearch(query) {
-        const searchSources = (this.nodelink.options.search.unifiedSources || [
-            'youtube'
-        ]);
+        const searchSources = this.nodelink.options.search.unifiedSources;
         logger('debug', 'Sources', `Performing unified search for "${query}" on [${searchSources.join(', ')}]`);
         const searchPromises = searchSources.map((sourceName) => this._instrumentedSourceCall(sourceName, 'search', query).catch((e) => {
             logger('warn', 'Sources', `A source (${sourceName}) failed during unified search: ${e.message}`);
@@ -348,7 +347,7 @@ export default class SourcesManager {
                         const match = getBestMatch(searchResult.data, track);
                         if (match) {
                             logger('info', 'Sources', `ISRC Upscale: found match for ${track.isrc} on ${source}. Using high-quality source.`);
-                            return (await this.getTrackUrl(match.info, undefined, false, true));
+                            return await this.getTrackUrl(match.info, undefined, false, true);
                         }
                     }
                 }

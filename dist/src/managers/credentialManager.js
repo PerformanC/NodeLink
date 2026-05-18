@@ -4,7 +4,7 @@ const CREDENTIALS_VERSION = 1;
 const DEFAULT_SAVE_DELAY_MS = 1000;
 const DEFAULT_CREDENTIALS_PATH = './.cache/credentials.bin';
 const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 1000;
-const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+const _isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 /**
  * Encrypted credential store with TTL support and debounced persistence.
  * @remarks
@@ -113,12 +113,7 @@ export default class CredentialManager extends BaseCacheManager {
         };
     }
     static _resolvePassword(options) {
-        const optionsCandidate = options;
-        const serverCandidate = optionsCandidate.server;
-        const server = isRecord(serverCandidate)
-            ? serverCandidate
-            : null;
-        const password = server && typeof server.password === 'string' ? server.password : null;
+        const password = options.server?.password;
         if (!password) {
             throw new Error('CredentialManager requires options.server.password');
         }

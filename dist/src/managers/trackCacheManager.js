@@ -5,7 +5,7 @@ const DEFAULT_SAVE_DELAY_MS = 5000;
 const DEFAULT_TTL_MS = 1000 * 60 * 60 * 6;
 const DEFAULT_MAX_ENTRIES = 5000;
 const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 1000;
-const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+const _isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 /**
  * Encrypted cache for resolved track metadata and URLs.
  * @remarks Uses AES-256-GCM and purges expired entries on load and access.
@@ -68,16 +68,9 @@ export default class TrackCacheManager extends BaseCacheManager {
         this.save();
     }
     static _resolveCacheOptions(options) {
-        const directCandidate = options.trackCache;
-        const rootCache = isRecord(directCandidate) ? directCandidate : null;
-        const nestedCandidate = options.cache;
-        const nestedCache = isRecord(nestedCandidate)
-            ? nestedCandidate.track
-            : null;
-        const nestedTrackCache = isRecord(nestedCache) ? nestedCache : null;
-        const selected = rootCache ?? nestedTrackCache;
-        const maxEntriesRaw = selected?.maxEntries;
-        const cleanupIntervalRaw = selected?.cleanupIntervalMs;
+        const playback = options.playback;
+        const maxEntriesRaw = playback.maxPlaylistLength;
+        const cleanupIntervalRaw = playback.statsUpdateInterval;
         const maxEntries = typeof maxEntriesRaw === 'number' && Number.isFinite(maxEntriesRaw)
             ? Math.max(100, Math.floor(maxEntriesRaw))
             : DEFAULT_MAX_ENTRIES;
@@ -88,12 +81,7 @@ export default class TrackCacheManager extends BaseCacheManager {
         return { maxEntries, cleanupIntervalMs };
     }
     static _resolvePassword(options) {
-        const optionsCandidate = options;
-        const serverCandidate = optionsCandidate.server;
-        const server = isRecord(serverCandidate)
-            ? serverCandidate
-            : null;
-        const password = server && typeof server.password === 'string' ? server.password : null;
+        const password = options.server?.password;
         if (!password) {
             throw new Error('TrackCacheManager requires options.server.password');
         }

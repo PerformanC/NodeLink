@@ -1,4 +1,27 @@
 import { logger } from "../utils.js";
+const normalizeIpBlocks = (blocks) => {
+    if (!Array.isArray(blocks))
+        return [];
+    return blocks
+        .map((block) => {
+        if (typeof block === 'string')
+            return { cidr: block };
+        if (block &&
+            typeof block === 'object' &&
+            typeof block.cidr === 'string') {
+            return block;
+        }
+        return null;
+    })
+        .filter((block) => block !== null);
+};
+const resolveConfig = (nodelink) => {
+    const cfg = nodelink.options.network.routePlanner;
+    return {
+        ...cfg,
+        ipBlocks: normalizeIpBlocks(cfg.ipBlocks)
+    };
+};
 const BIGINT_MAX_SAFE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
 /**
  * Provides outbound IP selection and ban tracking for route-planned requests.
@@ -24,7 +47,7 @@ export default class RoutePlannerManager {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = nodelink.options.network.routePlanner ?? {};
+        this.config = resolveConfig(nodelink);
         this.blocks = [];
         this.bannedIps = new Map();
         this.bannedBlocks = new Map();
@@ -39,6 +62,12 @@ export default class RoutePlannerManager {
      */
     get ipBlocks() {
         return this.blocks;
+    }
+    /**
+     * Compatibility alias used by shutdown paths.
+     */
+    dispose() {
+        this.freeAll();
     }
     /**
      * Converts an IPv4 or IPv6 address string to bigint form.

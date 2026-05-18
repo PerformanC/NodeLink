@@ -15,6 +15,7 @@ import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import v8 from 'node:v8';
 import { isMainThread, parentPort, workerData as rawWorkerData, Worker } from 'node:worker_threads';
+import { migrateConfig } from "../modules/config/configMigration.js";
 import * as utils from "../utils.js";
 import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from "./headQueue.js";
 const __filename = fileURLToPath(import.meta.url);
@@ -59,12 +60,39 @@ if (isMainThread) {
      * @internal
      */
     async function loadConfig() {
-        try {
-            return (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.js')))).default;
+        const resolveConfigExport = (importedModule, fileName) => {
+            const candidate = importedModule.default ??
+                importedModule.config;
+            if (candidate &&
+                typeof candidate === 'object' &&
+                Object.keys(candidate).length > 0) {
+                return candidate;
+            }
+            throw new Error(`[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`);
+        };
+        const candidates = [
+            'config.ts',
+            'config.js',
+            'config.default.ts',
+            'config.default.js'
+        ];
+        for (const fileName of candidates) {
+            try {
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl(fileName)));
+                const raw = resolveConfigExport(module, fileName);
+                return migrateConfig(raw);
+            }
+            catch (error) {
+                const err = error;
+                const isNotFound = err.code === 'ERR_MODULE_NOT_FOUND' ||
+                    err.code === 'ENOENT' ||
+                    err.message?.includes('Cannot find module');
+                if (isNotFound)
+                    continue;
+                throw error;
+            }
         }
-        catch {
-            return (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js')))).default;
-        }
+        throw new Error('[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).');
     }
     const config = await loadConfig();
     utils.applyEnvOverrides(config);

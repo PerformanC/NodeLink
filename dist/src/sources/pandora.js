@@ -424,7 +424,7 @@ export default class PandoraSource {
      * @internal
      */
     getMaxPlaylistLength() {
-        return this.options.playback.maxPlaylistLength ?? 100;
+        return (this.options.playback.maxPlaylistLength ?? 100);
     }
     /**
      * Resolves an artist, album, or track by ID.

@@ -46,9 +46,9 @@ export default class IheartradioSource {
         this.nodelink = nodelink;
         const options = nodelink.options;
         this.maxSearchResults =
-            typeof options.search.maxResults === 'number' &&
-                Number.isInteger(options.search.maxResults) &&
-                options.search.maxResults > 0
+            typeof options.search?.maxResults === 'number' &&
+                Number.isInteger(options.search?.maxResults) &&
+                options.search?.maxResults > 0
                 ? options.search.maxResults
                 : 10;
     }

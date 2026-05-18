@@ -12,10 +12,10 @@ import http from 'node:http';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import WebSocketServer from '@performanc/pwsl-server';
-import { migrateConfig } from "./modules/config/configMigration.js";
 import RoutePlannerManager from "./managers/routePlannerManager.js";
 import SessionManager from "./managers/sessionManager.js";
 import StatsManager from "./managers/statsManager.js";
+import { migrateConfig, persistConfig } from "./modules/config/configMigration.js";
 import { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
 import 'dotenv/config';
 import { GatewayEvents, MINIMUM_NODE_VERSION } from "./constants.js";
@@ -157,27 +157,89 @@ const getTrackCacheManagerClass = async () => {
 let config;
 const loadConfig = async () => {
     const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
-    try {
-        const imported = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.ts')))).default;
-        console.log('[INFO] Config: Loaded configuration from config.ts');
-        return migrateConfig(imported);
-    }
-    catch (e) {
-        const error = e;
-        // Handle various error formats for missing modules across different runtimes (Node, Bun, ts-node, tsx)
-        if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT' || error.message?.includes('Cannot find module')) {
+    const resolveConfigExport = (importedModule, fileName) => {
+        const candidate = importedModule.default ??
+            importedModule.config;
+        if (candidate &&
+            typeof candidate === 'object' &&
+            Object.keys(candidate).length > 0) {
+            return candidate;
+        }
+        throw new Error(`[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`);
+    };
+    /**
+     * Loads and merges configuration files.
+     * Prioritizes config.ts/js, falls back to config.default.ts/js.
+     * @returns Migrated and merged configuration object.
+     */
+    const loadAndMerge = async () => {
+        // 1. Load defaults (Mandatory)
+        let baseConfig = {};
+        let defaultFileName = 'config.default.ts';
+        try {
+            const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.ts')));
+            baseConfig = resolveConfigExport(module, 'config.default.ts');
+        }
+        catch {
             try {
-                const imported = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.ts')))).default;
-                console.log('[INFO] Config: Loaded fallback configuration from config.default.ts');
-                return migrateConfig(imported);
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js')));
+                baseConfig = resolveConfigExport(module, 'config.default.js');
+                defaultFileName = 'config.default.js';
             }
-            catch (e2) {
-                console.error('[ERROR] Config: Failed to load configuration (config.ts or config.default.ts).');
-                throw e2;
+            catch {
+                throw new Error('[ERROR] Config: Base configuration (config.default.ts/js) not found.');
             }
         }
-        throw e;
-    }
+        // 2. Try to load user configuration
+        let userConfig = {};
+        let userFileName = null;
+        const userCandidates = ['config.ts', 'config.js'];
+        for (const fileName of userCandidates) {
+            try {
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl(fileName)));
+                userConfig = resolveConfigExport(module, fileName);
+                userFileName = fileName;
+                console.log(`[INFO] Config: Loaded user configuration from ${fileName}`);
+                break;
+            }
+            catch (e) {
+                const error = e;
+                const isNotFound = error.code === 'ERR_MODULE_NOT_FOUND' ||
+                    error.code === 'ENOENT' ||
+                    error.message?.includes('Cannot find module');
+                if (isNotFound)
+                    continue;
+                throw e;
+            }
+        }
+        if (!userFileName) {
+            console.log(`[INFO] Config: No user configuration found. Using defaults.`);
+        }
+        // 3. Merge user config over defaults
+        // We do a deep merge for 'sources', 'lyrics', 'meanings', 'pluginConfig'
+        // and a shallow merge for the rest to keep it simple but functional.
+        const merged = { ...baseConfig };
+        for (const [key, value] of Object.entries(userConfig)) {
+            if (value &&
+                typeof value === 'object' &&
+                !Array.isArray(value) &&
+                baseConfig[key] &&
+                typeof baseConfig[key] === 'object' &&
+                !Array.isArray(baseConfig[key])) {
+                merged[key] = {
+                    ...baseConfig[key],
+                    ...value
+                };
+            }
+            else {
+                merged[key] = value;
+            }
+        }
+        const migrated = migrateConfig(merged);
+        await persistConfig(migrated, userFileName ?? defaultFileName);
+        return migrated;
+    };
+    return await loadAndMerge();
 };
 config = await loadConfig();
 // Apply environment variable overrides after config is loaded
@@ -367,6 +429,7 @@ class NodelinkServer extends EventEmitter {
         this._sourceInitPromise = this._initSources(isClusterPrimary, options);
         this.routePlanner = new RoutePlannerManager(this);
         memoryTrace('constructor:after-route-planner');
+        this.proxyManager = null;
         this.credentialManager = null;
         memoryTrace('constructor:after-credential-manager');
         this.trackCacheManager = null;
@@ -1904,7 +1967,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 if (clusterEnabled && cluster.isPrimary) {
     if (config.sources?.youtube?.getOAuthToken) {
-        // dynamicly import OAuth (if enabled)
+        // dynamically import OAuth (if enabled)
         const OAuth = (await import("./sources/youtube/OAuth.js").catch((e) => {
             logger('error', 'youtube', `\x1b[1m\x1b[31mOAuth class not found Error: ${e.message}\x1b[0m`);
             process.exit(1);

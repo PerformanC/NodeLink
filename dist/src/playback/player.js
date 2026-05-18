@@ -115,7 +115,9 @@ export class Player {
                 'music_offtopic',
                 'filler'
             ],
-            actionTypes: this.nodelink.options.playback.sponsorblock?.actionTypes ?? ['skip'],
+            actionTypes: this.nodelink.options.playback.sponsorblock?.actionTypes ?? [
+                'skip'
+            ],
             segments: [],
             lastSkippedUuid: null,
             skipMarginMs: this.nodelink.options.playback.sponsorblock?.skipMarginMs ?? 150
@@ -230,7 +232,7 @@ export class Player {
             encryption: this.nodelink.options?.playback.audio?.encryption ?? null
         });
         this.connection.stuckTimeout =
-            Math.max(this.nodelink.options.playback.trackStuckThresholdMs, 30000) + 5000;
+            Math.max(this.nodelink.options.playback.trackStuckThresholdMs ?? 10000, 30000) + 5000;
         this.connection.on('stateChange', (_, s) => {
             logger('debug', 'Player', `Voice connection state change for guild ${this.guildId} in session ${this.session.id}: ${s.status}`);
             this._onConn(s);
@@ -324,7 +326,8 @@ export class Player {
         }
         if (state.status === 'idle' && state.reason === 'stuck') {
             logger('warn', 'Player', `Track became stuck for guild ${this.guildId}. Triggering immediate recovery.`);
-            this._stuckTime = this.nodelink.options.playback.trackStuckThresholdMs + 1;
+            this._stuckTime =
+                (this.nodelink.options.playback.trackStuckThresholdMs ?? 0) + 1;
             this._sendUpdate();
             return;
         }
@@ -767,7 +770,7 @@ export class Player {
                 logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Current position: ${Math.round(position)}ms, Segments: ${this.sponsorBlock.segments.length}, LastSkipped: ${this.sponsorBlock.lastSkippedUuid}`);
             }
         }
-        const threshold = this.nodelink.options.playback.trackStuckThresholdMs;
+        const threshold = this.nodelink.options.playback.trackStuckThresholdMs ?? 0;
         if (threshold > 0 &&
             !this.isUpdatingTrack &&
             !this._isStopping &&
@@ -775,7 +778,8 @@ export class Player {
             !this._isResuming &&
             !this.isPaused) {
             if (this._lastPosition === position) {
-                this._stuckTime += this.nodelink.options.playback.playerUpdateInterval;
+                this._stuckTime +=
+                    this.nodelink.options.playback.playerUpdateInterval ?? 0;
                 if (this._stuckTime >= threshold &&
                     !this._isRecovering &&
                     this.connStatus === 'connected') {

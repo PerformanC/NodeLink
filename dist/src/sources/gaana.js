@@ -60,8 +60,8 @@ export default class GaanaSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        const sourceConfig = this.asRecord(this.nodelink.options.sources?.gaana);
-        this.config = sourceConfig || {};
+        const sourceConfig = this.nodelink.options.sources.gaana;
+        this.config = sourceConfig;
         this.searchTerms = ['gnsearch', 'gaanasearch'];
         this.patterns = [
             /^@?(?:https?:\/\/)?(?:www\.)?gaana\.com\/(?<type>song|album|playlist|artist)\/(?<seokey>[\w-]+)(?:[?#].*)?$/
@@ -832,7 +832,7 @@ export default class GaanaSource {
      * @returns Proxy configuration object or null.
      */
     getProxyConfig() {
-        const proxy = this.asRecord(this.config.network.proxy);
+        const proxy = this.asRecord(this.config.network?.proxy);
         const url = this.asString(proxy?.url);
         if (!url)
             return undefined;

@@ -356,7 +356,7 @@ export default class TwitterSource {
      */
     getMaxSearchResults() {
         const options = this.nodelink.options;
-        const limit = options.search.maxResults;
+        const limit = options.search?.maxResults;
         return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
             ? limit
             : 10;

@@ -499,7 +499,7 @@ export default class PlayerManager {
     /**
      * Returns current SponsorBlock state for a player.
      */
-    getSponsorBlock(guildId) {
+    async getSponsorBlock(guildId) {
         if (this.isCluster) {
             return this.runClusterPlayerCommand(guildId, 'getSponsorBlock', []);
         }
