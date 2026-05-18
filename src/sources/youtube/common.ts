@@ -1282,6 +1282,11 @@ export interface TrackBuildOptions {
   fetchChannelInfo?: boolean
   maxAlbumPlaylistLength?: number
   enableHoloTracks?: boolean
+  search: {
+    maxResults?: number
+    resolveExternalLinks?: boolean
+    fetchChannelInfo?: boolean
+  }
 }
 
 /**
@@ -1310,7 +1315,7 @@ export async function buildTrack(
   sourceNameOverride: string | null = null,
   fullApiResponse: Record<string, unknown> | null = null,
   enableHolo = false,
-  config: TrackBuildOptions = {},
+  config: TrackBuildOptions = { search: {} },
   makeRequestFn: MakeRequestFn | null = null
 ): Promise<YouTubeTrackData | null> {
   if (!itemData) {
@@ -1683,7 +1688,7 @@ export async function buildHoloTrack(
   itemData: YouTubeRenderer | null,
   itemType: string,
   fullApiResponse: Record<string, unknown> | null = null,
-  config: TrackBuildOptions = {},
+  config: TrackBuildOptions = { search: {} },
   makeRequestFn: MakeRequestFn | null = null
 ): Promise<YouTubeTrackData> {
   const duration = formatDuration(trackInfo.length)
@@ -1872,7 +1877,7 @@ export async function buildHoloTrack(
     accessibilityLabel ||
     `${trackInfo.title} by ${(channelData.name as string | undefined) || trackInfo.author}`
 
-  if (config.fetchChannelInfo && channelData.id && makeRequestFn) {
+  if (config.search.fetchChannelInfo && channelData.id && makeRequestFn) {
     try {
       const channelInfo = await fetchChannelInfo(
         channelData.id as string,
@@ -1906,7 +1911,7 @@ export async function buildHoloTrack(
 
   let externalLinks = extractExternalLinks(description)
 
-  if (config.resolveExternalLinks && externalLinks && makeRequestFn) {
+  if (config.search.resolveExternalLinks && externalLinks && makeRequestFn) {
     try {
       externalLinks = await resolveExternalLinks(externalLinks, makeRequestFn)
     } catch (e: unknown) {
@@ -2078,7 +2083,7 @@ export async function fetchEncryptedHostFlags(
  */
 export abstract class BaseClient {
   nodelink: WorkerNodeLink
-  config: Record<string, unknown>
+  config: WorkerNodeLink['options']
   name: string
   oauth: IOAuth | null
 
@@ -2375,10 +2380,11 @@ export abstract class BaseClient {
       sourceName,
       null,
       playerResponse as Record<string, unknown>,
-      !!this.config.enableHoloTracks,
+      !!this.config.experimental.enableHoloTracks,
       {
-        resolveExternalLinks: !!this.config.resolveExternalLinks,
-        fetchChannelInfo: !!this.config.fetchChannelInfo
+        resolveExternalLinks: !!this.config.search.resolveExternalLinks,
+        fetchChannelInfo: !!this.config.search.fetchChannelInfo,
+        search: {}
       }
     )
 
@@ -2495,7 +2501,7 @@ export abstract class BaseClient {
     const tracks: YouTubeTrackData[] = []
     let selectedTrack = 0
     const maxLength =
-      (this.config.maxAlbumPlaylistLength as number | undefined) || 100
+      (this.config.playback?.maxPlaylistLength as number | undefined) || 100
 
     for (let i = 0; i < Math.min(playlistContent.length, maxLength); i++) {
       const item = playlistContent[i] as YouTubeRenderer
@@ -2505,10 +2511,11 @@ export abstract class BaseClient {
           sourceName || 'youtube',
           null,
           null,
-          !!this.config.enableHoloTracks,
+          !!this.config.experimental.enableHoloTracks,
           {
             fetchChannelInfo: false,
-            resolveExternalLinks: false
+            resolveExternalLinks: false,
+            search: {}
           }
         )
         if (track) {
@@ -2644,7 +2651,7 @@ export abstract class BaseClient {
 
     const tracks: YouTubeTrackData[] = []
     const maxLength =
-      (this.config.maxAlbumPlaylistLength as number | undefined) || 100
+      (this.config.playback?.maxPlaylistLength as number | undefined) || 100
     const shelfContents = shelf.contents as unknown[]
 
     for (let i = 0; i < Math.min(shelfContents.length, maxLength); i++) {
@@ -2655,10 +2662,11 @@ export abstract class BaseClient {
           sourceName || 'ytmusic',
           sourceName,
           browseResponse,
-          !!this.config.enableHoloTracks,
+          !!this.config.experimental.enableHoloTracks,
           {
             fetchChannelInfo: false,
-            resolveExternalLinks: false
+            resolveExternalLinks: false,
+            search: {}
           }
         )
         if (track) {
@@ -2768,7 +2776,7 @@ export abstract class BaseClient {
       targetItags = [Number(targetItag)]
     } else {
       const qualityPriority = this._getQualityPriority()
-      const audioConfig = this.config.audio as
+      const audioConfig = this.config.playback?.audio as
         | Record<string, unknown>
         | undefined
       const audioQuality =
@@ -3306,5 +3314,51 @@ export abstract class BaseClient {
       cipherManager,
       itag
     )
+  }
+
+  /**
+   * Fetches the initial visitor data by making a GET request to YouTube.
+   * This is used to initialize the session context.
+   *
+   * @returns The extracted visitor data string, or null if it could not be found.
+   */
+  async getVisitorData(): Promise<string | null> {
+    try {
+      const response = await makeRequest('https://www.youtube.com', {
+        method: 'GET',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        proxy: this.getProxy()
+      })
+
+      if (response.statusCode !== 200 || !response.body) {
+        return null
+      }
+
+      const body = response.body as string
+      const match = body.match(/ytcfg\.set\((\{.*?\})\);/)
+      if (match?.[1]) {
+        try {
+          const ytcfg = JSON.parse(match[1])
+          if (ytcfg.VISITOR_DATA) {
+            return ytcfg.VISITOR_DATA as string
+          }
+        } catch {
+          // Fallback to regex if JSON parse fails
+        }
+      }
+
+      const visitorDataMatch = body.match(/"visitorData":"([^"]+)"/)
+      return visitorDataMatch?.[1] || null
+    } catch (err) {
+      logger(
+        'debug',
+        `youtube-${this.name}`,
+        `Failed to fetch visitor data: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return null
+    }
   }
 }

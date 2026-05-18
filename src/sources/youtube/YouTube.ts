@@ -235,9 +235,8 @@ export default class YouTubeSource {
    */
   constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
-    this.config = (
-      nodelink.options as Record<string, Record<string, unknown> | undefined>
-    ).sources?.youtube as YouTubeSourceConfig
+    this.config = nodelink.options.sources
+      .youtube as unknown as YouTubeSourceConfig
     this.proxyManager = new YouTubeProxyManager(this.config.proxies || [])
     this.additionalsSourceName = ['ytmusic']
     this.searchTerms = ['ytsearch', 'ytmsearch']
@@ -480,11 +479,11 @@ export default class YouTubeSource {
           )
         }
       }
-    } catch (e) {
+    } catch (_e) {
       logger(
         'error',
         'YouTube',
-        `Error fetching visitor data: ${(e as Error).message}`
+        `Error fetching visitor data: \${(e as Error).message}`
       )
       logger(
         'warn',
@@ -1060,7 +1059,8 @@ export default class YouTubeSource {
         playerBody as any,
         {
           fetchChannelInfo: options.fetchChannelInfo ?? false,
-          resolveExternalLinks: options.resolveExternalLinks ?? false
+          resolveExternalLinks: options.resolveExternalLinks ?? false,
+          search: {}
         }
       )
 
@@ -1459,10 +1459,11 @@ export default class YouTubeSource {
       ? this.config.fallbackSources
       : []
 
-    const opts = this.nodelink.options as Record<string, unknown>
-    const defaultSources = Array.isArray(opts.defaultSearchSource)
-      ? (opts.defaultSearchSource as string[])
-      : [opts.defaultSearchSource as string]
+    const opts = this.nodelink.options as unknown as Record<string, unknown>
+    const searchConfig = opts.search as Record<string, unknown> | undefined
+    const defaultSources = Array.isArray(searchConfig?.defaultSource)
+      ? (searchConfig.defaultSource as string[])
+      : [searchConfig?.defaultSource as string]
 
     const fallbackOrder = [
       ...configuredFallbackSources,
