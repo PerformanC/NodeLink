@@ -19,6 +19,7 @@ export class DASHHandler extends Transform {
   private readonly options: DASHHandlerOptions
   private stopped = false
   private abortController: AbortController | null = null
+  private readonly readWaiters: Array<() => void> = []
 
   constructor(mpdUrl: string, options: DASHHandlerOptions = {}) {
     super()
@@ -32,6 +33,24 @@ export class DASHHandler extends Transform {
     callback: TransformCallback
   ): void {
     callback()
+  }
+
+  override _read(size: number): void {
+    super._read(size)
+    this._resolveReadWaiters()
+  }
+
+  override _destroy(
+    err: Error | null,
+    callback: (error?: Error | null) => void
+  ): void {
+    this.stop()
+    callback(err)
+  }
+
+  private _resolveReadWaiters(): void {
+    const waiters = this.readWaiters.splice(0)
+    for (const resolve of waiters) resolve()
   }
 
   /**
@@ -99,9 +118,7 @@ export class DASHHandler extends Transform {
         return
       }
 
-      if (!this.push(initRes.body)) {
-        await this._waitForDrain()
-      }
+      await this._pushChunk(initRes.body)
 
       const totalSegments = this._countSegments(selected)
       const segmentUrlGen = this._generateSegmentUrls(selected)
@@ -133,7 +150,8 @@ export class DASHHandler extends Transform {
       const fetchSegment = async (url: string): Promise<Buffer | null> => {
         try {
           const res = await fetch(url, {
-            headers: this.options.headers as Record<string, string>
+            headers: this.options.headers as Record<string, string>,
+            signal
           })
           if (!res.ok || !res.body) {
             logger(
@@ -173,7 +191,7 @@ export class DASHHandler extends Transform {
 
         const data = await pending
         if (data && !this.stopped && !signal.aborted) {
-          this.push(data)
+          await this._pushChunk(data)
         }
 
         if (fetchIndex < totalSegments) {
@@ -212,6 +230,7 @@ export class DASHHandler extends Transform {
   stop(): void {
     this.stopped = true
     this.abortController?.abort()
+    this._resolveReadWaiters()
   }
 
   private _sleepOrStop(ms: number): Promise<void> {
@@ -232,18 +251,25 @@ export class DASHHandler extends Transform {
 
   private async _waitForBuffer(): Promise<void> {
     while (this.readableLength > MAX_BUFFERED && !this.stopped) {
-      await this._waitForDrain()
+      await this._waitForRead()
     }
   }
 
-  private _waitForDrain(): Promise<void> {
+  private _pushChunk(chunk: Buffer): Promise<void> {
+    if (this.stopped || this.destroyed) return Promise.resolve()
+    if (this.push(chunk)) return Promise.resolve()
+    return this._waitForRead()
+  }
+
+  private _waitForRead(): Promise<void> {
     return new Promise<void>((resolve) => {
       if (this.readableLength <= MAX_BUFFERED) {
         resolve()
         return
       }
       const cleanup = () => {
-        this.off('data', onData)
+        const index = this.readWaiters.indexOf(onRead)
+        if (index !== -1) this.readWaiters.splice(index, 1)
         this.off('end', onEnd)
         this.off('close', onEnd)
       }
@@ -251,13 +277,13 @@ export class DASHHandler extends Transform {
         cleanup()
         resolve()
       }
-      const onData = () => {
+      const onRead = () => {
         if (this.readableLength <= MAX_BUFFERED) {
           cleanup()
           resolve()
         }
       }
-      this.on('data', onData)
+      this.readWaiters.push(onRead)
       this.once('end', onEnd)
       this.once('close', onEnd)
     })

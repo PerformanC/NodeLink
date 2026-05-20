@@ -1576,10 +1576,6 @@ export default class YouTubeSource {
                 return;
             }
             if (isAborted && stream.writableNeedDrain) {
-                logger('debug', 'YouTube', `Stream is paused/backed up, skipping recovery (cause: ${causeError?.message}). Player will recover on resume.`);
-                return;
-            }
-            if (isAborted && stream.writableNeedDrain) {
                 logger('debug', 'YouTube', `Stream is paused/backed up, waiting for drain before recovery (cause: ${causeError?.message})`);
                 await new Promise((resolve) => {
                     const onDrain = () => {

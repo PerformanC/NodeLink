@@ -682,12 +682,10 @@ class BaseAudioResource {
         abort?: () => void
         unpipe?: () => void
         destroy?: () => void
-        removeAllListeners?: () => void
       }
       pipe.abort?.()
       pipe.unpipe?.()
       pipe.destroy?.()
-      pipe.removeAllListeners?.()
     }
 
     this.pipes.length = 0

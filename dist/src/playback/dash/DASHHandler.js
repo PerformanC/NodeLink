@@ -13,6 +13,7 @@ export class DASHHandler extends Transform {
     options;
     stopped = false;
     abortController = null;
+    readWaiters = [];
     constructor(mpdUrl, options = {}) {
         super();
         this.mpdUrl = mpdUrl;
@@ -20,6 +21,19 @@ export class DASHHandler extends Transform {
     }
     _transform(_chunk, _encoding, callback) {
         callback();
+    }
+    _read(size) {
+        super._read(size);
+        this._resolveReadWaiters();
+    }
+    _destroy(err, callback) {
+        this.stop();
+        callback(err);
+    }
+    _resolveReadWaiters() {
+        const waiters = this.readWaiters.splice(0);
+        for (const resolve of waiters)
+            resolve();
     }
     /**
      * Fetch the MPD, parse representations, select AACLC, and stream segments.
@@ -66,9 +80,7 @@ export class DASHHandler extends Transform {
                 this.destroy(err);
                 return;
             }
-            if (!this.push(initRes.body)) {
-                await this._waitForDrain();
-            }
+            await this._pushChunk(initRes.body);
             const totalSegments = this._countSegments(selected);
             const segmentUrlGen = this._generateSegmentUrls(selected);
             const segmentDuration = this._calcSegmentDuration(selected);
@@ -89,7 +101,8 @@ export class DASHHandler extends Transform {
             const fetchSegment = async (url) => {
                 try {
                     const res = await fetch(url, {
-                        headers: this.options.headers
+                        headers: this.options.headers,
+                        signal
                     });
                     if (!res.ok || !res.body) {
                         logger('error', 'DASHHandler', `Segment fetch failed: HTTP ${res.status}`);
@@ -125,7 +138,7 @@ export class DASHHandler extends Transform {
                     break;
                 const data = await pending;
                 if (data && !this.stopped && !signal.aborted) {
-                    this.push(data);
+                    await this._pushChunk(data);
                 }
                 if (fetchIndex < totalSegments) {
                     const url = segmentUrlGen.next().value;
@@ -153,6 +166,7 @@ export class DASHHandler extends Transform {
     stop() {
         this.stopped = true;
         this.abortController?.abort();
+        this._resolveReadWaiters();
     }
     _sleepOrStop(ms) {
         return new Promise((resolve) => {
@@ -171,17 +185,26 @@ export class DASHHandler extends Transform {
     }
     async _waitForBuffer() {
         while (this.readableLength > MAX_BUFFERED && !this.stopped) {
-            await this._waitForDrain();
+            await this._waitForRead();
         }
     }
-    _waitForDrain() {
+    _pushChunk(chunk) {
+        if (this.stopped || this.destroyed)
+            return Promise.resolve();
+        if (this.push(chunk))
+            return Promise.resolve();
+        return this._waitForRead();
+    }
+    _waitForRead() {
         return new Promise((resolve) => {
             if (this.readableLength <= MAX_BUFFERED) {
                 resolve();
                 return;
             }
             const cleanup = () => {
-                this.off('data', onData);
+                const index = this.readWaiters.indexOf(onRead);
+                if (index !== -1)
+                    this.readWaiters.splice(index, 1);
                 this.off('end', onEnd);
                 this.off('close', onEnd);
             };
@@ -189,13 +212,13 @@ export class DASHHandler extends Transform {
                 cleanup();
                 resolve();
             };
-            const onData = () => {
+            const onRead = () => {
                 if (this.readableLength <= MAX_BUFFERED) {
                     cleanup();
                     resolve();
                 }
             };
-            this.on('data', onData);
+            this.readWaiters.push(onRead);
             this.once('end', onEnd);
             this.once('close', onEnd);
         });
