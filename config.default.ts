@@ -5,7 +5,7 @@ export const config: NodelinkConfig = {
     host: '0.0.0.0',
     port: 3000,
     password: 'youshallnotpass',
-    useBunServer: false
+    useBunServer: true
   },
 
   cluster: {
