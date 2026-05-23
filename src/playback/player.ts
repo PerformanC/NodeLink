@@ -1679,6 +1679,19 @@ export class Player {
     if (this.destroying || !this.track) return false
     if (!this.track.info.isSeekable && !this.track.info.isStream) return false
 
+    const streamFormat =
+      typeof this.streamInfo?.format === 'string'
+        ? this.streamInfo.format.toLowerCase()
+        : ''
+    if (streamFormat.includes('flac')) {
+      logger(
+        'warn',
+        'Player',
+        `Seeking not supported for FLAC stream on guild ${this.guildId}`
+      )
+      return false
+    }
+
     const seekPosition = position ?? this._realPosition()
 
     if (

@@ -552,7 +552,8 @@ export const config = {
             enabled: true,
             instances: [],
             streamingInstances: [],
-            quality: 'HI_RES_LOSSLESS'
+            quality: 'HI_RES_LOSSLESS',
+            qobuzQuality: 6
         },
         pandora: {
             enabled: true,

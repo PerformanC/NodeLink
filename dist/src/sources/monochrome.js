@@ -399,11 +399,13 @@ class MonochromeSource {
     async getTrackUrl(track) {
         const isVideo = track.uri.includes('/video/');
         if (!isVideo && track.isrc) {
-            const qobuzUrl = await this.fetchQobuzProxyUrl(track.isrc);
+            const qobuzQuality = this.config.qobuzQuality ?? 6;
+            const qobuzUrl = await this.fetchQobuzProxyUrl(track.isrc, qobuzQuality);
             if (qobuzUrl) {
                 return {
                     url: qobuzUrl,
-                    protocol: 'https'
+                    protocol: 'https',
+                    format: qobuzQuality > 5 ? 'audio/flac' : 'audio/mpeg'
                 };
             }
         }
@@ -618,7 +620,7 @@ class MonochromeSource {
      * @returns Direct stream URL or null.
      * @private
      */
-    async fetchQobuzProxyUrl(isrc) {
+    async fetchQobuzProxyUrl(isrc, quality = 6) {
         const pool = this.qobuzInstances.filter((i) => i.score > 0);
         if (pool.length === 0) {
             logger('warn', 'Monochrome', 'No Qobuz proxy instances available.');
@@ -664,7 +666,7 @@ class MonochromeSource {
                     instance.score = Math.max(instance.score - 5, 0);
                     continue;
                 }
-                const downloadUrl = `${instance.url}/api/download-music?track_id=${trackId}&quality=5`;
+                const downloadUrl = `${instance.url}/api/download-music?track_id=${trackId}&quality=${quality}`;
                 const { body: downloadBody, statusCode: downloadStatus } = await http1makeRequest(downloadUrl, {
                     method: 'GET',
                     timeout: 5000,
