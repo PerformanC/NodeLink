@@ -1603,7 +1603,7 @@ class MP4ToAACStream extends Transform {
 
     this._initPromise = (async () => {
       const mp4Box = await getMP4Box()
-      this.mp4boxFile = mp4Box.createFile(true) as unknown as MP4BoxFile
+      this.mp4boxFile = mp4Box.createFile(false) as unknown as MP4BoxFile
       this._setupMP4BoxHandlers()
     })()
 

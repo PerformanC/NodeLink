@@ -1187,7 +1187,7 @@ class MP4ToAACStream extends Transform {
         }
         this._initPromise = (async () => {
             const mp4Box = await getMP4Box();
-            this.mp4boxFile = mp4Box.createFile(true);
+            this.mp4boxFile = mp4Box.createFile(false);
             this._setupMP4BoxHandlers();
         })();
         await this._initPromise;
