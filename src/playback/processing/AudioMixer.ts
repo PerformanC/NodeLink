@@ -14,6 +14,13 @@ interface ExtendedVoiceStream extends VoiceAudioStream {
   destroyed: boolean
 }
 
+interface AudioMixerLayerListeners {
+  data: (chunk: Buffer) => void
+  end: () => void
+  close: () => void
+  error: (error: Error) => void
+}
+
 const LAYER_BUFFER_SIZE = 1024 * 1024
 const EMPTY_BUFFER = Buffer.alloc(0)
 const FRAME_SIZE = 3840
@@ -29,6 +36,7 @@ export class AudioMixer extends Readable {
   private defaultVolume: number
   public autoCleanup: boolean
   public enabled: boolean
+  private readonly layerListeners: Map<string, AudioMixerLayerListeners>
 
   /**
    * Creates a new AudioMixer.
@@ -42,6 +50,7 @@ export class AudioMixer extends Readable {
     this.defaultVolume = config.defaultVolume || 0.8
     this.autoCleanup = config.autoCleanup !== false
     this.enabled = config.enabled !== false
+    this.layerListeners = new Map()
   }
 
   override _read(_size: number): void {
@@ -166,7 +175,7 @@ export class AudioMixer extends Readable {
 
     this.mixLayers.set(id, layer)
 
-    stream.on('data', (chunk: Buffer) => {
+    const onData = (chunk: Buffer): void => {
       if (!layer.active) return
 
       if (layer.ringBuffer.length > LAYER_BUFFER_SIZE * 0.8) {
@@ -193,20 +202,32 @@ export class AudioMixer extends Readable {
         layer.receivedBytes += data.length
         layer.ringBuffer.write(data)
       }
-    })
+    }
 
-    stream.once('end', () => {
+    const onEnd = (): void => {
       layer.finishedFeeding = true
-    })
+    }
 
-    stream.once('close', () => {
+    const onClose = (): void => {
       layer.finishedFeeding = true
-    })
+    }
 
-    stream.once('error', (error: Error) => {
+    const onError = (error: Error): void => {
       this.emit('mixError', { id, error })
       this.removeLayer(id, 'ERROR')
+    }
+
+    this.layerListeners.set(id, {
+      data: onData,
+      end: onEnd,
+      close: onClose,
+      error: onError
     })
+
+    stream.on('data', onData)
+    stream.once('end', onEnd)
+    stream.once('close', onClose)
+    stream.once('error', onError)
 
     this.emit('mixStarted', { id, track, volume: layer.volume })
 
@@ -268,8 +289,16 @@ export class AudioMixer extends Readable {
     if (!layer) return false
 
     layer.active = false
+    const listeners = this.layerListeners.get(id)
+    if (listeners) {
+      layer.stream.off('data', listeners.data)
+      layer.stream.off('end', listeners.end)
+      layer.stream.off('close', listeners.close)
+      layer.stream.off('error', listeners.error)
+      this.layerListeners.delete(id)
+    }
+
     if (layer.stream && !(layer.stream as ExtendedVoiceStream).destroyed) {
-      layer.stream.removeAllListeners('data')
       layer.stream.destroy()
     }
     layer.ringBuffer.dispose()

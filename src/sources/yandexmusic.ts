@@ -270,7 +270,7 @@ export default class YandexMusicSource implements SourceInstance {
 
       if (!data) return { loadType: 'empty', data: {} }
 
-      const limit = (this.nodelink.options.maxSearchResults as number) || 10
+      const limit = (this.nodelink.options.search.maxResults as number) || 10
 
       if (searchType === 'album') {
         const albums = (data.albums?.results || [])
@@ -494,7 +494,7 @@ export default class YandexMusicSource implements SourceInstance {
           streamOnly: true,
           headers,
           localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-          proxy: this.config.proxy
+          proxy: this.config.network.proxy
         })
       }
 
@@ -1068,7 +1068,7 @@ export default class YandexMusicSource implements SourceInstance {
         'X-Yandex-Music-Client': CLIENT_HEADER
       },
       localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-      proxy: this.config.proxy
+      proxy: this.config.network.proxy
     })
 
     if (res.statusCode !== 200) {
@@ -1404,7 +1404,7 @@ export default class YandexMusicSource implements SourceInstance {
     const sm = this.nodelink.sources
     if (!sm) return false
     const config = (
-      this.nodelink.options.sources as
+      this.nodelink.options.sources as unknown as
         | Record<string, { enabled?: boolean }>
         | undefined
     )?.[name]

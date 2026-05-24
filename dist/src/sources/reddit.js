@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream';
+import { PassThrough, pipeline } from 'node:stream';
 import { encodeTrack, logger, makeRequest } from "../utils.js";
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3';
 const REDDIT_BASE = 'https://www.reddit.com';
@@ -180,7 +180,15 @@ export default class RedditSource {
                 throw new Error(`Reddit returned status ${response.statusCode}`);
             }
             const stream = new PassThrough();
-            response.stream.pipe(stream);
+            stream.once('close', () => {
+                ;
+                response.stream.destroy?.();
+            });
+            pipeline(response.stream, stream, (error) => {
+                if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                    logger('error', 'Sources', `Reddit stream error: ${error.message}`);
+                }
+            });
             const type = url.endsWith('.mp3') ? 'mp3' : 'mp4';
             return { stream, type };
         }

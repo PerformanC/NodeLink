@@ -15,6 +15,7 @@ import WebSocketServer from '@performanc/pwsl-server';
 import RoutePlannerManager from "./managers/routePlannerManager.js";
 import SessionManager from "./managers/sessionManager.js";
 import StatsManager from "./managers/statsManager.js";
+import { migrateConfig, persistConfig } from "./modules/config/configMigration.js";
 import { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
 import 'dotenv/config';
 import { GatewayEvents, MINIMUM_NODE_VERSION } from "./constants.js";
@@ -154,28 +155,93 @@ const getTrackCacheManagerClass = async () => {
     return trackCacheManagerClassPromise;
 };
 let config;
-const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
-try {
-    config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.js'))))
-        .default;
-}
-catch (e) {
-    const error = e;
-    if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT') {
+const loadConfig = async () => {
+    const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
+    const resolveConfigExport = (importedModule, fileName) => {
+        const candidate = importedModule.default ??
+            importedModule.config;
+        if (candidate &&
+            typeof candidate === 'object' &&
+            Object.keys(candidate).length > 0) {
+            return candidate;
+        }
+        throw new Error(`[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`);
+    };
+    /**
+     * Loads and merges configuration files.
+     * Prioritizes config.ts/js, falls back to config.default.ts/js.
+     * @returns Migrated and merged configuration object.
+     */
+    const loadAndMerge = async () => {
+        // 1. Load defaults (Mandatory)
+        let baseConfig = {};
+        let defaultFileName = 'config.default.ts';
         try {
-            config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js'))))
-                .default;
-            console.log('[WARN] Config: config.js not found, using config.default.js. It is recommended to create a config.js file for your own configuration.');
+            const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.ts')));
+            baseConfig = resolveConfigExport(module, 'config.default.ts');
         }
-        catch (e2) {
-            console.error('[ERROR] Config: Failed to load config.default.js. Please make sure it exists.');
-            throw e2;
+        catch {
+            try {
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js')));
+                baseConfig = resolveConfigExport(module, 'config.default.js');
+                defaultFileName = 'config.default.js';
+            }
+            catch {
+                throw new Error('[ERROR] Config: Base configuration (config.default.ts/js) not found.');
+            }
         }
-    }
-    else {
-        throw e;
-    }
-}
+        // 2. Try to load user configuration
+        let userConfig = {};
+        let userFileName = null;
+        const userCandidates = ['config.ts', 'config.js'];
+        for (const fileName of userCandidates) {
+            try {
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl(fileName)));
+                userConfig = resolveConfigExport(module, fileName);
+                userFileName = fileName;
+                console.log(`[INFO] Config: Loaded user configuration from ${fileName}`);
+                break;
+            }
+            catch (e) {
+                const error = e;
+                const isNotFound = error.code === 'ERR_MODULE_NOT_FOUND' ||
+                    error.code === 'ENOENT' ||
+                    error.message?.includes('Cannot find module');
+                if (isNotFound)
+                    continue;
+                throw e;
+            }
+        }
+        if (!userFileName) {
+            console.log(`[INFO] Config: No user configuration found. Using defaults.`);
+        }
+        // 3. Merge user config over defaults
+        // We do a deep merge for 'sources', 'lyrics', 'meanings', 'pluginConfig'
+        // and a shallow merge for the rest to keep it simple but functional.
+        const merged = { ...baseConfig };
+        for (const [key, value] of Object.entries(userConfig)) {
+            if (value &&
+                typeof value === 'object' &&
+                !Array.isArray(value) &&
+                baseConfig[key] &&
+                typeof baseConfig[key] === 'object' &&
+                !Array.isArray(baseConfig[key])) {
+                merged[key] = {
+                    ...baseConfig[key],
+                    ...value
+                };
+            }
+            else {
+                merged[key] = value;
+            }
+        }
+        const migrated = migrateConfig(merged);
+        await persistConfig(migrated, userFileName ?? defaultFileName);
+        return migrated;
+    };
+    return await loadAndMerge();
+};
+config = await loadConfig();
 // Apply environment variable overrides after config is loaded
 applyEnvOverrides(config);
 const clusterEnabled = 
@@ -316,6 +382,7 @@ class NodelinkServer extends EventEmitter {
     lyrics;
     meanings;
     _sourceInitPromise;
+    proxyManager;
     routePlanner;
     credentialManager;
     trackCacheManager;
@@ -362,6 +429,7 @@ class NodelinkServer extends EventEmitter {
         this._sourceInitPromise = this._initSources(isClusterPrimary, options);
         this.routePlanner = new RoutePlannerManager(this);
         memoryTrace('constructor:after-route-planner');
+        this.proxyManager = null;
         this.credentialManager = null;
         memoryTrace('constructor:after-credential-manager');
         this.trackCacheManager = null;
@@ -397,8 +465,8 @@ class NodelinkServer extends EventEmitter {
         };
         this.voiceSockets = new Map();
         this.voiceRelay = createVoiceRelay({
-            enabled: options.voiceReceive?.enabled || false,
-            format: options.voiceReceive?.format || 'pcm',
+            enabled: options.playback.voiceReceive?.enabled || false,
+            format: options.playback.voiceReceive?.format || 'pcm',
             sendFrame: (frame) => this.handleVoiceFrame(frame),
             logger
         });
@@ -1109,7 +1177,7 @@ class NodelinkServer extends EventEmitter {
                         const voiceMatch = url.pathname.match(/^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/);
                         const liveMatch = url.pathname.match(/^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/);
                         if (voiceMatch) {
-                            if (!self.options.voiceReceive?.enabled) {
+                            if (!self.options.playback.voiceReceive?.enabled) {
                                 try {
                                     wrapper.close(1008, 'Voice receive disabled');
                                 }
@@ -1296,7 +1364,7 @@ class NodelinkServer extends EventEmitter {
                     logger('warn', 'Server', `Unauthorized connection attempt from ${clientAddress} - Invalid user ID provided`);
                     return rejectUpgrade(400, 'Bad Request', 'Invalid User-Id header.');
                 }
-                if (voiceMatch && !this.options.voiceReceive?.enabled) {
+                if (voiceMatch && !this.options.playback.voiceReceive?.enabled) {
                     return rejectUpgrade(404, 'Not Found', 'Voice websocket endpoint is disabled.');
                 }
                 for (const key in headers) {
@@ -1334,7 +1402,7 @@ class NodelinkServer extends EventEmitter {
         });
         this.socket?.on('/v4/websocket/voice', (socket, request, _clientInfo, _sessionId, guildId) => {
             socket.guildId = guildId;
-            if (!this.options.voiceReceive?.enabled) {
+            if (!this.options.playback.voiceReceive?.enabled) {
                 try {
                     socket.close(1008, 'Voice receive disabled');
                 }
@@ -1445,12 +1513,12 @@ class NodelinkServer extends EventEmitter {
     _startGlobalUpdater() {
         if (this._globalUpdater)
             return;
-        const updateInterval = Math.max(1, this.options?.playerUpdateInterval ?? 5000);
-        const statsSendInterval = Math.max(1, this.options?.statsUpdateInterval ?? 30000);
-        const metricsInterval = this.options?.metrics?.enabled
+        const updateInterval = Math.max(1, this.options?.playback.playerUpdateInterval ?? 5000);
+        const statsSendInterval = Math.max(1, this.options?.playback.statsUpdateInterval ?? 30000);
+        const metricsInterval = this.options?.api.metrics?.enabled
             ? 5000
             : statsSendInterval;
-        const zombieThreshold = this.options?.zombieThresholdMs ?? 60000;
+        const zombieThreshold = this.options?.playback.zombieThresholdMs ?? 60000;
         this._globalUpdater = setInterval(() => {
             for (const session of this.sessions.values()) {
                 if (!session.players)
@@ -1775,8 +1843,8 @@ class NodelinkServer extends EventEmitter {
     _startMasterMetricsUpdater() {
         if (this._globalUpdater)
             return;
-        const statsSendInterval = Math.max(1, this.options?.statsUpdateInterval ?? 30000);
-        const metricsInterval = this.options?.metrics?.enabled
+        const statsSendInterval = Math.max(1, this.options?.playback.statsUpdateInterval ?? 30000);
+        const metricsInterval = this.options?.api.metrics?.enabled
             ? 5000
             : statsSendInterval;
         let lastStatsSendTime = 0;
@@ -1899,7 +1967,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 if (clusterEnabled && cluster.isPrimary) {
     if (config.sources?.youtube?.getOAuthToken) {
-        // dynamicly import OAuth (if enabled)
+        // dynamically import OAuth (if enabled)
         const OAuth = (await import("./sources/youtube/OAuth.js").catch((e) => {
             logger('error', 'youtube', `\x1b[1m\x1b[31mOAuth class not found Error: ${e.message}\x1b[0m`);
             process.exit(1);
@@ -1993,6 +2061,12 @@ else {
             await nserver.credentialManager?.forceSave();
             await nserver.trackCacheManager?.forceSave();
             nserver.sourceWorkerManager?.destroy?.();
+            nserver.workerManager?.destroy?.();
+            nserver.connectionManager?.destroy?.();
+            nserver.proxyManager?.destroy?.();
+            nserver.routePlanner?.dispose?.();
+            nserver.credentialManager?.destroy?.();
+            nserver.trackCacheManager?.destroy?.();
             await nserver._cleanupWebSocketServer();
             if (nserver.server?.listening) {
                 await new Promise((resolve) => nserver.server.close(resolve));

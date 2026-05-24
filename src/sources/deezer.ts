@@ -79,6 +79,12 @@ interface DeezerRuntimeOptions {
    * Maximum number of tracks loaded for albums, playlists, and artists.
    */
   maxAlbumPlaylistLength?: number
+  search?: {
+    maxResults?: number
+  }
+  playback?: {
+    maxPlaylistLength?: number
+  }
 
   /**
    * Source-specific configuration map.
@@ -1822,7 +1828,7 @@ export default class DeezerSource {
    * @returns Maximum number of search results to return.
    */
   private getMaxSearchResults(): number {
-    const limit = this.config.maxSearchResults
+    const limit = this.config.search?.maxResults
     return typeof limit === 'number' && limit > 0 ? limit : 10
   }
 
@@ -1833,7 +1839,7 @@ export default class DeezerSource {
    * @returns Maximum collection length for albums, playlists, or artists.
    */
   private getMaxCollectionLength(fallback: number): number {
-    const limit = this.config.maxAlbumPlaylistLength
+    const limit = this.config.playback?.maxPlaylistLength
     return typeof limit === 'number' && limit > 0 ? limit : fallback
   }
 

@@ -830,7 +830,7 @@ export default class SpotifySource {
      * @internal
      */
     async _resolveAlbum(id) {
-        const maxTracks = this.nodelink.options.maxAlbumPlaylistLength || 1000;
+        const maxTracks = this.nodelink.options.playback.maxPlaylistLength || 1000;
         const tracks = [];
         let name = 'Unknown Album';
         if (this.anonymousToken || this.config.sp_dc) {
@@ -916,7 +916,7 @@ export default class SpotifySource {
      * @internal
      */
     async _resolvePlaylist(id) {
-        const maxTracks = this.nodelink.options.maxAlbumPlaylistLength || 1000;
+        const maxTracks = this.nodelink.options.playback.maxPlaylistLength || 1000;
         const tracks = [];
         let name = 'Unknown Playlist';
         if (this.anonymousToken || id.startsWith('37i9dQZ')) {

@@ -174,7 +174,7 @@ export default class Web extends BaseClient {
     }
 
     const maxResults =
-      (this.config.maxSearchResults as number | undefined) || 10
+      (this.config.search.maxResults as number | undefined) || 10
     if (videos.length > maxResults) {
       let count = 0
       videos = videos.filter((video) => {
@@ -193,7 +193,7 @@ export default class Web extends BaseClient {
         sourceName,
         null,
         null,
-        this.config.enableHoloTracks as boolean | undefined
+        this.config.experimental.enableHoloTracks as boolean | undefined
       )
       if (track) {
         tracks.push(track)

@@ -58,7 +58,7 @@ export default class ShazamSource {
      */
     getMaxSearchResults() {
         const options = this.nodelink.options;
-        const limit = options.maxSearchResults;
+        const limit = options.search?.maxResults;
         return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
             ? limit
             : 10;
@@ -127,7 +127,7 @@ export default class ShazamSource {
             }
             const { body, statusCode, error } = await http1makeRequest(url, {
                 headers: {
-                    "sec-ch-ua": "\"Chromium\";v=\"148\", \"Google Chrome\";v=\"148\", \"Not/A)Brand\";v=\"99\""
+                    'sec-ch-ua': '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"'
                 }
             });
             if (error || statusCode !== 200) {

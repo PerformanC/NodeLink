@@ -195,10 +195,48 @@ export interface YouTubeContext {
     platform?: string
 
     /**
+     * Operating system name identifier.
+     * @example 'Windows', 'Android', 'iOS', 'Linux'
+     */
+    osName?: string
+
+    /**
+     * UTC offset in minutes relative to GMT.
+     * @example 0, -180, 120
+     */
+    utcOffsetMinutes?: number
+
+    /**
+     * Operating system version string.
+     * @example '10.0', '13', '14.1'
+     */
+    osVersion?: string
+
+    /**
      * User agent string sent with API requests.
      * @example 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)...'
      */
     userAgent?: string
+
+    /**
+     * Client form factor.
+     */
+    clientFormFactor?: string
+
+    /**
+     * User interface theme.
+     */
+    userInterfaceTheme?: string
+
+    /**
+     * Browser name.
+     */
+    browserName?: string
+
+    /**
+     * Browser version string.
+     */
+    browserVersion?: string
   }
 }
 

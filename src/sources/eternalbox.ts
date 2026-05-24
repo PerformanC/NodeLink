@@ -225,7 +225,7 @@ export default class EternalboxSource implements SourceInstance {
 
     const limit =
       this.config.searchResults ||
-      (this.nodelink.options.maxSearchResults as number) ||
+      (this.nodelink.options.search.maxResults as number) ||
       10
     const url = `${this.baseUrl}/api/analysis/search?query=${encodeURIComponent(query)}&results=${limit}`
 

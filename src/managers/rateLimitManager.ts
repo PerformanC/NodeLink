@@ -12,6 +12,14 @@ import { logger } from '../utils.ts'
 type RateLimitContext = {
   options?: {
     rateLimit?: Partial<RateLimitConfig>
+    api?: {
+      rateLimit?: Partial<RateLimitConfig>
+      [key: string]: unknown
+    }
+    security?: {
+      rateLimit?: Partial<RateLimitConfig>
+      [key: string]: unknown
+    }
   }
 }
 
@@ -69,7 +77,11 @@ export default class RateLimitManager {
    */
   constructor(nodelink: RateLimitContext) {
     this.nodelink = nodelink
-    this.config = this._resolveConfig(nodelink.options?.rateLimit)
+    this.config = this._resolveConfig(
+      nodelink.options?.api?.rateLimit ??
+        nodelink.options?.security?.rateLimit ??
+        nodelink.options?.rateLimit
+    )
     this.store = new Map()
     this.cleanupInterval = setInterval(
       () => this._cleanup(),

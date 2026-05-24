@@ -119,6 +119,10 @@ export interface HttpRequestOptions {
   maxRetries?: number
   /** Proxy settings for the request. */
   proxy?: HttpProxyConfig
+  /** Backward-compatible network block used by some callers. */
+  network?: {
+    proxy?: HttpProxyConfig
+  }
 }
 
 /**

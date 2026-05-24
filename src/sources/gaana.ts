@@ -2,6 +2,7 @@ import { createDecipheriv } from 'node:crypto'
 import { PassThrough } from 'node:stream'
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import { parse as parsePlaylist } from '../playback/hls/PlaylistParser.ts'
+import type { GaanaSourceConfig } from '../typings/config/config.types.ts'
 import type { HLSSegment } from '../typings/playback/hls.types.ts'
 import type {
   SourceResult,
@@ -42,7 +43,7 @@ export default class GaanaSource {
   /**
    * Gaana source configuration block.
    */
-  public readonly config: Record<string, unknown>
+  public readonly config: GaanaSourceConfig
 
   /**
    * Search aliases handled by this source.
@@ -91,8 +92,8 @@ export default class GaanaSource {
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
 
-    const sourceConfig = this.asRecord(this.nodelink.options.sources?.gaana)
-    this.config = sourceConfig || {}
+    const sourceConfig = this.nodelink.options.sources.gaana
+    this.config = sourceConfig
     this.searchTerms = ['gnsearch', 'gaanasearch']
     this.patterns = [
       /^@?(?:https?:\/\/)?(?:www\.)?gaana\.com\/(?<type>song|album|playlist|artist)\/(?<seokey>[\w-]+)(?:[?#].*)?$/
@@ -100,9 +101,9 @@ export default class GaanaSource {
     this.priority = 70
 
     this.maxSearchResults =
-      this.asNumber(this.nodelink.options.maxSearchResults) ?? 10
+      this.asNumber(this.nodelink.options.search.maxResults) ?? 10
     const maxAlbumPlaylistLength =
-      this.asNumber(this.nodelink.options.maxAlbumPlaylistLength) ?? 100
+      this.asNumber(this.nodelink.options.playback.maxPlaylistLength) ?? 100
     this.playlistLoadLimit =
       this.asNumber(this.config.playlistLoadLimit) ?? maxAlbumPlaylistLength
     this.albumLoadLimit =
@@ -1072,7 +1073,7 @@ export default class GaanaSource {
         password?: string
       }
     | undefined {
-    const proxy = this.asRecord(this.config.proxy)
+    const proxy = this.asRecord(this.config.network?.proxy)
     const url = this.asString(proxy?.url)
     if (!url) return undefined
 

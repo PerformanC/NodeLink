@@ -289,7 +289,7 @@ export default class JioSaavnSource {
         const { stream, error, statusCode } = await http1makeRequest(url, {
             method: 'GET',
             streamOnly: true,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy
         });
         if (error || statusCode !== 200 || !stream) {
             return this.exceptionLoadResult(`Failed to load stream: ${error || statusCode || 'unknown'}`);
@@ -333,7 +333,7 @@ export default class JioSaavnSource {
         const { body, error, statusCode } = await http1makeRequest(url.toString(), {
             method: 'GET',
             headers: HEADERS,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy
         });
         if (error || statusCode !== 200) {
             throw new Error(`JioSaavn API request failed: ${statusCode || 'unknown'}`);

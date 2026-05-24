@@ -301,6 +301,47 @@ export interface NodeLinkOptions {
     autoCleanup?: boolean
   }
   connection?: import('../voice/connection.types.ts').ConnectionConfig
+  search: {
+    maxResults?: number
+    defaultSource?: string | string[]
+    unifiedSources?: string[]
+    resolveExternalLinks?: boolean
+    fetchChannelInfo?: boolean
+    [key: string]: unknown
+  }
+  playback: {
+    maxPlaylistLength?: number
+    playerUpdateInterval?: number
+    statsUpdateInterval?: number
+    trackStuckThresholdMs?: number
+    eventTimeoutMs?: number
+    zombieThresholdMs?: number
+    sponsorblock?: NodeLinkOptions['sponsorblock']
+    filters?: { enabled?: Record<string, boolean> }
+    audio?: NodeLinkOptions['audio']
+    voiceReceive?: { enabled?: boolean; format?: string }
+    mix?: NodeLinkOptions['mix']
+    [key: string]: unknown
+  }
+  experimental: {
+    enableHoloTracks?: boolean
+    [key: string]: unknown
+  }
+  network: {
+    proxy?: {
+      enabled?: boolean
+      list?: unknown[]
+      [key: string]: unknown
+    }
+    connection?: import('../voice/connection.types.ts').ConnectionConfig
+    routePlanner?: {
+      strategy?: string
+      bannedIpCooldown?: number
+      ipBlocks?: Array<string | { cidr: string }>
+      [key: string]: unknown
+    }
+    [key: string]: unknown
+  }
 }
 
 export type AudioOptionsWithTransitions = NonNullable<
@@ -376,7 +417,7 @@ export type LoggerFn = (level: string, ...args: unknown[]) => void
  * NodeLink runtime context required by the player.
  */
 export interface NodeLink {
-  options: Partial<NodeLinkOptions> & {
+  options: NodeLinkOptions & {
     trackStuckThresholdMs: number
     playerUpdateInterval: number
   }

@@ -262,12 +262,18 @@ export default class HttpSource {
         method: 'HEAD',
         headers: requestHeaders
       }).catch((err) => {
-            logger('warn', 'HTTP Source', `HEAD request failed for URL: ${url} with error: ${err.message} - falling back to GET request (this is expected for some servers that do not support HEAD)`);
-            return { error: err };
-        });
+        logger(
+          'warn',
+          'HTTP Source',
+          `HEAD request failed for URL: ${url} with error: ${err.message} - falling back to GET request (this is expected for some servers that do not support HEAD)`
+        )
+        return { error: err }
+      })
 
       const headContentType = headerToString(
-        ((data as HttpRequestResult).headers as Record<string, unknown>)?.['content-type']
+        ((data as HttpRequestResult).headers as Record<string, unknown>)?.[
+          'content-type'
+        ]
       )
       const headOk =
         !data.error &&
@@ -304,7 +310,9 @@ export default class HttpSource {
         }
       }
 
-      const headers = (data as HttpRequestResult).headers as HttpResponseHeaders | undefined
+      const headers = (data as HttpRequestResult).headers as
+        | HttpResponseHeaders
+        | undefined
       const contentType = headerToString(
         (headers as Record<string, unknown>)?.['content-type']
       )

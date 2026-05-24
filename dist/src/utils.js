@@ -1370,7 +1370,7 @@ async function makeRequest(urlString, options, nodelink) {
             0) {
         return http1makeRequest(urlString, options);
     }
-    if (options.proxy) {
+    if (options.network?.proxy) {
         return http1makeRequest(urlString, options);
     }
     const localAddress = finalNodeLink?.routePlanner?.getIP?.() ?? undefined;
@@ -1746,7 +1746,7 @@ function applyEnvOverrides(config, prefix = 'NODELINK') {
  * @returns Best matching candidate or null.
  * @public
  */
-function getBestMatch(list, original, options = {}) {
+export function getBestMatch(list, original, options = {}) {
     const { durationTolerance = 0.15, allowExplicit = true } = options;
     const normalize = (str) => {
         if (!str)
@@ -1906,13 +1906,13 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         }
         logger('debug', 'SponsorBlock', `Successfully loaded ${videoMatch.segments.length} segments for video ${videoId} in ${duration}ms`);
         return videoMatch.segments.map((s) => ({
-            uuid: s.UUID,
-            start: Math.round(s.segment[0] * 1000),
-            end: Math.round(s.segment[1] * 1000),
+            uuid: s.uuid,
+            start: Math.round(s.start * 1000),
+            end: Math.round(s.end * 1000),
             category: s.category,
             actionType: s.actionType,
             votes: s.votes,
-            locked: s.locked === 1,
+            locked: s.locked,
             videoDuration: Math.round(s.videoDuration * 1000),
             description: s.description || ''
         }));
@@ -1922,4 +1922,4 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         return [];
     }
 }
-export { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getBestMatch, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
+export { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };

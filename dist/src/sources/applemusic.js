@@ -230,7 +230,7 @@ export default class AppleMusicSource {
      */
     async search(query, _sourceName, searchType = 'track') {
         try {
-            const limit = this.nodelink.options.maxSearchResults || 10;
+            const limit = this.nodelink.options.search.maxResults || 10;
             const typeMap = {
                 track: 'songs',
                 album: 'albums',

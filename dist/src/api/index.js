@@ -171,7 +171,7 @@ async function requestHandler(nodelink, req, res) {
         parsedUrl.pathname === `/${PATH_VERSION}/profiler/ui` ||
         parsedUrl.pathname === `/${PATH_VERSION}/profiler/file`;
     if (isMetricsEndpoint) {
-        const metricsConfig = nodelink.options.metrics || {};
+        const metricsConfig = nodelink.options.api.metrics || {};
         if (!metricsConfig.enabled) {
             logger('warn', 'Metrics', `Metrics endpoint disabled - ${clientAddress} attempted to access ${parsedUrl.pathname}`);
             res.writeHead(404, { 'Content-Type': 'text/plain' });

@@ -56,7 +56,7 @@ class MonochromeSource implements SourceInstance {
    */
   constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
-    const sources = nodelink.options?.sources as
+    const sources = nodelink.options?.sources as unknown as
       | Record<string, { enabled?: boolean }>
       | undefined
     this.config =
@@ -489,7 +489,7 @@ class MonochromeSource implements SourceInstance {
       while (
         tracks.length < total &&
         tracks.length <
-          ((this.nodelink.options.maxAlbumPlaylistLength as number) || 1000)
+          ((this.nodelink.options.playback.maxPlaylistLength as number) || 1000)
       ) {
         const res = await this.fetchWithRetry<
           MonochromeResponse<{
@@ -551,11 +551,13 @@ class MonochromeSource implements SourceInstance {
     const isVideo = track.uri.includes('/video/')
 
     if (!isVideo && track.isrc) {
-      const qobuzUrl = await this.fetchQobuzProxyUrl(track.isrc)
+      const qobuzQuality = this.config.qobuzQuality ?? 6
+      const qobuzUrl = await this.fetchQobuzProxyUrl(track.isrc, qobuzQuality)
       if (qobuzUrl) {
         return {
           url: qobuzUrl,
-          protocol: 'https'
+          protocol: 'https',
+          format: qobuzQuality > 5 ? 'audio/flac' : 'audio/mpeg'
         }
       }
     }
@@ -842,7 +844,10 @@ class MonochromeSource implements SourceInstance {
    * @returns Direct stream URL or null.
    * @private
    */
-  private async fetchQobuzProxyUrl(isrc: string): Promise<string | null> {
+  private async fetchQobuzProxyUrl(
+    isrc: string,
+    quality: number = 6
+  ): Promise<string | null> {
     const pool = this.qobuzInstances.filter((i) => i.score > 0)
     if (pool.length === 0) {
       logger('warn', 'Monochrome', 'No Qobuz proxy instances available.')
@@ -900,7 +905,7 @@ class MonochromeSource implements SourceInstance {
           continue
         }
 
-        const downloadUrl = `${instance.url}/api/download-music?track_id=${trackId}&quality=5`
+        const downloadUrl = `${instance.url}/api/download-music?track_id=${trackId}&quality=${quality}`
         const { body: downloadBody, statusCode: downloadStatus } =
           await http1makeRequest(downloadUrl, {
             method: 'GET',

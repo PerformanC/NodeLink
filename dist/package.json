@@ -1,6 +1,6 @@
 {
     "name": "nodelink",
-    "version": "3.8.1-dev.20260515.1",
+    "version": "3.8.1-dev.20260523.1",
     "scripts": {
         "build": "tsc --incremental false",
         "start": "node --dns-result-order=ipv4first --import tsx src/index.ts",
@@ -21,7 +21,7 @@
         "@ecliptia/seekable-stream": "github:1Lucas1apk/seekable-stream",
         "@performanc/pwsl-server": "github:performanc/internals#PWSL-server",
         "@performanc/voice": "github:PerformanC/voice",
-        "@toddynnn/symphonia-decoder": "1.0.6",
+        "@toddynnn/symphonia-decoder": "1.1.0",
         "@toddynnn/voice-opus": "^1.0.1",
         "fastest-validator": "^1.19.1",
         "jsdom": "^29.1.1",
@@ -30,12 +30,12 @@
         "proxy-agent": "^8.0.1"
     },
     "devDependencies": {
-        "@biomejs/biome": "^2.4.13",
+        "@biomejs/biome": "^2.4.15",
         "@commitlint/cli": "20.5.0",
         "@commitlint/config-conventional": "20.5.0",
         "@types/bun": "^1.3.13",
         "@types/jsdom": "^28.0.1",
-        "@types/node": "^25.6.0",
+        "@types/node": "^25.6.2",
         "dotenv": "^17.4.2",
         "husky": "9.1.7",
         "tsx": "^4.21.0",

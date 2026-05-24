@@ -31,9 +31,8 @@ export default class BlueskySource {
         const options = nodelink.options;
         this.nodelink = nodelink;
         this.config = {
-            maxSearchResults: typeof options.maxSearchResults === 'number'
-                ? options.maxSearchResults
-                : undefined
+            maxSearchResults: options.sources?.bluesky
+                ?.maxSearchResults ?? options.search?.maxResults
         };
         this.searchTerms = ['bksearch'];
         this.patterns = [

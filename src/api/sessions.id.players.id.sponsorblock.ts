@@ -1,3 +1,4 @@
+import type { PlayerCommandResponse } from '../managers/playerManager.ts'
 import type {
   ApiNodelinkServer,
   ApiRequest,
@@ -10,7 +11,7 @@ import type {
   PlayerSponsorBlockState,
   SponsorBlockSegment
 } from '../typings/playback/player.types.ts'
-import { logger, sendErrorResponse } from '../utils.ts'
+import { sendErrorResponse } from '../utils.ts'
 
 /**
  * Minimal player manager contract required by the SponsorBlock route.
@@ -19,7 +20,9 @@ interface SponsorBlockPlayerManager {
   /**
    * Returns current SponsorBlock state for a player.
    */
-  getSponsorBlock: (guildId: string) => PlayerSponsorBlockState
+  getSponsorBlock: (
+    guildId: string
+  ) => Promise<PlayerSponsorBlockState | PlayerCommandResponse>
 
   /**
    * Updates SponsorBlock settings for a player.
@@ -29,7 +32,7 @@ interface SponsorBlockPlayerManager {
     updates: Partial<
       Omit<PlayerSponsorBlockState, 'segments' | 'lastSkippedUuid'>
     >
-  ) => void
+  ) => Promise<PlayerCommandResponse | undefined>
 
   /**
    * Overrides SponsorBlock segments for a player.
@@ -37,12 +40,14 @@ interface SponsorBlockPlayerManager {
   setSponsorBlockSegments: (
     guildId: string,
     segments: SponsorBlockSegment[]
-  ) => void
+  ) => Promise<PlayerCommandResponse | undefined>
 
   /**
    * Clears SponsorBlock state for a player.
    */
-  clearSponsorBlock: (guildId: string) => void
+  clearSponsorBlock: (
+    guildId: string
+  ) => Promise<PlayerCommandResponse | undefined>
 }
 
 /**
@@ -156,7 +161,7 @@ async function handleGetSponsorBlock(
   }
 
   try {
-    const state = session.players.getSponsorBlock(pathParams.guildId)
+    const state = await session.players.getSponsorBlock(pathParams.guildId)
     sendResponse(req, res, state, 200)
   } catch (error) {
     const errorMessage =
@@ -202,16 +207,32 @@ async function handlePatchSponsorBlock(
   }
 
   try {
-    session.players.updateSponsorBlock(pathParams.guildId, {
-      enabled: body.enabled,
-      categories: body.categories,
-      actionTypes: body.actionTypes,
-      skipMarginMs: body.skipMarginMs
-    })
+    const result = await session.players.updateSponsorBlock(
+      pathParams.guildId,
+      {
+        enabled: body.enabled,
+        categories: body.categories,
+        actionTypes: body.actionTypes,
+        skipMarginMs: body.skipMarginMs
+      }
+    )
+
+    if (result && 'status' in result && result.status !== 200) {
+      sendErrorResponse(
+        req,
+        res,
+        (result.status as number) || 500,
+        'Internal Server Error',
+        result.message || 'Operation failed',
+        req.url || ''
+      )
+      return
+    }
+
     sendResponse(
       req,
       res,
-      session.players.getSponsorBlock(pathParams.guildId),
+      await session.players.getSponsorBlock(pathParams.guildId),
       200
     )
   } catch (error) {
@@ -258,11 +279,27 @@ async function handlePostSponsorBlock(
   }
 
   try {
-    session.players.setSponsorBlockSegments(pathParams.guildId, body.segments)
+    const result = await session.players.setSponsorBlockSegments(
+      pathParams.guildId,
+      body.segments
+    )
+
+    if (result && 'status' in result && result.status !== 200) {
+      sendErrorResponse(
+        req,
+        res,
+        (result.status as number) || 500,
+        'Internal Server Error',
+        result.message || 'Operation failed',
+        req.url || ''
+      )
+      return
+    }
+
     sendResponse(
       req,
       res,
-      session.players.getSponsorBlock(pathParams.guildId),
+      await session.players.getSponsorBlock(pathParams.guildId),
       200
     )
   } catch (error) {
@@ -295,7 +332,7 @@ async function handleDeleteSponsorBlock(
   }
 
   try {
-    session.players.clearSponsorBlock(pathParams.guildId)
+    await session.players.clearSponsorBlock(pathParams.guildId)
     res.writeHead(204)
     res.end()
   } catch (error) {

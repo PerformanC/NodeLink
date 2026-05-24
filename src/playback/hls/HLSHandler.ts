@@ -71,7 +71,7 @@ export default class HLSHandler extends PassThrough {
     this.currentUrl = url
     this.headers = options.headers ?? {}
     this.localAddress = options.localAddress ?? null
-    this.proxy = options.proxy ?? null
+    this.proxy = options.network?.proxy ?? options.proxy ?? null
     this.onResolveUrl = options.onResolveUrl ?? null
     this.strategy =
       options.strategy ??

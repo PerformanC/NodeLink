@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { alignLyrics } from '../modules/lyricsAligner.ts'
+import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type { SourceResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'
 
@@ -83,10 +84,7 @@ export type LyricsLoadResult =
  */
 export interface LyricsManagerContext {
   /** Server options. */
-  options?: Record<string, unknown> & {
-    /** Lyrics source configuration bucket. */
-    lyrics?: Record<string, unknown>
-  }
+  options: NodelinkConfig
   /** Source manager accessor. */
   sources?: {
     /** Re-resolves a track URI into reliable source metadata. */

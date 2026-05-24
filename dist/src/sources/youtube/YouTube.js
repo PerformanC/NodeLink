@@ -172,7 +172,8 @@ export default class YouTubeSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = nodelink.options.sources?.youtube;
+        this.config = nodelink.options.sources
+            .youtube;
         this.proxyManager = new YouTubeProxyManager(this.config.proxies || []);
         this.additionalsSourceName = ['ytmusic'];
         this.searchTerms = ['ytsearch', 'ytmsearch'];
@@ -346,8 +347,8 @@ export default class YouTubeSource {
                 }
             }
         }
-        catch (e) {
-            logger('error', 'YouTube', `Error fetching visitor data: ${e.message}`);
+        catch (_e) {
+            logger('error', 'YouTube', `Error fetching visitor data: \${(e as Error).message}`);
             logger('warn', 'YouTube', 'Using cached visitorData fallback (if present).');
         }
         if (playerScriptUrl)
@@ -696,7 +697,8 @@ export default class YouTubeSource {
             // biome-ignore lint/suspicious/noExplicitAny: buildHoloTrack is dynamically imported from JS with inferred null-typed param
             playerBody, {
                 fetchChannelInfo: options.fetchChannelInfo ?? false,
-                resolveExternalLinks: options.resolveExternalLinks ?? false
+                resolveExternalLinks: options.resolveExternalLinks ?? false,
+                search: {}
             });
             if (holoTrack)
                 holoTrack.userData = userData;
@@ -935,9 +937,10 @@ export default class YouTubeSource {
             ? this.config.fallbackSources
             : [];
         const opts = this.nodelink.options;
-        const defaultSources = Array.isArray(opts.defaultSearchSource)
-            ? opts.defaultSearchSource
-            : [opts.defaultSearchSource];
+        const searchConfig = opts.search;
+        const defaultSources = Array.isArray(searchConfig?.defaultSource)
+            ? searchConfig.defaultSource
+            : [searchConfig?.defaultSource];
         const fallbackOrder = [
             ...configuredFallbackSources,
             ...defaultSources,
@@ -1570,10 +1573,6 @@ export default class YouTubeSource {
             }
             if (stream.destroyed || stream.writableEnded) {
                 cleanup();
-                return;
-            }
-            if (isAborted && stream.writableNeedDrain) {
-                logger('debug', 'YouTube', `Stream is paused/backed up, skipping recovery (cause: ${causeError?.message}). Player will recover on resume.`);
                 return;
             }
             if (isAborted && stream.writableNeedDrain) {

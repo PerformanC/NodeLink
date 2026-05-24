@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough, pipeline } from 'node:stream'
 import type {
   SourceResult,
   TrackInfo,
@@ -23,16 +23,6 @@ const SEARCH_SUBHEAD_REGEX = /<div class="subhead">([\s\S]*?)<\/div>/
 const SEARCH_ARTWORK_REGEX = /<div class="art">\s*<img src="([^"]+)"/
 const STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\\s]+/
 const TRALBUM_REGEX = /data-tralbum=(["'])([\s\S]+?)\1/
-
-/**
- * Runtime options used by the Bandcamp source.
- */
-interface BandcampRuntimeOptions {
-  /**
-   * Maximum number of tracks returned for search operations.
-   */
-  maxSearchResults?: number
-}
 
 /**
  * Minimal Bandcamp track payload used by `data-tralbum`.
@@ -526,7 +516,8 @@ export default class BandcampSource {
         }
       }
 
-      const streamUrlMatch = page.match(STREAM_URL_REGEX)
+      const decodedPage = this.decodeHtmlEntities(page)
+      const streamUrlMatch = decodedPage.match(STREAM_URL_REGEX)
 
       if (!streamUrlMatch) {
         return {
@@ -540,7 +531,7 @@ export default class BandcampSource {
       }
 
       return {
-        url: this.decodeHtmlEntities(streamUrlMatch[0]),
+        url: streamUrlMatch[0],
         protocol: 'https',
         format: 'mp3'
       }
@@ -579,7 +570,10 @@ export default class BandcampSource {
     try {
       const response = await makeRequest(url, {
         method: 'GET',
-        streamOnly: true
+        streamOnly: true,
+        headers: {
+          Referer: decodedTrack.uri
+        }
       })
 
       if (response.error || response.statusCode !== 200 || !response.stream) {
@@ -596,7 +590,22 @@ export default class BandcampSource {
       }
 
       const stream = new PassThrough()
-      response.stream.pipe(stream)
+      stream.once('close', () => {
+        ;(response.stream as { destroy?: () => void }).destroy?.()
+      })
+      pipeline(
+        response.stream,
+        stream,
+        (error: NodeJS.ErrnoException | null) => {
+          if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger(
+              'error',
+              'Sources',
+              `BandCamp stream error: ${error.message}`
+            )
+          }
+        }
+      )
 
       return { stream }
     } catch (error) {
@@ -869,8 +878,8 @@ export default class BandcampSource {
    * @returns A positive integer limit used when parsing search results.
    */
   private getMaxSearchResults(): number {
-    const options = this.nodelink.options as BandcampRuntimeOptions
-    const limit = options.maxSearchResults
+    const options = this.nodelink.options
+    const limit = options.search.maxResults
 
     return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
       ? limit

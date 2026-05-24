@@ -138,7 +138,7 @@ export default class Android extends BaseClient {
                 logger('debug', 'YouTube-Android', `No matches found on ${sourceName} for: ${query}`);
                 return { loadType: 'empty', data: {} };
             }
-            const maxResults = this.config.maxSearchResults || 10;
+            const maxResults = this.config.search.maxResults || 10;
             let count = 0;
             const filteredItems = items.filter((item) => {
                 const isValid = item.videoRenderer ||
@@ -158,7 +158,7 @@ export default class Android extends BaseClient {
                 return false;
             });
             for (const itemData of filteredItems) {
-                const track = await buildTrack(itemData, sourceName, null, null, this.config.enableHoloTracks);
+                const track = await buildTrack(itemData, sourceName, null, null, this.config.experimental.enableHoloTracks);
                 if (track) {
                     tracks.push(track);
                 }

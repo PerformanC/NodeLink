@@ -115,8 +115,11 @@ export default class CipherManager implements ICipherManager {
     this.nodelink = nodelink
     this.config = {
       ...((
-        (nodelink.options.sources as Record<string, unknown> | undefined)
-          ?.youtube as { cipher?: YouTubeCipherConfig } | undefined
+        (
+          nodelink.options.sources as unknown as
+            | Record<string, unknown>
+            | undefined
+        )?.youtube as { cipher?: YouTubeCipherConfig } | undefined
       )?.cipher ?? {})
     }
     if (this.config.url) {

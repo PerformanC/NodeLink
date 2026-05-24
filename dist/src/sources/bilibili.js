@@ -161,7 +161,7 @@ export default class BilibiliSource {
         const res = await makeRequest('https://api.bilibili.com/x/web-interface/nav', {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.proxy
+            proxy: this.config.network.proxy
         });
         const body = res.body;
         if (res.error || !body?.data?.wbi_img) {
@@ -227,7 +227,7 @@ export default class BilibiliSource {
                     Cookie: cookie,
                     Referer: 'https://search.bilibili.com/'
                 },
-                proxy: this.config.proxy
+                proxy: this.config.network.proxy
             });
             body = searchResponse.body;
             if (!body?.data ||
@@ -241,7 +241,7 @@ export default class BilibiliSource {
                         Cookie: cookie,
                         Referer: 'https://search.bilibili.com/'
                     },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 body = allSearchResponse.body;
             }
@@ -263,7 +263,7 @@ export default class BilibiliSource {
                 return { loadType: 'empty', data: {} };
             }
             const tracks = [];
-            const limit = this.nodelink.options.maxSearchResults || 10;
+            const limit = this.nodelink.options.search.maxResults || 10;
             for (const item of videos.slice(0, limit)) {
                 const durationParts = String(item.duration || '0:0')
                     .split(':')
@@ -322,7 +322,7 @@ export default class BilibiliSource {
                 headers: HEADERS,
                 maxRedirects: 3,
                 timeout: 5000,
-                proxy: this.config.proxy
+                proxy: this.config.network.proxy
             });
             if (typeof res.body === 'string') {
                 const match = res.body.match(/rel=["']canonical["'][^>]+href=["']([^"']+)["']/);
@@ -482,7 +482,7 @@ export default class BilibiliSource {
                 const res = await makeRequest(apiUrl, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const body = res.body;
                 if (!body || body.code !== 0) {
@@ -518,7 +518,7 @@ export default class BilibiliSource {
                 const res = await makeRequest(apiUrl, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const body = res.body;
                 if (!body || body.code !== 0)
@@ -584,7 +584,7 @@ export default class BilibiliSource {
                     const res = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/song/info?sid=${id}`, {
                         method: 'GET',
                         headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                        proxy: this.config.proxy
+                        proxy: this.config.network.proxy
                     });
                     const body = res.body;
                     if (!body || body.code !== 0)
@@ -617,7 +617,7 @@ export default class BilibiliSource {
                 const albumResRaw = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/song/of-menu?sid=${id}&pn=1&ps=100`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const albumRes = albumResRaw.body;
                 if (!albumRes || albumRes.code !== 0)
@@ -645,7 +645,7 @@ export default class BilibiliSource {
                 const infoResRaw = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/menu/info?sid=${id}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const infoRes = infoResRaw.body;
                 return {
@@ -675,7 +675,7 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.live.bilibili.com/room/v1/Room/get_info?room_id=${id}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const body = res.body;
                 if (!body || body.code !== 0)
@@ -724,7 +724,7 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.bilibili.com/x/space/wbi/arc/search?${queryParams}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const body = res.body;
                 if (!body || body.code !== 0)
@@ -803,7 +803,7 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/url?sid=${sid}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const body = res.body;
                 if (!body || body.code !== 0 || !body.data?.cdns?.[0]) {
@@ -820,7 +820,7 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id=${roomId}&protocol=0,1&format=0,2&codec=0,1&qn=10000&platform=web&pt=web&no_playurl=0&mask=0`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const body = res.body;
                 if (!body ||
@@ -882,7 +882,7 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network.proxy
                 });
                 const body = res.body;
                 if (!body || body.code !== 0 || !body.data) {
@@ -902,7 +902,7 @@ export default class BilibiliSource {
                     Referer: 'https://www.bilibili.com/',
                     Cookie: this.buildCookieHeader()
                 },
-                proxy: this.config.proxy
+                proxy: this.config.network.proxy
             });
             const body = res.body;
             if (!body || body.code !== 0 || !body.data) {
@@ -968,7 +968,7 @@ export default class BilibiliSource {
                         type: 'mpegts',
                         localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
                         startTime: additionalData?.startTime || 0,
-                        proxy: this.config.proxy
+                        proxy: this.config.network.proxy
                     }),
                     type: 'mpegts'
                 };
@@ -977,7 +977,7 @@ export default class BilibiliSource {
                 method: 'GET',
                 headers,
                 streamOnly: true,
-                proxy: this.config.proxy
+                proxy: this.config.network.proxy
             });
             if (res.error || !res.stream)
                 throw new Error(res.error || 'Failed to get stream.');

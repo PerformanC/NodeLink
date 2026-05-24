@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream';
+import { PassThrough, pipeline } from 'node:stream';
 import { encodeTrack, logger, makeRequest } from "../utils.js";
 const BANDCAMP_BASE_URL = 'https://bandcamp.com';
 const BANDCAMP_TRACK_PATTERN = /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/;
@@ -209,7 +209,8 @@ export default class BandcampSource {
                     }
                 };
             }
-            const streamUrlMatch = page.match(STREAM_URL_REGEX);
+            const decodedPage = this.decodeHtmlEntities(page);
+            const streamUrlMatch = decodedPage.match(STREAM_URL_REGEX);
             if (!streamUrlMatch) {
                 return {
                     loadType: 'error',
@@ -221,7 +222,7 @@ export default class BandcampSource {
                 };
             }
             return {
-                url: this.decodeHtmlEntities(streamUrlMatch[0]),
+                url: streamUrlMatch[0],
                 protocol: 'https',
                 format: 'mp3'
             };
@@ -251,7 +252,10 @@ export default class BandcampSource {
         try {
             const response = await makeRequest(url, {
                 method: 'GET',
-                streamOnly: true
+                streamOnly: true,
+                headers: {
+                    Referer: decodedTrack.uri
+                }
             });
             if (response.error || response.statusCode !== 200 || !response.stream) {
                 return {
@@ -265,7 +269,15 @@ export default class BandcampSource {
                 };
             }
             const stream = new PassThrough();
-            response.stream.pipe(stream);
+            stream.once('close', () => {
+                ;
+                response.stream.destroy?.();
+            });
+            pipeline(response.stream, stream, (error) => {
+                if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                    logger('error', 'Sources', `BandCamp stream error: ${error.message}`);
+                }
+            });
             return { stream };
         }
         catch (error) {
@@ -492,7 +504,7 @@ export default class BandcampSource {
      */
     getMaxSearchResults() {
         const options = this.nodelink.options;
-        const limit = options.maxSearchResults;
+        const limit = options.search.maxResults;
         return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
             ? limit
             : 10;

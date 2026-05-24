@@ -224,7 +224,7 @@ async function requestHandler(
     parsedUrl.pathname === `/${PATH_VERSION}/profiler/ui` ||
     parsedUrl.pathname === `/${PATH_VERSION}/profiler/file`
   if (isMetricsEndpoint) {
-    const metricsConfig = nodelink.options.metrics || {}
+    const metricsConfig = nodelink.options.api.metrics || {}
     if (!metricsConfig.enabled) {
       logger(
         'warn',

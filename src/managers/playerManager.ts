@@ -106,7 +106,11 @@ interface CreatePlayerResult {
  * Generic player command response payload for cluster commands.
  * @public
  */
-interface PlayerCommandResponse extends Record<string, unknown> {
+export interface PlayerCommandResponse extends Record<string, unknown> {
+  /** HTTP-like status code. */
+  status?: number
+  /** Success/failure message or error details. */
+  message?: string
   playerNotFound?: boolean
 }
 
@@ -892,11 +896,11 @@ export default class PlayerManager {
   /**
    * Returns current SponsorBlock state for a player.
    */
-  getSponsorBlock(
+  async getSponsorBlock(
     guildId: string
-  ): PlayerSponsorBlockState | PlayerCommandResponse {
+  ): Promise<PlayerSponsorBlockState | PlayerCommandResponse> {
     if (this.isCluster) {
-      return this.runClusterPlayerCommand(guildId, 'getSponsorBlock', []) as any
+      return this.runClusterPlayerCommand(guildId, 'getSponsorBlock', [])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -915,7 +919,7 @@ export default class PlayerManager {
     if (this.isCluster) {
       return this.runClusterPlayerCommand(guildId, 'updateSponsorBlock', [
         updates
-      ]) as any
+      ])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -933,7 +937,7 @@ export default class PlayerManager {
     if (this.isCluster) {
       return this.runClusterPlayerCommand(guildId, 'setSponsorBlockSegments', [
         segments
-      ]) as any
+      ])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -948,11 +952,7 @@ export default class PlayerManager {
     guildId: string
   ): Promise<PlayerCommandResponse | undefined> {
     if (this.isCluster) {
-      return this.runClusterPlayerCommand(
-        guildId,
-        'clearSponsorBlock',
-        []
-      ) as any
+      return this.runClusterPlayerCommand(guildId, 'clearSponsorBlock', [])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))

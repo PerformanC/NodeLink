@@ -73,8 +73,7 @@ export default class CipherManager {
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.config = {
-            ...(nodelink.options.sources
-                ?.youtube?.cipher ?? {})
+            ...(nodelink.options.sources?.youtube?.cipher ?? {})
         };
         if (this.config.url) {
             this.config.url = this.config.url.replace(/\/+$/, '');

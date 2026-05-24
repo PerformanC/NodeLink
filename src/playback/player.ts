@@ -167,13 +167,13 @@ export class Player {
     this.session = options.session
     this.guildId = options.guildId
     this.volumePercent = this.nodelink.options?.defaultVolume ?? 100
-    this.fading = this.nodelink.options?.audio?.fading
+    this.fading = this.nodelink.options?.playback.audio?.fading
     this.loudnessNormalizer =
-      this.nodelink.options?.audio?.loudnessNormalizer ?? false
+      this.nodelink.options?.playback.audio?.loudnessNormalizer ?? false
 
     this.sponsorBlock = {
-      enabled: this.nodelink.options.sponsorblock?.enabled ?? false,
-      categories: this.nodelink.options.sponsorblock?.categories ?? [
+      enabled: this.nodelink.options.playback.sponsorblock?.enabled ?? false,
+      categories: this.nodelink.options.playback.sponsorblock?.categories ?? [
         'sponsor',
         'selfpromo',
         'interaction',
@@ -183,10 +183,13 @@ export class Player {
         'music_offtopic',
         'filler'
       ],
-      actionTypes: this.nodelink.options.sponsorblock?.actionTypes ?? ['skip'],
+      actionTypes: this.nodelink.options.playback.sponsorblock?.actionTypes ?? [
+        'skip'
+      ],
       segments: [],
       lastSkippedUuid: null,
-      skipMarginMs: this.nodelink.options.sponsorblock?.skipMarginMs ?? 150
+      skipMarginMs:
+        this.nodelink.options.playback.sponsorblock?.skipMarginMs ?? 150
     }
 
     logger(
@@ -227,7 +230,7 @@ export class Player {
     this.waitEvent = (
       event,
       filter,
-      timeout = this.nodelink.options.eventTimeoutMs ?? 15000
+      timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000
     ) =>
       new Promise((resolve, reject) => {
         const handler = (_: unknown, payload: unknown) => {
@@ -253,7 +256,7 @@ export class Player {
   }
 
   private _getAudioOptions(): AudioOptionsWithTransitions | undefined {
-    return this.nodelink.options.audio as
+    return this.nodelink.options.playback.audio as
       | AudioOptionsWithTransitions
       | undefined
   }
@@ -274,7 +277,7 @@ export class Player {
 
     const { AudioMixer: Mixer } = await import('./processing/AudioMixer.ts')
     this.audioMixer = new Mixer(
-      this.nodelink.options?.mix ?? {
+      this.nodelink.options?.playback.mix ?? {
         enabled: true,
         defaultVolume: 0.8,
         maxLayersMix: 5,
@@ -330,10 +333,13 @@ export class Player {
       guildId: this.guildId,
       userId: this.session.userId,
       channelId: this.voice.channelId || this.guildId,
-      encryption: this.nodelink.options?.audio?.encryption ?? null
+      encryption: this.nodelink.options?.playback.audio?.encryption ?? null
     })
     this.connection.stuckTimeout =
-      Math.max(this.nodelink.options.trackStuckThresholdMs, 30000) + 5000
+      Math.max(
+        this.nodelink.options.playback.trackStuckThresholdMs ?? 10000,
+        30000
+      ) + 5000
     this.connection.on(
       'stateChange',
       (_: VoiceConnectionState | null, s: VoiceConnectionState) => {
@@ -481,7 +487,8 @@ export class Player {
         'Player',
         `Track became stuck for guild ${this.guildId}. Triggering immediate recovery.`
       )
-      this._stuckTime = this.nodelink.options.trackStuckThresholdMs + 1
+      this._stuckTime =
+        (this.nodelink.options.playback.trackStuckThresholdMs ?? 0) + 1
       this._sendUpdate()
       return
     }
@@ -894,7 +901,7 @@ export class Player {
     track: PlayerTrack | null
   ): Promise<PlayerTrack | null> {
     if (!track) return null
-    if (!this.nodelink.options.enableHoloTracks) {
+    if (!this.nodelink.options.experimental.enableHoloTracks) {
       return track
     }
 
@@ -913,8 +920,9 @@ export class Player {
       )?.resolveHoloTrack
       if (typeof resolveHoloTrack === 'function') {
         const holoTrack = await resolveHoloTrack.call(source, track, {
-          fetchChannelInfo: this.nodelink.options.fetchChannelInfo,
-          resolveExternalLinks: this.nodelink.options.resolveExternalLinks
+          fetchChannelInfo: this.nodelink.options.search.fetchChannelInfo,
+          resolveExternalLinks:
+            this.nodelink.options.search.resolveExternalLinks
         })
         return holoTrack || track
       }
@@ -978,7 +986,7 @@ export class Player {
     urlData: TrackUrlResult & { protocol?: string; format?: TrackFormat },
     startTime?: number
   ): Promise<{ stream: AudioResource } | { exception: { message: string } }> {
-    if (this.nodelink.options?.mix?.enabled !== false) {
+    if (this.nodelink.options?.playback.mix?.enabled !== false) {
       await this._ensureAudioMixer()
     }
 
@@ -1125,7 +1133,7 @@ export class Player {
       }
     }
 
-    const threshold = this.nodelink.options.trackStuckThresholdMs
+    const threshold = this.nodelink.options.playback.trackStuckThresholdMs ?? 0
     if (
       threshold > 0 &&
       !this.isUpdatingTrack &&
@@ -1135,7 +1143,8 @@ export class Player {
       !this.isPaused
     ) {
       if (this._lastPosition === position) {
-        this._stuckTime += this.nodelink.options.playerUpdateInterval
+        this._stuckTime +=
+          this.nodelink.options.playback.playerUpdateInterval ?? 0
         if (
           this._stuckTime >= threshold &&
           !this._isRecovering &&
@@ -1490,7 +1499,7 @@ export class Player {
       this.sponsorBlock.lastSkippedUuid = null
 
       const videoId = this.track.info.identifier
-      const sbConfig = this.nodelink.options.sponsorblock
+      const sbConfig = this.nodelink.options.playback.sponsorblock
 
       if (this.sponsorBlock.enabled) {
         logger(
@@ -1669,6 +1678,19 @@ export class Player {
   ): Promise<boolean> {
     if (this.destroying || !this.track) return false
     if (!this.track.info.isSeekable && !this.track.info.isStream) return false
+
+    const streamFormat =
+      typeof this.streamInfo?.format === 'string'
+        ? this.streamInfo.format.toLowerCase()
+        : ''
+    if (streamFormat.includes('flac')) {
+      logger(
+        'warn',
+        'Player',
+        `Seeking not supported for FLAC stream on guild ${this.guildId}`
+      )
+      return false
+    }
 
     const seekPosition = position ?? this._realPosition()
 
@@ -1926,7 +1948,7 @@ export class Player {
     position: number,
     endTime?: number
   ): Promise<boolean> {
-    if (this.nodelink.options?.mix?.enabled !== false) {
+    if (this.nodelink.options?.playback.mix?.enabled !== false) {
       await this._ensureAudioMixer()
     }
 
@@ -2666,7 +2688,7 @@ export class Player {
     await this._ensureAudioMixer()
     if (!this.audioMixer) throw new Error('AudioMixer not initialized')
 
-    const mixConfig = this.nodelink?.options?.mix ?? {
+    const mixConfig = this.nodelink?.options?.playback.mix ?? {
       enabled: true,
       defaultVolume: 0.8,
       maxLayersMix: 5

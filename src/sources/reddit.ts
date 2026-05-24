@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough, pipeline } from 'node:stream'
 import type {
   SourceResult,
   TrackInfo,
@@ -465,7 +465,18 @@ export default class RedditSource {
       }
 
       const stream = new PassThrough()
-      response.stream.pipe(stream)
+      stream.once('close', () => {
+        ;(response.stream as { destroy?: () => void }).destroy?.()
+      })
+      pipeline(
+        response.stream,
+        stream,
+        (error: NodeJS.ErrnoException | null) => {
+          if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger('error', 'Sources', `Reddit stream error: ${error.message}`)
+          }
+        }
+      )
 
       const type = url.endsWith('.mp3') ? 'mp3' : 'mp4'
       return { stream, type }

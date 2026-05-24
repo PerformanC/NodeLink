@@ -1230,6 +1230,9 @@ export interface ConnectionManagerContext {
    */
   options: {
     connection?: import('./voice/connection.types.ts').ConnectionConfig
+    network?: {
+      connection?: import('./voice/connection.types.ts').ConnectionConfig
+    }
   }
 
   /**
