@@ -29,6 +29,7 @@ interface BoomplaySourceConfig extends Record<string, unknown> {
   playlistLoadLimit?: number
   albumLoadLimit?: number
   cookie?: string
+  allowExplicit?: boolean
 }
 
 interface RawTrack {
@@ -98,11 +99,7 @@ async function aesDecrypt(base64Cipher: string): Promise<string> {
   return new TextDecoder().decode(decrypted)
 }
 
-function metaContent(
-  html: string,
-  _attr: string,
-  value: string
-): string | null {
+function metaContent(html: string, _attr: string, value: string): string | null {
   const re = new RegExp(
     `<meta[^>]+(?:property|name)=["']${value}["'][^>]+content=["']([^"']+)["']`,
     'i'
@@ -193,16 +190,14 @@ function parseDataDataMetadata(raw: string): ParsedDataData {
   return {
     title: titleCandidate
       ? cleanText(
-          decodeURIComponent(titleCandidate)
-            .replace(/%/g, '')
-            .trim() || titleCandidate
+          decodeURIComponent(titleCandidate).replace(/%/g, '').trim() ||
+            titleCandidate
         )
       : undefined,
     artistName: artistCandidate
       ? cleanText(
-          decodeURIComponent(artistCandidate)
-            .replace(/%/g, '')
-            .trim() || artistCandidate
+          decodeURIComponent(artistCandidate).replace(/%/g, '').trim() ||
+            artistCandidate
         )
       : undefined,
     artworkUrl:
@@ -278,7 +273,6 @@ function parseSearchHtml(html: string): RawTrack[] {
 
   for (const li of liMatches) {
     const block = li[0]
-
     const idMatch = block.match(/\bdata-id=["'](\d+)["']/)
     if (!idMatch) continue
     const id = idMatch[1]
@@ -568,9 +562,7 @@ function parseTrackListHtml(html: string): RawTrack[] {
   return tracks
 }
 
-function parseAlbumPage(
-  html: string
-): { name: string; tracks: RawTrack[] } | null {
+function parseAlbumPage(html: string): { name: string; tracks: RawTrack[] } | null {
   const albumLd = jsonLd(html, 'MusicAlbum')
   const name =
     (albumLd?.['name'] as string | undefined) ??
@@ -581,9 +573,7 @@ function parseAlbumPage(
   return { name: cleanText(name), tracks }
 }
 
-function parsePlaylistPage(
-  html: string
-): { name: string; tracks: RawTrack[] } | null {
+function parsePlaylistPage(html: string): { name: string; tracks: RawTrack[] } | null {
   const name =
     metaContent(html, 'property', 'og:title') ??
     html.match(/<h1[^>]*class="[^"]*playlist[^"]*"[^>]*>([^<]+)<\/h1>/i)?.[1] ??
@@ -593,9 +583,7 @@ function parsePlaylistPage(
   return { name: cleanText(name), tracks }
 }
 
-function parseArtistPage(
-  html: string
-): { name: string; tracks: RawTrack[] } | null {
+function parseArtistPage(html: string): { name: string; tracks: RawTrack[] } | null {
   const artistLd = jsonLd(html, 'MusicGroup')
   const name =
     (artistLd?.['name'] as string | undefined) ??
@@ -620,8 +608,7 @@ function parseQuery(query: string): ParsedQuery {
   }
   const parsed: ParsedQuery = { text: text || query, filters }
   if (filters.has('artist')) parsed.artist = filters.get('artist')
-  if (filters.has('albumartist'))
-    parsed.albumArtist = filters.get('albumartist')
+  if (filters.has('albumartist')) parsed.albumArtist = filters.get('albumartist')
   if (filters.has('album')) parsed.album = filters.get('album')
   if (filters.has('genre')) parsed.genre = filters.get('genre')
   if (filters.has('isrc')) parsed.isrc = filters.get('isrc')
@@ -652,10 +639,7 @@ function parseQuery(query: string): ParsedQuery {
   return parsed
 }
 
-function filterTracksByQuery(
-  tracks: RawTrack[],
-  query: ParsedQuery
-): RawTrack[] {
+function filterTracksByQuery(tracks: RawTrack[], query: ParsedQuery): RawTrack[] {
   return tracks.filter((track) => {
     if (query.minDuration !== undefined && track.duration < query.minDuration)
       return false
@@ -681,11 +665,6 @@ function filterTracksByQuery(
   })
 }
 
-/**
- * Boomplay source plugin implementation.
- *
- * Provides search, resolve, and track URL resolution for Boomplay resources.
- */
 export default class BoomplaySource implements SourceInstance {
   private readonly nodelink: WorkerNodeLink
   private readonly config: BoomplaySourceConfig
@@ -763,32 +742,20 @@ export default class BoomplaySource implements SourceInstance {
       const html = await fetchPage(url, this.config.cookie ?? '')
       if (!html) continue
 
-      logger(
-        'debug',
-        'Boomplay',
-        `Web search HTML snippet (${url}): ${html.slice(0, 600)}`
-      )
+      logger('debug', 'Boomplay', `Web search HTML snippet (${url}): ${html.slice(0, 600)}`)
 
       let rawTracks = parseSearchHtml(html)
       if (parsedQuery) rawTracks = filterTracksByQuery(rawTracks, parsedQuery)
 
       if (rawTracks.length > 0) {
-        logger(
-          'debug',
-          'Boomplay',
-          `Web search "${query}" → ${rawTracks.length} results`
-        )
+        logger('debug', 'Boomplay', `Web search "${query}" → ${rawTracks.length} results`)
         return {
           loadType: 'search',
           data: rawTracks.map((t) => this._buildTrackData(t))
         }
       }
 
-      logger(
-        'debug',
-        'Boomplay',
-        `No tracks parsed from web search URL: ${url}`
-      )
+      logger('debug', 'Boomplay', `No tracks parsed from web search URL: ${url}`)
     }
 
     return { loadType: 'empty', data: {} }
@@ -806,15 +773,9 @@ export default class BoomplaySource implements SourceInstance {
       if (rawType === 'albums' || rawType === 'album')
         return this._resolveCollection(`${BOOMPLAY_BASE}/albums/${id}`, 'album')
       if (rawType === 'playlists' || rawType === 'playlist')
-        return this._resolveCollection(
-          `${BOOMPLAY_BASE}/playlists/${id}`,
-          'playlist'
-        )
+        return this._resolveCollection(`${BOOMPLAY_BASE}/playlists/${id}`, 'playlist')
       if (rawType === 'artists' || rawType === 'artist')
-        return this._resolveCollection(
-          `${BOOMPLAY_BASE}/artists/${id}`,
-          'artist'
-        )
+        return this._resolveCollection(`${BOOMPLAY_BASE}/artists/${id}`, 'artist')
       return { loadType: 'empty', data: {} }
     } catch (error) {
       const msg = this._errMsg(error)
@@ -828,22 +789,18 @@ export default class BoomplaySource implements SourceInstance {
 
   public async getTrackUrl(
     decodedTrack: TrackInfo
-  ): Promise<
-    TrackUrlResult | { exception: { message: string; severity: string } }
-  > {
+  ): Promise<TrackUrlResult | { exception: { message: string; severity: string } }> {
     const songIdMatch = decodedTrack.uri?.match(/\/songs\/(\d+)/)
     const songId = songIdMatch?.[1]
+
     if (songId) {
       const streamUrl = await this._fetchStreamUrl(songId)
       if (streamUrl) {
-        logger(
-          'debug',
-          'Boomplay',
-          `Resolved stream for ${decodedTrack.title}: ${streamUrl}`
-        )
+        logger('debug', 'Boomplay', `Resolved stream for ${decodedTrack.title}: ${streamUrl}`)
         return { url: streamUrl }
       }
     }
+
     return this._delegateTrackUrl(decodedTrack)
   }
 
@@ -861,9 +818,7 @@ export default class BoomplaySource implements SourceInstance {
     return { loadType: 'track', data: this._buildTrackData(raw) }
   }
 
-  private async _fetchTrackMetadataAndroid(
-    songId: string
-  ): Promise<RawTrack | null> {
+  private async _fetchTrackMetadataAndroid(songId: string): Promise<RawTrack | null> {
     const attempts = [
       {
         url: 'https://android.boomplaymusic.com/BoomPlayer/getSongInfo',
@@ -894,11 +849,7 @@ export default class BoomplaySource implements SourceInstance {
         if (res.statusCode !== 200) continue
         const bodyStr =
           typeof res.body === 'string' ? res.body : JSON.stringify(res.body)
-        logger(
-          'debug',
-          'Boomplay',
-          `getSongInfo response: ${bodyStr.slice(0, 800)}`
-        )
+        logger('debug', 'Boomplay', `getSongInfo response: ${bodyStr.slice(0, 800)}`)
         let parsed: unknown
         try {
           parsed = JSON.parse(bodyStr)
@@ -929,11 +880,7 @@ export default class BoomplaySource implements SourceInstance {
           uri: `${BOOMPLAY_BASE}/songs/${songId}`
         }
       } catch (err) {
-        logger(
-          'debug',
-          'Boomplay',
-          `getSongInfo attempt failed: ${this._errMsg(err)}`
-        )
+        logger('debug', 'Boomplay', `getSongInfo attempt failed: ${this._errMsg(err)}`)
       }
     }
     return null
@@ -944,8 +891,7 @@ export default class BoomplaySource implements SourceInstance {
     type: 'album' | 'playlist' | 'artist'
   ): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.maxAlbumPlaylistLength as number | undefined) ??
-      1000
+      (this.nodelink.options.playback?.maxPlaylistLength as number | undefined) ?? 1000
     const html = await fetchPage(pageUrl, this.config.cookie ?? '')
     if (!html) return { loadType: 'empty', data: {} }
 
@@ -984,11 +930,7 @@ export default class BoomplaySource implements SourceInstance {
       })
 
       if (res.statusCode !== 200) {
-        logger(
-          'debug',
-          'Boomplay',
-          `getResourceAddr returned ${res.statusCode}`
-        )
+        logger('debug', 'Boomplay', `getResourceAddr returned ${res.statusCode}`)
         return null
       }
 
@@ -997,10 +939,7 @@ export default class BoomplaySource implements SourceInstance {
       let streamUrl: string | null = null
       try {
         const parsed = JSON.parse(bodyStr) as { source?: string; desc?: string }
-        if (
-          parsed.desc &&
-          parsed.desc.includes('unavailable in your country')
-        ) {
+        if (parsed.desc && parsed.desc.includes('unavailable in your country')) {
           logger('debug', 'Boomplay', `Track ${songId} is geo-restricted`)
           return null
         }
@@ -1009,50 +948,59 @@ export default class BoomplaySource implements SourceInstance {
           streamUrl = decrypted.trim().replace(/\0+$/, '')
         }
       } catch (err) {
-        logger(
-          'debug',
-          'Boomplay',
-          `getResourceAddr parse error: ${this._errMsg(err)}`
-        )
+        logger('debug', 'Boomplay', `getResourceAddr parse error: ${this._errMsg(err)}`)
       }
       return streamUrl
     } catch (err) {
-      logger(
-        'debug',
-        'Boomplay',
-        `_fetchStreamUrl failed: ${this._errMsg(err)}`
-      )
+      logger('debug', 'Boomplay', `_fetchStreamUrl failed: ${this._errMsg(err)}`)
       return null
     }
   }
 
   private async _delegateTrackUrl(
     decodedTrack: TrackInfo
-  ): Promise<
-    TrackUrlResult | { exception: { message: string; severity: string } }
-  > {
-    if (!this.nodelink.sources)
+  ): Promise<TrackUrlResult | { exception: { message: string; severity: string } }> {
+    const sm = this.nodelink.sources
+    if (!sm)
       return {
         exception: { message: 'Source manager unavailable.', severity: 'fault' }
       }
+
     try {
-      const query = `${decodedTrack.title} ${decodedTrack.author}`
-      const result = await this.nodelink.sources.searchWithDefault(query)
-      const tracks: TrackInfo[] =
-        result.loadType === 'search'
-          ? (result.data as TrackData[]).map((t) => t.info)
-          : []
-      const candidates: BestMatchCandidate[] = tracks.map((t) => ({
-        info: { title: t.title, author: t.author, length: t.length, uri: t.uri }
-      }))
-      const best = getBestMatch(candidates, decodedTrack)
-      if (!best)
+      const isrcQuery = decodedTrack.isrc ? `"${decodedTrack.isrc}"` : null
+      const titleQuery = `${decodedTrack.title} ${decodedTrack.author}`
+
+      let res = isrcQuery ? await sm.searchWithDefault(isrcQuery) : null
+
+      if (!res || res.loadType !== 'search' || !(res.data as TrackData[]).length) {
+        res = await sm.searchWithDefault(titleQuery)
+      }
+
+      if (res.loadType !== 'search' || !(res.data as TrackData[]).length) {
         return {
           exception: { message: 'No fallback source found.', severity: 'fault' }
         }
-      const url = await this.nodelink.sources.getTrackUrl(
-        best.info as TrackInfo
-      )
+      }
+
+      const candidates: BestMatchCandidate[] = (res.data as TrackData[]).map((t) => ({
+        info: {
+          title: t.info.title,
+          author: t.info.author,
+          length: t.info.length,
+          uri: t.info.uri
+        }
+      }))
+
+      const best = getBestMatch(candidates, decodedTrack, {
+        allowExplicit: this.config.allowExplicit
+      })
+
+      if (!best)
+        return {
+          exception: { message: 'No suitable matching alternative was found.', severity: 'fault' }
+        }
+
+      const url = await sm.getTrackUrl(best.info as TrackInfo)
       return { newTrack: { info: best.info as TrackInfo }, ...url }
     } catch (err) {
       return {
