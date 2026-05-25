@@ -299,7 +299,7 @@ export class PoTokenManager {
   private _idleTimer: NodeJS.Timeout | null = null
 
   /**
-   * Refreshes the idle timeout for JSDOM resources.
+   * Refreshes the idle timeout for NativeDOM resources.
    * @internal
    */
   private _refreshIdleTimer(): void {
@@ -309,7 +309,7 @@ export class PoTokenManager {
         logger(
           'debug',
           'PoToken',
-          'Idle timeout reached. Cleaning up JSDOM resources.'
+          'Idle timeout reached. Cleaning up NativeDOM resources.'
         )
         this.reset()
       },
@@ -319,8 +319,8 @@ export class PoTokenManager {
   }
 
   /**
-   * Applies JSDOM environment to globalThis.
-   * @param dom - JSDOM instance.
+   * Applies NativeDOM environment to globalThis.
+   * @param dom - NativeDOM instance.
    * @internal
    */
   private _applyDomGlobals(dom: {
@@ -358,7 +358,7 @@ export class PoTokenManager {
   }
 
   /**
-   * Cleans up JSDOM and restores previous globals.
+   * Cleans up NativeDOM and restores previous globals.
    * @internal
    */
   private _cleanupDom(): void {
@@ -509,16 +509,28 @@ export class PoTokenManager {
       `VisitorData: ${this.visitorData?.slice(0, 20)}...`
     )
 
-    this._cleanupDom()
-    const { JSDOM } = await import('jsdom')
-    this._dom = new JSDOM(
-      '<!DOCTYPE html><html lang="en"><head><title></title></head><body></body></html>',
-      {
-        url: 'https://www.youtube.com/',
-        referrer: 'https://www.youtube.com/',
-        userAgent: PO_CONFIG.userAgent
-      } as import('jsdom').ConstructorOptions
+    await this._initializeWithDom()
+    logger(
+      'debug',
+      'PoToken',
+      'BotGuard initialization with NativeDOM complete'
     )
+  }
+
+  /**
+   * Internal helper to perform BotGuard initialization with NativeDOM.
+   * @internal
+   */
+  private async _initializeWithDom(): Promise<void> {
+    this._cleanupDom()
+
+    const { NativeDOM } = await import('./nativeDOM.ts')
+    this._dom = new NativeDOM({
+      url: 'https://www.youtube.com/',
+      referrer: 'https://www.youtube.com/',
+      userAgent: PO_CONFIG.userAgent
+    })
+
     this._applyDomGlobals(this._dom)
 
     logger('debug', 'PoToken', 'Fetching attestation challenge...')
@@ -562,11 +574,17 @@ export class PoTokenManager {
       body: JSON.stringify([requestKey, botguardResponse])
     })
 
-    const response = (await integrityTokenResponse.json()) as [string, unknown]
-    if (typeof response[0] !== 'string')
-      throw new Error('Could not get integrity token')
+    const response = (await integrityTokenResponse.json()) as any
+    let token = ''
+    if (response && typeof response[0] === 'string') {
+      token = response[0]
+    } else if (response && typeof response[3] === 'string') {
+      token = response[3]
+    }
 
-    this.integrityToken = response[0]
+    if (!token) throw new Error('Could not get integrity token')
+
+    this.integrityToken = token
     logger(
       'debug',
       'PoToken',
