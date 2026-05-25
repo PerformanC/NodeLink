@@ -10,6 +10,12 @@ import type {
   BestMatchCandidate,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
+import type {
+  BoomplaySourceOptions,
+  BoomplayRawTrack,
+  BoomplayParsedQuery,
+  BoomplayParsedData
+} from '../typings/sources/boomplay.types.ts'
 import {
   encodeTrack,
   getBestMatch,
@@ -23,37 +29,6 @@ const AES_IV = 'boomplay8xIsKTn9'
 const DESKTOP_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
 const ANDROID_UA = 'BoomplayMusicApp/6.0 (Android; BoomPlayer)'
-
-interface BoomplaySourceConfig extends Record<string, unknown> {
-  enabled?: boolean
-  playlistLoadLimit?: number
-  albumLoadLimit?: number
-  cookie?: string
-  allowExplicit?: boolean
-}
-
-interface RawTrack {
-  id: string | number
-  title: string
-  artistName: string
-  duration: number
-  artworkUrl: string | null
-  isrc: string | null
-  uri: string
-}
-
-interface ParsedQuery {
-  text: string
-  artist?: string
-  albumArtist?: string
-  album?: string
-  year?: number
-  minDuration?: number
-  maxDuration?: number
-  genre?: string
-  isrc?: string
-  filters: Map<string, string>
-}
 
 function strToBytes(str: string): Uint8Array {
   return new TextEncoder().encode(str)
@@ -152,14 +127,7 @@ function cleanText(s: string): string {
     .trim()
 }
 
-interface ParsedDataData {
-  title?: string
-  artistName?: string
-  duration?: number
-  artworkUrl?: string | null
-}
-
-function parseDataDataMetadata(raw: string): ParsedDataData {
+function parseDataDataMetadata(raw: string): BoomplayParsedData {
   const decoded = raw
     .replace(/%40%2B%23/gi, '@+#')
     .replace(/%3A/gi, ':')
@@ -264,8 +232,8 @@ async function fetchPage(url: string, cookies = ''): Promise<string | null> {
   }
 }
 
-function parseSearchHtml(html: string): RawTrack[] {
-  const tracks: RawTrack[] = []
+function parseSearchHtml(html: string): BoomplayRawTrack[] {
+  const tracks: BoomplayRawTrack[] = []
   const seen = new Set<string>()
 
   const liRe = /<li[^>]+class="[^"]*\bplay_one\b[^"]*"[^>]*>([\s\S]*?)<\/li>/gi
@@ -398,7 +366,7 @@ function parseSearchHtml(html: string): RawTrack[] {
   return tracks
 }
 
-function parseTrackPage(html: string, songId: string): RawTrack | null {
+function parseTrackPage(html: string, songId: string): BoomplayRawTrack | null {
   const ld = jsonLd(html, 'MusicRecording')
 
   let title: string | null = null
@@ -463,8 +431,8 @@ function parseTrackPage(html: string, songId: string): RawTrack | null {
   }
 }
 
-function parseTrackListHtml(html: string): RawTrack[] {
-  const tracks: RawTrack[] = []
+function parseTrackListHtml(html: string): BoomplayRawTrack[] {
+  const tracks: BoomplayRawTrack[] = []
   const seen = new Set<string>()
 
   const playOneRe =
@@ -562,7 +530,7 @@ function parseTrackListHtml(html: string): RawTrack[] {
   return tracks
 }
 
-function parseAlbumPage(html: string): { name: string; tracks: RawTrack[] } | null {
+function parseAlbumPage(html: string): { name: string; tracks: BoomplayRawTrack[] } | null {
   const albumLd = jsonLd(html, 'MusicAlbum')
   const name =
     (albumLd?.['name'] as string | undefined) ??
@@ -573,7 +541,7 @@ function parseAlbumPage(html: string): { name: string; tracks: RawTrack[] } | nu
   return { name: cleanText(name), tracks }
 }
 
-function parsePlaylistPage(html: string): { name: string; tracks: RawTrack[] } | null {
+function parsePlaylistPage(html: string): { name: string; tracks: BoomplayRawTrack[] } | null {
   const name =
     metaContent(html, 'property', 'og:title') ??
     html.match(/<h1[^>]*class="[^"]*playlist[^"]*"[^>]*>([^<]+)<\/h1>/i)?.[1] ??
@@ -583,7 +551,7 @@ function parsePlaylistPage(html: string): { name: string; tracks: RawTrack[] } |
   return { name: cleanText(name), tracks }
 }
 
-function parseArtistPage(html: string): { name: string; tracks: RawTrack[] } | null {
+function parseArtistPage(html: string): { name: string; tracks: BoomplayRawTrack[] } | null {
   const artistLd = jsonLd(html, 'MusicGroup')
   const name =
     (artistLd?.['name'] as string | undefined) ??
@@ -594,7 +562,7 @@ function parseArtistPage(html: string): { name: string; tracks: RawTrack[] } | n
   return { name: cleanText(name), tracks }
 }
 
-function parseQuery(query: string): ParsedQuery {
+function parseQuery(query: string): BoomplayParsedQuery {
   const filters = new Map<string, string>()
   let text = query
   const filterRegex = /(\w+):["']?([^"'\s]+)["']?/g
@@ -606,7 +574,7 @@ function parseQuery(query: string): ParsedQuery {
     filters.set(key.toLowerCase(), value)
     text = text.replace(match[0], '').trim()
   }
-  const parsed: ParsedQuery = { text: text || query, filters }
+  const parsed: BoomplayParsedQuery = { text: text || query, filters }
   if (filters.has('artist')) parsed.artist = filters.get('artist')
   if (filters.has('albumartist')) parsed.albumArtist = filters.get('albumartist')
   if (filters.has('album')) parsed.album = filters.get('album')
@@ -639,7 +607,7 @@ function parseQuery(query: string): ParsedQuery {
   return parsed
 }
 
-function filterTracksByQuery(tracks: RawTrack[], query: ParsedQuery): RawTrack[] {
+function filterTracksByQuery(tracks: BoomplayRawTrack[], query: BoomplayParsedQuery): BoomplayRawTrack[] {
   return tracks.filter((track) => {
     if (query.minDuration !== undefined && track.duration < query.minDuration)
       return false
@@ -667,7 +635,7 @@ function filterTracksByQuery(tracks: RawTrack[], query: ParsedQuery): RawTrack[]
 
 export default class BoomplaySource implements SourceInstance {
   private readonly nodelink: WorkerNodeLink
-  private readonly config: BoomplaySourceConfig
+  private readonly config: BoomplaySourceOptions
 
   public readonly searchTerms = ['bpsearch', 'boomplay']
   public readonly patterns = [
@@ -682,7 +650,7 @@ export default class BoomplaySource implements SourceInstance {
       enabled: false,
       playlistLoadLimit: 100,
       albumLoadLimit: 100
-    }) as BoomplaySourceConfig
+    }) as BoomplaySourceOptions
   }
 
   public async setup(): Promise<boolean> {
@@ -719,7 +687,7 @@ export default class BoomplaySource implements SourceInstance {
   private async _searchWeb(
     query: string,
     searchType: string,
-    parsedQuery?: ParsedQuery
+    parsedQuery?: BoomplayParsedQuery
   ): Promise<SourceResult> {
     const bpMediaType =
       searchType === 'track'
@@ -818,7 +786,7 @@ export default class BoomplaySource implements SourceInstance {
     return { loadType: 'track', data: this._buildTrackData(raw) }
   }
 
-  private async _fetchTrackMetadataAndroid(songId: string): Promise<RawTrack | null> {
+  private async _fetchTrackMetadataAndroid(songId: string): Promise<BoomplayRawTrack | null> {
     const attempts = [
       {
         url: 'https://android.boomplaymusic.com/BoomPlayer/getSongInfo',
@@ -895,7 +863,7 @@ export default class BoomplaySource implements SourceInstance {
     const html = await fetchPage(pageUrl, this.config.cookie ?? '')
     if (!html) return { loadType: 'empty', data: {} }
 
-    let parsed: { name: string; tracks: RawTrack[] } | null = null
+    let parsed: { name: string; tracks: BoomplayRawTrack[] } | null = null
     if (type === 'album') parsed = parseAlbumPage(html)
     else if (type === 'playlist') parsed = parsePlaylistPage(html)
     else if (type === 'artist') parsed = parseArtistPage(html)
@@ -1012,7 +980,7 @@ export default class BoomplaySource implements SourceInstance {
     }
   }
 
-  private _buildTrackData(raw: RawTrack): {
+  private _buildTrackData(raw: BoomplayRawTrack): {
     encoded: string
     info: TrackInfo
     pluginInfo: Record<string, unknown>
