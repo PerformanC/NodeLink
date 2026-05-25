@@ -572,6 +572,13 @@ export const config: NodelinkConfig = {
       albumLoadLimit: 100
     },
 
+    boomplay:{
+        enabled: true,
+        playlistLoadLimit: 100,
+        albumLoadLimit: 100,
+        cookie: '' // F12 → Network tab → refresh → click any boomplay.com request → Request Headers → copy the full "Cookie:" value
+    },
+
     qobuz: {
       enabled: true,
       userToken: '',

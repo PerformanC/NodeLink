@@ -350,6 +350,26 @@ export interface GaanaSourceConfig extends SourceConfigBase {
 }
 
 /**
+ * Configuration for the Boomplay (Africa) provider.
+ */
+export interface BoomplaySourceConfig extends SourceConfigBase {
+  /** Master switch for the Boomplay source plugin. */
+  enabled: boolean
+
+  /** Maximum tracks to load from a Boomplay playlist. */
+  playlistLoadLimit: number
+
+  /** Maximum tracks to load from a Boomplay album. */
+  albumLoadLimit: number
+
+  /** Cookie string for authenticated Boomplay requests. */
+  cookie: string
+
+  /** Whether to allow explicit content in search results. */
+  allowExplicit?: boolean
+}
+
+/**
  * Configuration for the Yandex Music (Russia) provider.
  */
 export interface YandexMusicSourceConfig extends SourceConfigBase {
@@ -769,6 +789,9 @@ export interface SourcesRegistry {
 
   /** JioSaavn resolution. */
   jiosaavn: JioSaavnSourceConfig
+
+  /** Boomplay resolution. */
+  boomplay: BoomplaySourceConfig
 
   /** Gaana resolution. */
   gaana: GaanaSourceConfig
