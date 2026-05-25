@@ -1,44 +1,4 @@
 /**
- * Source-level configuration options for Boomplay.
- *
- * Pulled from `nodelink.options.sources.boomplay`.
- *
- * @public
- */
-export interface BoomplaySourceOptions extends Record<string, unknown> {
-  /**
-   * Whether the Boomplay source is enabled.
-   *
-   * @default false
-   */
-  enabled?: boolean
-
-  /**
-   * Maximum number of tracks to load from playlists.
-   *
-   * @default 100
-   */
-  playlistLoadLimit?: number
-
-  /**
-   * Maximum number of tracks to load from albums.
-   *
-   * @default 100
-   */
-  albumLoadLimit?: number
-
-  /**
-   * Cookie string for authenticated requests.
-   */
-  cookie?: string
-
-  /**
-   * Whether to allow explicit content in search results.
-   */
-  allowExplicit?: boolean
-}
-
-/**
  * Raw track data parsed from Boomplay HTML pages or API responses.
  *
  * @public
