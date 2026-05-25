@@ -10,8 +10,8 @@ import type {
   BestMatchCandidate,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
+import type { BoomplaySourceConfig } from '../typings/config/config.types.ts'
 import type {
-  BoomplaySourceOptions,
   BoomplayRawTrack,
   BoomplayParsedQuery,
   BoomplayParsedData
@@ -635,7 +635,7 @@ function filterTracksByQuery(tracks: BoomplayRawTrack[], query: BoomplayParsedQu
 
 export default class BoomplaySource implements SourceInstance {
   private readonly nodelink: WorkerNodeLink
-  private readonly config: BoomplaySourceOptions
+  private readonly config: BoomplaySourceConfig
 
   public readonly searchTerms = ['bpsearch', 'boomplay']
   public readonly patterns = [
@@ -650,7 +650,7 @@ export default class BoomplaySource implements SourceInstance {
       enabled: false,
       playlistLoadLimit: 100,
       albumLoadLimit: 100
-    }) as BoomplaySourceOptions
+    }) as BoomplaySourceConfig
   }
 
   public async setup(): Promise<boolean> {
