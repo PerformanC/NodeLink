@@ -1834,7 +1834,7 @@ class NodelinkServer extends EventEmitter {
         }
         this.connectionManager?.start();
         memoryTrace('start:ready');
-        void checkDependencyUpdates();
+        void checkDependencyUpdates(this.credentialManager ?? undefined);
         return this;
     }
     /**

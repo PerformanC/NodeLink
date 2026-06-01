@@ -7,7 +7,7 @@ import https from 'node:https'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
-import { URL } from 'node:url'
+import { URL, fileURLToPath } from 'node:url'
 import util from 'node:util'
 import zlib from 'node:zlib'
 
@@ -23,6 +23,7 @@ import type {
   ApiRequest,
   ApiResponse
 } from './typings/api/api.types.ts'
+import type CredentialManager from './managers/credentialManager.ts'
 import type { ClientInfo } from './typings/shared.types.ts'
 import type {
   BestMatchCandidate,
@@ -1977,7 +1978,7 @@ async function makeRequest(
  * @public
  */
 async function checkDependencyUpdates(
-  credentialManager?: any
+  credentialManager?: CredentialManager
 ): Promise<void> {
   const coreDeps = [
     '@performanc/voice',
@@ -2004,7 +2005,7 @@ async function checkDependencyUpdates(
 
   if (localVersions.length > 0) {
     logger(
-      'debug',
+      'info',
       'Server',
       `Installed core packages: ${localVersions.map((v) => `${v.name}@${v.version}`).join(', ')}`
     )
@@ -2152,7 +2153,7 @@ async function checkDependencyUpdates(
       'Update recommended for stability. Run "npm install" to update.'
     )
   } else if (Object.keys(latestVersions).length > 0) {
-    logger('debug', 'Server', 'All core packages are up to date.')
+  logger('info', 'Server', 'All core packages are up to date.')
   }
 }
 
