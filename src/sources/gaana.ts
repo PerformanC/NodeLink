@@ -1014,7 +1014,10 @@ export default class GaanaSource {
     query = ''
   ): Promise<Record<string, unknown> | null> {
     const url = `${API_URL}?${new URLSearchParams(
-      Object.entries(params).map(([key, value]) => [key, String(value)])
+      Object.entries(params).map(([key, value]) => [key, String(value)]) as [
+        string,
+        string
+      ][]
     ).toString()}`
 
     const proxy = this.getProxyConfig()

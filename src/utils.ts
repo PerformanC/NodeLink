@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import http2 from 'node:http2'
 import https from 'node:https'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { URL } from 'node:url'
@@ -1963,6 +1964,170 @@ async function makeRequest(
 }
 
 /**
+ * Checks for updates of core dependencies against the NPM registry.
+ *
+ * Logs a warning if an update is available for critical packages.
+ * @public
+ */
+/**
+ * Checks for updates of core dependencies against the NPM registry and GitHub.
+ *
+ * Logs a warning if an update is available for critical packages.
+ * @param credentialManager - Persistence manager to rate-limit checks.
+ * @public
+ */
+async function checkDependencyUpdates(
+  credentialManager?: any
+): Promise<void> {
+  const CHECK_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
+  const now = Date.now()
+
+  if (credentialManager) {
+    const lastCheck = credentialManager.get<{ ts: number }>(
+      'runtime.dependencies.lastCheck'
+    )
+    if (lastCheck && now - lastCheck.ts < CHECK_INTERVAL_MS) {
+      return
+    }
+  }
+
+  const coreDeps = [
+    '@performanc/voice',
+    '@performanc/pwsl-server',
+    '@toddynnn/symphonia-decoder',
+    '@toddynnn/voice-opus',
+    '@ecliptia/faad2-wasm',
+    '@alexanderolsen/libsamplerate-js',
+    '@ecliptia/seekable-stream'
+  ]
+
+  const require = createRequire(import.meta.url)
+  const updates: Array<{
+    name: string
+    current: string
+    latest: string
+    source: 'NPM' | 'GitHub'
+  }> = []
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 5000)
+
+  try {
+    const deps = (packageJson as any).dependencies || {}
+
+    await Promise.all(
+      coreDeps.map(async (dep) => {
+        try {
+          const declaredVersion = deps[dep] || ''
+          let currentVersionStr = 'unknown'
+          try {
+            const depPath = require.resolve(`${dep}/package.json`)
+            currentVersionStr = require(depPath).version
+          } catch {
+            return
+          }
+
+          let latestVersionStr = ''
+          let source: 'NPM' | 'GitHub' = 'NPM'
+
+          if (
+            declaredVersion.startsWith('github:') ||
+            (declaredVersion.includes('/') && !declaredVersion.includes(':'))
+          ) {
+            source = 'GitHub'
+            const repo = declaredVersion.replace('github:', '').split('#')[0]
+            const branch = declaredVersion.split('#')[1] || 'main'
+            const response = await fetch(
+              `https://raw.githubusercontent.com/${repo}/${branch}/package.json`,
+              { signal: controller.signal }
+            )
+            if (response.ok) {
+              const data = (await response.json()) as { version: string }
+              latestVersionStr = data.version
+            }
+          } else if (
+            !declaredVersion.includes(':') &&
+            !declaredVersion.includes('/')
+          ) {
+            const response = await fetch(
+              `https://registry.npmjs.org/${dep}/latest`,
+              {
+                signal: controller.signal
+              }
+            )
+            if (response.ok) {
+              const data = (await response.json()) as { version: string }
+              latestVersionStr = data.version
+            }
+          }
+
+          if (!latestVersionStr || currentVersionStr === latestVersionStr) return
+
+          const current = parseSemver(currentVersionStr)
+          const latest = parseSemver(latestVersionStr)
+
+          if (current && latest) {
+            const isNewer =
+              latest.major > current.major ||
+              (latest.major === current.major && latest.minor > current.minor) ||
+              (latest.major === current.major &&
+                latest.minor === current.minor &&
+                latest.patch > current.patch)
+
+            if (isNewer) {
+              updates.push({
+                name: dep,
+                current: currentVersionStr,
+                latest: latestVersionStr,
+                source
+              })
+            }
+          }
+        } catch {
+          // Ignore individual failures
+        }
+      })
+    )
+
+    if (credentialManager) {
+      credentialManager.set(
+        'runtime.dependencies.lastCheck',
+        { ts: now },
+        24 * 60 * 60 * 1000
+      )
+    }
+
+    if (updates.length > 0) {
+      logger(
+        'warn',
+        'Server',
+        'The following core dependencies have updates available:'
+      )
+      for (const update of updates) {
+        logger(
+          'warn',
+          'Server',
+          ` - ${update.name}: ${update.current} -> \x1b[1m\x1b[32m${update.latest}\x1b[0m (${update.source})`
+        )
+      }
+      logger(
+        'warn',
+        'Server',
+        'Update recommended for stability. Run "npm install" to update.'
+      )
+    }
+  } catch (error) {
+    logger(
+      'debug',
+      'Server',
+      `Failed to check dependency updates: ${error instanceof Error ? error.message : String(error)}`
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+/**
  * Checks for git updates against the upstream branch.
  *
  * Logs messages to the console without altering the working tree.
@@ -2392,6 +2557,7 @@ async function fetchSponsorBlockSegments(
 
 export {
   applyEnvOverrides,
+  checkDependencyUpdates,
   checkForUpdates,
   cleanupHttpAgents,
   cleanupLogger,

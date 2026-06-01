@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import http2 from 'node:http2';
 import https from 'node:https';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { URL } from 'node:url';
@@ -1602,6 +1603,67 @@ async function makeRequest(urlString, options, nodelink) {
     });
 }
 /**
+ * Checks for updates of core dependencies against the NPM registry.
+ *
+ * Logs a warning if an update is available for critical packages.
+ * @public
+ */
+async function checkDependencyUpdates() {
+    const coreDeps = [
+        '@performanc/voice',
+        '@performanc/pwsl-server',
+        '@toddynnn/symphonia-decoder',
+        '@toddynnn/voice-opus',
+        '@ecliptia/faad2-wasm',
+        '@alexanderolsen/libsamplerate-js',
+        '@ecliptia/seekable-stream'
+    ];
+    const require = createRequire(import.meta.url);
+    const updates = [];
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+        await Promise.all(coreDeps.map(async (dep) => {
+            try {
+                let currentVersion = 'unknown';
+                try {
+                    const depPath = require.resolve(`${dep}/package.json`);
+                    currentVersion = require(depPath).version;
+                }
+                catch {
+                    return;
+                }
+                const response = await fetch(`https://registry.npmjs.org/${dep}/latest`, {
+                    signal: controller.signal
+                });
+                if (!response.ok)
+                    return;
+                const data = (await response.json());
+                const latestVersion = data.version;
+                if (currentVersion !== latestVersion && latestVersion) {
+                    updates.push({ name: dep, current: currentVersion, latest: latestVersion });
+                }
+            }
+            catch {
+                // Ignore individual fetch/resolve failures
+            }
+        }));
+        if (updates.length > 0) {
+            logger('warn', 'Server', 'The following core dependencies have updates available:');
+            for (const update of updates) {
+                logger('warn', 'Server', ` - ${update.name}: ${update.current} -> \x1b[1m\x1b[32m${update.latest}\x1b[0m (Update recommended for stability)`);
+            }
+            logger('warn', 'Server', 'Run "npm install" or update your package.json to get the latest improvements.');
+        }
+    }
+    catch (error) {
+        logger('debug', 'Server', `Failed to check dependency updates: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    finally {
+        clearTimeout(timeout);
+    }
+}
+/**
  * Checks for git updates against the upstream branch.
  *
  * Logs messages to the console without altering the working tree.
@@ -1922,4 +1984,4 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         return [];
     }
 }
-export { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
+export { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };

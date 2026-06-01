@@ -16,7 +16,7 @@ import RoutePlannerManager from "./managers/routePlannerManager.js";
 import SessionManager from "./managers/sessionManager.js";
 import StatsManager from "./managers/statsManager.js";
 import { migrateConfig, persistConfig } from "./modules/config/configMigration.js";
-import { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
+import { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
 import 'dotenv/config';
 import { GatewayEvents, MINIMUM_NODE_VERSION } from "./constants.js";
 import ConfigValidationManager from "./managers/configValidationManager.js";
@@ -1834,6 +1834,7 @@ class NodelinkServer extends EventEmitter {
         }
         this.connectionManager?.start();
         memoryTrace('start:ready');
+        void checkDependencyUpdates();
         return this;
     }
     /**

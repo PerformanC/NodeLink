@@ -14,6 +14,7 @@ import {
 } from './modules/config/configMigration.ts'
 import {
   applyEnvOverrides,
+  checkDependencyUpdates,
   checkForUpdates,
   cleanupHttpAgents,
   cleanupLogger,
@@ -2643,6 +2644,9 @@ class NodelinkServer extends EventEmitter {
 
     this.connectionManager?.start()
     memoryTrace('start:ready')
+
+    void checkDependencyUpdates(this.credentialManager)
+
     return this
   }
 
