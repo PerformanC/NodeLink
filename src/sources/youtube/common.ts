@@ -3108,6 +3108,8 @@ export abstract class BaseClient {
 
       format: resolveFormatStr(resolvedFormat?.mimeType as string | undefined),
 
+      itag: resolvedFormat?.itag,
+
       hlsUrl: (streamingData.hlsManifestUrl as string | undefined) || null,
 
       formats

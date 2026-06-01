@@ -948,6 +948,8 @@ export interface TrackUrlData {
   hlsUrl?: string | null
   /** Array of available format entries with their metadata. */
   formats?: FormatEntry[]
+  /** The specific itag used for this track URL. */
+  itag?: number
   /** Additional metadata attached to the track URL (content length, proxy info, access tokens, etc.). */
   additionalData?: Record<string, unknown>
   /** New track information when resolution redirects to a different track (e.g., fallback sources). */
@@ -1049,6 +1051,8 @@ export interface TrackUrlAdditionalData {
   clientInfo?: unknown
   /** Available format entries used by SABR to select audio quality. */
   formats?: FormatEntry[]
+  /** The specific itag used for this track URL. */
+  itag?: number
   /** Start time offset in seconds for SABR stream initialization. */
   startTime?: number
   /** Position callback used by SABR to report playback progress. */

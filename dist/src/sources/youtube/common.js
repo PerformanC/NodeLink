@@ -2114,6 +2114,7 @@ export class BaseClient {
             url: directUrl,
             protocol: directUrl ? 'http' : null,
             format: resolveFormatStr(resolvedFormat?.mimeType),
+            itag: resolvedFormat?.itag,
             hlsUrl: streamingData.hlsManifestUrl || null,
             formats
         };

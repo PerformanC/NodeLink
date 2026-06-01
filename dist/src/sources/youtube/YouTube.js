@@ -153,6 +153,8 @@ export default class YouTubeSource {
     activeStreams;
     /** Set of fallback-mirror lookup keys currently in flight, used to prevent infinite recursion loops. */
     mirrorFallbackInFlight;
+    /** Map of track identifiers to a set of client names that failed to provide a playable URL. */
+    failingClientsByTrack;
     /** YouTube innertube request context sent with every API call (device info, locale, visitor data). */
     ytContext;
     // -- Public fields consumed by the framework --
@@ -194,6 +196,7 @@ export default class YouTubeSource {
         });
         this.activeStreams = new Map();
         this.mirrorFallbackInFlight = new Set();
+        this.failingClientsByTrack = new Map();
         this.ytContext = {
             client: {
                 screenDensityFloat: 1,
@@ -282,6 +285,7 @@ export default class YouTubeSource {
         if (this.oauth)
             this.oauth.cleanup?.();
         this.cipherManager?.cleanup?.();
+        this.failingClientsByTrack.clear();
     }
     /**
      * Fetches visitor data and player script URL from YouTube embed pages.
@@ -741,7 +745,12 @@ export default class YouTubeSource {
         if (!clientList.length)
             clientList = ['Web'];
         const clientErrors = [];
+        const failingClients = this.failingClientsByTrack.get(decodedTrack.identifier);
         for (const clientName of clientList) {
+            if (failingClients?.has(clientName)) {
+                logger('debug', 'YouTube', `Skipping known failing client ${clientName} for track ${decodedTrack.identifier}`);
+                continue;
+            }
             const client = this.clients[clientName];
             if (!client)
                 continue;
@@ -752,6 +761,14 @@ export default class YouTubeSource {
                 const urlData = await client.getTrackUrl(decodedTrack, this.ytContext, this.cipherManager, itag, proxyToUse);
                 const proxyLatency = Date.now() - proxyStartTime;
                 if (urlData.exception) {
+                    const isNoStream = urlData.exception.cause === 'UpstreamNoStream';
+                    const isNotFound = urlData.exception.status === 404;
+                    if (isNoStream || isNotFound) {
+                        if (!this.failingClientsByTrack.has(decodedTrack.identifier)) {
+                            this.failingClientsByTrack.set(decodedTrack.identifier, new Set());
+                        }
+                        this.failingClientsByTrack.get(decodedTrack.identifier)?.add(clientName);
+                    }
                     this.reportProxyStatus(proxyToUse, false, urlData.exception.status || 500, proxyLatency);
                     clientErrors.push({
                         client: clientName,
@@ -798,7 +815,12 @@ export default class YouTubeSource {
                         logger('debug', 'YouTube', `URL pre-flight check successful for client ${clientName}.`);
                         const result = {
                             ...urlData,
-                            additionalData: { contentLength, proxy: proxyToUse }
+                            additionalData: {
+                                contentLength,
+                                proxy: proxyToUse,
+                                itag: urlData.itag,
+                                formats: urlData.formats
+                            }
                         };
                         this.nodelink.trackCacheManager?.set('youtube', decodedTrack.identifier, result, 1000 * 60 * 60 * 5);
                         return result;
@@ -1391,6 +1413,10 @@ export default class YouTubeSource {
         let activeRequest = null;
         let recoverTimeout = null;
         let currentAdditionalData = additionalData;
+        let currentItag = currentAdditionalData?.itag;
+        let availableFormats = currentAdditionalData?.formats || [];
+        const failedItags = new Set();
+        let isRecovering = false;
         const cleanup = () => {
             if (destroyed)
                 return;
@@ -1472,7 +1498,7 @@ export default class YouTubeSource {
                         (statusCode ?? 0) >= 500) {
                         logger('warn', 'YouTube', `Got ${statusCode} at pos ${position} → forcing recovery`);
                         fetching = false;
-                        recover();
+                        recover({ message: `HTTP ${statusCode}`, statusCode, name: 'Error' });
                         return;
                     }
                     throw new Error(`Range request failed: ${statusCode}`);
@@ -1556,7 +1582,7 @@ export default class YouTubeSource {
             const isForbidden = causeError?.message?.includes('403') || causeError?.statusCode === 403;
             const isAborted = causeError?.message === 'aborted' ||
                 causeError?.code === 'ECONNRESET';
-            if (!isForbidden && !isAborted && refreshes === 0) {
+            if (!isForbidden && refreshes === 0) {
                 logger('debug', 'YouTube', `Retrying same URL for recovery first (cause: ${causeError?.message})...`);
                 errors = 0;
                 fetching = false;
@@ -1578,37 +1604,65 @@ export default class YouTubeSource {
             if (isAborted && stream.writableNeedDrain) {
                 logger('debug', 'YouTube', `Stream is paused/backed up, waiting for drain before recovery (cause: ${causeError?.message})`);
                 await new Promise((resolve) => {
-                    const onDrain = () => {
-                        stream.off('drain', onDrain);
+                    const onDrainOrEnd = () => {
+                        cleanupListeners();
                         resolve();
                     };
-                    stream.once('drain', onDrain);
-                    const timeout = setTimeout(() => {
-                        stream.off('drain', onDrain);
-                        resolve();
-                    }, 60000);
-                    if (typeof timeout.unref === 'function')
-                        timeout.unref();
+                    const cleanupListeners = () => {
+                        stream.off('drain', onDrainOrEnd);
+                        stream.off('close', onDrainOrEnd);
+                        stream.off('error', onDrainOrEnd);
+                    };
+                    stream.once('drain', onDrainOrEnd);
+                    stream.once('close', onDrainOrEnd);
+                    stream.once('error', onDrainOrEnd);
                 });
                 if (destroyed || cancelSignal.aborted || stream.destroyed)
                     return;
-                if (stream.writableNeedDrain) {
-                    logger('debug', 'YouTube', 'Stream still backed up after drain wait, deferring recovery until resume');
-                    return;
-                }
             }
             try {
-                const newUrlData = await this.getTrackUrl(decodedTrack, null, true);
+                let itagToTry = null;
+                if (refreshes > 2 && currentItag) {
+                    failedItags.add(currentItag);
+                    logger('warn', 'YouTube', `Itag ${currentItag} failed consistently. Attempting quality fallback...`);
+                    const currentMime = currentAdditionalData?.formats?.find((f) => f.itag === currentItag)?.mimeType || '';
+                    const isWebm = currentMime.includes('webm');
+                    const otherAudioFormats = availableFormats
+                        .filter((f) => f.itag !== currentItag &&
+                        !failedItags.has(f.itag) &&
+                        f.mimeType?.includes('audio') &&
+                        (isWebm ? f.mimeType.includes('webm') : f.mimeType.includes('mp4')))
+                        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+                    const bestFallback = otherAudioFormats[0];
+                    if (bestFallback) {
+                        itagToTry = bestFallback.itag;
+                        logger('info', 'YouTube', `Switching to itag ${itagToTry} (available: ${otherAudioFormats.map((f) => f.itag).join(', ')})`);
+                    }
+                }
+                const newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true);
                 if (destroyed || cancelSignal.aborted)
                     return;
                 if (newUrlData.exception || !newUrlData.url) {
                     throw new Error('No valid URL from getTrackUrl');
                 }
+                const oldContentLength = currentAdditionalData?.contentLength || contentLength;
+                const newAdditionalData = newUrlData.additionalData;
+                const newContentLength = newAdditionalData?.contentLength;
+                if (oldContentLength && newContentLength && oldContentLength !== newContentLength) {
+                    const ratio = newContentLength / oldContentLength;
+                    const oldPos = position;
+                    position = Math.floor(position * ratio);
+                    contentLength = newContentLength;
+                    logger('debug', 'YouTube', `Adjusted position for itag switch (${currentItag} -> ${newUrlData.itag || itagToTry}): ${oldPos} -> ${position} bytes (ratio: ${ratio.toFixed(4)})`);
+                }
                 currentUrl = newUrlData.url;
                 currentAdditionalData =
                     newUrlData.additionalData;
+                currentItag = newUrlData.itag || itagToTry || currentItag;
+                if (newUrlData.formats)
+                    availableFormats = newUrlData.formats;
                 errors = 0;
-                logger('debug', 'YouTube', `URL recovered for ${decodedTrack.title} (resume at ${position} bytes, attempt ${refreshes}, cause: ${causeError?.message})`);
+                logger('debug', 'YouTube', `URL recovered for ${decodedTrack.title} (resume at ${position} bytes, attempt ${refreshes}, itag ${currentItag}, cause: ${causeError?.message})`);
                 fetching = false;
                 fetchNext();
             }

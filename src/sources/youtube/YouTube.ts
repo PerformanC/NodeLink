@@ -213,6 +213,9 @@ export default class YouTubeSource {
   /** Set of fallback-mirror lookup keys currently in flight, used to prevent infinite recursion loops. */
   private mirrorFallbackInFlight: Set<string>
 
+  /** Map of track identifiers to a set of client names that failed to provide a playable URL. */
+  private failingClientsByTrack: Map<string, Set<string>>
+
   /** YouTube innertube request context sent with every API call (device info, locale, visitor data). */
   private ytContext: YouTubeContext
 
@@ -258,6 +261,7 @@ export default class YouTubeSource {
     })
     this.activeStreams = new Map()
     this.mirrorFallbackInFlight = new Set()
+    this.failingClientsByTrack = new Map()
     this.ytContext = {
       client: {
         screenDensityFloat: 1,
@@ -369,6 +373,7 @@ export default class YouTubeSource {
 
     if (this.oauth) (this.oauth as { cleanup?: () => void }).cleanup?.()
     ;(this.cipherManager as { cleanup?: () => void })?.cleanup?.()
+    this.failingClientsByTrack.clear()
   }
   /**
    * Fetches visitor data and player script URL from YouTube embed pages.
@@ -1129,7 +1134,18 @@ export default class YouTubeSource {
     if (!clientList.length) clientList = ['Web']
     const clientErrors: Array<{ client: string; message: string }> = []
 
+    const failingClients = this.failingClientsByTrack.get(decodedTrack.identifier)
+
     for (const clientName of clientList) {
+      if (failingClients?.has(clientName)) {
+        logger(
+          'debug',
+          'YouTube',
+          `Skipping known failing client ${clientName} for track ${decodedTrack.identifier}`
+        )
+        continue
+      }
+
       const client = this.clients[clientName]
       if (!client) continue
 
@@ -1152,6 +1168,16 @@ export default class YouTubeSource {
         const proxyLatency = Date.now() - proxyStartTime
 
         if (urlData.exception) {
+          const isNoStream = urlData.exception.cause === 'UpstreamNoStream'
+          const isNotFound = urlData.exception.status === 404
+
+          if (isNoStream || isNotFound) {
+            if (!this.failingClientsByTrack.has(decodedTrack.identifier)) {
+              this.failingClientsByTrack.set(decodedTrack.identifier, new Set())
+            }
+            this.failingClientsByTrack.get(decodedTrack.identifier)?.add(clientName)
+          }
+
           this.reportProxyStatus(
             proxyToUse,
             false,
@@ -1230,7 +1256,12 @@ export default class YouTubeSource {
             )
             const result: TrackUrlData = {
               ...urlData,
-              additionalData: { contentLength, proxy: proxyToUse }
+              additionalData: {
+                contentLength,
+                proxy: proxyToUse,
+                itag: urlData.itag,
+                formats: urlData.formats
+              }
             }
             this.nodelink.trackCacheManager?.set(
               'youtube',
@@ -2120,6 +2151,10 @@ export default class YouTubeSource {
       | null = null
     let recoverTimeout: ReturnType<typeof setTimeout> | null = null
     let currentAdditionalData = additionalData
+    let currentItag = currentAdditionalData?.itag
+    let availableFormats = currentAdditionalData?.formats || []
+    const failedItags = new Set<number>()
+    let isRecovering = false
 
     const cleanup = () => {
       if (destroyed) return
@@ -2227,7 +2262,7 @@ export default class YouTubeSource {
               `Got ${statusCode} at pos ${position} → forcing recovery`
             )
             fetching = false
-            recover()
+            recover({ message: `HTTP ${statusCode}`, statusCode, name: 'Error' })
             return
           }
           throw new Error(`Range request failed: ${statusCode}`)
@@ -2337,7 +2372,7 @@ export default class YouTubeSource {
         causeError?.message === 'aborted' ||
         (causeError as Error & { code?: string })?.code === 'ECONNRESET'
 
-      if (!isForbidden && !isAborted && refreshes === 0) {
+      if (!isForbidden && refreshes === 0) {
         logger(
           'debug',
           'YouTube',
@@ -2370,30 +2405,58 @@ export default class YouTubeSource {
           `Stream is paused/backed up, waiting for drain before recovery (cause: ${causeError?.message})`
         )
         await new Promise<void>((resolve) => {
-          const onDrain = () => {
-            stream.off('drain', onDrain)
+          const onDrainOrEnd = () => {
+            cleanupListeners()
             resolve()
           }
-          stream.once('drain', onDrain)
-          const timeout = setTimeout(() => {
-            stream.off('drain', onDrain)
-            resolve()
-          }, 60000)
-          if (typeof timeout.unref === 'function') timeout.unref()
+          const cleanupListeners = () => {
+            stream.off('drain', onDrainOrEnd)
+            stream.off('close', onDrainOrEnd)
+            stream.off('error', onDrainOrEnd)
+          }
+          stream.once('drain', onDrainOrEnd)
+          stream.once('close', onDrainOrEnd)
+          stream.once('error', onDrainOrEnd)
         })
         if (destroyed || cancelSignal.aborted || stream.destroyed) return
-        if (stream.writableNeedDrain) {
-          logger(
-            'debug',
-            'YouTube',
-            'Stream still backed up after drain wait, deferring recovery until resume'
-          )
-          return
-        }
       }
 
       try {
-        const newUrlData = await this.getTrackUrl(decodedTrack, null, true)
+        let itagToTry: number | null = null
+
+        if (refreshes > 2 && currentItag) {
+          failedItags.add(currentItag)
+          logger(
+            'warn',
+            'YouTube',
+            `Itag ${currentItag} failed consistently. Attempting quality fallback...`
+          )
+
+          const currentMime = currentAdditionalData?.formats?.find((f) => f.itag === currentItag)?.mimeType || ''
+          const isWebm = currentMime.includes('webm')
+
+          const otherAudioFormats = availableFormats
+            .filter(
+              (f) =>
+                f.itag !== currentItag &&
+                !failedItags.has(f.itag) &&
+                f.mimeType?.includes('audio') &&
+                (isWebm ? f.mimeType.includes('webm') : f.mimeType.includes('mp4'))
+            )
+            .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))
+
+          const bestFallback = otherAudioFormats[0]
+          if (bestFallback) {
+            itagToTry = bestFallback.itag as number
+            logger(
+              'info',
+              'YouTube',
+              `Switching to itag ${itagToTry} (available: ${otherAudioFormats.map((f) => f.itag).join(', ')})`
+            )
+          }
+        }
+
+        const newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true)
 
         if (destroyed || cancelSignal.aborted) return
 
@@ -2401,14 +2464,33 @@ export default class YouTubeSource {
           throw new Error('No valid URL from getTrackUrl')
         }
 
+        const oldContentLength = currentAdditionalData?.contentLength as number | undefined || contentLength
+        const newAdditionalData = newUrlData.additionalData as TrackUrlAdditionalData | undefined
+        const newContentLength = newAdditionalData?.contentLength as number | undefined
+
+        if (oldContentLength && newContentLength && oldContentLength !== newContentLength) {
+          const ratio = newContentLength / oldContentLength
+          const oldPos = position
+          position = Math.floor(position * ratio)
+          contentLength = newContentLength
+          logger(
+            'debug',
+            'YouTube',
+            `Adjusted position for itag switch (${currentItag} -> ${newUrlData.itag || itagToTry}): ${oldPos} -> ${position} bytes (ratio: ${ratio.toFixed(4)})`
+          )
+        }
+
         currentUrl = newUrlData.url
         currentAdditionalData =
           newUrlData.additionalData as TrackUrlAdditionalData
+        currentItag = newUrlData.itag || itagToTry || currentItag
+        if (newUrlData.formats) availableFormats = newUrlData.formats
+
         errors = 0
         logger(
           'debug',
           'YouTube',
-          `URL recovered for ${decodedTrack.title} (resume at ${position} bytes, attempt ${refreshes}, cause: ${causeError?.message})`
+          `URL recovered for ${decodedTrack.title} (resume at ${position} bytes, attempt ${refreshes}, itag ${currentItag}, cause: ${causeError?.message})`
         )
         fetching = false
         fetchNext()
