@@ -1979,18 +1979,6 @@ async function makeRequest(
 async function checkDependencyUpdates(
   credentialManager?: any
 ): Promise<void> {
-  const CHECK_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
-  const now = Date.now()
-
-  if (credentialManager) {
-    const lastCheck = credentialManager.get<{ ts: number }>(
-      'runtime.dependencies.lastCheck'
-    )
-    if (lastCheck && now - lastCheck.ts < CHECK_INTERVAL_MS) {
-      return
-    }
-  }
-
   const coreDeps = [
     '@performanc/voice',
     '@performanc/pwsl-server',
@@ -2002,6 +1990,115 @@ async function checkDependencyUpdates(
   ]
 
   const require = createRequire(import.meta.url)
+  const localVersions: Array<{ name: string; version: string }> = []
+
+  for (const dep of coreDeps) {
+    try {
+      const depPath = require.resolve(`${dep}/package.json`)
+      const version = require(depPath).version
+      localVersions.push({ name: dep, version })
+    } catch {
+      // Ignore if package not found
+    }
+  }
+
+  if (localVersions.length > 0) {
+    logger(
+      'debug',
+      'Server',
+      `Installed core packages: ${localVersions.map((v) => `${v.name}@${v.version}`).join(', ')}`
+    )
+  }
+
+  const CHECK_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
+  const now = Date.now()
+  let latestVersions: Record<string, { version: string; source: 'NPM' | 'GitHub' }> = {}
+  let isCacheValid = false
+
+  if (credentialManager) {
+    const cache = credentialManager.get<{
+      ts: number
+      versions: Record<string, { version: string; source: 'NPM' | 'GitHub' }>
+    }>('runtime.dependencies.latest')
+
+    if (cache && now - cache.ts < CHECK_INTERVAL_MS) {
+      latestVersions = cache.versions
+      isCacheValid = true
+    }
+  }
+
+  if (!isCacheValid) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000)
+
+    try {
+      const deps = (packageJson as any).dependencies || {}
+
+      await Promise.all(
+        coreDeps.map(async (dep) => {
+          try {
+            const declaredVersion = deps[dep] || ''
+            let latestVersionStr = ''
+            let source: 'NPM' | 'GitHub' = 'NPM'
+
+            if (
+              declaredVersion.startsWith('github:') ||
+              (declaredVersion.includes('/') && !declaredVersion.includes(':'))
+            ) {
+              source = 'GitHub'
+              const repo = declaredVersion.replace('github:', '').split('#')[0]
+              const branch = declaredVersion.split('#')[1] || 'main'
+              const response = await fetch(
+                `https://raw.githubusercontent.com/${repo}/${branch}/package.json`,
+                { signal: controller.signal }
+              )
+              if (response.ok) {
+                const data = (await response.json()) as { version: string }
+                latestVersionStr = data.version
+              }
+            } else if (
+              !declaredVersion.includes(':') &&
+              !declaredVersion.includes('/')
+            ) {
+              const response = await fetch(
+                `https://registry.npmjs.org/${dep}/latest`,
+                {
+                  signal: controller.signal
+                }
+              )
+              if (response.ok) {
+                const data = (await response.json()) as { version: string }
+                latestVersionStr = data.version
+              }
+            }
+
+            if (latestVersionStr) {
+              latestVersions[dep] = { version: latestVersionStr, source }
+            }
+          } catch {
+            // Ignore individual failures
+          }
+        })
+      )
+
+      if (credentialManager && Object.keys(latestVersions).length > 0) {
+        credentialManager.set(
+          'runtime.dependencies.latest',
+          { ts: now, versions: latestVersions },
+          24 * 60 * 60 * 1000
+        )
+      }
+    } catch (error) {
+      logger(
+        'debug',
+        'Server',
+        `Failed to check dependency updates: ${error instanceof Error ? error.message : String(error)}`
+      )
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
   const updates: Array<{
     name: string
     current: string
@@ -2009,121 +2106,53 @@ async function checkDependencyUpdates(
     source: 'NPM' | 'GitHub'
   }> = []
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 5000)
+  for (const local of localVersions) {
+    const latest = latestVersions[local.name]
+    if (!latest || local.version === latest.version) continue
 
-  try {
-    const deps = (packageJson as any).dependencies || {}
+    const currentSemver = parseSemver(local.version)
+    const latestSemver = parseSemver(latest.version)
 
-    await Promise.all(
-      coreDeps.map(async (dep) => {
-        try {
-          const declaredVersion = deps[dep] || ''
-          let currentVersionStr = 'unknown'
-          try {
-            const depPath = require.resolve(`${dep}/package.json`)
-            currentVersionStr = require(depPath).version
-          } catch {
-            return
-          }
+    if (currentSemver && latestSemver) {
+      const isNewer =
+        latestSemver.major > currentSemver.major ||
+        (latestSemver.major === currentSemver.major &&
+          latestSemver.minor > currentSemver.minor) ||
+        (latestSemver.major === currentSemver.major &&
+          latestSemver.minor === currentSemver.minor &&
+          latestSemver.patch > currentSemver.patch)
 
-          let latestVersionStr = ''
-          let source: 'NPM' | 'GitHub' = 'NPM'
-
-          if (
-            declaredVersion.startsWith('github:') ||
-            (declaredVersion.includes('/') && !declaredVersion.includes(':'))
-          ) {
-            source = 'GitHub'
-            const repo = declaredVersion.replace('github:', '').split('#')[0]
-            const branch = declaredVersion.split('#')[1] || 'main'
-            const response = await fetch(
-              `https://raw.githubusercontent.com/${repo}/${branch}/package.json`,
-              { signal: controller.signal }
-            )
-            if (response.ok) {
-              const data = (await response.json()) as { version: string }
-              latestVersionStr = data.version
-            }
-          } else if (
-            !declaredVersion.includes(':') &&
-            !declaredVersion.includes('/')
-          ) {
-            const response = await fetch(
-              `https://registry.npmjs.org/${dep}/latest`,
-              {
-                signal: controller.signal
-              }
-            )
-            if (response.ok) {
-              const data = (await response.json()) as { version: string }
-              latestVersionStr = data.version
-            }
-          }
-
-          if (!latestVersionStr || currentVersionStr === latestVersionStr) return
-
-          const current = parseSemver(currentVersionStr)
-          const latest = parseSemver(latestVersionStr)
-
-          if (current && latest) {
-            const isNewer =
-              latest.major > current.major ||
-              (latest.major === current.major && latest.minor > current.minor) ||
-              (latest.major === current.major &&
-                latest.minor === current.minor &&
-                latest.patch > current.patch)
-
-            if (isNewer) {
-              updates.push({
-                name: dep,
-                current: currentVersionStr,
-                latest: latestVersionStr,
-                source
-              })
-            }
-          }
-        } catch {
-          // Ignore individual failures
-        }
-      })
-    )
-
-    if (credentialManager) {
-      credentialManager.set(
-        'runtime.dependencies.lastCheck',
-        { ts: now },
-        24 * 60 * 60 * 1000
-      )
-    }
-
-    if (updates.length > 0) {
-      logger(
-        'warn',
-        'Server',
-        'The following core dependencies have updates available:'
-      )
-      for (const update of updates) {
-        logger(
-          'warn',
-          'Server',
-          ` - ${update.name}: ${update.current} -> \x1b[1m\x1b[32m${update.latest}\x1b[0m (${update.source})`
-        )
+      if (isNewer) {
+        updates.push({
+          name: local.name,
+          current: local.version,
+          latest: latest.version,
+          source: latest.source
+        })
       }
+    }
+  }
+
+  if (updates.length > 0) {
+    logger(
+      'warn',
+      'Server',
+      'The following core dependencies have updates available:'
+    )
+    for (const update of updates) {
       logger(
         'warn',
         'Server',
-        'Update recommended for stability. Run "npm install" to update.'
+        ` - ${update.name}: ${update.current} -> \x1b[1m\x1b[32m${update.latest}\x1b[0m (${update.source})`
       )
     }
-  } catch (error) {
     logger(
-      'debug',
+      'warn',
       'Server',
-      `Failed to check dependency updates: ${error instanceof Error ? error.message : String(error)}`
+      'Update recommended for stability. Run "npm install" to update.'
     )
-  } finally {
-    clearTimeout(timeout)
+  } else if (Object.keys(latestVersions).length > 0) {
+    logger('debug', 'Server', 'All core packages are up to date.')
   }
 }
 
