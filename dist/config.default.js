@@ -549,7 +549,7 @@ export const config = {
             allowExplicit: true
         },
         monochrome: {
-            enabled: true,
+            enabled: false,
             instances: [],
             streamingInstances: [],
             quality: 'HI_RES_LOSSLESS',

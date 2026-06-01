@@ -580,7 +580,7 @@ export const config: NodelinkConfig = {
     },
 
     monochrome: {
-      enabled: true,
+      enabled: false,
       instances: [],
       streamingInstances: [],
       quality: 'HI_RES_LOSSLESS',
