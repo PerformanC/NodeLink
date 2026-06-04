@@ -7,7 +7,7 @@ import https from 'node:https'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
-import { URL, fileURLToPath } from 'node:url'
+import { URL } from 'node:url'
 import util from 'node:util'
 import zlib from 'node:zlib'
 
@@ -18,12 +18,12 @@ import {
   REDIRECT_STATUS_CODES,
   SEMVER_PATTERN
 } from './constants.ts'
+import type CredentialManager from './managers/credentialManager.ts'
 import type {
   ApiHttpMethod,
   ApiRequest,
   ApiResponse
 } from './typings/api/api.types.ts'
-import type CredentialManager from './managers/credentialManager.ts'
 import type { ClientInfo } from './typings/shared.types.ts'
 import type {
   BestMatchCandidate,
@@ -44,8 +44,6 @@ import type {
 } from './typings/utils.types.ts'
 
 declare const __BUILD_GIT_INFO__: GitInfo | undefined
-
-const isBun = typeof process !== 'undefined' && process.versions?.bun
 
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
@@ -1677,17 +1675,6 @@ async function makeRequest(
       new Error(`Too many redirects (${maxRedirects}) for ${urlString}`)
     )
   }
-  // fall back to HTTP/1 for Bun requests
-  // Note: bun v1.3.12, crashes with "authority" argument must be a type of string, object or URL. received type Number (825110816)
-  // Crashes the source worker ^^, could be related to monochrome's request or anything else that uses http/2
-  // UPDATE: Bun v1.3.13 has fixed this crash, since it was released today as this commit, i will be checking the version but can be removed later.
-  if (
-    isBun &&
-    process.versions.bun.localeCompare('1.3.13', undefined, { numeric: true }) <
-      0
-  ) {
-    return http1makeRequest(urlString, options)
-  }
 
   if (options.network?.proxy) {
     return http1makeRequest(urlString, options)
@@ -2013,7 +2000,10 @@ async function checkDependencyUpdates(
 
   const CHECK_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
   const now = Date.now()
-  let latestVersions: Record<string, { version: string; source: 'NPM' | 'GitHub' }> = {}
+  let latestVersions: Record<
+    string,
+    { version: string; source: 'NPM' | 'GitHub' }
+  > = {}
   let isCacheValid = false
 
   if (credentialManager) {
@@ -2153,7 +2143,7 @@ async function checkDependencyUpdates(
       'Update recommended for stability. Run "npm install" to update.'
     )
   } else if (Object.keys(latestVersions).length > 0) {
-  logger('info', 'Server', 'All core packages are up to date.')
+    logger('info', 'Server', 'All core packages are up to date.')
   }
 }
 

@@ -12,7 +12,6 @@ import util from 'node:util';
 import zlib from 'node:zlib';
 import packageJson from '../package.json' with { type: 'json' };
 import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from "./constants.js";
-const isBun = typeof process !== 'undefined' && process.versions?.bun;
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
  *
@@ -1361,15 +1360,6 @@ async function makeRequest(urlString, options, nodelink) {
     }
     if (_redirectsFollowed >= maxRedirects) {
         return Promise.reject(new Error(`Too many redirects (${maxRedirects}) for ${urlString}`));
-    }
-    // fall back to HTTP/1 for Bun requests
-    // Note: bun v1.3.12, crashes with "authority" argument must be a type of string, object or URL. received type Number (825110816)
-    // Crashes the source worker ^^, could be related to monochrome's request or anything else that uses http/2
-    // UPDATE: Bun v1.3.13 has fixed this crash, since it was released today as this commit, i will be checking the version but can be removed later.
-    if (isBun &&
-        process.versions.bun.localeCompare('1.3.13', undefined, { numeric: true }) <
-            0) {
-        return http1makeRequest(urlString, options);
     }
     if (options.network?.proxy) {
         return http1makeRequest(urlString, options);
