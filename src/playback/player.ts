@@ -15,6 +15,7 @@ import type {
   CreateAudioResource,
   CreateSeekeableAudioResource,
   ExtendedAudioStream,
+  ExtendedVoiceConnection,
   FadeTimers,
   FadingConfig,
   FadingSection,
@@ -93,7 +94,7 @@ export class Player {
   public filters: FiltersState = {}
   public position = 0
   public connStatus: VoiceConnectionState['status'] = 'disconnected'
-  public connection: VoiceConnection | null = null
+  public connection: ExtendedVoiceConnection | null = null
   public voice: PlayerVoiceState = {
     sessionId: null,
     token: null,
@@ -752,17 +753,8 @@ export class Player {
    * Destroys and dereferences current audio stream to avoid lingering references.
    */
   private _cleanupCurrentAudioStream(context: string): void {
-    const conn = this.connection as
-      | (VoiceConnection & { audioStream?: VoiceAudioStream | null })
-      | null
-      | undefined
-    const audioStream = conn?.audioStream as
-      | (AudioResource & {
-          destroyed?: boolean
-          _cleanupListeners?: () => void
-        })
-      | undefined
-      | null
+    const conn = this.connection
+    const audioStream = conn?.audioStream as ExtendedAudioStream | undefined | null
 
     if (!audioStream) return
 
@@ -779,6 +771,14 @@ export class Player {
 
     try {
       audioStream.destroy?.()
+
+      if (Array.isArray(audioStream.pipes)) {
+        for (const pipe of audioStream.pipes) {
+          pipe.destroy?.()
+        }
+      }
+
+      conn?.udp?.flush?.()
     } catch (err) {
       logger(
         'debug',
@@ -787,6 +787,8 @@ export class Player {
           (err as Error)?.message ?? String(err)
         }`
       )
+    } finally {
+      if (conn) conn.audioStream = null
     }
   }
 
@@ -1361,8 +1363,8 @@ export class Player {
                 `[SponsorBlock][${this.guildId}] Successfully jumped to ${segment.end}ms`
               )
               this.emitEvent(GatewayEvents.SPONSORBLOCK_SEGMENT_SKIPPED, {
-                segment,
-                skippedMs
+                track: this.track,
+                segment
               })
             } else {
               logger(
@@ -1370,6 +1372,8 @@ export class Player {
                 'Player',
                 `[SponsorBlock][${this.guildId}] Failed to jump to ${segment.end}ms for segment ${segment.uuid}`
               )
+              // fallback: temporarily mute or un-stick if it fails
+              this.sponsorBlock.lastSkippedUuid = null
             }
           })
           .catch((err) => {
@@ -1379,6 +1383,7 @@ export class Player {
               `[SponsorBlock][${this.guildId}] Error while seeking to segment end:`,
               err
             )
+            this.sponsorBlock.lastSkippedUuid = null
           })
         return true
       }
@@ -1843,11 +1848,12 @@ export class Player {
     let reuseUrlData: TrackUrlResult | null = null
 
     if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
-      const inputStream = (this.connection.audioStream as { pipes?: unknown[] })
-        ?.pipes?.[0] as { getSessionState?: () => unknown } | undefined
-      if (inputStream && typeof inputStream.getSessionState === 'function') {
-        previousSession = inputStream.getSessionState()
-        if (previousSession) {
+      const inputStream = (
+        this.connection.audioStream as { pipes?: Array<{ getSessionState?: () => unknown }> }
+      )?.pipes?.[0]
+      
+      const previousSession = inputStream?.getSessionState?.()
+      if (previousSession) {
           logger(
             'debug',
             'Player',
@@ -1877,7 +1883,6 @@ export class Player {
           )
         }
       }
-    }
 
     const trackInfo = {
       ...this.track.info,

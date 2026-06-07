@@ -145,6 +145,8 @@ export default class YouTubeSource {
     oauth;
     /** Interval handle for periodic visitor data refresh, or `null` when not running. */
     visitorDataInterval;
+    /** Interval handle to clear failingClientsByTrack periodically. */
+    failingClientsInterval;
     /** Cipher/signature decryption manager shared across all innertube clients. */
     cipherManager;
     /** Live chat connection handler for YouTube live streams. */
@@ -189,6 +191,7 @@ export default class YouTubeSource {
         this.clients = {};
         this.oauth = null;
         this.visitorDataInterval = null;
+        this.failingClientsInterval = null;
         this.cipherManager = new CipherManager(nodelink);
         this.liveChat = new YouTubeLiveChat(nodelink, {
             getProxy: this.getProxy.bind(this),
@@ -262,9 +265,11 @@ export default class YouTubeSource {
         if (this.visitorDataInterval)
             clearInterval(this.visitorDataInterval);
         this.visitorDataInterval = setInterval(() => this._fetchVisitorData(), VISITOR_DATA_INTERVAL);
-        if (typeof this.visitorDataInterval.unref === 'function') {
-            this.visitorDataInterval.unref();
-        }
+        this.visitorDataInterval.unref?.();
+        if (this.failingClientsInterval)
+            clearInterval(this.failingClientsInterval);
+        this.failingClientsInterval = setInterval(() => this.failingClientsByTrack.clear(), 1000 * 60 * 60 * 12);
+        this.failingClientsInterval.unref?.();
         logger('info', 'YouTube', 'YouTube source setup complete.');
         return true;
     }
@@ -281,6 +286,10 @@ export default class YouTubeSource {
         if (this.visitorDataInterval) {
             clearInterval(this.visitorDataInterval);
             this.visitorDataInterval = null;
+        }
+        if (this.failingClientsInterval) {
+            clearInterval(this.failingClientsInterval);
+            this.failingClientsInterval = null;
         }
         if (this.oauth)
             this.oauth.cleanup?.();
@@ -1542,8 +1551,7 @@ export default class YouTubeSource {
                         }
                         else {
                             const timeout = setTimeout(fetchNext, Math.min(1000 * 2 ** (errors - 1), 5000));
-                            if (typeof timeout.unref === 'function')
-                                timeout.unref();
+                            timeout.unref?.();
                         }
                     }
                 };
@@ -1570,8 +1578,7 @@ export default class YouTubeSource {
                     }
                     else {
                         const timeout = setTimeout(fetchNext, Math.min(1000 * 2 ** (errors - 1), 5000));
-                        if (typeof timeout.unref === 'function')
-                            timeout.unref();
+                        timeout.unref?.();
                     }
                 }
             }
@@ -1670,9 +1677,7 @@ export default class YouTubeSource {
                 logger('warn', 'YouTube', `Recovery failed (attempt ${refreshes}): ${error.message}`);
                 if (!destroyed && !cancelSignal.aborted) {
                     recoverTimeout = setTimeout(() => recover(causeError), 4000 + refreshes * 1000);
-                    if (typeof recoverTimeout.unref === 'function') {
-                        recoverTimeout.unref();
-                    }
+                    recoverTimeout.unref?.();
                 }
             }
         };

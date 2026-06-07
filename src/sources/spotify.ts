@@ -194,6 +194,15 @@ export default class SpotifySource implements SourceInstance {
   private refreshPromises = new Map<SpotifyTokenType, Promise<boolean>>()
 
   /**
+   * Predictive token refresh timers.
+   * @internal
+   */
+  private tokenRefreshTimers = new Map<
+    SpotifyTokenType,
+    ReturnType<typeof setTimeout>
+  >()
+
+  /**
    * Creates a new SpotifySource instance.
    * @param nodelink - The worker context providing managers and options.
    */
@@ -298,6 +307,26 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
+   * Schedules a background token refresh to prevent latency during playback.
+   * @internal
+   */
+  private _scheduleTokenRefresh(type: SpotifyTokenType, expiry: number) {
+    const existing = this.tokenRefreshTimers.get(type)
+    if (existing) clearTimeout(existing)
+
+    const now = Date.now()
+    const timeUntilRefresh = expiry - now - TOKEN_REFRESH_MARGIN_MS
+
+    if (timeUntilRefresh > 0) {
+      const timer = setTimeout(() => {
+        this._refreshToken(type).catch(() => {})
+      }, timeUntilRefresh)
+      timer.unref?.()
+      this.tokenRefreshTimers.set(type, timer)
+    }
+  }
+
+  /**
    * Implementation logic for refreshing various Spotify token tiers.
    * Handles Client Credentials flow, local Web Player generation, and session cookie flows.
    *
@@ -334,6 +363,7 @@ export default class SpotifySource implements SourceInstance {
           const ttl = (body.expires_in || 3600) * 1000
           this.accessTokenExpiry = Date.now() + ttl
           cm.set('spotify_access_token', this.accessToken, ttl)
+          this._scheduleTokenRefresh('official', this.accessTokenExpiry)
           return true
         }
       }
@@ -357,6 +387,7 @@ export default class SpotifySource implements SourceInstance {
                 this.mobileToken,
                 Math.max(ttl, 60000)
               )
+              this._scheduleTokenRefresh('mobile', expiry)
             } else {
               this.anonymousToken = data.accessToken
               this.anonymousTokenExpiry = expiry
@@ -365,6 +396,7 @@ export default class SpotifySource implements SourceInstance {
                 this.anonymousToken,
                 Math.max(ttl, 60000)
               )
+              this._scheduleTokenRefresh('anonymous', expiry)
             }
             return true
           }
@@ -396,6 +428,7 @@ export default class SpotifySource implements SourceInstance {
                 this.anonymousToken,
                 Math.max(ttl, 60000)
               )
+              this._scheduleTokenRefresh('anonymous', this.anonymousTokenExpiry)
               return true
             }
           } catch (e) {
@@ -417,6 +450,17 @@ export default class SpotifySource implements SourceInstance {
       )
       return false
     }
+  }
+
+  /**
+   * Cleans up all pending timers.
+   * @public
+   */
+  public cleanup(): void {
+    for (const timer of this.tokenRefreshTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.tokenRefreshTimers.clear()
   }
 
   /**

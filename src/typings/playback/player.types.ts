@@ -140,12 +140,20 @@ export interface AudioResource {
   stream?: VoiceAudioStream | null
 }
 
+export interface ExtendedVoiceConnection extends VoiceConnection {
+  audioStream?: VoiceAudioStream | null
+  udp?: { flush?: () => void }
+}
+
 export interface TrackEnergy {
   rms: number
 }
 
 export interface ExtendedAudioStream extends AudioResource {
   getMainEnergy?: () => TrackEnergy | null
+  destroyed?: boolean
+  _cleanupListeners?: () => void
+  pipes?: Array<{ destroy?: () => void }>
 }
 
 export interface FilterTransitionsConfig {

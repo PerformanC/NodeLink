@@ -201,6 +201,9 @@ export default class YouTubeSource {
   /** Interval handle for periodic visitor data refresh, or `null` when not running. */
   private visitorDataInterval: ReturnType<typeof setInterval> | null
 
+  /** Interval handle to clear failingClientsByTrack periodically. */
+  private failingClientsInterval: ReturnType<typeof setInterval> | null
+
   /** Cipher/signature decryption manager shared across all innertube clients. */
   private cipherManager: CipherManager
 
@@ -254,6 +257,7 @@ export default class YouTubeSource {
     this.clients = {}
     this.oauth = null
     this.visitorDataInterval = null
+    this.failingClientsInterval = null
     this.cipherManager = new CipherManager(nodelink)
     this.liveChat = new YouTubeLiveChat(nodelink, {
       getProxy: this.getProxy.bind(this),
@@ -346,9 +350,14 @@ export default class YouTubeSource {
       () => this._fetchVisitorData(),
       VISITOR_DATA_INTERVAL
     )
-    if (typeof this.visitorDataInterval.unref === 'function') {
-      this.visitorDataInterval.unref()
-    }
+    this.visitorDataInterval.unref?.()
+
+    if (this.failingClientsInterval) clearInterval(this.failingClientsInterval)
+    this.failingClientsInterval = setInterval(
+      () => this.failingClientsByTrack.clear(),
+      1000 * 60 * 60 * 12
+    )
+    this.failingClientsInterval.unref?.()
 
     logger('info', 'YouTube', 'YouTube source setup complete.')
     return true
@@ -369,6 +378,11 @@ export default class YouTubeSource {
     if (this.visitorDataInterval) {
       clearInterval(this.visitorDataInterval)
       this.visitorDataInterval = null
+    }
+
+    if (this.failingClientsInterval) {
+      clearInterval(this.failingClientsInterval)
+      this.failingClientsInterval = null
     }
 
     if (this.oauth) (this.oauth as { cleanup?: () => void }).cleanup?.()
@@ -2318,7 +2332,7 @@ export default class YouTubeSource {
                 fetchNext,
                 Math.min(1000 * 2 ** (errors - 1), 5000)
               )
-              if (typeof timeout.unref === 'function') timeout.unref()
+              timeout.unref?.()
             }
           }
         }
@@ -2357,7 +2371,7 @@ export default class YouTubeSource {
               fetchNext,
               Math.min(1000 * 2 ** (errors - 1), 5000)
             )
-            if (typeof timeout.unref === 'function') timeout.unref()
+            timeout.unref?.()
           }
         }
       }
@@ -2505,9 +2519,7 @@ export default class YouTubeSource {
             () => recover(causeError),
             4000 + refreshes * 1000
           )
-          if (typeof recoverTimeout.unref === 'function') {
-            recoverTimeout.unref()
-          }
+          recoverTimeout.unref?.()
         }
       }
     }
