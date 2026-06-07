@@ -67,6 +67,18 @@ export default class TrackCacheManager extends BaseCacheManager {
         this._enforceMaxEntries();
         this.save();
     }
+    /**
+     * Deletes a cached value by source/identifier.
+     * @param source - Source name (e.g., "youtube").
+     * @param identifier - Track identifier.
+     */
+    delete(source, identifier) {
+        const key = `${source}:${identifier}`;
+        const deleted = this.cache.delete(key);
+        if (deleted)
+            this.save();
+        return deleted;
+    }
     static _resolveCacheOptions(options) {
         const playback = options.playback;
         const maxEntriesRaw = playback.maxPlaylistLength;

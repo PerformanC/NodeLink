@@ -433,6 +433,7 @@ export interface NodeLink {
     audioInterceptors?: Array<() => import('node:stream').Transform>
   } & Record<string, unknown>
   pluginManager?: import('../../managers/pluginManager.ts').default | null
+  trackCacheManager?: import('../../managers/trackCacheManager.ts').default | null
   getLyricsManager?: () => Promise<LyricsManagerLike>
   [key: string]: unknown
 }

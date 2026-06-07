@@ -91,6 +91,18 @@ export default class TrackCacheManager extends BaseCacheManager<unknown> {
     this.save()
   }
 
+  /**
+   * Deletes a cached value by source/identifier.
+   * @param source - Source name (e.g., "youtube").
+   * @param identifier - Track identifier.
+   */
+  delete(source: string, identifier: string): boolean {
+    const key = `${source}:${identifier}`
+    const deleted = this.cache.delete(key)
+    if (deleted) this.save()
+    return deleted
+  }
+
   private static _resolveCacheOptions(options: NodelinkConfig): {
     maxEntries: number
     cleanupIntervalMs: number

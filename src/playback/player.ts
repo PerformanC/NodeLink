@@ -1258,7 +1258,17 @@ export class Player {
           this.stuckRecoveryCount++
           this._positionAtRecoveryStart = position
 
-          this.seek(this._lastPosition, this.track.endTime, true)
+          if (this.track.info.identifier && this.track.info.sourceName) {
+            this.nodelink.trackCacheManager?.delete(
+              this.track.info.sourceName,
+              this.track.info.identifier
+            )
+          }
+
+          const isStream = this.track.info.isStream
+          const recoveryPosition = isStream ? 0 : this._lastPosition
+
+          this.seek(recoveryPosition, this.track.endTime, true)
             .then((success) => {
               if (success) {
                 logger(
