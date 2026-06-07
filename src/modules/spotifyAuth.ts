@@ -158,7 +158,7 @@ async function getServerTime(spDc?: string | null): Promise<number> {
         ? (JSON.parse(res.body) as SpotifyServerTimeResponse)
         : (res.body as SpotifyServerTimeResponse)
 
-    return typeof data.serverTime === 'number' ? data.serverTime : Date.now()
+    return typeof data.serverTime === 'number' ? data.serverTime * 1000 : Date.now()
   } catch {
     return Date.now()
   }
@@ -212,10 +212,9 @@ async function performTokenRequest(
   productType: string
 ): Promise<SpotifyLocalTokenResponse> {
   const isWebPlayer = productType === 'web-player'
-  const serverTimeMs = isWebPlayer ? Date.now() : await getServerTime(spDc)
-  const localTimeMs = Date.now()
+  const serverTimeMs = await getServerTime(spDc)
 
-  const totpLocal = generateTOTP(secret, localTimeMs, 30)
+  const totpLocal = generateTOTP(secret, serverTimeMs, 30)
   const totpServer = generateTOTP(secret, serverTimeMs, 900)
 
   const url = new URL('https://open.spotify.com/api/token')
