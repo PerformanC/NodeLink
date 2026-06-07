@@ -1974,16 +1974,16 @@ async function checkDependencyUpdates(
     '@toddynnn/voice-opus',
     '@ecliptia/faad2-wasm',
     '@alexanderolsen/libsamplerate-js',
-    '@ecliptia/seekable-stream'
+    '@ecliptia/seekable-stream',
+    'mp4box'
   ]
 
-  const require = createRequire(import.meta.url)
   const localVersions: Array<{ name: string; version: string }> = []
 
   for (const dep of coreDeps) {
     try {
-      const depPath = require.resolve(`${dep}/package.json`)
-      const version = require(depPath).version
+      const depPath = path.join(process.cwd(), 'node_modules', dep, 'package.json')
+      const version = JSON.parse(fs.readFileSync(depPath, 'utf8')).version
       localVersions.push({ name: dep, version })
     } catch {
       // Ignore if package not found
@@ -2023,7 +2023,7 @@ async function checkDependencyUpdates(
     const timeout = setTimeout(() => controller.abort(), 5000)
 
     try {
-      const deps = (packageJson as any).dependencies || {}
+      const deps = (packageJson as { dependencies?: Record<string, string> }).dependencies || {}
 
       await Promise.all(
         coreDeps.map(async (dep) => {
@@ -2128,8 +2128,9 @@ async function checkDependencyUpdates(
     logger(
       'warn',
       'Server',
-      'The following core dependencies have updates available:'
+      'The following core dependencies have updates available and will be automatically updated:'
     )
+    
     for (const update of updates) {
       logger(
         'warn',
@@ -2137,11 +2138,33 @@ async function checkDependencyUpdates(
         ` - ${update.name}: ${update.current} -> \x1b[1m\x1b[32m${update.latest}\x1b[0m (${update.source})`
       )
     }
-    logger(
-      'warn',
-      'Server',
-      'Update recommended for stability. Run "npm install" to update.'
-    )
+
+    try {
+      logger('info', 'Server', `Running automatic update for core packages...`)
+      const isPnpm = fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml'))
+      const cmd = isPnpm ? 'pnpm update' : 'npm update'
+      execSync(cmd, { stdio: 'inherit' })
+      logger('info', 'Server', 'Dependencies updated successfully. Restarting process to apply changes...')
+      
+      const { spawn } = await import('node:child_process')
+      const child = spawn(process.argv[0] as string, process.argv.slice(1), {
+        stdio: 'inherit',
+        env: process.env
+      } as import('node:child_process').SpawnOptions)
+      
+      child.on('exit', (code: number | null) => {
+        process.exit(code ?? 0)
+      })
+      
+      // Halt execution of the parent process forever while the child runs
+      await new Promise(() => {})
+    } catch (error) {
+      logger(
+        'error',
+        'Server',
+        `Failed to auto-update dependencies: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
   } else if (Object.keys(latestVersions).length > 0) {
     logger('info', 'Server', 'All core packages are up to date.')
   }

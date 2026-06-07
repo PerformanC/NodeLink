@@ -271,6 +271,7 @@ if (!cluster.isWorker) {
     process.stdout.write(`\x1b[32m${ascii}\x1b[0m\n`);
 }
 await checkForUpdates();
+await checkDependencyUpdates();
 memoryTrace('bootstrap:after-check-for-updates');
 /**
  * Main NodeLink server class
@@ -1478,7 +1479,6 @@ class NodelinkServer extends EventEmitter {
         }
         this.connectionManager?.start();
         memoryTrace('start:ready');
-        void checkDependencyUpdates(this.credentialManager ?? undefined);
         return this;
     }
     /**

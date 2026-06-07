@@ -460,6 +460,7 @@ if (!cluster.isWorker) {
 }
 
 await checkForUpdates()
+await checkDependencyUpdates()
 memoryTrace('bootstrap:after-check-for-updates')
 
 /**
@@ -2188,8 +2189,6 @@ class NodelinkServer extends EventEmitter {
 
     this.connectionManager?.start()
     memoryTrace('start:ready')
-
-    void checkDependencyUpdates(this.credentialManager ?? undefined)
 
     return this
   }
