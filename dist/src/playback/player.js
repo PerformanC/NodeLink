@@ -240,7 +240,16 @@ export class Player {
         this.connection.on('playerStateChange', (_, s) => this._onPlay(s));
         this.connection.on('error', (err) => {
             logger('error', 'Player', `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`, err);
-            this._onError(err);
+            process.nextTick(() => {
+                if (this.destroying)
+                    return;
+                const playerReason = this.connection?.playerState?.reason;
+                if (playerReason === 'reconnecting') {
+                    logger('warn', 'Player', `Voice connection error for guild ${this.guildId} is a recoverable reconnection (playerState.reason=${playerReason}). Deferring to library.`);
+                    return;
+                }
+                this._onError(err);
+            });
         });
         this.connection.on('stuck', () => {
             if (this.destroying)
@@ -1257,1434 +1266,1257 @@ export class Player {
                 logger('debug', 'Player', `Reusing existing SABR streaming URL for seek to maintain session`);
             }
         }
-    }
-    trackInfo = {
-        ...this.track.info,
-        audioTrackId: this.track.audioTrackId
-    };
-    urlData = reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo));
-}
-this.streamInfo = { ...urlData, trackInfo: this.track.info };
-if (urlData.exception) {
-    const err = new Error(urlData.exception.message);
-    this._onError(err);
-    return false;
-}
-if (!this.connection) {
-    this._initConnection();
-}
-if (!this.connection?.udpInfo?.secretKey) {
-    await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
-}
-if (!this.connection?.udpInfo?.secretKey) {
-    const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`;
-    logger('error', 'Player', errorMessage);
-    this._onError(new Error(errorMessage));
-    return false;
-}
-const fetched = await this._fetchResource(this.track.info, urlData, position);
-if ('exception' in fetched) {
-    const err = new Error(fetched.exception.message);
-    this._onError(err);
-    return false;
-}
-this._cleanupCurrentAudioStream('source-seek');
-const resource = fetched.stream;
-if (this.volumePercent !== 100) {
-    resource.setVolume(this.volumePercent / 100);
-}
-this._fading('seekPrepare', { resource });
-this.setFilters(this.filters);
-logger('debug', 'Player', `Playing resource for guild ${this.guildId} after source seek`);
-this.connection.play(resource);
-await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
-this._lyricsBasePosition = position;
-this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
-return true;
-async;
-_seekeableSeek(position, number, endTime ?  : number);
-Promise < boolean > {
-    : .nodelink.options?.playback.mix?.enabled !== false
-};
-{
-    await this._ensureAudioMixer();
-}
-await getStreamProcessor();
-const seekResourceFactory = createSeekeableAudioResource;
-if (!seekResourceFactory) {
-    return this._legacySeek(position, endTime);
-}
-logger('debug', 'Player', `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`);
-this.position = position;
-try {
-    const url = this.streamInfo?.url;
-    if (!url)
-        return false;
-    const resourceResult = await seekResourceFactory(this.guildId, url, position, endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer);
-    if (resourceResult.exception) {
-        const exception = resourceResult.exception;
-        logger('error', 'Player', `Seekeable resource creation failed for guild ${this.guildId}: ${exception.message}. Falling back to old method.`);
-        this.emitEvent(GatewayEvents.TRACK_EXCEPTION, {
-            track: this.track,
-            exception
-        });
-        this._emitTrackEnd(EndReasons.LOAD_FAILED);
-        return this._legacySeek(position, endTime);
-    }
-    const resource = resourceResult;
-    if (this.volumePercent !== 100) {
-        resource.setVolume(this.volumePercent / 100);
-    }
-    this._fading('seekPrepare', { resource });
-    resource.setFilters(this.filters);
-    const oldStream = this.connection?.play(resource);
-    await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
-    if (oldStream) {
-        oldStream.destroy();
-    }
-    this._lyricsBasePosition = position;
-    this._lyricsBasePackets =
-        this.connection?.statistics?.packetsExpected ?? 0;
-    return true;
-}
-catch (e) {
-    const err = e;
-    logger('error', 'Player', `An unexpected error occurred during seekeable seek for guild ${this.guildId}: ${err.message}. Falling back to old method.`);
-    this.emitEvent(GatewayEvents.TRACK_EXCEPTION, {
-        track: this.track,
-        exception: {
-            message: err.message,
-            severity: 'fault',
-            cause: 'UNKNOWN_ERROR'
-        }
-    });
-    this._emitTrackEnd(EndReasons.LOAD_FAILED);
-    return this._legacySeek(position, endTime);
-}
-async;
-_legacySeek(position, number, endTime ?  : number);
-Promise < boolean > {
-    : .track, return: false,
-    if(position, , ) { }
-} ||
-    (this.track.info.length > 0 && position > this.track.info.length);
-return false;
-logger('debug', 'Player', `Seeking with legacy method to ${position}ms for guild ${this.guildId}`);
-this.position = position;
-this.track.endTime = endTime;
-const trackInfo = {
-    ...this.track.info,
-    audioTrackId: this.track.audioTrackId
-};
-const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this._isRecovering);
-if (!this.track)
-    return false;
-this.streamInfo = { ...urlData, trackInfo: this.track.info };
-if (urlData.exception) {
-    const err = new Error(urlData.exception.message);
-    this._onError(err);
-    return false;
-}
-if (!this.connection) {
-    this._initConnection();
-}
-if (!this.connection?.udpInfo?.secretKey) {
-    logger('debug', 'Player', `Waiting for voice connection to be ready for guild ${this.guildId}`);
-    await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
-}
-if (!this.connection?.udpInfo?.secretKey) {
-    const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`;
-    logger('error', 'Player', errorMessage);
-    this._onError(new Error(errorMessage));
-    return false;
-}
-const fetched = await this._fetchResource(this.track.info, urlData, position);
-if ('exception' in fetched) {
-    const err = new Error(fetched.exception.message);
-    this._onError(err);
-    return false;
-}
-this._cleanupCurrentAudioStream('legacy-seek');
-const resource = fetched.stream;
-if (this.volumePercent !== 100) {
-    resource.setVolume(this.volumePercent / 100);
-}
-this._fading('seekPrepare', { resource });
-this.setFilters(this.filters);
-logger('debug', 'Player', `Playing resource for guild ${this.guildId} after legacy seek`);
-this.connection.play(resource);
-await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
-this._lyricsBasePosition = position;
-this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
-return true;
-stop();
-boolean;
-{
-    this.isUpdatingTrack = true;
-    try {
-        if (this.destroying || !this.track)
+        const trackInfo = {
+            ...this.track.info,
+            audioTrackId: this.track.audioTrackId
+        };
+        const urlData = reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo));
+        this.streamInfo = { ...urlData, trackInfo: this.track.info };
+        if (urlData.exception) {
+            const err = new Error(urlData.exception.message);
+            this._onError(err);
             return false;
+        }
+        if (!this.connection) {
+            this._initConnection();
+        }
+        if (!this.connection?.udpInfo?.secretKey) {
+            await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
+        }
+        if (!this.connection?.udpInfo?.secretKey) {
+            const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`;
+            logger('error', 'Player', errorMessage);
+            this._onError(new Error(errorMessage));
+            return false;
+        }
+        const fetched = await this._fetchResource(this.track.info, urlData, position);
+        if ('exception' in fetched) {
+            const err = new Error(fetched.exception.message);
+            this._onError(err);
+            return false;
+        }
+        this._cleanupCurrentAudioStream('source-seek');
+        const resource = fetched.stream;
+        if (this.volumePercent !== 100) {
+            resource.setVolume(this.volumePercent / 100);
+        }
+        this._fading('seekPrepare', { resource });
+        this.setFilters(this.filters);
+        logger('debug', 'Player', `Playing resource for guild ${this.guildId} after source seek`);
+        this.connection.play(resource);
+        await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
+        this._lyricsBasePosition = position;
+        this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
+        return true;
+    }
+    /**
+     * Seeks using seekable-stream helper for compatible sources.
+     */
+    async _seekeableSeek(position, endTime) {
+        if (this.nodelink.options?.playback.mix?.enabled !== false) {
+            await this._ensureAudioMixer();
+        }
+        await getStreamProcessor();
+        const seekResourceFactory = createSeekeableAudioResource;
+        if (!seekResourceFactory) {
+            return this._legacySeek(position, endTime);
+        }
+        logger('debug', 'Player', `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`);
+        this.position = position;
+        try {
+            const url = this.streamInfo?.url;
+            if (!url)
+                return false;
+            const resourceResult = await seekResourceFactory(this.guildId, url, position, endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer);
+            if (resourceResult.exception) {
+                const exception = resourceResult.exception;
+                logger('error', 'Player', `Seekeable resource creation failed for guild ${this.guildId}: ${exception.message}. Falling back to old method.`);
+                this.emitEvent(GatewayEvents.TRACK_EXCEPTION, {
+                    track: this.track,
+                    exception
+                });
+                this._emitTrackEnd(EndReasons.LOAD_FAILED);
+                return this._legacySeek(position, endTime);
+            }
+            const resource = resourceResult;
+            if (this.volumePercent !== 100) {
+                resource.setVolume(this.volumePercent / 100);
+            }
+            this._fading('seekPrepare', { resource });
+            resource.setFilters(this.filters);
+            const oldStream = this.connection?.play(resource);
+            await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
+            if (oldStream) {
+                oldStream.destroy();
+            }
+            this._lyricsBasePosition = position;
+            this._lyricsBasePackets =
+                this.connection?.statistics?.packetsExpected ?? 0;
+            return true;
+        }
+        catch (e) {
+            const err = e;
+            logger('error', 'Player', `An unexpected error occurred during seekeable seek for guild ${this.guildId}: ${err.message}. Falling back to old method.`);
+            this.emitEvent(GatewayEvents.TRACK_EXCEPTION, {
+                track: this.track,
+                exception: {
+                    message: err.message,
+                    severity: 'fault',
+                    cause: 'UNKNOWN_ERROR'
+                }
+            });
+            this._emitTrackEnd(EndReasons.LOAD_FAILED);
+            return this._legacySeek(position, endTime);
+        }
+    }
+    /**
+     * Seeks using legacy re-fetch strategy.
+     */
+    async _legacySeek(position, endTime) {
+        if (!this.track)
+            return false;
+        if (position < 0 ||
+            (this.track.info.length > 0 && position > this.track.info.length))
+            return false;
+        logger('debug', 'Player', `Seeking with legacy method to ${position}ms for guild ${this.guildId}`);
+        this.position = position;
+        this.track.endTime = endTime;
+        const trackInfo = {
+            ...this.track.info,
+            audioTrackId: this.track.audioTrackId
+        };
+        const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this._isRecovering);
+        if (!this.track)
+            return false;
+        this.streamInfo = { ...urlData, trackInfo: this.track.info };
+        if (urlData.exception) {
+            const err = new Error(urlData.exception.message);
+            this._onError(err);
+            return false;
+        }
+        if (!this.connection) {
+            this._initConnection();
+        }
+        if (!this.connection?.udpInfo?.secretKey) {
+            logger('debug', 'Player', `Waiting for voice connection to be ready for guild ${this.guildId}`);
+            await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
+        }
+        if (!this.connection?.udpInfo?.secretKey) {
+            const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`;
+            logger('error', 'Player', errorMessage);
+            this._onError(new Error(errorMessage));
+            return false;
+        }
+        const fetched = await this._fetchResource(this.track.info, urlData, position);
+        if ('exception' in fetched) {
+            const err = new Error(fetched.exception.message);
+            this._onError(err);
+            return false;
+        }
+        this._cleanupCurrentAudioStream('legacy-seek');
+        const resource = fetched.stream;
+        if (this.volumePercent !== 100) {
+            resource.setVolume(this.volumePercent / 100);
+        }
+        this._fading('seekPrepare', { resource });
+        this.setFilters(this.filters);
+        logger('debug', 'Player', `Playing resource for guild ${this.guildId} after legacy seek`);
+        this.connection.play(resource);
+        await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
+        this._lyricsBasePosition = position;
+        this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
+        return true;
+    }
+    /**
+     * Stops playback and emits STOPPED if applicable.
+     *
+     * @returns True when stop was executed; false when no active track.
+     */
+    stop() {
+        this.isUpdatingTrack = true;
+        try {
+            if (this.destroying || !this.track)
+                return false;
+            if (this.nextResource) {
+                this.nextResource.destroy();
+                this.nextResource = null;
+                this.nextTrack = null;
+                this.nextStreamInfo = null;
+            }
+            if (this.connection && this.connStatus !== 'destroyed') {
+                if (this.connection.audioStream) {
+                    this._isStopping = true;
+                    if (this._fading('trackStop'))
+                        return true;
+                    this._isStopping = false;
+                    this.connection.stop(EndReasons.STOPPED);
+                }
+                else {
+                    this._emitTrackEnd(EndReasons.STOPPED);
+                    this._resetTrack();
+                }
+            }
+            else {
+                this._emitTrackEnd(EndReasons.STOPPED);
+                this._resetTrack();
+            }
+            return true;
+        }
+        finally {
+            this.isUpdatingTrack = false;
+        }
+    }
+    /**
+     * Preloads the next track for gapless playback.
+     *
+     * @param payload - Track to prepare in advance.
+     * @returns True when preload succeeded.
+     */
+    async preload(payload) {
+        if (this.destroying)
+            return false;
+        const sameEncoded = !!payload.encoded &&
+            !!this.nextTrack?.encoded &&
+            this.nextTrack.encoded === payload.encoded;
+        const sameIdentifier = !!payload.info?.identifier &&
+            !!this.nextTrack?.info?.identifier &&
+            this.nextTrack.info.identifier === payload.info.identifier;
+        const isDuplicatePreload = (sameEncoded || sameIdentifier) && !!this.nextResource;
+        if (isDuplicatePreload) {
+            logger('debug', 'Player', `Skipping duplicate preload for ${this.guildId}`, {
+                identifier: payload.info?.identifier,
+                encodedMatch: sameEncoded,
+                identifierMatch: sameIdentifier
+            });
+            return true;
+        }
         if (this.nextResource) {
             this.nextResource.destroy();
             this.nextResource = null;
             this.nextTrack = null;
             this.nextStreamInfo = null;
         }
-        if (this.connection && this.connStatus !== 'destroyed') {
-            if (this.connection.audioStream) {
-                this._isStopping = true;
-                if (this._fading('trackStop'))
-                    return true;
-                this._isStopping = false;
-                this.connection.stop(EndReasons.STOPPED);
+        try {
+            const trackInfo = {
+                ...payload.info,
+                audioTrackId: payload.audioTrackId
+            };
+            const urlData = await this.nodelink.sources.getTrackUrl(trackInfo);
+            if (urlData.exception)
+                return false;
+            const fetched = await this._fetchResource(payload.info, urlData, 0);
+            if ('exception' in fetched)
+                return false;
+            this.nextTrack = payload;
+            this.nextResource = fetched.stream;
+            this.nextStreamInfo = { ...urlData, trackInfo: payload.info };
+            if (this.volumePercent !== 100) {
+                this.nextResource.setVolume(this.volumePercent / 100);
             }
-            else {
-                this._emitTrackEnd(EndReasons.STOPPED);
-                this._resetTrack();
-            }
-        }
-        else {
-            this._emitTrackEnd(EndReasons.STOPPED);
-            this._resetTrack();
-        }
-        return true;
-    }
-    finally {
-        this.isUpdatingTrack = false;
-    }
-}
-async;
-preload(payload, PlayerTrack);
-Promise < boolean > {
-    : .destroying, return: false,
-    const: sameEncoded =
-        !!payload.encoded &&
-            !!this.nextTrack?.encoded &&
-            this.nextTrack.encoded === payload.encoded,
-    const: sameIdentifier =
-        !!payload.info?.identifier &&
-            !!this.nextTrack?.info?.identifier &&
-            this.nextTrack.info.identifier === payload.info.identifier,
-    const: isDuplicatePreload =
-        (sameEncoded || sameIdentifier) && !!this.nextResource,
-    if(isDuplicatePreload) {
-        logger('debug', 'Player', `Skipping duplicate preload for ${this.guildId}`, {
-            identifier: payload.info?.identifier,
-            encodedMatch: sameEncoded,
-            identifierMatch: sameIdentifier
-        });
-        return true;
-    },
-    : .nextResource
-};
-{
-    this.nextResource.destroy();
-    this.nextResource = null;
-    this.nextTrack = null;
-    this.nextStreamInfo = null;
-}
-try {
-    const trackInfo = {
-        ...payload.info,
-        audioTrackId: payload.audioTrackId
-    };
-    const urlData = await this.nodelink.sources.getTrackUrl(trackInfo);
-    if (urlData.exception)
-        return false;
-    const fetched = await this._fetchResource(payload.info, urlData, 0);
-    if ('exception' in fetched)
-        return false;
-    this.nextTrack = payload;
-    this.nextResource = fetched.stream;
-    this.nextStreamInfo = { ...urlData, trackInfo: payload.info };
-    if (this.volumePercent !== 100) {
-        this.nextResource.setVolume(this.volumePercent / 100);
-    }
-    this.nextResource.setFilters(this.filters);
-    return true;
-}
-catch (err) {
-    const error = err;
-    logger('error', 'Player', `Preload failed for guild ${this.guildId}: ${error.message}`);
-    return false;
-}
-clearNextTrack();
-boolean;
-{
-    if (this.destroying)
-        return false;
-    if (this.nextResource) {
-        this.nextResource.destroy();
-        this.nextResource = null;
-    }
-    this.nextTrack = null;
-    this.nextStreamInfo = null;
-    return true;
-}
-pause(shouldPause, boolean);
-boolean;
-{
-    if (this.destroying || this.isPaused === shouldPause)
-        return false;
-    logger('debug', 'Player', `Setting pause to ${shouldPause} for guild ${this.guildId}`);
-    if (shouldPause) {
-        this._pausedAtPosition = this._realPosition();
-        if (this._fadeTimers?.trackEnd) {
-            clearTimeout(this._fadeTimers.trackEnd);
-            this._fadeTimers.trackEnd = null;
-        }
-        if (this._fading('pause')) {
-            this.isPaused = true;
-            this.emitEvent(GatewayEvents.PAUSE, { paused: true });
+            this.nextResource.setFilters(this.filters);
             return true;
         }
-        this.isPaused = true;
-        this.connection?.pause?.('requested');
+        catch (err) {
+            const error = err;
+            logger('error', 'Player', `Preload failed for guild ${this.guildId}: ${error.message}`);
+            return false;
+        }
     }
-    else {
-        this.isPaused = false;
-        this._isResuming = true;
-        this._fading('resume');
-        this.connection?.unpause?.('requested');
+    /**
+     * Clears any queued/preloaded next track.
+     *
+     * @returns True when state was cleared.
+     */
+    clearNextTrack() {
+        if (this.destroying)
+            return false;
+        if (this.nextResource) {
+            this.nextResource.destroy();
+            this.nextResource = null;
+        }
+        this.nextTrack = null;
+        this.nextStreamInfo = null;
+        return true;
     }
-    this.emitEvent(GatewayEvents.PAUSE, { paused: this.isPaused });
-    return true;
-}
-volume(level, number);
-boolean;
-{
-    if (this.destroying)
-        return false;
-    logger('debug', 'Player', `Setting volume to ${level} for guild ${this.guildId}`);
-    this.volumePercent = Math.max(0, Math.min(1000, level));
-    this.connection?.audioStream?.setVolume(this.volumePercent / 100);
-    this.nextResource?.setVolume(this.volumePercent / 100);
-    this.emitEvent(GatewayEvents.VOLUME_CHANGED, { volume: this.volumePercent });
-    return true;
-}
-setFading(config ?  : FadingConfig);
-boolean;
-{
-    this.fading = config;
-    return true;
-}
-setLoudnessNormalizer(enabled, boolean);
-boolean;
-{
-    this.loudnessNormalizer = !!enabled;
-    if (this.connection?.audioStream) {
-        this.connection.audioStream.setLoudnessNormalizer?.(this.loudnessNormalizer);
-    }
-    return true;
-}
-setFilters(filters, FiltersState);
-boolean;
-{
-    if (this.destroying || !this.track)
-        return false;
-    logger('debug', 'Player', `Applying filters for guild ${this.guildId}:`, filters);
-    const payload = filters.filters ??
-        filters;
-    const filterTransitions = this._getFilterTransitions();
-    const newFilterSettings = {};
-    if (payload && Object.keys(payload).length > 0) {
-        for (const key in payload) {
-            const value = payload[key];
-            if (value === null || value === undefined) {
-                continue;
+    /**
+     * Pauses or resumes playback.
+     *
+     * @param shouldPause - True to pause, false to resume.
+     * @returns True when state changed; false otherwise.
+     */
+    pause(shouldPause) {
+        if (this.destroying || this.isPaused === shouldPause)
+            return false;
+        logger('debug', 'Player', `Setting pause to ${shouldPause} for guild ${this.guildId}`);
+        if (shouldPause) {
+            this._pausedAtPosition = this._realPosition();
+            if (this._fadeTimers?.trackEnd) {
+                clearTimeout(this._fadeTimers.trackEnd);
+                this._fadeTimers.trackEnd = null;
             }
-            if (key === 'equalizer') {
-                if (Array.isArray(value)) {
-                    newFilterSettings[key] = { bands: value };
+            if (this._fading('pause')) {
+                this.isPaused = true;
+                this.emitEvent(GatewayEvents.PAUSE, { paused: true });
+                return true;
+            }
+            this.isPaused = true;
+            this.connection?.pause?.('requested');
+        }
+        else {
+            this.isPaused = false;
+            this._isResuming = true;
+            this._fading('resume');
+            this.connection?.unpause?.('requested');
+        }
+        this.emitEvent(GatewayEvents.PAUSE, { paused: this.isPaused });
+        return true;
+    }
+    /**
+     * Adjusts playback volume (0-1000).
+     *
+     * @param level - Volume percentage (0-1000).
+     * @returns True when volume was updated.
+     */
+    volume(level) {
+        if (this.destroying)
+            return false;
+        logger('debug', 'Player', `Setting volume to ${level} for guild ${this.guildId}`);
+        this.volumePercent = Math.max(0, Math.min(1000, level));
+        this.connection?.audioStream?.setVolume(this.volumePercent / 100);
+        this.nextResource?.setVolume(this.volumePercent / 100);
+        this.emitEvent(GatewayEvents.VOLUME_CHANGED, { volume: this.volumePercent });
+        return true;
+    }
+    /**
+     * Sets fading configuration.
+     *
+     * @param config - New fading config; disables fading when undefined.
+     * @returns Always true.
+     */
+    setFading(config) {
+        this.fading = config;
+        return true;
+    }
+    /**
+     * Toggles loudness normalization.
+     *
+     * @param enabled - Whether to enable loudness normalization.
+     * @returns True when updated.
+     */
+    setLoudnessNormalizer(enabled) {
+        this.loudnessNormalizer = !!enabled;
+        if (this.connection?.audioStream) {
+            this.connection.audioStream.setLoudnessNormalizer?.(this.loudnessNormalizer);
+        }
+        return true;
+    }
+    /**
+     * Applies audio filters to the active stream.
+     *
+     * @param filters - Filter payload that replaces the active filter set.
+     * @returns True when filters applied; false if player inactive.
+     */
+    setFilters(filters) {
+        if (this.destroying || !this.track)
+            return false;
+        logger('debug', 'Player', `Applying filters for guild ${this.guildId}:`, filters);
+        const payload = filters.filters ??
+            filters;
+        const filterTransitions = this._getFilterTransitions();
+        const newFilterSettings = {};
+        if (payload && Object.keys(payload).length > 0) {
+            for (const key in payload) {
+                const value = payload[key];
+                if (value === null || value === undefined) {
+                    continue;
+                }
+                if (key === 'equalizer') {
+                    if (Array.isArray(value)) {
+                        newFilterSettings[key] = { bands: value };
+                    }
+                    else {
+                        newFilterSettings[key] = isObjectRecord(value)
+                            ? value
+                            : { value };
+                    }
                 }
                 else {
-                    newFilterSettings[key] = isObjectRecord(value)
-                        ? value
-                        : { value };
-                }
-            }
-            else {
-                const existing = this.filters.filters?.[key];
-                if (existing &&
-                    typeof existing === 'object' &&
-                    !Array.isArray(existing) &&
-                    typeof value === 'object' &&
-                    !Array.isArray(value)) {
-                    const merged = {
-                        ...existing,
-                        ...value
-                    };
-                    const mergedFilter = merged;
-                    if (mergedFilter._disabled) {
-                        delete mergedFilter._disabled;
+                    const existing = this.filters.filters?.[key];
+                    if (existing &&
+                        typeof existing === 'object' &&
+                        !Array.isArray(existing) &&
+                        typeof value === 'object' &&
+                        !Array.isArray(value)) {
+                        const merged = {
+                            ...existing,
+                            ...value
+                        };
+                        const mergedFilter = merged;
+                        if (mergedFilter._disabled) {
+                            delete mergedFilter._disabled;
+                        }
+                        newFilterSettings[key] = mergedFilter;
                     }
-                    newFilterSettings[key] = mergedFilter;
-                }
-                else {
-                    newFilterSettings[key] = {
-                        ...value
-                    };
-                    const newFilter = newFilterSettings[key];
-                    if (isObjectRecord(newFilter) && newFilter._disabled) {
-                        delete newFilter._disabled;
+                    else {
+                        newFilterSettings[key] = {
+                            ...value
+                        };
+                        const newFilter = newFilterSettings[key];
+                        if (isObjectRecord(newFilter) && newFilter._disabled) {
+                            delete newFilter._disabled;
+                        }
                     }
                 }
+                const filterBlock = newFilterSettings[key];
+                if (filterBlock &&
+                    typeof filterBlock === 'object' &&
+                    !filterBlock.transition &&
+                    filterTransitions?.enabled) {
+                    filterBlock.transition = {
+                        durationMs: filterTransitions.durationMs ?? 4000,
+                        curve: filterTransitions.curve ?? 'sinusoidal'
+                    };
+                }
             }
-            const filterBlock = newFilterSettings[key];
-            if (filterBlock &&
-                typeof filterBlock === 'object' &&
-                !filterBlock.transition &&
-                filterTransitions?.enabled) {
-                filterBlock.transition = {
-                    durationMs: filterTransitions.durationMs ?? 4000,
-                    curve: filterTransitions.curve ?? 'sinusoidal'
+        }
+        const oldFilters = this.filters.filters || {};
+        for (const key in oldFilters) {
+            if (!(key in newFilterSettings)) {
+                const existingFilter = oldFilters[key];
+                if (existingFilter?._disabled === true)
+                    continue;
+                newFilterSettings[key] = {
+                    _disabled: true,
+                    ...(filterTransitions?.enabled
+                        ? {
+                            transition: {
+                                durationMs: filterTransitions.durationMs ?? 4000,
+                                curve: filterTransitions.curve ?? 'sinusoidal'
+                            }
+                        }
+                        : {})
                 };
             }
         }
-    }
-    const oldFilters = this.filters.filters || {};
-    for (const key in oldFilters) {
-        if (!(key in newFilterSettings)) {
-            const existingFilter = oldFilters[key];
-            if (existingFilter?._disabled === true)
-                continue;
-            newFilterSettings[key] = {
-                _disabled: true,
-                ...(filterTransitions?.enabled
-                    ? {
-                        transition: {
-                            durationMs: filterTransitions.durationMs ?? 4000,
-                            curve: filterTransitions.curve ?? 'sinusoidal'
-                        }
-                    }
-                    : {})
-            };
+        this.filters = { ...this.filters, filters: newFilterSettings };
+        if (this.connection?.audioStream) {
+            this._snapshotPosition();
+            this.connection.audioStream.setFilters(this.filters);
         }
-    }
-    this.filters = { ...this.filters, filters: newFilterSettings };
-    if (this.connection?.audioStream) {
-        this._snapshotPosition();
-        this.connection.audioStream.setFilters(this.filters);
-    }
-    this.nextResource?.setFilters(this.filters);
-    const disabledKeys = [];
-    for (const key in newFilterSettings) {
-        const val = newFilterSettings[key];
-        if (val?._disabled === true) {
-            disabledKeys.push(key);
-        }
-    }
-    if (disabledKeys.length > 0) {
-        const cleanupDisabledFilters = () => {
-            const current = { ...(this.filters.filters ?? {}) };
-            let changed = false;
-            for (const key of disabledKeys) {
-                const entry = current[key];
-                if (entry?._disabled === true) {
-                    delete current[key];
-                    changed = true;
-                }
-            }
-            if (changed) {
-                this.filters = { ...this.filters, filters: current };
-            }
-        };
-        const maxTransitionMs = Math.max(...disabledKeys.map((key) => {
+        this.nextResource?.setFilters(this.filters);
+        const disabledKeys = [];
+        for (const key in newFilterSettings) {
             const val = newFilterSettings[key];
-            const tr = val?.transition;
-            return tr?.durationMs ?? 0;
-        }));
-        if (maxTransitionMs <= 0) {
-            cleanupDisabledFilters();
+            if (val?._disabled === true) {
+                disabledKeys.push(key);
+            }
         }
-        else {
-            const cleanupTimer = setTimeout(() => {
+        if (disabledKeys.length > 0) {
+            const cleanupDisabledFilters = () => {
+                const current = { ...(this.filters.filters ?? {}) };
+                let changed = false;
+                for (const key of disabledKeys) {
+                    const entry = current[key];
+                    if (entry?._disabled === true) {
+                        delete current[key];
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    this.filters = { ...this.filters, filters: current };
+                }
+            };
+            const maxTransitionMs = Math.max(...disabledKeys.map((key) => {
+                const val = newFilterSettings[key];
+                const tr = val?.transition;
+                return tr?.durationMs ?? 0;
+            }));
+            if (maxTransitionMs <= 0) {
                 cleanupDisabledFilters();
-            }, maxTransitionMs + 500);
-            cleanupTimer.unref?.();
+            }
+            else {
+                const cleanupTimer = setTimeout(() => {
+                    cleanupDisabledFilters();
+                }, maxTransitionMs + 500);
+                cleanupTimer.unref?.();
+            }
         }
+        this.emitEvent(GatewayEvents.FILTERS_CHANGED, { filters: this.filters });
+        return true;
     }
-    this.emitEvent(GatewayEvents.FILTERS_CHANGED, { filters: this.filters });
-    return true;
-}
-updateVoice(voicePayload, (Partial) = {}, force = false);
-void {
-    : .destroying, return: ,
-    const: { sessionId, token, endpoint, channelId } = voicePayload,
-    let, changed = false,
-    if(sessionId) { }
-} !== undefined && this.voice.sessionId !== sessionId;
-{
-    this.voice.sessionId = sessionId;
-    changed = true;
-}
-if (token !== undefined && this.voice.token !== token) {
-    this.voice.token = token;
-    changed = true;
-}
-if (endpoint !== undefined && this.voice.endpoint !== endpoint) {
-    this.voice.endpoint = endpoint;
-    changed = true;
-}
-if (channelId !== undefined && this.voice.channelId !== channelId) {
-    this.voice.channelId = channelId;
-    changed = true;
-}
-if (this.voice.sessionId && this.voice.token && this.voice.endpoint) {
-    if (!changed && !force) {
-        logger('debug', 'Player', `Voice state for guild ${this.guildId} is unchanged. Skipping update.`);
-        return;
-    }
-    logger('debug', 'Player', `Updating voice state for guild ${this.guildId}`);
-    if (!this.connection)
-        this._initConnection();
-    if (this.voice.channelId && this.connection) {
-        this.connection.channelId = this.voice.channelId;
-    }
-    this.connection?.voiceStateUpdate({ session_id: this.voice.sessionId });
-    if (force && this.connection?.voiceServer) {
-        this.connection.voiceServer = null;
-    }
-    this.connection?.voiceServerUpdate({
-        token: this.voice.token,
-        endpoint: this.voice.endpoint
-    });
-    this.connection?.connect(async () => {
+    /**
+     * Updates the voice state for this player.
+     *
+     * @param voicePayload - Session/token/endpoint/channel updates.
+     * @param force - Forces reconnect even when unchanged.
+     */
+    updateVoice(voicePayload = {}, force = false) {
         if (this.destroying)
             return;
-        if (this.connection?.audioStream && !this.isPaused) {
-            this.connection.unpause?.('reconnected');
+        const { sessionId, token, endpoint, channelId } = voicePayload;
+        let changed = false;
+        if (sessionId !== undefined && this.voice.sessionId !== sessionId) {
+            this.voice.sessionId = sessionId;
+            changed = true;
         }
-        if (this.track &&
-            !this.connection?.audioStream &&
-            !this.isUpdatingTrack) {
-            logger('debug', 'Player', `Voice state updated for guild ${this.guildId}, starting pending track.`);
-            await this._startPlayback();
+        if (token !== undefined && this.voice.token !== token) {
+            this.voice.token = token;
+            changed = true;
         }
-    });
-}
-else {
-    logger('warn', 'Player', `Incomplete voice update for guild ${this.guildId}. Missing sessionId, token, or endpoint.`);
-}
-destroy(emitClose = true);
-void {
-    : .destroying, return: this.destroying = true,
-    : .guildId
-} `)
-    if (this.connection) {
-      try {
-        if (this.connection.audioStream) {
-          this.connection.stop(EndReasons.CLEANUP)
-          this._cleanupCurrentAudioStream('destroy')
+        if (endpoint !== undefined && this.voice.endpoint !== endpoint) {
+            this.voice.endpoint = endpoint;
+            changed = true;
         }
-        this.connection.destroy()
-        this.connection = null
-      } catch (err) {
-        const error = err as Error
-        logger(
-          'error',
-          'internal',
-          `;
-Failed;
-to;
-destroy;
-connection;
-for (guild; $; { this: .guildId })
-    : $;
-{
-    error.message;
-}
-`
-        )
-      }
-    }
-    if (emitClose) {
-      this.emitEvent(GatewayEvents.WEBSOCKET_CLOSED, {
-        code: 1000,
-        reason: 'destroyed by client',
-        byRemote: false
-      })
-    }
-    this.emitEvent(GatewayEvents.PLAYER_DESTROYED, {
-      guildId: this.guildId
-    })
-
-    if (this.audioMixer) {
-      this.audioMixer.destroy()
-      this.audioMixer = null
-    }
-    this._audioMixerInitPromise = null
-
-    this._resetTrack()
-    this.connStatus = 'destroyed'
-    this.volumePercent = this.nodelink.options?.defaultVolume ?? 100
-  }
-
-  /**
-   * Adds an additional mix layer over the main stream.
-   *
-   * @param trackPayload - Track to mix in PCM form.
-   * @param volume - Optional mix volume (0-1). Defaults to mix config.
-   * @throws Error when no active main stream or mixer limits exceeded.
-   */
-  public async addMix(
-    trackPayload: PlayerTrack,
-    volume: number | null = null
-  ): Promise<{
-    id: string
-    track: PlayerTrack
-    volume: number
-  }> {
-    if (!this.track || this.isPaused) {
-      throw new Error('Cannot add mix without an active stream')
-    }
-
-    await this._ensureAudioMixer()
-    if (!this.audioMixer) throw new Error('AudioMixer not initialized')
-
-    const mixConfig = this.nodelink?.options?.playback.mix ?? {
-      enabled: true,
-      defaultVolume: 0.8,
-      maxLayersMix: 5
-    }
-
-    if (this.audioMixer.mixLayers.size >= (mixConfig.maxLayersMix ?? 5)) {
-      throw new Error(
-        `;
-Maximum;
-number;
-of;
-mix;
-layers($, { mixConfig, : .maxLayersMix });
-reached `
-      )
-    }
-
-    const mixVolume = volume ?? mixConfig.defaultVolume ?? 0.8
-
-    const { createAudioResource: createResource } = await import(
-      './processing/streamProcessor.ts'
-    )
-
-    const urlData = await this.nodelink.sources.getTrackUrl(trackPayload.info)
-    if (!urlData?.url) {
-      throw new Error('Failed to get stream URL for mix track')
-    }
-
-    const fetched = await this.nodelink.sources.getTrackStream(
-      (urlData.newTrack?.info as TrackInfoExtended) || trackPayload.info,
-      urlData.url as string,
-      urlData.protocol as string,
-      urlData.additionalData
-    )
-
-    if (fetched.exception) {
-      throw new Error(fetched.exception.message)
-    }
-
-    const pcmResource = createResource(
-      this.guildId,
-      fetched.stream as NonNullable<typeof fetched.stream>,
-      fetched.type || (urlData.format as string) || 'unknown',
-      this.nodelink,
-      {},
-      mixVolume,
-      null,
-      true
-    ) as AudioResource & { stream: VoiceAudioStream }
-
-    const mixId = this.audioMixer.addLayer(
-      pcmResource.stream,
-      trackPayload,
-      mixVolume
-    )
-
-    return {
-      id: mixId,
-      track: trackPayload,
-      volume: mixVolume
-    }
-  }
-
-  /**
-   * Removes a mix layer by id.
-   *
-   * @param mixId - Identifier returned by addMix.
-   * @returns True when removed.
-   */
-  public removeMix(mixId: string): boolean {
-    if (!this.audioMixer) {
-      return false
-    }
-    return this.audioMixer.removeLayer(mixId)
-  }
-
-  /**
-   * Updates the volume of a mix layer.
-   *
-   * @param mixId - Identifier of the mix layer.
-   * @param volume - New volume (0-1).
-   * @returns True when updated; false if layer missing.
-   */
-  public updateMix(mixId: string, volume: number): boolean {
-    if (!this.audioMixer) {
-      return false
-    }
-    return this.audioMixer.updateLayerVolume(mixId, volume)
-  }
-
-  /**
-   * Lists active mix layers.
-   *
-   * @returns Current mix layers with track and volume.
-   */
-  public getMixes(): Array<{
-    id: string
-    track: PlayerTrack
-    volume: number
-    position: number
-    startTime: number
-  }> {
-    if (!this.audioMixer) {
-      return []
-    }
-    return this.audioMixer.getLayers()
-  }
-
-  /**
-   * Subscribes to lyrics events for the current track.
-   *
-   * @param skipTrackSource - When true, skips track source provider before fetching lyrics.
-   */
-  public async subscribeLyrics(
-    skipTrackSource: boolean | string | undefined
-  ): Promise<void> {
-    return new Promise((resolve) => {
-      if (this.isLyricsSubscribed) {
-        return resolve()
-      }
-
-      this.isLyricsSubscribed = true
-      this.skipTrackSource =
-        skipTrackSource === 'true' || skipTrackSource === true
-
-      if (this.track && !this.isPaused) {
-        this._loadLyrics().catch((error: unknown) => {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error)
-          logger(
-            'warn',
-            'Lyrics',
-            `;
-Failed;
-to;
-load;
-lyrics;
-for (guild; $; { this: .guildId })
-    : $;
-{
-    errorMessage;
-}
-`
-          )
-        })
-      }
-
-      return resolve()
-    })
-  }
-
-  /**
-   * Unsubscribes from lyrics events.
-   */
-  public unsubscribeLyrics(): Promise<void> {
-    return new Promise((resolve) => {
-      this.isLyricsSubscribed = false
-      this.skipTrackSource = false
-      this.currentLyrics = null
-      this.lyricsLineIndex = -1
-      if (this._lyricsMarkerTimer) {
-        clearTimeout(this._lyricsMarkerTimer)
-        this._lyricsMarkerTimer = null
-      }
-      return resolve()
-    })
-  }
-
-  /**
-   * Returns current SponsorBlock state for the player.
-   *
-   * @returns Current segments and configuration.
-   */
-  public getSponsorBlock(): PlayerSponsorBlockState {
-    return this.sponsorBlock
-  }
-
-  /**
-   * Updates SponsorBlock settings for the player.
-   *
-   * @param updates - Configuration updates.
-   */
-  public updateSponsorBlock(
-    updates: Partial<
-      Omit<PlayerSponsorBlockState, 'segments' | 'lastSkippedUuid'>
-    >
-  ): void {
-    if (updates.enabled !== undefined)
-      this.sponsorBlock.enabled = updates.enabled
-    if (updates.categories !== undefined)
-      this.sponsorBlock.categories = updates.categories
-    if (updates.actionTypes !== undefined)
-      this.sponsorBlock.actionTypes = updates.actionTypes
-  }
-
-  /**
-   * Overrides SponsorBlock segments for the current track.
-   *
-   * @param segments - Array of segments to apply.
-   */
-  public setSponsorBlockSegments(segments: SponsorBlockSegment[]): void {
-    this.sponsorBlock.segments = segments
-    this.sponsorBlock.lastSkippedUuid = null
-  }
-
-  /**
-   * Clears SponsorBlock state for the player.
-   */
-  public clearSponsorBlock(): void {
-    this.sponsorBlock.segments = []
-    this.sponsorBlock.lastSkippedUuid = null
-  }
-
-  /**
-   * Loads lyrics for the current track and emits events.
-   */
-  private async _loadLyrics(): Promise<void> {
-    if (!this.track) return
-
-    const lyricsManager =
-      this.nodelink.lyrics ?? (await this.nodelink.getLyricsManager?.())
-    if (!lyricsManager) return
-
-    const lyricsData = await lyricsManager.loadLyrics(
-      { info: this.track.info },
-      undefined,
-      this.skipTrackSource
-    )
-
-    if (lyricsData && lyricsData.loadType === 'lyrics') {
-      const lines: LyricsLine[] = lyricsData.data.lines.map((line) => ({
-        timestamp: line.time,
-        duration: line.duration || 0,
-        line: line.text,
-        words: line.words || [],
-        plugin: {}
-      }))
-
-      for (let i = 0; i < lines.length - 1; i++) {
-        const current = lines[i]
-        const next = lines[i + 1]
-        if (!current || !next) continue
-        if (current.duration === 0) {
-          current.duration = next.timestamp - current.timestamp
+        if (channelId !== undefined && this.voice.channelId !== channelId) {
+            this.voice.channelId = channelId;
+            changed = true;
         }
-      }
-
-      const payload: LyricsPayload = {
-        sourceName: this.track.info.sourceName,
-        provider: lyricsData.data.provider,
-        text: lyricsData.data.lines.map((l) => l.text).join('\n'),
-        lines,
-        plugin: {}
-      }
-
-      this.currentLyrics = payload
-      this.lyricsLineIndex = -1
-      this.emitEvent('LyricsFoundEvent', { lyrics: this.currentLyrics })
-      if (this._lyricsMarkerTimer) {
-        clearTimeout(this._lyricsMarkerTimer)
-        this._lyricsMarkerTimer = null
-      }
-      this._recalculateLyricsIndex(undefined, undefined, true)
-      this._syncLyrics(true)
-    } else {
-      this.currentLyrics = null
-      this.emitEvent('LyricsNotFoundEvent')
-    }
-  }
-
-  /**
-   * Synchronizes lyrics with current playback position.
-   */
-  private _syncLyrics(force = false): void {
-    if (!this.isLyricsSubscribed || !this.currentLyrics?.lines) return
-    if (this._lyricsMarkerTimer && !force) return
-
-    const timescale = this._getTimescale()
-    const playbackSpeed = timescale.speed * timescale.rate
-    const position = this._getLyricsPosition(playbackSpeed)
-    const lines = this.currentLyrics.lines
-    this._recalculateLyricsIndex(position, lines)
-
-    const nextIndex = this.lyricsLineIndex + 1
-    const nextLine = lines[nextIndex]
-    if (!nextLine) return
-
-    const nextTimestamp = nextLine.timestamp
-    const delayMs = Math.max(0, (nextTimestamp - position) / playbackSpeed)
-
-    this._lyricsMarkerTimer = setTimeout(() => {
-      this._lyricsMarkerTimer = null
-      if (!this.isLyricsSubscribed || !this.currentLyrics?.lines) return
-      const timedLine = this.currentLyrics.lines[nextIndex]
-      if (!timedLine) return
-      const nowPosition = this._getLyricsPosition(playbackSpeed)
-      const drift = nowPosition - nextTimestamp
-
-      if (drift < -15) {
-        this._syncLyrics(true)
-        return
-      }
-
-      if (Math.abs(drift) > 100) {
-        this._lyricsBasePosition -= drift * 0.25
-      }
-
-      this.lyricsLineIndex = nextIndex
-      this.emitEvent('LyricsLineEvent', {
-        lineIndex: nextIndex,
-        line: timedLine,
-        skipped: drift > 60
-      })
-      this._syncLyrics(true)
-    }, delayMs)
-  }
-
-  /**
-   * Computes current lyrics position based on packets received.
-   */
-  private _getLyricsPosition(playbackSpeed: number): number {
-    const stats = this.connection?.statistics
-    const packets = stats?.packetsExpected ?? this._lyricsBasePackets
-    const deltaPackets = Math.max(0, packets - this._lyricsBasePackets)
-
-    return this._lyricsBasePosition + deltaPackets * 20 * playbackSpeed
-  }
-
-  /**
-   * Recalculates the current lyric line index.
-   */
-  private _recalculateLyricsIndex(
-    positionOverride?: number,
-    linesOverride?: LyricsLine[],
-    allowBackward = false
-  ): void {
-    if (!this.currentLyrics?.lines) return
-
-    const lines = linesOverride || this.currentLyrics.lines
-    let position = positionOverride
-
-    if (position === undefined) {
-      const timescale = this._getTimescale()
-      const playbackSpeed = timescale.speed * timescale.rate
-      position = this._getLyricsPosition(playbackSpeed)
-    }
-
-    let foundIndex = -1
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      if (!line) continue
-      if (line.timestamp <= position) {
-        foundIndex = i
-      } else {
-        break
-      }
-    }
-
-    if (!allowBackward && foundIndex < this.lyricsLineIndex) {
-      return
-    }
-
-    if (foundIndex !== this.lyricsLineIndex) {
-      const skipped = foundIndex > this.lyricsLineIndex + 1
-      this.lyricsLineIndex = foundIndex
-
-      if (foundIndex !== -1) {
-        const line = lines[foundIndex]
-        if (!line) return
-        this.emitEvent('LyricsLineEvent', {
-          lineIndex: foundIndex,
-          line: line,
-          skipped
-        })
-      }
-    }
-  }
-
-  /**
-   * Serializes player state to JSON-safe object.
-   */
-  public toJSON(): PlayerStateJSON {
-    return {
-      guildId: this.guildId,
-      track: this.track,
-      volume: this.volumePercent,
-      fading: this.fading,
-      loudnessNormalizer: this.loudnessNormalizer,
-      paused: this.isPaused,
-      filters: this.filters,
-      state: {
-        time: Date.now(),
-        position: this._realPosition(),
-        connected: this.connStatus === 'connected',
-        ping:
-          this.connection && this.connection.ping >= 0
-            ? this.connection.ping
-            : 0
-      },
-      voice: { ...this.voice }
-    }
-  }
-
-  /**
-   * Handles fading, tape, and scratch actions for start/stop/seek/pause events.
-   */
-  private _fading(
-    action:
-      | 'reset'
-      | 'trackStart'
-      | 'trackStartArm'
-      | 'trackEndSchedule'
-      | 'trackStop'
-      | 'seek'
-      | 'seekPrepare'
-      | 'pause'
-      | 'resume',
-    payload: { resource?: AudioResource; startPosition?: number } = {}
-  ): boolean {
-    const timers = this._fadeTimers
-    if (!timers) return false
-
-    if (action === 'reset') {
-      if (timers.trackEnd) clearTimeout(timers.trackEnd)
-      if (timers.pause) {
-        if (timers.pause instanceof Object && 'interval' in timers.pause) {
-          clearInterval(timers.pause.interval)
-          if (timers.pause.timeout) clearTimeout(timers.pause.timeout)
-        } else {
-          clearTimeout(timers.pause as NodeJS.Timeout)
+        if (this.voice.sessionId && this.voice.token && this.voice.endpoint) {
+            if (!changed && !force) {
+                logger('debug', 'Player', `Voice state for guild ${this.guildId} is unchanged. Skipping update.`);
+                return;
+            }
+            logger('debug', 'Player', `Updating voice state for guild ${this.guildId}`);
+            if (!this.connection)
+                this._initConnection();
+            if (this.voice.channelId && this.connection) {
+                this.connection.channelId = this.voice.channelId;
+            }
+            this.connection?.voiceStateUpdate({ session_id: this.voice.sessionId });
+            if (force && this.connection?.voiceServer) {
+                this.connection.voiceServer = null;
+            }
+            this.connection?.voiceServerUpdate({
+                token: this.voice.token,
+                endpoint: this.voice.endpoint
+            });
+            this.connection?.connect(async () => {
+                if (this.destroying)
+                    return;
+                if (this.connection?.audioStream && !this.isPaused) {
+                    this.connection.unpause?.('reconnected');
+                }
+                if (this.track &&
+                    !this.connection?.audioStream &&
+                    !this.isUpdatingTrack) {
+                    logger('debug', 'Player', `Voice state updated for guild ${this.guildId}, starting pending track.`);
+                    await this._startPlayback();
+                }
+            });
         }
-      }
-      if (timers.stop) {
-        if (typeof timers.stop === 'object' && 'interval' in timers.stop) {
-          clearInterval(timers.stop.interval)
-          if (timers.stop.timeout) clearTimeout(timers.stop.timeout)
-        } else {
-          clearTimeout(timers.stop)
+        else {
+            logger('warn', 'Player', `Incomplete voice update for guild ${this.guildId}. Missing sessionId, token, or endpoint.`);
         }
-      }
-      timers.trackEnd = null
-      timers.pause = null
-      timers.stop = null
-      this._pendingTrackStartFade = false
-      return false
     }
-
-    if (action === 'trackEndSchedule' && timers.trackEnd) {
-      clearTimeout(timers.trackEnd)
-      timers.trackEnd = null
+    /**
+     * Destroys the player and cleans up the voice connection.
+     *
+     * @param emitClose - Whether to emit WEBSOCKET_CLOSED to the client.
+     */
+    destroy(emitClose = true) {
+        if (this.destroying)
+            return;
+        this.destroying = true;
+        logger('debug', 'Player', `Destroying player for guild ${this.guildId}`);
+        if (this.connection) {
+            try {
+                if (this.connection.audioStream) {
+                    this.connection.stop(EndReasons.CLEANUP);
+                    this._cleanupCurrentAudioStream('destroy');
+                }
+                this.connection.destroy();
+                this.connection = null;
+            }
+            catch (err) {
+                const error = err;
+                logger('error', 'internal', `Failed to destroy connection for guild ${this.guildId}: ${error.message} `);
+            }
+        }
+        if (emitClose) {
+            this.emitEvent(GatewayEvents.WEBSOCKET_CLOSED, {
+                code: 1000,
+                reason: 'destroyed by client',
+                byRemote: false
+            });
+        }
+        this.emitEvent(GatewayEvents.PLAYER_DESTROYED, {
+            guildId: this.guildId
+        });
+        if (this.audioMixer) {
+            this.audioMixer.destroy();
+            this.audioMixer = null;
+        }
+        this._audioMixerInitPromise = null;
+        this._resetTrack();
+        this.connStatus = 'destroyed';
+        this.volumePercent = this.nodelink.options?.defaultVolume ?? 100;
     }
-
-    if (action === 'trackEndSchedule') {
-      if (!this.track?.info) return false
-      const total =
-        this.track.endTime && this.track.endTime > 0
-          ? this.track.endTime
-          : this.track.info.length || 0
-      if (!Number.isFinite(total) || total <= 0) return false
-
-      const startPosition = payload.startPosition || 0
-      const remaining = Math.max(0, total - startPosition)
-      const teSection = this.fading?.trackEnd as FadingSection | undefined
-      const hasFade =
-        teSection &&
-        Number.isFinite(teSection.duration) &&
-        teSection.duration > 0
-      const fadeDuration = hasFade ? Math.min(teSection.duration, remaining) : 0
-      const fadeType = hasFade ? teSection.type || 'volume' : 'volume'
-      const delay = Math.max(0, remaining - fadeDuration)
-      const scratchStyle = (hasFade ? teSection.curve : undefined) as
-        | import('../typings/playback/processing.types.ts').ScratchStyle
-        | undefined
-
-      if (fadeType === 'tape' || fadeType === 'scratch') {
-        this._snapshotPosition()
-      }
-
-      timers.trackEnd = setTimeout(() => {
-        const stream = this.connection?.audioStream as AudioResource | undefined
-        if (stream) {
-          if (hasFade && teSection) {
+    /**
+     * Adds an additional mix layer over the main stream.
+     *
+     * @param trackPayload - Track to mix in PCM form.
+     * @param volume - Optional mix volume (0-1). Defaults to mix config.
+     * @throws Error when no active main stream or mixer limits exceeded.
+     */
+    async addMix(trackPayload, volume = null) {
+        if (!this.track || this.isPaused) {
+            throw new Error('Cannot add mix without an active stream');
+        }
+        await this._ensureAudioMixer();
+        if (!this.audioMixer)
+            throw new Error('AudioMixer not initialized');
+        const mixConfig = this.nodelink?.options?.playback.mix ?? {
+            enabled: true,
+            defaultVolume: 0.8,
+            maxLayersMix: 5
+        };
+        if (this.audioMixer.mixLayers.size >= (mixConfig.maxLayersMix ?? 5)) {
+            throw new Error(`Maximum number of mix layers(${mixConfig.maxLayersMix}) reached`);
+        }
+        const mixVolume = volume ?? mixConfig.defaultVolume ?? 0.8;
+        const { createAudioResource: createResource } = await import("./processing/streamProcessor.js");
+        const urlData = await this.nodelink.sources.getTrackUrl(trackPayload.info);
+        if (!urlData?.url) {
+            throw new Error('Failed to get stream URL for mix track');
+        }
+        const fetched = await this.nodelink.sources.getTrackStream(urlData.newTrack?.info || trackPayload.info, urlData.url, urlData.protocol, urlData.additionalData);
+        if (fetched.exception) {
+            throw new Error(fetched.exception.message);
+        }
+        const pcmResource = createResource(this.guildId, fetched.stream, fetched.type || urlData.format || 'unknown', this.nodelink, {}, mixVolume, null, true);
+        const mixId = this.audioMixer.addLayer(pcmResource.stream, trackPayload, mixVolume);
+        return {
+            id: mixId,
+            track: trackPayload,
+            volume: mixVolume
+        };
+    }
+    /**
+     * Removes a mix layer by id.
+     *
+     * @param mixId - Identifier returned by addMix.
+     * @returns True when removed.
+     */
+    removeMix(mixId) {
+        if (!this.audioMixer) {
+            return false;
+        }
+        return this.audioMixer.removeLayer(mixId);
+    }
+    /**
+     * Updates the volume of a mix layer.
+     *
+     * @param mixId - Identifier of the mix layer.
+     * @param volume - New volume (0-1).
+     * @returns True when updated; false if layer missing.
+     */
+    updateMix(mixId, volume) {
+        if (!this.audioMixer) {
+            return false;
+        }
+        return this.audioMixer.updateLayerVolume(mixId, volume);
+    }
+    /**
+     * Lists active mix layers.
+     *
+     * @returns Current mix layers with track and volume.
+     */
+    getMixes() {
+        if (!this.audioMixer) {
+            return [];
+        }
+        return this.audioMixer.getLayers();
+    }
+    /**
+     * Subscribes to lyrics events for the current track.
+     *
+     * @param skipTrackSource - When true, skips track source provider before fetching lyrics.
+     */
+    async subscribeLyrics(skipTrackSource) {
+        return new Promise((resolve) => {
+            if (this.isLyricsSubscribed) {
+                return resolve();
+            }
+            this.isLyricsSubscribed = true;
+            this.skipTrackSource =
+                skipTrackSource === 'true' || skipTrackSource === true;
+            if (this.track && !this.isPaused) {
+                this._loadLyrics().catch((error) => {
+                    const errorMessage = error instanceof Error ? error.message : String(error);
+                    logger('warn', 'Lyrics', `Failed to load lyrics for guild ${this.guildId}: ${errorMessage} `);
+                });
+            }
+            return resolve();
+        });
+    }
+    /**
+     * Unsubscribes from lyrics events.
+     */
+    unsubscribeLyrics() {
+        return new Promise((resolve) => {
+            this.isLyricsSubscribed = false;
+            this.skipTrackSource = false;
+            this.currentLyrics = null;
+            this.lyricsLineIndex = -1;
+            if (this._lyricsMarkerTimer) {
+                clearTimeout(this._lyricsMarkerTimer);
+                this._lyricsMarkerTimer = null;
+            }
+            return resolve();
+        });
+    }
+    /**
+     * Returns current SponsorBlock state for the player.
+     *
+     * @returns Current segments and configuration.
+     */
+    getSponsorBlock() {
+        return this.sponsorBlock;
+    }
+    /**
+     * Updates SponsorBlock settings for the player.
+     *
+     * @param updates - Configuration updates.
+     */
+    updateSponsorBlock(updates) {
+        if (updates.enabled !== undefined)
+            this.sponsorBlock.enabled = updates.enabled;
+        if (updates.categories !== undefined)
+            this.sponsorBlock.categories = updates.categories;
+        if (updates.actionTypes !== undefined)
+            this.sponsorBlock.actionTypes = updates.actionTypes;
+    }
+    /**
+     * Overrides SponsorBlock segments for the current track.
+     *
+     * @param segments - Array of segments to apply.
+     */
+    setSponsorBlockSegments(segments) {
+        this.sponsorBlock.segments = segments;
+        this.sponsorBlock.lastSkippedUuid = null;
+    }
+    /**
+     * Clears SponsorBlock state for the player.
+     */
+    clearSponsorBlock() {
+        this.sponsorBlock.segments = [];
+        this.sponsorBlock.lastSkippedUuid = null;
+    }
+    /**
+     * Loads lyrics for the current track and emits events.
+     */
+    async _loadLyrics() {
+        if (!this.track)
+            return;
+        const lyricsManager = this.nodelink.lyrics ?? (await this.nodelink.getLyricsManager?.());
+        if (!lyricsManager)
+            return;
+        const lyricsData = await lyricsManager.loadLyrics({ info: this.track.info }, undefined, this.skipTrackSource);
+        if (lyricsData && lyricsData.loadType === 'lyrics') {
+            const lines = lyricsData.data.lines.map((line) => ({
+                timestamp: line.time,
+                duration: line.duration || 0,
+                line: line.text,
+                words: line.words || [],
+                plugin: {}
+            }));
+            for (let i = 0; i < lines.length - 1; i++) {
+                const current = lines[i];
+                const next = lines[i + 1];
+                if (!current || !next)
+                    continue;
+                if (current.duration === 0) {
+                    current.duration = next.timestamp - current.timestamp;
+                }
+            }
+            const payload = {
+                sourceName: this.track.info.sourceName,
+                provider: lyricsData.data.provider,
+                text: lyricsData.data.lines.map((l) => l.text).join('\n'),
+                lines,
+                plugin: {}
+            };
+            this.currentLyrics = payload;
+            this.lyricsLineIndex = -1;
+            this.emitEvent('LyricsFoundEvent', { lyrics: this.currentLyrics });
+            if (this._lyricsMarkerTimer) {
+                clearTimeout(this._lyricsMarkerTimer);
+                this._lyricsMarkerTimer = null;
+            }
+            this._recalculateLyricsIndex(undefined, undefined, true);
+            this._syncLyrics(true);
+        }
+        else {
+            this.currentLyrics = null;
+            this.emitEvent('LyricsNotFoundEvent');
+        }
+    }
+    /**
+     * Synchronizes lyrics with current playback position.
+     */
+    _syncLyrics(force = false) {
+        if (!this.isLyricsSubscribed || !this.currentLyrics?.lines)
+            return;
+        if (this._lyricsMarkerTimer && !force)
+            return;
+        const timescale = this._getTimescale();
+        const playbackSpeed = timescale.speed * timescale.rate;
+        const position = this._getLyricsPosition(playbackSpeed);
+        const lines = this.currentLyrics.lines;
+        this._recalculateLyricsIndex(position, lines);
+        const nextIndex = this.lyricsLineIndex + 1;
+        const nextLine = lines[nextIndex];
+        if (!nextLine)
+            return;
+        const nextTimestamp = nextLine.timestamp;
+        const delayMs = Math.max(0, (nextTimestamp - position) / playbackSpeed);
+        this._lyricsMarkerTimer = setTimeout(() => {
+            this._lyricsMarkerTimer = null;
+            if (!this.isLyricsSubscribed || !this.currentLyrics?.lines)
+                return;
+            const timedLine = this.currentLyrics.lines[nextIndex];
+            if (!timedLine)
+                return;
+            const nowPosition = this._getLyricsPosition(playbackSpeed);
+            const drift = nowPosition - nextTimestamp;
+            if (drift < -15) {
+                this._syncLyrics(true);
+                return;
+            }
+            if (Math.abs(drift) > 100) {
+                this._lyricsBasePosition -= drift * 0.25;
+            }
+            this.lyricsLineIndex = nextIndex;
+            this.emitEvent('LyricsLineEvent', {
+                lineIndex: nextIndex,
+                line: timedLine,
+                skipped: drift > 60
+            });
+            this._syncLyrics(true);
+        }, delayMs);
+    }
+    /**
+     * Computes current lyrics position based on packets received.
+     */
+    _getLyricsPosition(playbackSpeed) {
+        const stats = this.connection?.statistics;
+        const packets = stats?.packetsExpected ?? this._lyricsBasePackets;
+        const deltaPackets = Math.max(0, packets - this._lyricsBasePackets);
+        return this._lyricsBasePosition + deltaPackets * 20 * playbackSpeed;
+    }
+    /**
+     * Recalculates the current lyric line index.
+     */
+    _recalculateLyricsIndex(positionOverride, linesOverride, allowBackward = false) {
+        if (!this.currentLyrics?.lines)
+            return;
+        const lines = linesOverride || this.currentLyrics.lines;
+        let position = positionOverride;
+        if (position === undefined) {
+            const timescale = this._getTimescale();
+            const playbackSpeed = timescale.speed * timescale.rate;
+            position = this._getLyricsPosition(playbackSpeed);
+        }
+        let foundIndex = -1;
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line)
+                continue;
+            if (line.timestamp <= position) {
+                foundIndex = i;
+            }
+            else {
+                break;
+            }
+        }
+        if (!allowBackward && foundIndex < this.lyricsLineIndex) {
+            return;
+        }
+        if (foundIndex !== this.lyricsLineIndex) {
+            const skipped = foundIndex > this.lyricsLineIndex + 1;
+            this.lyricsLineIndex = foundIndex;
+            if (foundIndex !== -1) {
+                const line = lines[foundIndex];
+                if (!line)
+                    return;
+                this.emitEvent('LyricsLineEvent', {
+                    lineIndex: foundIndex,
+                    line: line,
+                    skipped
+                });
+            }
+        }
+    }
+    /**
+     * Serializes player state to JSON-safe object.
+     */
+    toJSON() {
+        return {
+            guildId: this.guildId,
+            track: this.track,
+            volume: this.volumePercent,
+            fading: this.fading,
+            loudnessNormalizer: this.loudnessNormalizer,
+            paused: this.isPaused,
+            filters: this.filters,
+            state: {
+                time: Date.now(),
+                position: this._realPosition(),
+                connected: this.connStatus === 'connected',
+                ping: this.connection && this.connection.ping >= 0
+                    ? this.connection.ping
+                    : 0
+            },
+            voice: { ...this.voice }
+        };
+    }
+    /**
+     * Handles fading, tape, and scratch actions for start/stop/seek/pause events.
+     */
+    _fading(action, payload = {}) {
+        const timers = this._fadeTimers;
+        if (!timers)
+            return false;
+        if (action === 'reset') {
+            if (timers.trackEnd)
+                clearTimeout(timers.trackEnd);
+            if (timers.pause) {
+                if (timers.pause instanceof Object && 'interval' in timers.pause) {
+                    clearInterval(timers.pause.interval);
+                    if (timers.pause.timeout)
+                        clearTimeout(timers.pause.timeout);
+                }
+                else {
+                    clearTimeout(timers.pause);
+                }
+            }
+            if (timers.stop) {
+                if (typeof timers.stop === 'object' && 'interval' in timers.stop) {
+                    clearInterval(timers.stop.interval);
+                    if (timers.stop.timeout)
+                        clearTimeout(timers.stop.timeout);
+                }
+                else {
+                    clearTimeout(timers.stop);
+                }
+            }
+            timers.trackEnd = null;
+            timers.pause = null;
+            timers.stop = null;
+            this._pendingTrackStartFade = false;
+            return false;
+        }
+        if (action === 'trackEndSchedule' && timers.trackEnd) {
+            clearTimeout(timers.trackEnd);
+            timers.trackEnd = null;
+        }
+        if (action === 'trackEndSchedule') {
+            if (!this.track?.info)
+                return false;
+            const total = this.track.endTime && this.track.endTime > 0
+                ? this.track.endTime
+                : this.track.info.length || 0;
+            if (!Number.isFinite(total) || total <= 0)
+                return false;
+            const startPosition = payload.startPosition || 0;
+            const remaining = Math.max(0, total - startPosition);
+            const teSection = this.fading?.trackEnd;
+            const hasFade = teSection &&
+                Number.isFinite(teSection.duration) &&
+                teSection.duration > 0;
+            const fadeDuration = hasFade ? Math.min(teSection.duration, remaining) : 0;
+            const fadeType = hasFade ? teSection.type || 'volume' : 'volume';
+            const delay = Math.max(0, remaining - fadeDuration);
+            const scratchStyle = (hasFade ? teSection.curve : undefined);
+            if (fadeType === 'tape' || fadeType === 'scratch') {
+                this._snapshotPosition();
+            }
+            timers.trackEnd = setTimeout(() => {
+                const stream = this.connection?.audioStream;
+                if (stream) {
+                    if (hasFade && teSection) {
+                        if (fadeType === 'volume' || fadeType === 'both') {
+                            stream.fadeTo?.(0, fadeDuration, teSection.curve);
+                        }
+                        if (fadeType === 'tape' || fadeType === 'both') {
+                            stream.tapeTo?.(fadeDuration, 'stop', teSection.curve);
+                        }
+                        const effectiveScratchStyle = [
+                            'wash',
+                            'backspin',
+                            'baby',
+                            'stop'
+                        ].includes(scratchStyle ?? '')
+                            ? scratchStyle
+                            : 'wash';
+                        if (fadeType === 'scratch') {
+                            stream.scratchTo?.(fadeDuration, effectiveScratchStyle);
+                        }
+                    }
+                    if (fadeType !== 'volume' && hasFade) {
+                        const safetyTimeout = fadeDuration * 2 + 1500;
+                        const trackId = this.track?.info.identifier;
+                        setTimeout(() => {
+                            if (this.track?.info.identifier === trackId &&
+                                !this.isUpdatingTrack &&
+                                !this._isStopping) {
+                                logger('debug', 'Player', `Safety stop triggered for guild ${this.guildId} after long fade-out ramp.`);
+                                this.connection?.stop(EndReasons.FINISHED);
+                            }
+                        }, safetyTimeout).unref?.();
+                    }
+                    else if (fadeDuration === 0) {
+                        if (this.track && !this.isUpdatingTrack && !this._isStopping) {
+                            logger('debug', 'Player', `Scheduled track end for guild ${this.guildId} at ${this.track.info.length}ms`);
+                            this.connection?.stop(EndReasons.FINISHED);
+                        }
+                    }
+                    else {
+                        const trackId = this.track?.info.identifier;
+                        setTimeout(() => {
+                            if (this.track?.info.identifier === trackId &&
+                                !this.isUpdatingTrack &&
+                                !this._isStopping) {
+                                logger('debug', 'Player', `Track end after volume fade for guild ${this.guildId}`);
+                                this.connection?.stop(EndReasons.FINISHED);
+                            }
+                        }, fadeDuration + 100).unref?.();
+                    }
+                }
+                if (timers.trackEnd) {
+                    clearTimeout(timers.trackEnd);
+                    timers.trackEnd = null;
+                }
+            }, delay);
+            return true;
+        }
+        if (!this.fading || this.fading.enabled !== true)
+            return false;
+        let section = null;
+        if (action === 'trackStart' || action === 'trackStartArm')
+            section = this.fading.trackStart;
+        else if (action === 'trackStop')
+            section = this.fading.trackStop;
+        else if (action === 'seek' || action === 'seekPrepare')
+            section = this.fading.seek;
+        else if (action === 'pause')
+            section = this.fading.pause;
+        else if (action === 'resume')
+            section = this.fading.resume;
+        else
+            return false;
+        if (!section || !Number.isFinite(section.duration) || section.duration <= 0)
+            return false;
+        const fadeType = section.type || 'volume';
+        const scratchStyle = section.curve ||
+            'random';
+        if (fadeType === 'tape' || fadeType === 'scratch') {
+            this._snapshotPosition();
+        }
+        if (action === 'trackStartArm') {
+            const resource = payload.resource;
+            if (!resource)
+                return false;
             if (fadeType === 'volume' || fadeType === 'both') {
-              stream.fadeTo?.(0, fadeDuration, teSection.curve)
+                if (resource.setFadeVolume)
+                    resource.setFadeVolume(0);
             }
             if (fadeType === 'tape' || fadeType === 'both') {
-              stream.tapeTo?.(fadeDuration, 'stop', teSection.curve)
+                if (resource.tapeTo)
+                    resource.tapeTo(0, 'stop');
             }
-            const effectiveScratchStyle = [
-              'wash',
-              'backspin',
-              'baby',
-              'stop'
-            ].includes(scratchStyle ?? '')
-              ? (scratchStyle as import('../typings/playback/processing.types.ts').ScratchStyle)
-              : 'wash'
             if (fadeType === 'scratch') {
-              stream.scratchTo?.(fadeDuration, effectiveScratchStyle)
+                if (resource.scratchTo)
+                    resource.scratchTo(0, 'stop');
             }
-          }
-
-          if (fadeType !== 'volume' && hasFade) {
-            const safetyTimeout = fadeDuration * 2 + 1500
-            const trackId = this.track?.info.identifier
-            setTimeout(() => {
-              if (
-                this.track?.info.identifier === trackId &&
-                !this.isUpdatingTrack &&
-                !this._isStopping
-              ) {
-                logger(
-                  'debug',
-                  'Player',
-                  `;
-Safety;
-stop;
-triggered;
-for (guild; $; { this: .guildId })
-    after;
-long;
-fade - out;
-ramp. `
-                )
-                this.connection?.stop(EndReasons.FINISHED)
-              }
-            }, safetyTimeout).unref?.()
-          } else if (fadeDuration === 0) {
-            if (this.track && !this.isUpdatingTrack && !this._isStopping) {
-              logger(
-                'debug',
-                'Player',
-                `;
-Scheduled;
-track;
-end;
-for (guild; $; { this: .guildId })
-    at;
-$;
-{
-    this.track.info.length;
-}
-ms `
-              )
-              this.connection?.stop(EndReasons.FINISHED)
+            this._pendingTrackStartFade = true;
+            return true;
+        }
+        if (action === 'trackStart') {
+            if (!this._pendingTrackStartFade)
+                return false;
+            const stream = payload.resource?.stream ||
+                this.connection?.audioStream;
+            if (!stream)
+                return false;
+            this._pendingTrackStartFade = false;
+            if (fadeType === 'volume' || fadeType === 'both') {
+                if (stream.fadeTo)
+                    stream.fadeTo?.(1, section.duration, section.curve);
             }
-          } else {
-            const trackId = this.track?.info.identifier
-            setTimeout(() => {
-              if (
-                this.track?.info.identifier === trackId &&
-                !this.isUpdatingTrack &&
-                !this._isStopping
-              ) {
-                logger(
-                  'debug',
-                  'Player',
-                  `;
-Track;
-end;
-after;
-volume;
-fade;
-for (guild; $; { this: .guildId } `
-                )
-                this.connection?.stop(EndReasons.FINISHED)
-              }
-            }, fadeDuration + 100).unref?.()
-          }
+            if (fadeType === 'tape' || fadeType === 'both') {
+                if (stream.tapeTo)
+                    stream.tapeTo?.(section.duration, 'start', section.curve);
+            }
+            if (fadeType === 'scratch') {
+                if (stream.scratchTo)
+                    stream.scratchTo?.(section.duration, scratchStyle);
+            }
+            return true;
         }
-        if (timers.trackEnd) {
-          clearTimeout(timers.trackEnd)
-          timers.trackEnd = null
+        if (action === 'seekPrepare') {
+            const resource = payload.resource;
+            if (!resource)
+                return false;
+            if (fadeType === 'volume' || fadeType === 'both') {
+                if (resource.setFadeVolume)
+                    resource.setFadeVolume(0);
+            }
+            if (fadeType === 'tape' || fadeType === 'both') {
+                if (resource.tapeTo)
+                    resource.tapeTo(0, 'stop');
+            }
+            if (fadeType === 'scratch') {
+                if (resource.scratchTo)
+                    resource.scratchTo(0, 'stop');
+            }
+            return true;
         }
-      }, delay)
-      return true
-    }
-
-    if (!this.fading || this.fading.enabled !== true) return false
-
-    let section: FadingSection | undefined | null = null
-    if (action === 'trackStart' || action === 'trackStartArm')
-      section = this.fading.trackStart
-    else if (action === 'trackStop') section = this.fading.trackStop
-    else if (action === 'seek' || action === 'seekPrepare')
-      section = this.fading.seek
-    else if (action === 'pause') section = this.fading.pause
-    else if (action === 'resume') section = this.fading.resume
-    else return false
-
-    if (!section || !Number.isFinite(section.duration) || section.duration <= 0)
-      return false
-
-    const fadeType = section.type || 'volume'
-    const scratchStyle =
-      (section.curve as import('../typings/playback/processing.types.ts').ScratchStyle) ||
-      'random'
-
-    if (fadeType === 'tape' || fadeType === 'scratch') {
-      this._snapshotPosition()
-    }
-
-    if (action === 'trackStartArm') {
-      const resource = payload.resource
-      if (!resource) return false
-      if (fadeType === 'volume' || fadeType === 'both') {
-        if (resource.setFadeVolume) resource.setFadeVolume(0)
-      }
-      if (fadeType === 'tape' || fadeType === 'both') {
-        if (resource.tapeTo) resource.tapeTo(0, 'stop')
-      }
-      if (fadeType === 'scratch') {
-        if (resource.scratchTo) resource.scratchTo(0, 'stop')
-      }
-      this._pendingTrackStartFade = true
-      return true
-    }
-
-    if (action === 'trackStart') {
-      if (!this._pendingTrackStartFade) return false
-      const stream =
-        (payload.resource as AudioResource | undefined)?.stream ||
-        this.connection?.audioStream
-      if (!stream) return false
-      this._pendingTrackStartFade = false
-
-      if (fadeType === 'volume' || fadeType === 'both') {
-        if ((stream as AudioResource).fadeTo)
-          (stream as AudioResource).fadeTo?.(1, section.duration, section.curve)
-      }
-      if (fadeType === 'tape' || fadeType === 'both') {
-        if ((stream as AudioResource).tapeTo)
-          (stream as AudioResource).tapeTo?.(
-            section.duration,
-            'start',
-            section.curve
-          )
-      }
-      if (fadeType === 'scratch') {
-        if ((stream as AudioResource).scratchTo)
-          (stream as AudioResource).scratchTo?.(section.duration, scratchStyle)
-      }
-      return true
-    }
-
-    if (action === 'seekPrepare') {
-      const resource = payload.resource
-      if (!resource) return false
-      if (fadeType === 'volume' || fadeType === 'both') {
-        if (resource.setFadeVolume) resource.setFadeVolume(0)
-      }
-      if (fadeType === 'tape' || fadeType === 'both') {
-        if (resource.tapeTo) resource.tapeTo(0, 'stop')
-      }
-      if (fadeType === 'scratch') {
-        if (resource.scratchTo) resource.scratchTo(0, 'stop')
-      }
-      return true
-    }
-
-    if (action === 'seek') {
-      const stream = this.connection?.audioStream as AudioResource | undefined
-      if (!stream) return false
-
-      if (fadeType === 'volume' || fadeType === 'both') {
-        if (stream.setFadeVolume) stream.setFadeVolume(0)
-        stream.fadeTo?.(1, section.duration, section.curve)
-      }
-      if (fadeType === 'tape' || fadeType === 'both') {
-        stream.tapeTo?.(section.duration, 'start', section.curve)
-      }
-      if (fadeType === 'scratch') {
-        stream.scratchTo?.(section.duration, 'start')
-      }
-      return true
-    }
-
-    if (action === 'pause') {
-      const stream = this.connection?.audioStream as AudioResource | undefined
-      if (!stream) return false
-      logger(
-        'debug',
-        'Player',
-        `)
-    Pause;
-fade;
-triggered;
-for (guild; $; { this: .guildId } `
-      )
-      if (timers.trackEnd) {
-        clearTimeout(timers.trackEnd)
-        timers.trackEnd = null
-      }
-      if (timers.pause) {
-        if (timers.pause instanceof Object && 'interval' in timers.pause) {
-          const pauseTimer = timers.pause as {
-            interval: NodeJS.Timeout
-            timeout?: NodeJS.Timeout
-          }
-          clearInterval(pauseTimer.interval)
-          if (pauseTimer.timeout) clearTimeout(pauseTimer.timeout)
-        } else {
-          clearTimeout(timers.pause as NodeJS.Timeout)
+        if (action === 'seek') {
+            const stream = this.connection?.audioStream;
+            if (!stream)
+                return false;
+            if (fadeType === 'volume' || fadeType === 'both') {
+                if (stream.setFadeVolume)
+                    stream.setFadeVolume(0);
+                stream.fadeTo?.(1, section.duration, section.curve);
+            }
+            if (fadeType === 'tape' || fadeType === 'both') {
+                stream.tapeTo?.(section.duration, 'start', section.curve);
+            }
+            if (fadeType === 'scratch') {
+                stream.scratchTo?.(section.duration, 'start');
+            }
+            return true;
         }
-      }
-
-      if (fadeType === 'volume' || fadeType === 'both') {
-        stream.fadeTo?.(0, section.duration, section.curve)
-      }
-      if (fadeType === 'tape' || fadeType === 'both') {
-        stream.tapeTo?.(section.duration, 'stop', section.curve)
-      }
-      if (fadeType === 'scratch') {
-        const style = ['wash', 'backspin', 'baby', 'stop'].includes(
-          scratchStyle
-        )
-          ? scratchStyle
-          : 'wash'
-        stream.scratchTo?.(section.duration, style)
-      }
-
-      const startTime = Date.now()
-      const checkInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime
-        const isTapeDone = stream.checkTapeRampCompleted?.()
-        const isScratchDone = stream.checkScratchEffectCompleted?.()
-        const effectsDone =
-          (fadeType !== 'tape' || isTapeDone === true) &&
-          (fadeType !== 'scratch' || isScratchDone === true) &&
-          (fadeType !== 'both' ||
-            (isTapeDone === true && isScratchDone === true))
-        const isRampDone = elapsed >= section.duration && effectsDone
-        const isTimeUp = elapsed > section.duration + 500 // Safety timeout
-
-        if (isRampDone || isTimeUp) {
-          clearInterval(checkInterval)
-
-          const drainTimeout = setTimeout(() => {
-            this.connection?.pause?.('requested')
-            timers.pause = null
-          }, 750)
-
-          const pauseTimer = timers.pause
-          if (
-            pauseTimer &&
-            typeof pauseTimer === 'object' &&
-            'interval' in pauseTimer
-          ) {
-            pauseTimer.timeout = drainTimeout
-          }
+        if (action === 'pause') {
+            const stream = this.connection?.audioStream;
+            if (!stream)
+                return false;
+            logger('debug', 'Player', `Pause fade triggered for guild ${this.guildId}`);
+            if (timers.trackEnd) {
+                clearTimeout(timers.trackEnd);
+                timers.trackEnd = null;
+            }
+            if (timers.pause) {
+                if (timers.pause instanceof Object && 'interval' in timers.pause) {
+                    const pauseTimer = timers.pause;
+                    clearInterval(pauseTimer.interval);
+                    if (pauseTimer.timeout)
+                        clearTimeout(pauseTimer.timeout);
+                }
+                else {
+                    clearTimeout(timers.pause);
+                }
+            }
+            if (fadeType === 'volume' || fadeType === 'both') {
+                stream.fadeTo?.(0, section.duration, section.curve);
+            }
+            if (fadeType === 'tape' || fadeType === 'both') {
+                stream.tapeTo?.(section.duration, 'stop', section.curve);
+            }
+            if (fadeType === 'scratch') {
+                const style = ['wash', 'backspin', 'baby', 'stop'].includes(scratchStyle)
+                    ? scratchStyle
+                    : 'wash';
+                stream.scratchTo?.(section.duration, style);
+            }
+            const startTime = Date.now();
+            const checkInterval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                const isTapeDone = stream.checkTapeRampCompleted?.();
+                const isScratchDone = stream.checkScratchEffectCompleted?.();
+                const effectsDone = (fadeType !== 'tape' || isTapeDone === true) &&
+                    (fadeType !== 'scratch' || isScratchDone === true) &&
+                    (fadeType !== 'both' ||
+                        (isTapeDone === true && isScratchDone === true));
+                const isRampDone = elapsed >= section.duration && effectsDone;
+                const isTimeUp = elapsed > section.duration + 500; // Safety timeout
+                if (isRampDone || isTimeUp) {
+                    clearInterval(checkInterval);
+                    const drainTimeout = setTimeout(() => {
+                        this.connection?.pause?.('requested');
+                        timers.pause = null;
+                    }, 750);
+                    const pauseTimer = timers.pause;
+                    if (pauseTimer &&
+                        typeof pauseTimer === 'object' &&
+                        'interval' in pauseTimer) {
+                        pauseTimer.timeout = drainTimeout;
+                    }
+                }
+            }, 10);
+            timers.pause = { interval: checkInterval };
+            return true;
         }
-      }, 10)
-
-      timers.pause = { interval: checkInterval }
-      return true
-    }
-
-    if (action === 'resume') {
-      const stream = this.connection?.audioStream as AudioResource | undefined
-      if (!stream) return false
-      logger(
-        'debug',
-        'Player',
-        `)
-    Resume;
-fade;
-triggered;
-for (guild; $; { this: .guildId } `
-      )
-
-      if (fadeType === 'volume' || fadeType === 'both') {
-        if (stream.setFadeVolume) stream.setFadeVolume(0)
-        stream.fadeTo?.(1, section.duration, section.curve)
-      }
-      if (fadeType === 'tape' || fadeType === 'both') {
-        stream.tapeTo?.(0, 'stop')
-        stream.tapeTo?.(section.duration, 'start', section.curve)
-      }
-      if (fadeType === 'scratch') {
-        stream.scratchTo?.(0, 'stop')
-        stream.scratchTo?.(section.duration, 'start')
-      }
-      return true
-    }
-
-    if (action === 'trackStop') {
-      const stream = this.connection?.audioStream as AudioResource | undefined
-      if (!stream) return false
-      if (timers.stop) {
-        if (typeof timers.stop === 'object' && 'interval' in timers.stop) {
-          clearInterval(timers.stop.interval)
-          if (timers.stop.timeout) clearTimeout(timers.stop.timeout)
-        } else {
-          clearTimeout(timers.stop)
+        if (action === 'resume') {
+            const stream = this.connection?.audioStream;
+            if (!stream)
+                return false;
+            logger('debug', 'Player', `Resume fade triggered for guild ${this.guildId}`);
+            if (fadeType === 'volume' || fadeType === 'both') {
+                if (stream.setFadeVolume)
+                    stream.setFadeVolume(0);
+                stream.fadeTo?.(1, section.duration, section.curve);
+            }
+            if (fadeType === 'tape' || fadeType === 'both') {
+                stream.tapeTo?.(0, 'stop');
+                stream.tapeTo?.(section.duration, 'start', section.curve);
+            }
+            if (fadeType === 'scratch') {
+                stream.scratchTo?.(0, 'stop');
+                stream.scratchTo?.(section.duration, 'start');
+            }
+            return true;
         }
-      }
-
-      if (fadeType === 'volume' || fadeType === 'both') {
-        stream.fadeTo?.(0, section.duration, section.curve)
-      }
-      if (fadeType === 'tape' || fadeType === 'both') {
-        stream.tapeTo?.(section.duration, 'stop', section.curve)
-      }
-      if (fadeType === 'scratch') {
-        const style = ['wash', 'backspin', 'baby', 'stop'].includes(
-          scratchStyle
-        )
-          ? scratchStyle
-          : 'stop'
-        stream.scratchTo?.(section.duration, style)
-      }
-
-      const startTime = Date.now()
-      const checkInterval = setInterval(() => {
-        const elapsed = Date.now() - startTime
-        const isRampDone = elapsed >= section.duration
-        const isTimeUp = elapsed > section.duration + 500 // Safety timeout
-
-        if (isRampDone || isTimeUp) {
-          clearInterval(checkInterval)
-
-          const drainTimeout = setTimeout(() => {
-            this._isStopping = false
-            this.connection?.stop(EndReasons.STOPPED)
-            timers.stop = null
-          }, 750)
-
-          if (
-            timers.stop &&
-            typeof timers.stop === 'object' &&
-            'interval' in timers.stop
-          ) {
-            timers.stop.timeout = drainTimeout
-          }
+        if (action === 'trackStop') {
+            const stream = this.connection?.audioStream;
+            if (!stream)
+                return false;
+            if (timers.stop) {
+                if (typeof timers.stop === 'object' && 'interval' in timers.stop) {
+                    clearInterval(timers.stop.interval);
+                    if (timers.stop.timeout)
+                        clearTimeout(timers.stop.timeout);
+                }
+                else {
+                    clearTimeout(timers.stop);
+                }
+            }
+            if (fadeType === 'volume' || fadeType === 'both') {
+                stream.fadeTo?.(0, section.duration, section.curve);
+            }
+            if (fadeType === 'tape' || fadeType === 'both') {
+                stream.tapeTo?.(section.duration, 'stop', section.curve);
+            }
+            if (fadeType === 'scratch') {
+                const style = ['wash', 'backspin', 'baby', 'stop'].includes(scratchStyle)
+                    ? scratchStyle
+                    : 'stop';
+                stream.scratchTo?.(section.duration, style);
+            }
+            const startTime = Date.now();
+            const checkInterval = setInterval(() => {
+                const elapsed = Date.now() - startTime;
+                const isRampDone = elapsed >= section.duration;
+                const isTimeUp = elapsed > section.duration + 500; // Safety timeout
+                if (isRampDone || isTimeUp) {
+                    clearInterval(checkInterval);
+                    const drainTimeout = setTimeout(() => {
+                        this._isStopping = false;
+                        this.connection?.stop(EndReasons.STOPPED);
+                        timers.stop = null;
+                    }, 750);
+                    if (timers.stop &&
+                        typeof timers.stop === 'object' &&
+                        'interval' in timers.stop) {
+                        timers.stop.timeout = drainTimeout;
+                    }
+                }
+            }, 10);
+            timers.stop = { interval: checkInterval };
+            return true;
         }
-      }, 10)
-
-      timers.stop = { interval: checkInterval }
-      return true
+        return false;
     }
-
-    return false
-  }
 }
-)
-    ;

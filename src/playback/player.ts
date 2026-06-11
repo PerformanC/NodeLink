@@ -364,7 +364,22 @@ export class Player {
         `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`,
         err
       )
-      this._onError(err)
+
+      process.nextTick(() => {
+        if (this.destroying) return
+
+        const playerReason = this.connection?.playerState?.reason
+        if (playerReason === 'reconnecting') {
+          logger(
+            'warn',
+            'Player',
+            `Voice connection error for guild ${this.guildId} is a recoverable reconnection (playerState.reason=${playerReason}). Deferring to library.`
+          )
+          return
+        }
+
+        this._onError(err)
+      })
     })
     this.connection.on('stuck', () => {
       if (this.destroying) return

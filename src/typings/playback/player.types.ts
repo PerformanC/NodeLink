@@ -1,4 +1,4 @@
-import type { VoiceAudioStream, VoiceConnection } from '@performanc/voice'
+import type { VoiceAudioStream, VoiceConnection, VoicePlayerState } from '@performanc/voice'
 import type { TrackData } from '../index.types.ts'
 import type {
   TrackStreamResult,
@@ -143,6 +143,7 @@ export interface AudioResource {
 export interface ExtendedVoiceConnection extends VoiceConnection {
   audioStream?: VoiceAudioStream | null
   udp?: { flush?: () => void }
+  playerState?: VoicePlayerState & { reason?: string }
 }
 
 export interface TrackEnergy {
