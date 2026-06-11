@@ -2178,6 +2178,7 @@ export abstract class BaseClient {
       context: this.getClient(context),
       videoId: videoId,
       contentCheckOk: true,
+      attestationRequest: { omitBotguardData: true },
       racyCheckOk: true
     }
 
