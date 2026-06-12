@@ -78,7 +78,7 @@ const getMP4Box = async (): Promise<MP4BoxModule> => {
 const getLibSampleRate = async (): Promise<LibSampleRateModule> => {
   if (!libSampleRatePromise) {
     libSampleRatePromise = import('@alexanderolsen/libsamplerate-js').then(
-      (module) => module as unknown as LibSampleRateModule
+      (module) => (module.default || module) as unknown as LibSampleRateModule
     )
   }
 
@@ -1179,7 +1179,7 @@ class MPEGTSDemuxer extends Transform {
     offset += (packet[offset] || 0) + 1
     if (offset + 11 < MPEGTS_CONFIG.packetSize) {
       this.patPmtId =
-        ((packet[offset + 10] || 0 & 0x1f) << 8) | (packet[offset + 11] || 0)
+        (((packet[offset + 10] || 0) & 0x1f) << 8) | (packet[offset + 11] || 0)
     }
   }
 

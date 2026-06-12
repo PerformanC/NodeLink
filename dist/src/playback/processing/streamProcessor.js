@@ -26,7 +26,7 @@ const getMP4Box = async () => {
 };
 const getLibSampleRate = async () => {
     if (!libSampleRatePromise) {
-        libSampleRatePromise = import('@alexanderolsen/libsamplerate-js').then((module) => module);
+        libSampleRatePromise = import('@alexanderolsen/libsamplerate-js').then((module) => (module.default || module));
     }
     return libSampleRatePromise;
 };
@@ -831,7 +831,7 @@ class MPEGTSDemuxer extends Transform {
         offset += (packet[offset] || 0) + 1;
         if (offset + 11 < MPEGTS_CONFIG.packetSize) {
             this.patPmtId =
-                ((packet[offset + 10] || 0 & 0x1f) << 8) | (packet[offset + 11] || 0);
+                (((packet[offset + 10] || 0) & 0x1f) << 8) | (packet[offset + 11] || 0);
         }
     }
     _processPMT(packet, offset) {
