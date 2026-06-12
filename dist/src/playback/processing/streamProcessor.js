@@ -694,7 +694,6 @@ class SymphoniaDecoderStream extends Transform {
         }
     }
     _finishDecode() {
-        logger('debug', 'SymphoniaDecoderStream', '_finishDecode called, stream finishing');
         const callback = this.flushCallback;
         this.flushCallback = null;
         this.isFinished = true;
@@ -892,7 +891,6 @@ class MPEGTSDemuxer extends Transform {
         }
     }
     _flush(callback) {
-        logger('debug', 'MPEGTSDemuxer', '_flush called');
         if (this.pesSize > 0) {
             this._emitPES(Buffer.concat(this.pesChunks, this.pesSize));
         }

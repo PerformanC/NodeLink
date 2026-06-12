@@ -1014,7 +1014,6 @@ class SymphoniaDecoderStream extends Transform {
   }
 
   _finishDecode(): void {
-    logger('debug', 'SymphoniaDecoderStream', '_finishDecode called, stream finishing')
     const callback = this.flushCallback
     this.flushCallback = null
     this.isFinished = true
@@ -1253,7 +1252,6 @@ class MPEGTSDemuxer extends Transform {
   }
 
   override _flush(callback: TransformCallback): void {
-    logger('debug', 'MPEGTSDemuxer', '_flush called')
     if (this.pesSize > 0) {
       this._emitPES(Buffer.concat(this.pesChunks, this.pesSize))
     }
