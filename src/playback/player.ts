@@ -1,5 +1,6 @@
 import type { Readable } from 'node:stream'
 import { PassThrough } from 'node:stream'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { SeekError } from '@ecliptia/seekable-stream'
 import discordVoice, {
   type VoiceAudioStream,
@@ -46,14 +47,8 @@ export type EndReason = (typeof EndReasons)[keyof typeof EndReasons]
 
 let createAudioResource: CreateAudioResource | null = null
 let createSeekeableAudioResource: CreateSeekeableAudioResource | null = null
-const env = process.env as NodeJS.ProcessEnv & {
-  NODELINK_TRACK_FINISH_MEMORY_TRACE?: string
-  NODELINK_TRACK_FINISH_FORCE_GC?: string
-}
 const trackFinishMemoryTraceEnabled =
-  env.NODELINK_TRACK_FINISH_MEMORY_TRACE?.toLowerCase() === 'true'
-const trackFinishForceGcEnabled =
-  env.NODELINK_TRACK_FINISH_FORCE_GC?.toLowerCase() === 'true'
+  process.env.NODELINK_TRACK_FINISH_MEMORY_TRACE?.toLowerCase() === 'true'
 
 async function getStreamProcessor(): Promise<void> {
   if (createAudioResource && createSeekeableAudioResource) return
@@ -234,17 +229,22 @@ export class Player {
       timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000
     ) =>
       new Promise((resolve, reject) => {
+        const conn = this.connection
+        if (!conn) {
+          return reject(new Error('No connection available for waitEvent'))
+        }
+
         const handler = (_: unknown, payload: unknown) => {
           const typedPayload = payload as unknown as Record<string, unknown>
           if (!filter || filter(typedPayload as never)) {
             clearTimeout(timeoutId)
-            this.connection?.off(event, handler)
+            conn.off(event, handler)
             resolve(typedPayload as never)
           }
         }
 
         const timeoutId = setTimeout(() => {
-          this.connection?.off(event, handler)
+          conn.off(event, handler)
           reject(
             new Error(
               `Event ${event} timed out after ${timeout}ms for guild ${this.guildId}`
@@ -252,7 +252,7 @@ export class Player {
           )
         }, timeout)
 
-        this.connection?.on(event, handler)
+        conn.on(event, handler)
       })
   }
 
@@ -410,7 +410,7 @@ export class Player {
       )
       this.emitEvent(GatewayEvents.PLAYER_CONNECTED, {
         guildId: this.guildId,
-        voice: { ...this.voice }
+        voice: structuredClone(this.voice)
       })
       if (this.track && this.isPaused && this.connection?.audioStream) {
         this.isPaused = false
@@ -430,7 +430,7 @@ export class Player {
         )
         this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
           guildId: this.guildId,
-          voice: { ...this.voice }
+          voice: structuredClone(this.voice)
         })
       }
     } else if (state.status === 'disconnected') {
@@ -583,7 +583,6 @@ export class Player {
       this._emitTrackEnd(endReason)
       this._resetTrack()
       this._traceTrackFinishMemory('after-reset')
-      this._scheduleTrackFinishGcProbe()
     } else if (
       state.status === 'playing' &&
       this.track &&
@@ -617,7 +616,7 @@ export class Player {
       )
       this.emitEvent(GatewayEvents.PLAYER_RECONNECTING, {
         guildId: this.guildId,
-        voice: { ...this.voice }
+        voice: structuredClone(this.voice)
       })
     }
   }
@@ -805,24 +804,6 @@ export class Player {
     } finally {
       if (conn) conn.audioStream = null
     }
-  }
-
-  /**
-   * Optionally runs forced GC after finish for leak diagnostics.
-   */
-  private _scheduleTrackFinishGcProbe(): void {
-    if (!trackFinishForceGcEnabled) return
-    const gcFn = global.gc
-    if (typeof gcFn !== 'function') return
-
-    const timer = setTimeout(() => {
-      try {
-        gcFn()
-        gcFn()
-      } catch {}
-      this._traceTrackFinishMemory('after-gc')
-    }, 0)
-    timer.unref?.()
   }
 
   /**
@@ -1102,6 +1083,7 @@ export class Player {
 
       streamForResource.on('close', cleanupListeners)
       streamForResource.on('error', cleanupListeners)
+      streamForResource.on('end', cleanupListeners)
       ;(
         streamForResource as unknown as {
           _cleanupListeners?: () => void
@@ -1427,6 +1409,74 @@ export class Player {
   /**
    * Starts playback for the current track.
    */
+  private async _connectAndPlayStream(
+    urlData: TrackUrlResult,
+    position: number,
+    cleanupReason: string,
+    fadingAction: 'trackStartArm' | 'seekPrepare',
+    playLogMessage: string
+  ): Promise<boolean> {
+    if (!this.track) return false
+
+    if (!this.connection) {
+      this._initConnection()
+    }
+
+    if (!this.connection?.udpInfo?.secretKey) {
+      logger(
+        'debug',
+        'Player',
+        `Waiting for voice connection to be ready for guild ${this.guildId}`
+      )
+      await this.waitEvent(
+        'stateChange',
+        (s: VoiceConnectionState) =>
+          s.status === 'connected' && !!this.connection?.udpInfo?.secretKey
+      )
+    }
+
+    if (!this.connection?.udpInfo?.secretKey) {
+      const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`
+      logger('error', 'Player', errorMessage)
+      this._onError(new Error(errorMessage))
+      return false
+    }
+
+    const fetched = await this._fetchResource(
+      this.track.info,
+      urlData,
+      position
+    )
+    if ('exception' in fetched) {
+      const err = new Error(fetched.exception.message)
+      this._onError(err)
+      return false
+    }
+
+    this._cleanupCurrentAudioStream(cleanupReason)
+
+    const resource = fetched.stream
+    if (this.volumePercent !== 100) {
+      resource.setVolume(this.volumePercent / 100)
+    }
+
+    this._fading(fadingAction, { resource })
+    this.setFilters(this.filters)
+
+    logger('debug', 'Player', playLogMessage)
+    this.connection.play(resource as unknown)
+
+    await this.waitEvent(
+      'playerStateChange',
+      (s: VoicePlayerState) => s.status === 'playing'
+    )
+
+    this._lyricsBasePosition = position
+    this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
+
+    return true
+  }
+
   private async _startPlayback(startTime = 0): Promise<boolean> {
     if (!this.track) return false
 
@@ -1460,67 +1510,17 @@ export class Player {
       return false
     }
 
-    if (!this.connection) {
-      this._initConnection()
-    }
-
-    if (!this.connection?.udpInfo?.secretKey) {
-      logger(
-        'debug',
-        'Player',
-        `Waiting for voice connection to be ready for guild ${this.guildId}`
-      )
-
-      await this.waitEvent(
-        'stateChange',
-        (s: VoiceConnectionState) =>
-          s.status === 'connected' && !!this.connection?.udpInfo?.secretKey
-      )
-    }
-
-    if (!this.connection?.udpInfo?.secretKey) {
-      logger(
-        'error',
-        'Player',
-        `Voice connection for guild ${this.guildId} is not ready, cannot start playback.`
-      )
-      this._onError(new Error('Voice connection is not ready.'))
-      return false
-    }
-
-    const fetched = await this._fetchResource(
-      this.track.info,
+    const result = await this._connectAndPlayStream(
       urlData,
-      startTime
+      startTime,
+      'start-playback',
+      'trackStartArm',
+      `Playing resource for guild ${this.guildId}`
     )
-    if ('exception' in fetched) {
-      const err = new Error(fetched.exception.message)
-      this._onError(err)
-      return false
-    }
+    if (!result) return false
 
-    this._cleanupCurrentAudioStream('start-playback')
-
-    const resource = fetched.stream
-    if (this.volumePercent !== 100) {
-      resource.setVolume(this.volumePercent / 100)
-    }
-    this._fading('trackStartArm', { resource })
     this._fading('trackEndSchedule', { startPosition: startTime || 0 })
-
-    this.setFilters(this.filters)
-
-    logger('debug', 'Player', `Playing resource for guild ${this.guildId}`)
     this._stuckTime = 0
-    this.connection.play(resource as unknown)
-    await this.waitEvent(
-      'playerStateChange',
-      (s: VoicePlayerState) => s.status === 'playing'
-    )
-
-    this._lyricsBasePosition = startTime || 0
-    this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
-
     if (
       this.track.info.sourceName === 'youtube' ||
       this.track.info.sourceName === 'ytmusic'
@@ -1754,8 +1754,6 @@ export class Player {
           'Player',
           'No stream info URL available for seek. awaiting getTrackUrl.'
         )
-        const sleep = (ms: number) =>
-          new Promise((resolve) => setTimeout(resolve, ms))
         await sleep(1600)
         if (!this.streamInfo?.url) {
           logger(
@@ -1914,59 +1912,14 @@ export class Player {
       return false
     }
 
-    if (!this.connection) {
-      this._initConnection()
-    }
-
-    if (!this.connection?.udpInfo?.secretKey) {
-      await this.waitEvent(
-        'stateChange',
-        (s: VoiceConnectionState) =>
-          s.status === 'connected' && !!this.connection?.udpInfo?.secretKey
-      )
-    }
-
-    if (!this.connection?.udpInfo?.secretKey) {
-      const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`
-      logger('error', 'Player', errorMessage)
-      this._onError(new Error(errorMessage))
-      return false
-    }
-
-    const fetched = await this._fetchResource(
-      this.track.info,
+    const result = await this._connectAndPlayStream(
       urlData,
-      position
-    )
-    if ('exception' in fetched) {
-      const err = new Error(fetched.exception.message)
-      this._onError(err)
-      return false
-    }
-
-    this._cleanupCurrentAudioStream('source-seek')
-
-    const resource = fetched.stream
-    if (this.volumePercent !== 100) {
-      resource.setVolume(this.volumePercent / 100)
-    }
-    this._fading('seekPrepare', { resource })
-
-    this.setFilters(this.filters)
-
-    logger(
-      'debug',
-      'Player',
+      position,
+      'source-seek',
+      'seekPrepare',
       `Playing resource for guild ${this.guildId} after source seek`
     )
-    this.connection.play(resource as unknown)
-    await this.waitEvent(
-      'playerStateChange',
-      (s: VoicePlayerState) => s.status === 'playing'
-    )
-
-    this._lyricsBasePosition = position
-    this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
+    if (!result) return false
 
     return true
   }
@@ -2635,7 +2588,14 @@ export class Player {
             'Player',
             `Voice state updated for guild ${this.guildId}, starting pending track.`
           )
-          await this._startPlayback()
+          await this._startPlayback().catch((err) => {
+            logger(
+              'error',
+              'Player',
+              `Failed to start pending track during voice update for guild ${this.guildId}:`,
+              err
+            )
+          })
         }
       })
     } else {
@@ -3102,7 +3062,7 @@ export class Player {
             ? this.connection.ping
             : 0
       },
-      voice: { ...this.voice }
+      voice: structuredClone(this.voice)
     }
   }
 
