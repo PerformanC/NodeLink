@@ -801,6 +801,13 @@ export class Player {
                     this.connStatus === 'connected') {
                     const stuckTime = this._stuckTime;
                     this._stuckTime = 0;
+                    const pipelineStream = this._getAudioStream();
+                    if (pipelineStream?.isPipelineFinished?.()) {
+                        logger('debug', 'Player', `Player for guild ${this.guildId} is starving but the network stream has finished. Treating as natural trackEnd.`);
+                        this._emitTrackEnd(EndReasons.FINISHED);
+                        this._resetTrack();
+                        return false;
+                    }
                     if (this.streamInfo?.format === 'mp4') {
                         logger('error', 'Player', `Player for guild ${this.guildId} is stuck on an MP4 track. Emitting TRACK_STUCK without recovery.`);
                         this.emitEvent(GatewayEvents.TRACK_STUCK, {

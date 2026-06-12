@@ -467,6 +467,16 @@ class BaseAudioResource {
     }
     tapeTo(_durationMs, _type, _curve) { }
     setLoudnessNormalizer(_enabled) { }
+    isPipelineFinished() {
+        if (this._destroyed || !this.pipes)
+            return true;
+        for (const pipe of this.pipes) {
+            const p = pipe;
+            if (p.isFinished || p.readableEnded)
+                return true;
+        }
+        return false;
+    }
     setVolume(volume) {
         if (!this.pipes)
             return;
@@ -684,6 +694,7 @@ class SymphoniaDecoderStream extends Transform {
         }
     }
     _finishDecode() {
+        logger('debug', 'SymphoniaDecoderStream', '_finishDecode called, stream finishing');
         const callback = this.flushCallback;
         this.flushCallback = null;
         this.isFinished = true;
@@ -881,6 +892,7 @@ class MPEGTSDemuxer extends Transform {
         }
     }
     _flush(callback) {
+        logger('debug', 'MPEGTSDemuxer', '_flush called');
         if (this.pesSize > 0) {
             this._emitPES(Buffer.concat(this.pesChunks, this.pesSize));
         }

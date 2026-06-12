@@ -1172,6 +1172,19 @@ export class Player {
           const stuckTime = this._stuckTime
           this._stuckTime = 0
 
+          const pipelineStream = this._getAudioStream() as any
+          if (pipelineStream?.isPipelineFinished?.()) {
+            logger(
+              'debug',
+              'Player',
+              `Player for guild ${this.guildId} is starving but the network stream has finished. Treating as natural trackEnd.`
+            )
+            this._emitTrackEnd(EndReasons.FINISHED)
+            this._resetTrack()
+            return false
+          }
+
+
           if (this.streamInfo?.format === 'mp4') {
             logger(
               'error',
