@@ -145,8 +145,10 @@ export class Player {
             player: this.toJSON()
         });
         this.waitEvent = (event, filter, timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000) => new Promise((resolve, reject) => {
+            logger('debug', 'Player', `waitEvent: Started waiting for '${event}' on guild ${this.guildId} (timeout: ${timeout}ms)`);
             const conn = this.connection;
             if (!conn) {
+                logger('warn', 'Player', `waitEvent: Aborted waiting for '${event}' on guild ${this.guildId} (no connection)`);
                 return reject(new Error('No connection available for waitEvent'));
             }
             const handler = (_, payload) => {
@@ -154,11 +156,13 @@ export class Player {
                 if (!filter || filter(typedPayload)) {
                     clearTimeout(timeoutId);
                     conn.off(event, handler);
+                    logger('debug', 'Player', `waitEvent: Resolved '${event}' for guild ${this.guildId}`);
                     resolve(typedPayload);
                 }
             };
             const timeoutId = setTimeout(() => {
                 conn.off(event, handler);
+                logger('warn', 'Player', `waitEvent: Timeout waiting for '${event}' on guild ${this.guildId}`);
                 reject(new Error(`Event ${event} timed out after ${timeout}ms for guild ${this.guildId}`));
             }, timeout);
             conn.on(event, handler);
@@ -228,6 +232,7 @@ export class Player {
     _initConnection() {
         if (this.connection || this.destroying)
             return;
+        logger('debug', 'Player', `[Connection] Initializing voice connection for guild ${this.guildId} (Session: ${this.session.id})`);
         this.connection = discordVoice.joinVoiceChannel({
             guildId: this.guildId,
             userId: this.session.userId,
@@ -522,6 +527,7 @@ export class Player {
      * Destroys and dereferences current audio stream to avoid lingering references.
      */
     _cleanupCurrentAudioStream(context) {
+        logger('debug', 'Player', `[Cleanup] Triggering stream cleanup for guild ${this.guildId}. Context: ${context}`);
         const conn = this.connection;
         const audioStream = conn?.audioStream;
         if (!audioStream)
@@ -699,9 +705,16 @@ export class Player {
         const track = urlData?.newTrack
             ? urlData?.newTrack?.info
             : info;
+        logger('debug', 'Player', `Fetching stream resource from source for guild ${this.guildId}`, {
+            source: track.sourceName,
+            url: urlData.url
+        });
         const fetched = await this.nodelink.sources.getTrackStream(track, urlData.url, urlData.protocol, additionalData);
-        if (fetched.exception)
+        if (fetched.exception) {
+            logger('error', 'Player', `Stream resource fetch failed for guild ${this.guildId}`, fetched.exception);
             return fetched;
+        }
+        logger('debug', 'Player', `Successfully fetched stream resource for guild ${this.guildId}`);
         const fetchedStream = fetched.stream;
         const totalBytesRaw = urlData.additionalData?.contentLength ?? null;
         const totalBytesNum = Number(totalBytesRaw);
@@ -970,7 +983,12 @@ export class Player {
         }
         if (!this.connection?.udpInfo?.secretKey) {
             logger('debug', 'Player', `Waiting for voice connection to be ready for guild ${this.guildId}`);
-            await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
+            try {
+                await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
+            }
+            catch (err) {
+                logger('warn', 'Player', `Timeout or error while waiting for voice connection on guild ${this.guildId}:`, err);
+            }
         }
         if (!this.connection?.udpInfo?.secretKey) {
             const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`;
@@ -1011,12 +1029,7 @@ export class Player {
             return false;
         this.streamInfo = { ...urlData, trackInfo: this.track.info };
         logger('debug', 'Player', `Got track URL for guild ${this.guildId}`, {
-            urlData: {
-                ...urlData,
-                formats: urlDataWithFormats.formats
-                    ? `[${urlDataWithFormats.formats.length} format(s) omitted]`
-                    : undefined
-            }
+            urlData
         });
         if (urlData.exception) {
             const err = new Error(urlData.exception.message);
@@ -1075,6 +1088,7 @@ export class Player {
      * @returns True when the request is accepted (actual start is async).
      */
     async play({ encoded, info, userData, audioTrackId, noReplace = false, startTime, endTime = 0 }) {
+        logger('debug', 'Player', `[Action: play] Method invoked for guild ${this.guildId} with track ${info.identifier}`);
         return new Promise((resolve) => {
             this.isUpdatingTrack = true;
             try {
@@ -1139,8 +1153,11 @@ export class Player {
      * @returns True when the seek succeeds; false otherwise.
      */
     async seek(position, endTime, forceLegacy = false) {
-        if (this.destroying || !this.track)
+        logger('debug', 'Player', `[Action: seek] Method invoked for guild ${this.guildId} with target position: ${position}ms`);
+        if (this.destroying || !this.track) {
+            logger('debug', 'Player', `[Action: seek] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`);
             return false;
+        }
         if (!this.track.info.isSeekable && !this.track.info.isStream)
             return false;
         const streamFormat = typeof this.streamInfo?.format === 'string'
@@ -1225,6 +1242,11 @@ export class Player {
                 this._fading('trackEndSchedule', { startPosition: this.position });
             }
             return result;
+        }
+        catch (e) {
+            logger('error', 'Player', `Seek failed for guild ${this.guildId}`, e);
+            this._onError(e);
+            return false;
         }
         finally {
             this._isSeeking = false;
@@ -1398,10 +1420,13 @@ export class Player {
      * @returns True when stop was executed; false when no active track.
      */
     stop() {
+        logger('debug', 'Player', `[Action: stop] Executing stop for guild ${this.guildId}`);
         this.isUpdatingTrack = true;
         try {
-            if (this.destroying || !this.track)
+            if (this.destroying || !this.track) {
+                logger('debug', 'Player', `[Action: stop] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`);
                 return false;
+            }
             if (this.nextResource) {
                 this.nextResource.destroy();
                 this.nextResource = null;
@@ -1438,8 +1463,11 @@ export class Player {
      * @returns True when preload succeeded.
      */
     async preload(payload) {
-        if (this.destroying)
+        logger('debug', 'Player', `[Action: preload] Method invoked for guild ${this.guildId} with track ${payload.info.identifier}`);
+        if (this.destroying) {
+            logger('debug', 'Player', `[Action: preload] Aborted for guild ${this.guildId}: player is destroying`);
             return false;
+        }
         const sameEncoded = !!payload.encoded &&
             !!this.nextTrack?.encoded &&
             this.nextTrack.encoded === payload.encoded;
@@ -1493,6 +1521,7 @@ export class Player {
      * @returns True when state was cleared.
      */
     clearNextTrack() {
+        logger('debug', 'Player', `[Action: clearNextTrack] Method invoked for guild ${this.guildId}`);
         if (this.destroying)
             return false;
         if (this.nextResource) {
@@ -1510,8 +1539,11 @@ export class Player {
      * @returns True when state changed; false otherwise.
      */
     pause(shouldPause) {
-        if (this.destroying || this.isPaused === shouldPause)
+        logger('debug', 'Player', `[Action: pause] Method invoked for guild ${this.guildId} with target: ${shouldPause}`);
+        if (this.destroying || this.isPaused === shouldPause) {
+            logger('debug', 'Player', `[Action: pause] Aborted for guild ${this.guildId}: destroying=${this.destroying}, alreadyPaused=${this.isPaused === shouldPause}`);
             return false;
+        }
         logger('debug', 'Player', `Setting pause to ${shouldPause} for guild ${this.guildId}`);
         if (shouldPause) {
             this._pausedAtPosition = this._realPosition();
@@ -1543,8 +1575,11 @@ export class Player {
      * @returns True when volume was updated.
      */
     volume(level) {
-        if (this.destroying)
+        logger('debug', 'Player', `[Action: volume] Method invoked for guild ${this.guildId} with target: ${level}`);
+        if (this.destroying) {
+            logger('debug', 'Player', `[Action: volume] Aborted for guild ${this.guildId}: player is destroying`);
             return false;
+        }
         logger('debug', 'Player', `Setting volume to ${level} for guild ${this.guildId}`);
         this.volumePercent = Math.max(0, Math.min(1000, level));
         this.connection?.audioStream?.setVolume(this.volumePercent / 100);
@@ -1559,6 +1594,7 @@ export class Player {
      * @returns Always true.
      */
     setFading(config) {
+        logger('debug', 'Player', `[Action: setFading] Method invoked for guild ${this.guildId}`);
         this.fading = config;
         return true;
     }
@@ -1569,6 +1605,7 @@ export class Player {
      * @returns True when updated.
      */
     setLoudnessNormalizer(enabled) {
+        logger('debug', 'Player', `[Action: setLoudnessNormalizer] Method invoked for guild ${this.guildId} to ${enabled}`);
         this.loudnessNormalizer = !!enabled;
         if (this.connection?.audioStream) {
             this.connection.audioStream.setLoudnessNormalizer?.(this.loudnessNormalizer);
@@ -1582,8 +1619,11 @@ export class Player {
      * @returns True when filters applied; false if player inactive.
      */
     setFilters(filters) {
-        if (this.destroying || !this.track)
+        logger('debug', 'Player', `[Action: setFilters] Method invoked for guild ${this.guildId}`);
+        if (this.destroying || !this.track) {
+            logger('debug', 'Player', `[Action: setFilters] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`);
             return false;
+        }
         logger('debug', 'Player', `Applying filters for guild ${this.guildId}:`, filters);
         const payload = filters.filters ??
             filters;
@@ -1716,6 +1756,7 @@ export class Player {
      * @param force - Forces reconnect even when unchanged.
      */
     updateVoice(voicePayload = {}, force = false) {
+        logger('debug', 'Player', `[Action: updateVoice] Method invoked for guild ${this.guildId} with force=${force}`);
         if (this.destroying)
             return;
         const { sessionId, token, endpoint, channelId } = voicePayload;
@@ -1781,10 +1822,10 @@ export class Player {
      * @param emitClose - Whether to emit WEBSOCKET_CLOSED to the client.
      */
     destroy(emitClose = true) {
+        logger('debug', 'Player', `[Action: destroy] Method invoked for guild ${this.guildId} with emitClose=${emitClose}`);
         if (this.destroying)
             return;
         this.destroying = true;
-        logger('debug', 'Player', `Destroying player for guild ${this.guildId}`);
         if (this.connection) {
             try {
                 if (this.connection.audioStream) {
@@ -1826,6 +1867,7 @@ export class Player {
      * @throws Error when no active main stream or mixer limits exceeded.
      */
     async addMix(trackPayload, volume = null) {
+        logger('debug', 'Player', `[Action: addMix] Method invoked for guild ${this.guildId}`);
         if (!this.track || this.isPaused) {
             throw new Error('Cannot add mix without an active stream');
         }
@@ -1865,6 +1907,7 @@ export class Player {
      * @returns True when removed.
      */
     removeMix(mixId) {
+        logger('debug', 'Player', `[Action: removeMix] Method invoked for guild ${this.guildId} mixId=${mixId}`);
         if (!this.audioMixer) {
             return false;
         }
@@ -1878,6 +1921,7 @@ export class Player {
      * @returns True when updated; false if layer missing.
      */
     updateMix(mixId, volume) {
+        logger('debug', 'Player', `[Action: updateMix] Method invoked for guild ${this.guildId} mixId=${mixId} volume=${volume}`);
         if (!this.audioMixer) {
             return false;
         }
@@ -1889,6 +1933,7 @@ export class Player {
      * @returns Current mix layers with track and volume.
      */
     getMixes() {
+        logger('debug', 'Player', `[Action: getMixes] Method invoked for guild ${this.guildId}`);
         if (!this.audioMixer) {
             return [];
         }
@@ -1900,6 +1945,7 @@ export class Player {
      * @param skipTrackSource - When true, skips track source provider before fetching lyrics.
      */
     async subscribeLyrics(skipTrackSource) {
+        logger('debug', 'Player', `[Action: subscribeLyrics] Method invoked for guild ${this.guildId}`);
         return new Promise((resolve) => {
             if (this.isLyricsSubscribed) {
                 return resolve();
@@ -1920,6 +1966,7 @@ export class Player {
      * Unsubscribes from lyrics events.
      */
     unsubscribeLyrics() {
+        logger('debug', 'Player', `[Action: unsubscribeLyrics] Method invoked for guild ${this.guildId}`);
         return new Promise((resolve) => {
             this.isLyricsSubscribed = false;
             this.skipTrackSource = false;
@@ -1938,6 +1985,7 @@ export class Player {
      * @returns Current segments and configuration.
      */
     getSponsorBlock() {
+        logger('debug', 'Player', `[Action: getSponsorBlock] Method invoked for guild ${this.guildId}`);
         return this.sponsorBlock;
     }
     /**
@@ -1946,6 +1994,7 @@ export class Player {
      * @param updates - Configuration updates.
      */
     updateSponsorBlock(updates) {
+        logger('debug', 'Player', `[Action: updateSponsorBlock] Method invoked for guild ${this.guildId}`);
         if (updates.enabled !== undefined)
             this.sponsorBlock.enabled = updates.enabled;
         if (updates.categories !== undefined)
@@ -1959,6 +2008,7 @@ export class Player {
      * @param segments - Array of segments to apply.
      */
     setSponsorBlockSegments(segments) {
+        logger('debug', 'Player', `[Action: setSponsorBlockSegments] Method invoked for guild ${this.guildId}`);
         this.sponsorBlock.segments = segments;
         this.sponsorBlock.lastSkippedUuid = null;
     }
@@ -1966,6 +2016,7 @@ export class Player {
      * Clears SponsorBlock state for the player.
      */
     clearSponsorBlock() {
+        logger('debug', 'Player', `[Action: clearSponsorBlock] Method invoked for guild ${this.guildId}`);
         this.sponsorBlock.segments = [];
         this.sponsorBlock.lastSkippedUuid = null;
     }
@@ -2118,6 +2169,7 @@ export class Player {
      * Serializes player state to JSON-safe object.
      */
     toJSON() {
+        logger('debug', 'Player', `[Action: toJSON] Method invoked for guild ${this.guildId}`);
         return {
             guildId: this.guildId,
             track: this.track,
@@ -2141,6 +2193,7 @@ export class Player {
      * Handles fading, tape, and scratch actions for start/stop/seek/pause events.
      */
     _fading(action, payload = {}) {
+        logger('debug', 'Player', `[Fading] Executing fading action '${action}' for guild ${this.guildId}`);
         const timers = this._fadeTimers;
         if (!timers)
             return false;
