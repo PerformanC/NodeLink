@@ -9,11 +9,11 @@ const parsePositiveIntEnv = (key: string, fallback: number): number => {
 
 const MAX_POOL_SIZE_BYTES = parsePositiveIntEnv(
   'NODELINK_BUFFER_POOL_MAX_BYTES',
-  20 * 1024 * 1024 // 20 MB - reduced from 50MB
+  64 * 1024 * 1024 // 64 MB
 )
 const MAX_BUCKET_ENTRIES = parsePositiveIntEnv(
   'NODELINK_BUFFER_POOL_MAX_BUCKET_ENTRIES',
-  4 // reduced from 8
+  16
 )
 const IDLE_CLEAR_MS = parsePositiveIntEnv(
   'NODELINK_BUFFER_POOL_IDLE_CLEAR_MS',

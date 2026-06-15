@@ -82,18 +82,33 @@ export class RingBuffer {
     if (bytesToRead === 0) return null
 
     const out = Buffer.allocUnsafe(bytesToRead)
+    this.readTo(out)
+    return out
+  }
+
+  /**
+   * Reads bytes from the ring buffer directly into the target buffer.
+   * @param target - The target buffer to write into.
+   * @param targetOffset - Offset in the target buffer.
+   * @returns The number of bytes actually read.
+   */
+  public readTo(target: Buffer, targetOffset = 0): number {
+    if (!this.buffer) return 0
+
+    const bytesToRead = Math.min(target.length - targetOffset, this._length)
+    if (bytesToRead <= 0) return 0
 
     const availableAtEnd = this.size - this.readOffset
     if (bytesToRead <= availableAtEnd) {
-      this.buffer.copy(out, 0, this.readOffset, this.readOffset + bytesToRead)
+      this.buffer.copy(target, targetOffset, this.readOffset, this.readOffset + bytesToRead)
     } else {
-      this.buffer.copy(out, 0, this.readOffset, this.size)
-      this.buffer.copy(out, availableAtEnd, 0, bytesToRead - availableAtEnd)
+      this.buffer.copy(target, targetOffset, this.readOffset, this.size)
+      this.buffer.copy(target, targetOffset + availableAtEnd, 0, bytesToRead - availableAtEnd)
     }
 
     this.readOffset = (this.readOffset + bytesToRead) % this.size
     this._length -= bytesToRead
-    return out
+    return bytesToRead
   }
 
   /**

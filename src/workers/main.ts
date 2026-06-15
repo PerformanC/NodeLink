@@ -1713,10 +1713,10 @@ function startTimers(hibernating = false): void {
           (acc, curr) => acc + getHeadQueueLength(curr.queue),
           0
         ),
-        cpu: { nodelinkLoad },
-        eventLoopLag: eluP50,
-        eventLoopLagP95: eluP95,
-        eventLoopLagP99: eluP99,
+        cpu: { nodelinkLoad: Math.round(nodelinkLoad * 100) / 100 },
+        eventLoopLag: Math.round(eluP50 * 100) / 100,
+        eventLoopLagP95: Math.round(eluP95 * 100) / 100,
+        eventLoopLagP99: Math.round(eluP99 * 100) / 100,
         memory: {
           used: mem.heapUsed,
           allocated: mem.heapTotal
