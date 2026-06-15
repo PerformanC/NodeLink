@@ -116,22 +116,41 @@ export class FadeTransformer extends Transform {
         else {
             _useBuffer = true;
         }
-        const step = sampleCount > 1 ? (gainEnd - gainStart) / (sampleCount - 1) : 0;
-        if (view) {
-            for (let i = 0; i < view.length; i++) {
-                const gain = gainStart + step * i;
-                const sample = view[i] ?? 0;
-                const value = sample * gain;
-                view[i] = value < -32768 ? -32768 : value > 32767 ? 32767 : value | 0;
+        if (gainStart === gainEnd) {
+            if (view) {
+                for (let i = 0; i < view.length; i++) {
+                    const sample = view[i] ?? 0;
+                    const value = sample * gainStart;
+                    view[i] = value < -32768 ? -32768 : value > 32767 ? 32767 : value | 0;
+                }
+            }
+            else {
+                for (let i = 0; i < sampleCount; i++) {
+                    const sample = chunk.readInt16LE(i * 2);
+                    const value = sample * gainStart;
+                    const clamped = value < -32768 ? -32768 : value > 32767 ? 32767 : value | 0;
+                    chunk.writeInt16LE(clamped, i * 2);
+                }
             }
         }
         else {
-            for (let i = 0; i < sampleCount; i++) {
-                const gain = gainStart + step * i;
-                const sample = chunk.readInt16LE(i * 2);
-                const value = sample * gain;
-                const clamped = value < -32768 ? -32768 : value > 32767 ? 32767 : value | 0;
-                chunk.writeInt16LE(clamped, i * 2);
+            const step = sampleCount > 1 ? (gainEnd - gainStart) / (sampleCount - 1) : 0;
+            if (view) {
+                for (let i = 0; i < view.length; i++) {
+                    const gain = gainStart + step * i;
+                    const sample = view[i] ?? 0;
+                    const value = sample * gain;
+                    view[i] = value < -32768 ? -32768 : value > 32767 ? 32767 : value | 0;
+                }
+            }
+            else {
+                for (let i = 0; i < sampleCount; i++) {
+                    const gain = gainStart + step * i;
+                    const sample = chunk.readInt16LE(i * 2);
+                    const value = sample * gain;
+                    const clamped = value < -32768 ? -32768 : value > 32767 ? 32767 : value | 0;
+                    chunk.writeInt16LE(clamped, i * 2);
+                }
             }
         }
         return chunk;

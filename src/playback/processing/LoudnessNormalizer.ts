@@ -4,6 +4,7 @@ const INT16_MAX = 32767
 const INT16_MIN = -32768
 const MIN_ENERGY = 1e-12
 const fround = Math.fround
+const INV_32768 = 1 / 32768
 
 /**
  * Implements a standard Biquad filter for audio processing.
@@ -198,6 +199,9 @@ export class LoudnessNormalizer {
     const energyAlpha = this._energyAlpha
     const target = this.targetLoudness
 
+    const filters = this.filters
+    const numChannels = this.channels
+
     for (
       let frameIndex = 0, sampleIndex = 0;
       frameIndex < frameCount;
@@ -205,9 +209,9 @@ export class LoudnessNormalizer {
     ) {
       let energySum = 0.0
 
-      for (let ch = 0; ch < this.channels; ch += 1, sampleIndex += 1) {
-        const sample = fround((inputView[sampleIndex] ?? 0) / 32768)
-        const filter = this.filters[ch]
+      for (let ch = 0; ch < numChannels; ch += 1, sampleIndex += 1) {
+        const sample = fround((inputView[sampleIndex] ?? 0) * INV_32768)
+        const filter = filters[ch]
         if (filter) {
           const filtered = filter.process(sample)
           channelBuffer[ch] = filtered
@@ -215,7 +219,7 @@ export class LoudnessNormalizer {
         }
       }
 
-      energySum = fround(energySum / this.channels)
+      energySum = fround(energySum / numChannels)
 
       if (energySum > this._gateThresholdEnergy) {
         energyState = fround(

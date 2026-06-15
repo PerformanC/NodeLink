@@ -22,6 +22,7 @@ export class VolumeTransformer extends Transform {
     lookaheadBuffer;
     lookaheadIndex;
     lookaheadFull;
+    _reusableOutputBuffer = null;
     currentVolume;
     targetVolume;
     startVolume;
@@ -141,9 +142,18 @@ export class VolumeTransformer extends Transform {
         if (abs <= this._thresholdValue || this._limitHeadroom <= 0)
             return value;
         const normalizedOvershoot = (abs - this._thresholdValue) / this._limitHeadroom;
-        const softened = 1 - Math.exp(-normalizedOvershoot * this.limiterSoftness);
+        // Fast approximation of 1 - exp(-x) for small x
+        // 1 - exp(-x) \approx x - x^2/2 + x^3/6
+        const x = normalizedOvershoot * this.limiterSoftness;
+        let softened;
+        if (x < 0.1) {
+            softened = x * (1 - x * 0.5);
+        }
+        else {
+            softened = 1 - Math.exp(-x);
+        }
         const limited = this._thresholdValue + this._limitHeadroom * softened;
-        return Math.sign(value) * Math.min(INT16_MAX, limited);
+        return (value < 0 ? -1 : 1) * (limited > INT16_MAX ? INT16_MAX : limited);
     }
     _clampToInt16(value) {
         if (value >= INT16_MAX)
@@ -186,7 +196,10 @@ export class VolumeTransformer extends Transform {
         const gainStep = usableSamples > 1 ? (gainEnd - gainStart) / (usableSamples - 1) : 0;
         let gain = gainStart;
         if (this.lookaheadSamples > 0) {
-            const outputBuffer = alignedBufferIfRequired(chunk.length);
+            if (!this._reusableOutputBuffer || this._reusableOutputBuffer.length < chunk.length) {
+                this._reusableOutputBuffer = alignedBufferIfRequired(chunk.length);
+            }
+            const outputBuffer = this._reusableOutputBuffer.subarray(0, chunk.length);
             const outputView = new Int16Array(outputBuffer.buffer, outputBuffer.byteOffset, usableSamples);
             if (useBufferOps) {
                 for (let i = 0; i < usableSamples; i++) {
@@ -202,36 +215,59 @@ export class VolumeTransformer extends Transform {
                 }
             }
             else if (view) {
-                for (let i = 0; i < view.length; i++) {
+                const len = view.length;
+                const lookaheadBuffer = this.lookaheadBuffer;
+                const lookaheadSamples = this.lookaheadSamples;
+                let lookaheadIndex = this.lookaheadIndex;
+                for (let i = 0; i < len; i++) {
                     const rawSample = view[i] ?? 0;
                     const scaled = rawSample * gain;
                     const limited = this._applyLimiter(scaled);
-                    const outputSample = this.lookaheadBuffer[this.lookaheadIndex] ?? 0;
-                    this.lookaheadBuffer[this.lookaheadIndex] = limited;
-                    this.lookaheadIndex =
-                        (this.lookaheadIndex + 1) % this.lookaheadSamples;
+                    const outputSample = lookaheadBuffer[lookaheadIndex] ?? 0;
+                    lookaheadBuffer[lookaheadIndex] = limited;
+                    lookaheadIndex = (lookaheadIndex + 1) % lookaheadSamples;
                     outputView[i] = this._clampToInt16(outputSample);
                     gain += gainStep;
                 }
+                this.lookaheadIndex = lookaheadIndex;
             }
             if (this.lookaheadIndex === 0)
                 this.lookaheadFull = true;
             return outputBuffer;
         }
         if (useBufferOps) {
-            for (let i = 0; i < usableSamples; i++) {
-                const scaled = chunk.readInt16LE(i * 2) * gain;
-                const limited = this._applyLimiter(scaled);
-                chunk.writeInt16LE(this._clampToInt16(limited), i * 2);
-                gain += gainStep;
+            if (gainStart === gainEnd) {
+                for (let i = 0; i < usableSamples; i++) {
+                    const scaled = chunk.readInt16LE(i * 2) * gainStart;
+                    const limited = this._applyLimiter(scaled);
+                    chunk.writeInt16LE(this._clampToInt16(limited), i * 2);
+                }
+            }
+            else {
+                for (let i = 0; i < usableSamples; i++) {
+                    const scaled = chunk.readInt16LE(i * 2) * gain;
+                    const limited = this._applyLimiter(scaled);
+                    chunk.writeInt16LE(this._clampToInt16(limited), i * 2);
+                    gain += gainStep;
+                }
             }
         }
         else if (view) {
-            for (let i = 0; i < view.length; i++) {
-                const scaled = (view[i] ?? 0) * gain;
-                const limited = this._applyLimiter(scaled);
-                view[i] = this._clampToInt16(limited);
-                gain += gainStep;
+            const len = view.length;
+            if (gainStart === gainEnd) {
+                for (let i = 0; i < len; i++) {
+                    const scaled = (view[i] ?? 0) * gainStart;
+                    const limited = this._applyLimiter(scaled);
+                    view[i] = this._clampToInt16(limited);
+                }
+            }
+            else {
+                for (let i = 0; i < len; i++) {
+                    const scaled = (view[i] ?? 0) * gain;
+                    const limited = this._applyLimiter(scaled);
+                    view[i] = this._clampToInt16(limited);
+                    gain += gainStep;
+                }
             }
         }
         return chunk;

@@ -63,27 +63,23 @@ export class AudioMixer extends Readable {
     mixBuffers(mainPCM, layersPCM) {
         if (layersPCM.size === 0 || !this.enabled)
             return mainPCM;
-        const outputBuffer = Buffer.allocUnsafe(mainPCM.length);
+        const mainLen = mainPCM.length >> 1;
         const mainView = this._asInt16Array(mainPCM);
-        const outputView = this._asInt16Array(outputBuffer);
         const activeLayerViews = [];
+        const layerVolumes = [];
         for (const layer of layersPCM.values()) {
-            activeLayerViews.push({
-                view: this._asInt16Array(layer.buffer),
-                volume: layer.volume
-            });
+            activeLayerViews.push(this._asInt16Array(layer.buffer));
+            layerVolumes.push(layer.volume);
         }
-        const mainLen = mainView.length;
         const numLayers = activeLayerViews.length;
+        const outputBuffer = Buffer.allocUnsafe(mainPCM.length);
+        const outputView = this._asInt16Array(outputBuffer);
         for (let i = 0; i < mainLen; i++) {
             let sample = mainView[i] ?? 0;
             for (let j = 0; j < numLayers; j++) {
-                const layer = activeLayerViews[j];
-                if (!layer)
-                    continue;
-                if (i < layer.view.length) {
-                    sample += ((layer.view[i] ?? 0) * layer.volume) | 0;
-                }
+                const layerView = activeLayerViews[j];
+                const volume = layerVolumes[j];
+                sample += ((layerView[i] ?? 0) * volume) | 0;
             }
             outputView[i] = sample < -32768 ? -32768 : sample > 32767 ? 32767 : sample;
         }
