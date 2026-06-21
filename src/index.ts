@@ -455,6 +455,7 @@ if (!cluster.isWorker) {
 █ █  █ ▀████ █  █  █▄   ▄▀ ███▄ ▐█ █ █  █ █  █  v${getVersion()}
 █  █ █       ███▀  ▀███▀       ▀ ▐ █  █ █   █   Powered by PerformanC;
 █   ██                             █   ██  ▀    rewritten by 1Lucas1.apk;
+                                                maintained by 1Lucas1.apk & ToddyTheNoobDud
 `
   process.stdout.write(`\x1b[32m${ascii}\x1b[0m\n`)
 }
