@@ -24,16 +24,16 @@
         "@toddynnn/symphonia-decoder": "1.1.0",
         "@toddynnn/voice-opus": "^1.0.1",
         "fastest-validator": "^1.19.1",
-        "mp4box": "^2.3.0",
+        "mp4box": "^2.4.1",
         "prom-client": "^15.1.3",
-        "proxy-agent": "^8.0.1"
+        "proxy-agent": "^8.0.2"
     },
     "devDependencies": {
-        "@biomejs/biome": "^2.4.16",
-        "@commitlint/cli": "20.5.0",
-        "@commitlint/config-conventional": "20.5.0",
+        "@biomejs/biome": "^2.5.0",
+        "@commitlint/cli": "21.0.2",
+        "@commitlint/config-conventional": "21.0.2",
         "@types/bun": "^1.3.14",
-        "@types/node": "^25.9.2",
+        "@types/node": "^26.0.0",
         "dotenv": "^17.4.2",
         "husky": "9.1.7",
         "tsx": "^4.22.4",
