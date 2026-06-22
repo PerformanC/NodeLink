@@ -1,7 +1,6 @@
 import { PassThrough, pipeline } from 'node:stream'
 import type {
   BandcampApiSearchResponse,
-  BandcampApiSearchResult,
   BandcampJsonLdData,
   BandcampTrackBuildInput,
   BandcampTralbumData,
@@ -26,7 +25,7 @@ const BANDCAMP_BASE_URL = 'https://bandcamp.com'
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
 const BANDCAMP_TRACK_PATTERN =
   /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/
-const STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/
+const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/
 const JSON_LD_REGEX =
   /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/script>/
@@ -577,7 +576,7 @@ export default class BandcampSource {
       // Find the specific track if an ID is provided, otherwise default to the first
       const trackData = trackId
         ? tralbum.trackinfo.find(
-            t => String(t.track_id) === trackId || String(t.id) === trackId
+            (t) => String(t.track_id) === trackId || String(t.id) === trackId
           ) || tralbum.trackinfo[0]
         : tralbum.trackinfo[0]
 

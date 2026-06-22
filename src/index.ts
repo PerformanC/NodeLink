@@ -12,6 +12,7 @@ import {
   migrateConfig,
   persistConfig
 } from './modules/config/configMigration.ts'
+import { cleanupBunServer, createBunServer } from './server/bunServer.ts'
 import {
   applyEnvOverrides,
   checkDependencyUpdates,
@@ -27,7 +28,6 @@ import {
   parseClient,
   verifyDiscordID
 } from './utils.ts'
-import { cleanupBunServer, createBunServer } from './server/bunServer.ts'
 import 'dotenv/config'
 import { GatewayEvents, MINIMUM_NODE_VERSION } from './constants.ts'
 import ConfigValidationManager from './managers/configValidationManager.ts'
@@ -445,7 +445,6 @@ initLogger(
 )
 
 const isBun = typeof Bun !== 'undefined'
-
 
 if (!cluster.isWorker) {
   const ascii = `
@@ -927,9 +926,7 @@ class NodelinkServer extends EventEmitter {
             'info',
             'Server',
             `\x1b[36m${clientInfo.name}\x1b[0m${
-              clientInfo.version
-                ? `/\x1b[32mv${clientInfo.version}\x1b[0m`
-                : ''
+              clientInfo.version ? `/\x1b[32mv${clientInfo.version}\x1b[0m` : ''
             } resumed session with ID: ${oldSessionId}`
           )
           this.statsManager.incrementSessionResume(clientInfo.name, true)

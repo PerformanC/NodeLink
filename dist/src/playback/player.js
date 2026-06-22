@@ -1031,7 +1031,6 @@ export class Player {
             audioTrackId: this.track.audioTrackId
         };
         const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this._isRecovering);
-        const urlDataWithFormats = urlData;
         if (!this.track)
             return false;
         this.streamInfo = { ...urlData, trackInfo: this.track.info };
@@ -1268,7 +1267,6 @@ export class Player {
         logger('debug', 'Player', `Seeking using source (native) to ${position}ms for guild ${this.guildId}`);
         this.position = position;
         this.track.endTime = endTime;
-        let previousSession = null;
         let reuseUrlData = null;
         if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
             const inputStream = this.connection.audioStream?.pipes?.[0];
@@ -2317,7 +2315,7 @@ export class Player {
             }, delay);
             return true;
         }
-        if (!this.fading || this.fading.enabled !== true)
+        if (this.fading?.enabled !== true)
             return false;
         let section = null;
         if (action === 'trackStart' || action === 'trackStartArm')

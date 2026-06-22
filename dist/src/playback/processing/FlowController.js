@@ -116,6 +116,10 @@ export class FlowController extends Transform {
         // This exists to satisfy streamProcessor's type check and avoid 'as any'
     }
     _transform(chunk, _encoding, callback) {
+        if (!this.pendingBuffer) {
+            callback();
+            return;
+        }
         let offset = 0;
         if (this.pendingLength > 0) {
             const needed = FRAME_SIZE - this.pendingLength;
@@ -142,7 +146,7 @@ export class FlowController extends Transform {
     }
     _flush(callback) {
         let remaining = this.pendingLength > 0
-            ? this.pendingBuffer.subarray(0, this.pendingLength)
+            ? (this.pendingBuffer?.subarray(0, this.pendingLength) ?? EMPTY_BUFFER)
             : EMPTY_BUFFER;
         this.pendingLength = 0;
         if (remaining.length > 0) {
@@ -175,8 +179,6 @@ export class FlowController extends Transform {
         callback();
     }
     _destroy(_err, cb) {
-        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-        ;
         this.pendingBuffer = null;
         cb(null);
     }

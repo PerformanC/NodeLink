@@ -21,7 +21,7 @@ export class FlowController extends Transform {
   private readonly tape: ITapeTransformer
   private readonly scratch: IScratchTransformer
   private readonly audioMixer: AudioMixer | null
-  private pendingBuffer: Buffer
+  private pendingBuffer: Buffer | null
   private pendingLength: number
 
   /**
@@ -162,6 +162,11 @@ export class FlowController extends Transform {
     _encoding: BufferEncoding,
     callback: TransformCallback
   ): void {
+    if (!this.pendingBuffer) {
+      callback()
+      return
+    }
+
     let offset = 0
 
     if (this.pendingLength > 0) {
@@ -196,7 +201,7 @@ export class FlowController extends Transform {
   public override _flush(callback: TransformCallback): void {
     let remaining =
       this.pendingLength > 0
-        ? this.pendingBuffer.subarray(0, this.pendingLength)
+        ? (this.pendingBuffer?.subarray(0, this.pendingLength) ?? EMPTY_BUFFER)
         : EMPTY_BUFFER
     this.pendingLength = 0
 
@@ -241,8 +246,7 @@ export class FlowController extends Transform {
     _err: Error | null,
     cb: (error?: Error | null) => void
   ): void {
-    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-    ;(this as any).pendingBuffer = null
+    this.pendingBuffer = null
     cb(null)
   }
 }

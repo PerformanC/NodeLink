@@ -119,7 +119,9 @@ async function getServerTime(spDc) {
         const data = typeof res.body === 'string'
             ? JSON.parse(res.body)
             : res.body;
-        return typeof data.serverTime === 'number' ? data.serverTime * 1000 : Date.now();
+        return typeof data.serverTime === 'number'
+            ? data.serverTime * 1000
+            : Date.now();
     }
     catch {
         return Date.now();

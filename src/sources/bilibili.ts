@@ -599,7 +599,7 @@ export default class BilibiliSource implements SourceInstance {
           | BilibiliApiResponse<BilibiliVideoData>
           | undefined
 
-        if (!body || body.code !== 0) {
+        if (body?.code !== 0) {
           throw new Error(`API Error: ${body?.message || 'Video not found'}`)
         }
 
@@ -642,7 +642,7 @@ export default class BilibiliSource implements SourceInstance {
           | BilibiliApiResponse<BilibiliBangumiData>
           | undefined
 
-        if (!body || body.code !== 0)
+        if (body?.code !== 0)
           throw new Error(`Bangumi API Error: ${body?.message}`)
 
         const result = body.result
@@ -718,8 +718,7 @@ export default class BilibiliSource implements SourceInstance {
             | BilibiliApiResponse<BilibiliAudioData>
             | undefined
 
-          if (!body || body.code !== 0)
-            throw new Error(`Audio API Error: ${body?.msg}`)
+          if (body?.code !== 0) throw new Error(`Audio API Error: ${body?.msg}`)
 
           const data = body.data
           if (!data) throw new Error('No data returned from audio API.')
@@ -760,7 +759,7 @@ export default class BilibiliSource implements SourceInstance {
           | BilibiliApiResponse<{ data: BilibiliAudioData[] }>
           | undefined
 
-        if (!albumRes || albumRes.code !== 0)
+        if (albumRes?.code !== 0)
           throw new Error(`Album API Error: ${albumRes?.msg}`)
 
         const tracks: TrackData[] = (albumRes.data?.data || []).map(
@@ -840,8 +839,7 @@ export default class BilibiliSource implements SourceInstance {
             }>
           | undefined
 
-        if (!body || body.code !== 0)
-          throw new Error(`Live API Error: ${body?.msg}`)
+        if (body?.code !== 0) throw new Error(`Live API Error: ${body?.msg}`)
         if (body.data?.live_status !== 1) throw new Error('Room is not live.')
 
         const data = body.data
@@ -901,7 +899,7 @@ export default class BilibiliSource implements SourceInstance {
             }>
           | undefined
 
-        if (!body || body.code !== 0)
+        if (body?.code !== 0)
           throw new Error(`Space API Error: ${body?.message}`)
 
         const list = body.data?.list?.vlist
@@ -992,7 +990,7 @@ export default class BilibiliSource implements SourceInstance {
         const body = res.body as
           | BilibiliApiResponse<{ cdns: string[] }>
           | undefined
-        if (!body || body.code !== 0 || !body.data?.cdns?.[0]) {
+        if (body?.code !== 0 || !body.data?.cdns?.[0]) {
           throw new Error('Failed to get audio stream.')
         }
 
@@ -1018,8 +1016,7 @@ export default class BilibiliSource implements SourceInstance {
         const body = res.body as BilibiliApiResponse<unknown> | undefined
 
         if (
-          !body ||
-          body.code !== 0 ||
+          body?.code !== 0 ||
           !(body.data as { playurl_info?: unknown })?.playurl_info
         ) {
           throw new Error('Failed to get live stream info.')
@@ -1113,7 +1110,7 @@ export default class BilibiliSource implements SourceInstance {
         const body = res.body as
           | BilibiliApiResponse<BilibiliVideoData>
           | undefined
-        if (!body || body.code !== 0 || !body.data) {
+        if (body?.code !== 0 || !body.data) {
           throw new Error('Failed to fetch video metadata for stream.')
         }
 
@@ -1146,7 +1143,7 @@ export default class BilibiliSource implements SourceInstance {
         | BilibiliApiResponse<BilibiliPlayurlData>
         | undefined
 
-      if (!body || body.code !== 0 || !body.data) {
+      if (body?.code !== 0 || !body.data) {
         throw new Error(`Playurl API Error: ${body?.message}`)
       }
 

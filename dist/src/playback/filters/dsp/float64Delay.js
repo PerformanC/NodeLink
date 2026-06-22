@@ -27,7 +27,10 @@ export class Float64DelayLine {
      * no clamping or truncation.
      */
     write(sample) {
-        this.buffer[this.writeIndex] = sample;
+        const buf = this.buffer;
+        if (!buf)
+            return;
+        buf[this.writeIndex] = sample;
         this.writeIndex = (this.writeIndex + 1) % this.size;
     }
     /**
@@ -43,15 +46,15 @@ export class Float64DelayLine {
         if (delayInSamples <= 0) {
             // Reading current write position (most recent sample)
             const idx = (this.writeIndex - 1 + this.size) % this.size;
-            return this.buffer[idx] ?? 0;
+            return this.buffer?.[idx] ?? 0;
         }
         const clamped = Math.min(delayInSamples, this.size - 1);
         const intDelay = Math.floor(clamped);
         const frac = clamped - intDelay;
         const idx0 = (this.writeIndex - intDelay - 1 + this.size * 2) % this.size;
         const idx1 = (idx0 - 1 + this.size) % this.size;
-        const s0 = this.buffer[idx0] ?? 0;
-        const s1 = this.buffer[idx1] ?? 0;
+        const s0 = this.buffer?.[idx0] ?? 0;
+        const s1 = this.buffer?.[idx1] ?? 0;
         // Linear interpolation: (1-frac)×s0 + frac×s1
         return s0 + frac * (s1 - s0);
     }
@@ -59,11 +62,9 @@ export class Float64DelayLine {
      * Clears the delay line (zero-fill).
      */
     clear() {
-        this.buffer.fill(0);
+        this.buffer?.fill(0);
     }
     destroy() {
-        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-        ;
         this.buffer = null;
     }
 }

@@ -84,16 +84,13 @@ export class VolumeTransformer extends Transform {
     }
     setAGCEnabled(enabled) {
         if (enabled && !this.agc) {
-            ;
-            this.agc =
-                new LoudnessNormalizer({
-                    sampleRate: this.sampleRate,
-                    channels: this.channels,
-                    targetLoudness: -14
-                });
+            this.agc = new LoudnessNormalizer({
+                sampleRate: this.sampleRate,
+                channels: this.channels,
+                targetLoudness: -14
+            });
         }
         else if (!enabled && this.agc) {
-            ;
             this.agc = null;
         }
     }
@@ -200,7 +197,7 @@ export class VolumeTransformer extends Transform {
         const { gainStart, gainEnd } = this._computeFadeGains(usableSamples);
         const gainStep = usableSamples > 1 ? (gainEnd - gainStart) / (usableSamples - 1) : 0;
         let gain = gainStart;
-        if (this.lookaheadSamples > 0) {
+        if (this.lookaheadSamples > 0 && this.lookaheadBuffer) {
             const outputBuffer = alignedBufferIfRequired(chunk.length);
             const outputView = new Int16Array(outputBuffer.buffer, outputBuffer.byteOffset, usableSamples);
             if (useBufferOps) {
@@ -271,17 +268,10 @@ export class VolumeTransformer extends Transform {
         }
     }
     _destroy(_err, cb) {
-        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-        ;
         this.lookaheadBuffer = null;
-        // biome-ignore lint/suspicious/noExplicitAny: checking runtime method existence
         if (this.agc && typeof this.agc.destroy === 'function') {
-            // biome-ignore lint/suspicious/noExplicitAny: calling dynamically-discovered destroy
-            ;
             this.agc.destroy();
         }
-        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release reference
-        ;
         this.agc = null;
         cb(null);
     }

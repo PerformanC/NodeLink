@@ -1,4 +1,8 @@
-import type { VoiceAudioStream, VoiceConnection, VoicePlayerState } from '@performanc/voice'
+import type {
+  VoiceAudioStream,
+  VoiceConnection,
+  VoicePlayerState
+} from '@performanc/voice'
 import type { TrackData } from '../index.types.ts'
 import type {
   TrackStreamResult,
@@ -155,6 +159,7 @@ export interface ExtendedAudioStream extends AudioResource {
   destroyed?: boolean
   _cleanupListeners?: () => void
   pipes?: Array<{ destroy?: () => void }>
+  isPipelineFinished?: () => boolean
 }
 
 export interface FilterTransitionsConfig {
@@ -442,7 +447,9 @@ export interface NodeLink {
     audioInterceptors?: Array<() => import('node:stream').Transform>
   } & Record<string, unknown>
   pluginManager?: import('../../managers/pluginManager.ts').default | null
-  trackCacheManager?: import('../../managers/trackCacheManager.ts').default | null
+  trackCacheManager?:
+    | import('../../managers/trackCacheManager.ts').default
+    | null
   getLyricsManager?: () => Promise<LyricsManagerLike>
   [key: string]: unknown
 }

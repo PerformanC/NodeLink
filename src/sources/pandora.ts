@@ -1101,8 +1101,7 @@ export default class PandoraSource implements SourceInstance {
       )
 
       if (
-        !searchResult ||
-        searchResult.loadType !== 'search' ||
+        searchResult?.loadType !== 'search' ||
         !Array.isArray(searchResult.data) ||
         searchResult.data.length === 0
       ) {

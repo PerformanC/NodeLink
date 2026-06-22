@@ -300,7 +300,7 @@ export default class TwitchSource {
             };
             const res = (await this._gqlRequest(payload));
             const stream = res.data?.user?.stream;
-            if (!stream || stream.type !== 'live') {
+            if (stream?.type !== 'live') {
                 return {
                     loadType: 'error',
                     exception: {

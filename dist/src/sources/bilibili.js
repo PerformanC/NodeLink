@@ -485,7 +485,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0) {
+                if (body?.code !== 0) {
                     throw new Error(`API Error: ${body?.message || 'Video not found'}`);
                 }
                 const data = body.data;
@@ -521,7 +521,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0)
+                if (body?.code !== 0)
                     throw new Error(`Bangumi API Error: ${body?.message}`);
                 const result = body.result;
                 if (!result)
@@ -587,7 +587,7 @@ export default class BilibiliSource {
                         proxy: this.config.network.proxy
                     });
                     const body = res.body;
-                    if (!body || body.code !== 0)
+                    if (body?.code !== 0)
                         throw new Error(`Audio API Error: ${body?.msg}`);
                     const data = body.data;
                     if (!data)
@@ -620,7 +620,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const albumRes = albumResRaw.body;
-                if (!albumRes || albumRes.code !== 0)
+                if (albumRes?.code !== 0)
                     throw new Error(`Album API Error: ${albumRes?.msg}`);
                 const tracks = (albumRes.data?.data || []).map((song) => {
                     const trackInfo = {
@@ -678,7 +678,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0)
+                if (body?.code !== 0)
                     throw new Error(`Live API Error: ${body?.msg}`);
                 if (body.data?.live_status !== 1)
                     throw new Error('Room is not live.');
@@ -727,7 +727,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0)
+                if (body?.code !== 0)
                     throw new Error(`Space API Error: ${body?.message}`);
                 const list = body.data?.list?.vlist;
                 if (!list?.length)
@@ -806,7 +806,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0 || !body.data?.cdns?.[0]) {
+                if (body?.code !== 0 || !body.data?.cdns?.[0]) {
                     throw new Error('Failed to get audio stream.');
                 }
                 return {
@@ -823,8 +823,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const body = res.body;
-                if (!body ||
-                    body.code !== 0 ||
+                if (body?.code !== 0 ||
                     !body.data?.playurl_info) {
                     throw new Error('Failed to get live stream info.');
                 }
@@ -885,7 +884,7 @@ export default class BilibiliSource {
                     proxy: this.config.network.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0 || !body.data) {
+                if (body?.code !== 0 || !body.data) {
                     throw new Error('Failed to fetch video metadata for stream.');
                 }
                 const pMatch = track.identifier.match(/\?p=(\d+)/);
@@ -905,7 +904,7 @@ export default class BilibiliSource {
                 proxy: this.config.network.proxy
             });
             const body = res.body;
-            if (!body || body.code !== 0 || !body.data) {
+            if (body?.code !== 0 || !body.data) {
                 throw new Error(`Playurl API Error: ${body?.message}`);
             }
             const { durl, dash } = body.data;

@@ -1644,7 +1644,8 @@ async function checkDependencyUpdates(credentialManager) {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);
         try {
-            const deps = packageJson.dependencies || {};
+            const deps = packageJson
+                .dependencies || {};
             await Promise.all(coreDeps.map(async (dep) => {
                 try {
                     const declaredVersion = deps[dep] || '';

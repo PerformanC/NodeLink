@@ -158,7 +158,9 @@ async function getServerTime(spDc?: string | null): Promise<number> {
         ? (JSON.parse(res.body) as SpotifyServerTimeResponse)
         : (res.body as SpotifyServerTimeResponse)
 
-    return typeof data.serverTime === 'number' ? data.serverTime * 1000 : Date.now()
+    return typeof data.serverTime === 'number'
+      ? data.serverTime * 1000
+      : Date.now()
   } catch {
     return Date.now()
   }

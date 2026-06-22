@@ -574,7 +574,7 @@ export class PoTokenManager {
       body: JSON.stringify([requestKey, botguardResponse])
     })
 
-    const response = (await integrityTokenResponse.json()) as any
+    const response = (await integrityTokenResponse.json()) as unknown[]
     let token = ''
     if (response && typeof response[0] === 'string') {
       token = response[0]

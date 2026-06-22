@@ -40,20 +40,21 @@ class CombFilter {
      * No clamping inside the loop — full Float64 precision.
      */
     process(input) {
-        const output = this.buffer[this.writeIndex] ?? 0;
+        const buf = this.buffer;
+        if (!buf)
+            return 0;
+        const output = buf[this.writeIndex] ?? 0;
         this.filterStore = output * this.damp2 + this.filterStore * this.damp1;
-        this.buffer[this.writeIndex] = input + this.filterStore * this.feedback;
+        buf[this.writeIndex] = input + this.filterStore * this.feedback;
         this.writeIndex = (this.writeIndex + 1) % this.size;
         return output;
     }
     clear() {
-        this.buffer.fill(0);
+        this.buffer?.fill(0);
         this.filterStore = 0;
         this.writeIndex = 0;
     }
     destroy() {
-        // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-        ;
         this.buffer = null;
         this.filterStore = 0;
     }

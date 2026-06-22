@@ -366,6 +366,11 @@ export interface FilterInstance {
    * Returns true if the filter is currently active or animating back to its disabled state.
    */
   isActive?: () => boolean
+
+  /**
+   * Releases any internal resources.
+   */
+  destroy?: () => void
 }
 
 /**

@@ -129,7 +129,7 @@ export class LoudnessNormalizer {
   private _attackAlpha = 0
   private _releaseAlpha = 0
   private _energyAlpha = 0
-  private _channelBuffer: Float32Array
+  private _channelBuffer: Float32Array | null
 
   /**
    * Creates a new LoudnessNormalizer.
@@ -187,6 +187,7 @@ export class LoudnessNormalizer {
    */
   public process(inputView: Int16Array): void {
     if (inputView.length === 0) return
+    if (!this._channelBuffer) return
 
     const frameCount = inputView.length / this.channels
     const channelBuffer = this._channelBuffer
@@ -276,8 +277,7 @@ export class LoudnessNormalizer {
   }
 
   public destroy(): void {
-    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-    ;(this as any)._channelBuffer = null
+    this._channelBuffer = null
     this.filters = []
   }
 }

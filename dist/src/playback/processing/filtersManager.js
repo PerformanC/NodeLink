@@ -244,12 +244,7 @@ export class FiltersManager extends Transform {
     _destroy(_err, cb) {
         for (const name in this.filterInstances) {
             const instance = this.filterInstances[name];
-            // biome-ignore lint/suspicious/noExplicitAny: checking runtime method existence
-            if (instance && typeof instance.destroy === 'function') {
-                // biome-ignore lint/suspicious/noExplicitAny: calling dynamically-discovered destroy
-                ;
-                instance.destroy();
-            }
+            instance?.destroy?.();
             delete this.filterInstances[name];
         }
         this.activeFilters = [];

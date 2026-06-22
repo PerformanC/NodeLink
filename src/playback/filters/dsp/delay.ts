@@ -3,7 +3,7 @@
  * @public
  */
 export default class DelayLine {
-  private buffer: Buffer
+  private buffer: Buffer | null
   private size: number
   private writeIndex: number
 
@@ -22,7 +22,7 @@ export default class DelayLine {
    * @param sample - The PCM sample to write.
    */
   public write(sample: number): void {
-    this.buffer.writeInt16LE(sample, this.writeIndex * 2)
+    this.buffer?.writeInt16LE(sample, this.writeIndex * 2)
     this.writeIndex = (this.writeIndex + 1) % this.size
   }
 
@@ -38,18 +38,17 @@ export default class DelayLine {
     )
     const readIndex = (this.writeIndex - safeDelay + this.size) % this.size
 
-    return this.buffer.readInt16LE(readIndex * 2)
+    return this.buffer?.readInt16LE(readIndex * 2) ?? 0
   }
 
   /**
    * Clears the delay line buffer.
    */
   public clear(): void {
-    this.buffer.fill(0)
+    this.buffer?.fill(0)
   }
 
   public destroy(): void {
-    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-    ;(this as any).buffer = null
+    this.buffer = null
   }
 }

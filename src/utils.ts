@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import http from 'node:http'
 import http2 from 'node:http2'
 import https from 'node:https'
-import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 import { URL } from 'node:url'
@@ -1982,7 +1981,12 @@ async function checkDependencyUpdates(
 
   for (const dep of coreDeps) {
     try {
-      const depPath = path.join(process.cwd(), 'node_modules', dep, 'package.json')
+      const depPath = path.join(
+        process.cwd(),
+        'node_modules',
+        dep,
+        'package.json'
+      )
       const version = JSON.parse(fs.readFileSync(depPath, 'utf8')).version
       localVersions.push({ name: dep, version })
     } catch {
@@ -2023,7 +2027,9 @@ async function checkDependencyUpdates(
     const timeout = setTimeout(() => controller.abort(), 5000)
 
     try {
-      const deps = (packageJson as { dependencies?: Record<string, string> }).dependencies || {}
+      const deps =
+        (packageJson as { dependencies?: Record<string, string> })
+          .dependencies || {}
 
       await Promise.all(
         coreDeps.map(async (dep) => {
@@ -2130,7 +2136,7 @@ async function checkDependencyUpdates(
       'Server',
       'The following core dependencies have updates available and will be automatically updated:'
     )
-    
+
     for (const update of updates) {
       logger(
         'warn',
@@ -2141,21 +2147,27 @@ async function checkDependencyUpdates(
 
     try {
       logger('info', 'Server', `Running automatic update for core packages...`)
-      const isPnpm = fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml'))
+      const isPnpm = fs.existsSync(
+        path.resolve(process.cwd(), 'pnpm-lock.yaml')
+      )
       const cmd = isPnpm ? 'pnpm update' : 'npm update'
       execSync(cmd, { stdio: 'inherit' })
-      logger('info', 'Server', 'Dependencies updated successfully. Restarting process to apply changes...')
-      
+      logger(
+        'info',
+        'Server',
+        'Dependencies updated successfully. Restarting process to apply changes...'
+      )
+
       const { spawn } = await import('node:child_process')
       const child = spawn(process.argv[0] as string, process.argv.slice(1), {
         stdio: 'inherit',
         env: process.env
       } as import('node:child_process').SpawnOptions)
-      
+
       child.on('exit', (code: number | null) => {
         process.exit(code ?? 0)
       })
-      
+
       // Halt execution of the parent process forever while the child runs
       await new Promise(() => {})
     } catch (error) {

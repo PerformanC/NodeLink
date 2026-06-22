@@ -831,8 +831,7 @@ export default class PandoraSource {
         }
         try {
             let searchResult = await sources.searchWithDefault(decodedTrack.isrc ? `"${decodedTrack.isrc}"` : query);
-            if (!searchResult ||
-                searchResult.loadType !== 'search' ||
+            if (searchResult?.loadType !== 'search' ||
                 !Array.isArray(searchResult.data) ||
                 searchResult.data.length === 0) {
                 searchResult = await sources.searchWithDefault(query);

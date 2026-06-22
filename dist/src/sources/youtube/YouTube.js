@@ -459,7 +459,7 @@ export default class YouTubeSource {
                     logger('debug', 'YouTube', `Music client failed for recommendations: ${e.message}`);
                 }
             }
-            if ((!automixRes || automixRes.loadType !== 'playlist') &&
+            if (automixRes?.loadType !== 'playlist' &&
                 (this.clients.TV || this.clients.TVCast || this.clients.WebRemix)) {
                 try {
                     const tvClient = this.clients.TV ?? this.clients.TVCast;
@@ -706,9 +706,7 @@ export default class YouTubeSource {
             if (!playerBody || playerBody.error)
                 return vanillaTrack;
             const { buildHoloTrack } = await import("./common.js");
-            const holoTrack = await buildHoloTrack(info, null, info.sourceName === 'ytmusic' ? 'ytmusic' : 'youtube', 
-            // biome-ignore lint/suspicious/noExplicitAny: buildHoloTrack is dynamically imported from JS with inferred null-typed param
-            playerBody, {
+            const holoTrack = await buildHoloTrack(info, null, info.sourceName === 'ytmusic' ? 'ytmusic' : 'youtube', playerBody, {
                 fetchChannelInfo: options.fetchChannelInfo ?? false,
                 resolveExternalLinks: options.resolveExternalLinks ?? false,
                 search: {}
@@ -776,7 +774,9 @@ export default class YouTubeSource {
                         if (!this.failingClientsByTrack.has(decodedTrack.identifier)) {
                             this.failingClientsByTrack.set(decodedTrack.identifier, new Set());
                         }
-                        this.failingClientsByTrack.get(decodedTrack.identifier)?.add(clientName);
+                        this.failingClientsByTrack
+                            .get(decodedTrack.identifier)
+                            ?.add(clientName);
                     }
                     this.reportProxyStatus(proxyToUse, false, urlData.exception.status || 500, proxyLatency);
                     clientErrors.push({
@@ -1012,8 +1012,7 @@ export default class YouTubeSource {
             for (const fallbackSource of fallbackOrder) {
                 try {
                     const search = await this.nodelink.sources?.search(fallbackSource, query);
-                    if (!search ||
-                        search.loadType !== 'search' ||
+                    if (search?.loadType !== 'search' ||
                         !Array.isArray(search.data) ||
                         search.data.length === 0) {
                         continue;
@@ -1187,7 +1186,7 @@ export default class YouTubeSource {
             try {
                 logger('warn', 'YouTube', `SABR stall detected for ${decodedTrack.title}. Refreshing session...`);
                 const newUrlData = await this.getTrackUrl(decodedTrack, null, true);
-                if (!newUrlData || newUrlData.protocol !== 'sabr') {
+                if (newUrlData?.protocol !== 'sabr') {
                     throw new Error('No SABR session available for recovery');
                 }
                 const ad = (newUrlData.additionalData || {});
@@ -1425,7 +1424,7 @@ export default class YouTubeSource {
         let currentItag = currentAdditionalData?.itag;
         let availableFormats = currentAdditionalData?.formats || [];
         const failedItags = new Set();
-        let isRecovering = false;
+        const _isRecovering = false;
         const cleanup = () => {
             if (destroyed)
                 return;
@@ -1507,7 +1506,11 @@ export default class YouTubeSource {
                         (statusCode ?? 0) >= 500) {
                         logger('warn', 'YouTube', `Got ${statusCode} at pos ${position} → forcing recovery`);
                         fetching = false;
-                        recover({ message: `HTTP ${statusCode}`, statusCode, name: 'Error' });
+                        recover({
+                            message: `HTTP ${statusCode}`,
+                            statusCode,
+                            name: 'Error'
+                        });
                         return;
                     }
                     throw new Error(`Range request failed: ${statusCode}`);
@@ -1632,13 +1635,16 @@ export default class YouTubeSource {
                 if (refreshes > 2 && currentItag) {
                     failedItags.add(currentItag);
                     logger('warn', 'YouTube', `Itag ${currentItag} failed consistently. Attempting quality fallback...`);
-                    const currentMime = currentAdditionalData?.formats?.find((f) => f.itag === currentItag)?.mimeType || '';
+                    const currentMime = currentAdditionalData?.formats?.find((f) => f.itag === currentItag)
+                        ?.mimeType || '';
                     const isWebm = currentMime.includes('webm');
                     const otherAudioFormats = availableFormats
                         .filter((f) => f.itag !== currentItag &&
                         !failedItags.has(f.itag) &&
                         f.mimeType?.includes('audio') &&
-                        (isWebm ? f.mimeType.includes('webm') : f.mimeType.includes('mp4')))
+                        (isWebm
+                            ? f.mimeType.includes('webm')
+                            : f.mimeType.includes('mp4')))
                         .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
                     const bestFallback = otherAudioFormats[0];
                     if (bestFallback) {
@@ -1652,10 +1658,13 @@ export default class YouTubeSource {
                 if (newUrlData.exception || !newUrlData.url) {
                     throw new Error('No valid URL from getTrackUrl');
                 }
-                const oldContentLength = currentAdditionalData?.contentLength || contentLength;
+                const oldContentLength = currentAdditionalData?.contentLength ||
+                    contentLength;
                 const newAdditionalData = newUrlData.additionalData;
                 const newContentLength = newAdditionalData?.contentLength;
-                if (oldContentLength && newContentLength && oldContentLength !== newContentLength) {
+                if (oldContentLength &&
+                    newContentLength &&
+                    oldContentLength !== newContentLength) {
                     const ratio = newContentLength / oldContentLength;
                     const oldPos = position;
                     position = Math.floor(position * ratio);

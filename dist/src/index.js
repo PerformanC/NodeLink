@@ -16,8 +16,8 @@ import RoutePlannerManager from "./managers/routePlannerManager.js";
 import SessionManager from "./managers/sessionManager.js";
 import StatsManager from "./managers/statsManager.js";
 import { migrateConfig, persistConfig } from "./modules/config/configMigration.js";
-import { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
 import { cleanupBunServer, createBunServer } from "./server/bunServer.js";
+import { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
 import 'dotenv/config';
 import { GatewayEvents, MINIMUM_NODE_VERSION } from "./constants.js";
 import ConfigValidationManager from "./managers/configValidationManager.js";
@@ -628,9 +628,7 @@ class NodelinkServer extends EventEmitter {
                 }
             }
             if (session) {
-                logger('info', 'Server', `\x1b[36m${clientInfo.name}\x1b[0m${clientInfo.version
-                    ? `/\x1b[32mv${clientInfo.version}\x1b[0m`
-                    : ''} resumed session with ID: ${oldSessionId}`);
+                logger('info', 'Server', `\x1b[36m${clientInfo.name}\x1b[0m${clientInfo.version ? `/\x1b[32mv${clientInfo.version}\x1b[0m` : ''} resumed session with ID: ${oldSessionId}`);
                 this.statsManager.incrementSessionResume(clientInfo.name, true);
                 socket.on('close', (...args) => {
                     const code = args[0];

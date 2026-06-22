@@ -26,7 +26,7 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
   public readonly sampleRate: number
   public readonly channels: number
   private readonly lookaheadSamples: number
-  private readonly lookaheadBuffer: Int16Array
+  private lookaheadBuffer: Int16Array | null
   private lookaheadIndex: number
   public lookaheadFull: boolean
   private currentVolume: number
@@ -41,7 +41,7 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
   public readonly limiterSoftness: number
   private readonly _thresholdValue: number
   private readonly _limitHeadroom: number
-  private readonly agc: LoudnessNormalizer | null
+  private agc: LoudnessNormalizer | null
 
   /**
    * Creates a new VolumeTransformer.
@@ -126,14 +126,13 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
 
   public setAGCEnabled(enabled: boolean): void {
     if (enabled && !this.agc) {
-      ;(this as unknown as { agc: LoudnessNormalizer | null }).agc =
-        new LoudnessNormalizer({
-          sampleRate: this.sampleRate,
-          channels: this.channels,
-          targetLoudness: -14
-        })
+      this.agc = new LoudnessNormalizer({
+        sampleRate: this.sampleRate,
+        channels: this.channels,
+        targetLoudness: -14
+      })
     } else if (!enabled && this.agc) {
-      ;(this as unknown as { agc: LoudnessNormalizer | null }).agc = null
+      this.agc = null
     }
   }
 
@@ -271,7 +270,7 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
       usableSamples > 1 ? (gainEnd - gainStart) / (usableSamples - 1) : 0
     let gain = gainStart
 
-    if (this.lookaheadSamples > 0) {
+    if (this.lookaheadSamples > 0 && this.lookaheadBuffer) {
       const outputBuffer = alignedBufferIfRequired(chunk.length)
       const outputView = new Int16Array(
         outputBuffer.buffer,
@@ -363,15 +362,11 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
     _err: Error | null,
     cb: (error?: Error | null) => void
   ): void {
-    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release buffer
-    ;(this as any).lookaheadBuffer = null
-    // biome-ignore lint/suspicious/noExplicitAny: checking runtime method existence
-    if (this.agc && typeof (this.agc as any).destroy === 'function') {
-      // biome-ignore lint/suspicious/noExplicitAny: calling dynamically-discovered destroy
-      ;(this.agc as any).destroy()
+    this.lookaheadBuffer = null
+    if (this.agc && typeof this.agc.destroy === 'function') {
+      this.agc.destroy()
     }
-    // biome-ignore lint/suspicious/noExplicitAny: intentional null to release reference
-    ;(this as any).agc = null
+    this.agc = null
     cb(null)
   }
 }

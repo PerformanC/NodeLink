@@ -143,9 +143,9 @@ const EMPTY_BUFFER: Buffer = Buffer.alloc(0)
 const _getResamplerConverterType = (
   quality: ResamplingQuality,
   libSampleRate: LibSampleRateModule
-): number => {
+): LibSampleRateModule['ConverterType'][keyof LibSampleRateModule['ConverterType']] => {
   const types = libSampleRate.ConverterType
-  const qualityMap: Record<string, number> = {
+  const qualityMap: Record<string, (typeof types)[keyof typeof types]> = {
     best: types.SRC_SINC_BEST_QUALITY,
     medium: types.SRC_SINC_MEDIUM_QUALITY,
     fastest: types.SRC_SINC_FASTEST,
@@ -741,8 +741,12 @@ class BaseAudioResource {
   isPipelineFinished(): boolean {
     if (this._destroyed || !this.pipes) return true
     for (const pipe of this.pipes) {
-      const p = pipe as any
-      if (p.isFinished || p.readableEnded) return true
+      if (
+        (pipe as unknown as { isFinished?: boolean }).isFinished ||
+        pipe.readableEnded
+      ) {
+        return true
+      }
     }
     return false
   }
@@ -1509,8 +1513,7 @@ class AACDecoderStream extends Transform {
                         converterType: _getResamplerConverterType(
                           this.resamplingQuality as ResamplingQuality,
                           libSampleRate
-                          // biome-ignore lint/suspicious/noExplicitAny: library type mismatch
-                        ) as any
+                        )
                       })
                     )
                     .then((resampler: ResamplerLike) => {

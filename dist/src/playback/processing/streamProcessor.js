@@ -471,9 +471,10 @@ class BaseAudioResource {
         if (this._destroyed || !this.pipes)
             return true;
         for (const pipe of this.pipes) {
-            const p = pipe;
-            if (p.isFinished || p.readableEnded)
+            if (pipe.isFinished ||
+                pipe.readableEnded) {
                 return true;
+            }
         }
         return false;
     }
@@ -1105,9 +1106,7 @@ class AACDecoderStream extends Transform {
                                 if (!this.resamplerCreationPromise) {
                                     this.resamplerCreationPromise = getLibSampleRate()
                                         .then((libSampleRate) => libSampleRate.create(2, sampleRate, 48000, {
-                                        converterType: _getResamplerConverterType(this.resamplingQuality, libSampleRate
-                                        // biome-ignore lint/suspicious/noExplicitAny: library type mismatch
-                                        )
+                                        converterType: _getResamplerConverterType(this.resamplingQuality, libSampleRate)
                                     }))
                                         .then((resampler) => {
                                         this.resampler = resampler;

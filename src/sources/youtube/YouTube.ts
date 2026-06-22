@@ -663,7 +663,7 @@ export default class YouTubeSource {
       }
 
       if (
-        (!automixRes || automixRes.loadType !== 'playlist') &&
+        automixRes?.loadType !== 'playlist' &&
         (this.clients.TV || this.clients.TVCast || this.clients.WebRemix)
       ) {
         try {
@@ -1074,8 +1074,7 @@ export default class YouTubeSource {
         info,
         null,
         info.sourceName === 'ytmusic' ? 'ytmusic' : 'youtube',
-        // biome-ignore lint/suspicious/noExplicitAny: buildHoloTrack is dynamically imported from JS with inferred null-typed param
-        playerBody as any,
+        playerBody as Record<string, unknown>,
         {
           fetchChannelInfo: options.fetchChannelInfo ?? false,
           resolveExternalLinks: options.resolveExternalLinks ?? false,
@@ -1148,7 +1147,9 @@ export default class YouTubeSource {
     if (!clientList.length) clientList = ['Web']
     const clientErrors: Array<{ client: string; message: string }> = []
 
-    const failingClients = this.failingClientsByTrack.get(decodedTrack.identifier)
+    const failingClients = this.failingClientsByTrack.get(
+      decodedTrack.identifier
+    )
 
     for (const clientName of clientList) {
       if (failingClients?.has(clientName)) {
@@ -1189,7 +1190,9 @@ export default class YouTubeSource {
             if (!this.failingClientsByTrack.has(decodedTrack.identifier)) {
               this.failingClientsByTrack.set(decodedTrack.identifier, new Set())
             }
-            this.failingClientsByTrack.get(decodedTrack.identifier)?.add(clientName)
+            this.failingClientsByTrack
+              .get(decodedTrack.identifier)
+              ?.add(clientName)
           }
 
           this.reportProxyStatus(
@@ -1561,8 +1564,7 @@ export default class YouTubeSource {
             query
           )
           if (
-            !search ||
-            search.loadType !== 'search' ||
+            search?.loadType !== 'search' ||
             !Array.isArray(search.data) ||
             search.data.length === 0
           ) {
@@ -1839,7 +1841,7 @@ export default class YouTubeSource {
           `SABR stall detected for ${decodedTrack.title}. Refreshing session...`
         )
         const newUrlData = await this.getTrackUrl(decodedTrack, null, true)
-        if (!newUrlData || newUrlData.protocol !== 'sabr') {
+        if (newUrlData?.protocol !== 'sabr') {
           throw new Error('No SABR session available for recovery')
         }
 
@@ -2168,7 +2170,7 @@ export default class YouTubeSource {
     let currentItag = currentAdditionalData?.itag
     let availableFormats = currentAdditionalData?.formats || []
     const failedItags = new Set<number>()
-    let isRecovering = false
+    const _isRecovering = false
 
     const cleanup = () => {
       if (destroyed) return
@@ -2276,7 +2278,11 @@ export default class YouTubeSource {
               `Got ${statusCode} at pos ${position} → forcing recovery`
             )
             fetching = false
-            recover({ message: `HTTP ${statusCode}`, statusCode, name: 'Error' })
+            recover({
+              message: `HTTP ${statusCode}`,
+              statusCode,
+              name: 'Error'
+            })
             return
           }
           throw new Error(`Range request failed: ${statusCode}`)
@@ -2446,7 +2452,9 @@ export default class YouTubeSource {
             `Itag ${currentItag} failed consistently. Attempting quality fallback...`
           )
 
-          const currentMime = currentAdditionalData?.formats?.find((f) => f.itag === currentItag)?.mimeType || ''
+          const currentMime =
+            currentAdditionalData?.formats?.find((f) => f.itag === currentItag)
+              ?.mimeType || ''
           const isWebm = currentMime.includes('webm')
 
           const otherAudioFormats = availableFormats
@@ -2455,7 +2463,9 @@ export default class YouTubeSource {
                 f.itag !== currentItag &&
                 !failedItags.has(f.itag) &&
                 f.mimeType?.includes('audio') &&
-                (isWebm ? f.mimeType.includes('webm') : f.mimeType.includes('mp4'))
+                (isWebm
+                  ? f.mimeType.includes('webm')
+                  : f.mimeType.includes('mp4'))
             )
             .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))
 
@@ -2478,11 +2488,21 @@ export default class YouTubeSource {
           throw new Error('No valid URL from getTrackUrl')
         }
 
-        const oldContentLength = currentAdditionalData?.contentLength as number | undefined || contentLength
-        const newAdditionalData = newUrlData.additionalData as TrackUrlAdditionalData | undefined
-        const newContentLength = newAdditionalData?.contentLength as number | undefined
+        const oldContentLength =
+          (currentAdditionalData?.contentLength as number | undefined) ||
+          contentLength
+        const newAdditionalData = newUrlData.additionalData as
+          | TrackUrlAdditionalData
+          | undefined
+        const newContentLength = newAdditionalData?.contentLength as
+          | number
+          | undefined
 
-        if (oldContentLength && newContentLength && oldContentLength !== newContentLength) {
+        if (
+          oldContentLength &&
+          newContentLength &&
+          oldContentLength !== newContentLength
+        ) {
           const ratio = newContentLength / oldContentLength
           const oldPos = position
           position = Math.floor(position * ratio)

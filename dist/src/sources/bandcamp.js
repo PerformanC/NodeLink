@@ -3,7 +3,7 @@ import { encodeTrack, logger, makeRequest } from "../utils.js";
 const BANDCAMP_BASE_URL = 'https://bandcamp.com';
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`;
 const BANDCAMP_TRACK_PATTERN = /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/;
-const STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/;
+const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/;
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/;
 const JSON_LD_REGEX = /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/script>/;
 /**
@@ -433,7 +433,7 @@ export default class BandcampSource {
         if (tralbum?.trackinfo) {
             // Find the specific track if an ID is provided, otherwise default to the first
             const trackData = trackId
-                ? tralbum.trackinfo.find(t => String(t.track_id) === trackId || String(t.id) === trackId) || tralbum.trackinfo[0]
+                ? tralbum.trackinfo.find((t) => String(t.track_id) === trackId || String(t.id) === trackId) || tralbum.trackinfo[0]
                 : tralbum.trackinfo[0];
             if (trackData?.file) {
                 const mp3Url = trackData.file['mp3-128'];
