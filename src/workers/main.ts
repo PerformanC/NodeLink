@@ -2499,6 +2499,31 @@ process.on('message', (msg: unknown) => {
     )
     return
   }
+  if (message.type === 'updateConfig') {
+    const newConfig = message.payload as unknown as NodeLinkConfig
+    if (newConfig) {
+      config = newConfig
+      nodelink.options = newConfig as any
+      
+      applyEnvOverrides(config as unknown as Record<string, unknown>)
+      
+      const logging = config.logging as LoggingConfig
+      initLogger({ logging })
+
+      nodelink.sources?.loadFolder?.().catch((err: any) => {
+        logger('error', 'Worker', `Failed to reload sources folder: ${err.message}`)
+      })
+      nodelink.lyrics?.loadFolder?.().catch((err: any) => {
+        logger('error', 'Worker', `Failed to reload lyrics folder: ${err.message}`)
+      })
+      nodelink.meanings?.loadFolder?.().catch((err: any) => {
+        logger('error', 'Worker', `Failed to reload meanings folder: ${err.message}`)
+      })
+
+      logger('info', 'Worker', 'Configuration dynamically updated from Master.')
+    }
+    return
+  }
   if (message.type === 'ping') {
     if (process.connected) {
       try {

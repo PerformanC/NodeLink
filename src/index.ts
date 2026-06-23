@@ -1,5 +1,6 @@
 import cluster from 'node:cluster'
 import { EventEmitter } from 'node:events'
+import fs from 'node:fs'
 import http from 'node:http'
 import { resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -294,9 +295,14 @@ const getTrackCacheManagerClass = async (): Promise<
 
 let config: NodelinkConfig
 
-const loadConfig = async (): Promise<NodelinkConfig> => {
-  const resolveRootConfigUrl = (fileName: string): string =>
-    pathToFileURL(resolvePath(process.cwd(), fileName)).href
+const loadConfig = async (updateTimestamp?: number): Promise<NodelinkConfig> => {
+  const resolveRootConfigUrl = (fileName: string): string => {
+    let url = pathToFileURL(resolvePath(process.cwd(), fileName)).href
+    if (updateTimestamp) {
+      url += `?update=${updateTimestamp}`
+    }
+    return url
+  }
   const resolveConfigExport = (
     importedModule: Record<string, unknown>,
     fileName: string
@@ -423,6 +429,68 @@ config = await loadConfig()
 
 // Apply environment variable overrides after config is loaded
 applyEnvOverrides(config as unknown as Record<string, unknown>)
+
+let watcherTimeout: NodeJS.Timeout | null = null
+
+const setupConfigWatcher = (): void => {
+  const configPath = process.cwd()
+  logger('info', 'Server', 'Initializing configuration file watcher...')
+
+  try {
+    fs.watch(configPath, { recursive: false }, (eventType, filename) => {
+      if (!filename || (filename !== 'config.ts' && filename !== 'config.js')) return
+
+      if (watcherTimeout) clearTimeout(watcherTimeout)
+
+      watcherTimeout = setTimeout(async () => {
+        logger('info', 'Server', `Configuration file change detected: ${filename}. Reloading...`)
+        try {
+          const timestamp = Date.now()
+          const newConfig = await loadConfig(timestamp)
+          applyEnvOverrides(newConfig as unknown as Record<string, unknown>)
+          
+          initLogger(newConfig as unknown as { logging?: import('./typings/utils.types.ts').LoggingConfig })
+          
+          config = newConfig
+
+          const nodelinkInstance = (global as typeof globalThis & { nodelink?: NodelinkServer }).nodelink
+          if (nodelinkInstance) {
+            nodelinkInstance.options = newConfig
+            
+            if (nodelinkInstance.sources) {
+              await nodelinkInstance.sources.loadFolder()
+            }
+            if (nodelinkInstance.lyrics) {
+              await nodelinkInstance.lyrics.loadFolder()
+            }
+            if (nodelinkInstance.meanings) {
+              await nodelinkInstance.meanings.loadFolder()
+            }
+
+            if (nodelinkInstance.workerManager) {
+              // @ts-ignore
+              nodelinkInstance.workerManager.updateConfig(newConfig)
+            }
+
+            logger('info', 'Server', 'Configuration hot-reloaded successfully.')
+          }
+        } catch (err: unknown) {
+          logger(
+            'error',
+            'Server',
+            `Failed to reload configuration: ${err instanceof Error ? err.message : String(err)}`
+          )
+        }
+      }, 200)
+    })
+  } catch (watchError: unknown) {
+    logger(
+      'error',
+      'Server',
+      `Failed to initialize config watcher: ${watchError instanceof Error ? watchError.message : String(watchError)}`
+    )
+  }
+}
 
 const clusterEnabled =
   // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires index signature access
@@ -2416,6 +2484,7 @@ if (clusterEnabled && cluster.isPrimary) {
     await nserver.start({ isClusterPrimary: true })
     ;(global as typeof globalThis & { nodelink?: NodelinkServer }).nodelink =
       nserver
+    setupConfigWatcher()
 
     let isShuttingDown = false
     const shutdown = async () => {
@@ -2490,6 +2559,7 @@ if (clusterEnabled && cluster.isPrimary) {
     await nserver.start()
     ;(global as typeof globalThis & { nodelink?: NodelinkServer }).nodelink =
       nserver
+    setupConfigWatcher()
 
     logger(
       'info',

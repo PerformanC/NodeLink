@@ -1794,6 +1794,55 @@ export default class WorkerManager {
     return workerMetrics
   }
 
+  updateConfig(config: NodelinkConfig): void {
+    this.config = config
+    const availableParallelism =
+      typeof os.availableParallelism === 'function'
+        ? os.availableParallelism()
+        : os.cpus().length
+    this.maxWorkers =
+      config.cluster.workers === 0
+        ? availableParallelism
+        : Math.max(1, config.cluster.workers || 0)
+    this.minWorkers = Math.max(1, config.cluster?.minWorkers || 1)
+    this.commandTimeout = config.cluster?.commandTimeout || 45000
+    this.fastCommandTimeout = config.cluster?.fastCommandTimeout || 10000
+    this.maxRetries = config.cluster?.maxRetries || 2
+    this.scalingConfig = {
+      maxPlayersPerWorker:
+        config.cluster.scaling?.maxPlayersPerWorker ||
+        config.cluster.workers ||
+        20,
+      targetUtilization: config.cluster.scaling?.targetUtilization || 0.7,
+      scaleUpThreshold: config.cluster.scaling?.scaleUpThreshold || 0.75,
+      scaleDownThreshold: config.cluster.scaling?.scaleDownThreshold || 0.3,
+      idleWorkerTimeoutMs: config.cluster.scaling?.idleWorkerTimeoutMs || 60000,
+      checkIntervalMs: config.cluster.scaling?.checkIntervalMs || 5000,
+      lagPenaltyLimit: config.cluster.scaling?.lagPenaltyLimit || 60,
+      cpuPenaltyLimit: config.cluster.scaling?.cpuPenaltyLimit || 0.85
+    }
+
+    logger(
+      'info',
+      'Cluster',
+      `WorkerManager config updated. Min: ${this.minWorkers}, Max: ${this.maxWorkers} workers.`
+    )
+
+    for (const worker of this.workers) {
+      if (worker && typeof worker.send === 'function') {
+        try {
+          worker.send({ type: 'updateConfig', payload: config })
+        } catch (e: unknown) {
+          logger(
+            'error',
+            'Cluster',
+            `Failed to send updateConfig to worker ${worker.id}: ${e instanceof Error ? e.message : String(e)}`
+          )
+        }
+      }
+    }
+  }
+
   destroy(): void {
     this.isDestroying = true
     this._stopScalingCheck()
