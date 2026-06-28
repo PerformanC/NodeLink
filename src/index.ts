@@ -447,6 +447,22 @@ initLogger(
 const isBun = typeof Bun !== 'undefined'
 
 if (!cluster.isWorker) {
+  const supportGuidelines = `\x1b[35m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                            SUPPORT GUIDELINES                                │
+│                                                                              │
+│  1. Turn on debugging in config.ts before asking for help.                   │
+│  2. Test the 'dev' branch (git checkout dev) to ensure it's not fixed yet.   │
+│  3. If providing logs, start copying EXACTLY from this box onwards.          │
+│  4. Cut logs or missing Node.js version will result in an ignored ticket.    │
+│  5. FAQ and Rules: https://discord.gg/bVz6ppZ3SP                             │
+│                    https://discord.gg/z4ayqfeBdB                             │
+╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m
+
+  *
+`
+  process.stdout.write(supportGuidelines)
+
   const ascii = `
    ▄   ████▄ ██▄   ▄███▄   █    ▄█    ▄   █  █▀
     █  █   █ █  █  █▀   ▀  █    ██     █  █▄█
@@ -2443,6 +2459,12 @@ if (clusterEnabled && cluster.isPrimary) {
       process.stdout.write(
         '  \x1b[1m\x1b[34m➜\x1b[0m \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m\n\n'
       )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mHaving issues? Use "git checkout dev" to see if it\'s fixed.\x1b[0m\n'
+      )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mRead the FAQ & follow the support template in our Discord.\x1b[0m\n\n'
+      )
 
       logger(
         'info',
@@ -2552,6 +2574,12 @@ if (clusterEnabled && cluster.isPrimary) {
       )
       process.stdout.write(
         '  \x1b[1m\x1b[34m➜\x1b[0m \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m\n\n'
+      )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mHaving issues? Use "git checkout dev" to see if it\'s fixed.\x1b[0m\n'
+      )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mRead the FAQ & follow the support template in our Discord.\x1b[0m\n\n'
       )
 
       process.exit(0)
