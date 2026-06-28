@@ -270,9 +270,19 @@ if (!cluster.isWorker) {
                                                 maintained by 1Lucas1.apk & ToddyTheNoobDud
 `;
     process.stdout.write(`\x1b[32m${ascii}\x1b[0m\n`);
+    try {
+        await checkForUpdates();
+    }
+    catch (e) {
+        logger('error', 'Git', `Update check failed: ${e.message}`);
+    }
+    try {
+        await checkDependencyUpdates();
+    }
+    catch (e) {
+        logger('error', 'Git', `Dependency check failed: ${e.message}`);
+    }
 }
-checkForUpdates().catch((e) => logger('error', 'Git', `Update check failed: ${e.message}`));
-checkDependencyUpdates().catch((e) => logger('error', 'Git', `Dependency check failed: ${e.message}`));
 memoryTrace('bootstrap:after-check-for-updates');
 /**
  * Main NodeLink server class
