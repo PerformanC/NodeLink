@@ -308,16 +308,9 @@ export default class YouTubeSource {
      */
     async _fetchVisitorData() {
         const cachedPlayerScript = this.nodelink.credentialManager?.get('yt_player_script_url');
-        const cachedVisitorData = this.nodelink.credentialManager?.get('yt_visitor_data');
         if (cachedPlayerScript) {
             this.cipherManager.setPlayerScriptUrl(cachedPlayerScript);
             logger('debug', 'YouTube', 'Player script URL loaded from cache.');
-        }
-        if (cachedVisitorData) {
-            this.ytContext.client.visitorData = cachedVisitorData;
-            logger('debug', 'YouTube', 'Visitor data loaded from cache.');
-        }
-        if (cachedPlayerScript && cachedVisitorData) {
             return;
         }
         let visitorFound = false;
@@ -334,9 +327,8 @@ export default class YouTubeSource {
                 const visitorMatch = bodyStr?.match(/"VISITOR_DATA":"([^"]+)"/);
                 if (visitorMatch?.[1]) {
                     this.ytContext.client.visitorData = visitorMatch[1];
-                    this.nodelink.credentialManager?.set('yt_visitor_data', visitorMatch[1], 60 * 60 * 1000);
                     visitorFound = true;
-                    logger('debug', 'YouTube', 'visitorData refreshed and cached.');
+                    logger('debug', 'YouTube', 'visitorData refreshed from embed.');
                 }
                 const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/);
                 if (playerScriptMatch?.[1]) {
@@ -360,18 +352,16 @@ export default class YouTubeSource {
                     guideBody?.responseContext?.visitorData) {
                     this.ytContext.client.visitorData =
                         guideBody.responseContext.visitorData;
-                    this.nodelink.credentialManager?.set('yt_visitor_data', guideBody.responseContext.visitorData, 60 * 60 * 1000);
                     visitorFound = true;
-                    logger('debug', 'YouTube', 'visitorData refreshed via guide and cached.');
+                    logger('debug', 'YouTube', 'visitorData refreshed via guide.');
                 }
                 else {
-                    logger('warn', 'YouTube', 'Failed to refresh visitorData via guide; using cached fallback if present.');
+                    logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.');
                 }
             }
         }
-        catch (_e) {
-            logger('error', 'YouTube', `Error fetching visitor data: \${(e as Error).message}`);
-            logger('warn', 'YouTube', 'Using cached visitorData fallback (if present).');
+        catch (e) {
+            logger('error', 'YouTube', `Error fetching visitor data: ${e.message}`);
         }
         if (playerScriptUrl)
             this.cipherManager.setPlayerScriptUrl(playerScriptUrl);

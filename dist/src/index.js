@@ -268,7 +268,8 @@ if (!cluster.isWorker) {
 │  2. Test the 'dev' branch (git checkout dev) to ensure it's not fixed yet.   │
 │  3. If providing logs, start copying EXACTLY from this box onwards.          │
 │  4. Cut logs or missing Node.js version will result in an ignored ticket.    │
-│  5. FAQ and Rules: https://discord.gg/z4ayqfeBdB                             │
+│  5. FAQ and Rules: https://discord.gg/bVz6ppZ3SP                             │
+│                    https://discord.gg/z4ayqfeBdB                             │
 ╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m
 
   *
