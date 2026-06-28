@@ -367,13 +367,9 @@ export default class WorkerManager {
     this.nextStatelessWorkerIndex = 0
     this.pendingRequests = new Map()
     this.streamRequests = new Map()
-    const availableParallelism =
-      typeof os.availableParallelism === 'function'
-        ? os.availableParallelism()
-        : os.cpus().length
     this.maxWorkers =
       config.cluster.workers === 0
-        ? availableParallelism
+        ? os.cpus().length
         : Math.max(1, config.cluster.workers || 0)
     this.minWorkers = Math.max(1, config.cluster?.minWorkers || 1)
     this.workerLoad = new Map()
@@ -671,25 +667,12 @@ export default class WorkerManager {
 
     if (stats.isHibernating) return cost
 
-    const cpuLoad = stats.cpu?.nodelinkLoad ?? 0
-    const lagP95 = stats.eventLoopLagP95 ?? stats.eventLoopLag ?? 0
-    const frameDeficit = stats.frameStats?.deficit ?? 0
-    const stuckRecoveries = stats.stuckRecoveries ?? 0
-
-    if (cpuLoad > this.scalingConfig.cpuPenaltyLimit) {
+    if ((stats.cpu?.nodelinkLoad ?? 0) > this.scalingConfig.cpuPenaltyLimit) {
       cost += this.scalingConfig.maxPlayersPerWorker + 5
     }
 
-    if (lagP95 > this.scalingConfig.lagPenaltyLimit) {
+    if ((stats.eventLoopLag ?? 0) > this.scalingConfig.lagPenaltyLimit) {
       cost += this.scalingConfig.maxPlayersPerWorker / 2
-    }
-
-    if (frameDeficit > playingCount * 10) {
-      cost += this.scalingConfig.maxPlayersPerWorker / 4
-    }
-
-    if (stuckRecoveries > playingCount * 0.1 && playingCount > 0) {
-      cost += this.scalingConfig.maxPlayersPerWorker / 3
     }
 
     return cost
@@ -1580,38 +1563,7 @@ export default class WorkerManager {
       }
     }
 
-    if (bestWorker) {
-      const ws = this.workerStats.get(bestWorker.id)
-      const localLoad = this.workerToGuilds.get(bestWorker.id)?.size ?? 0
-      const lagP99 = ws?.eventLoopLagP99 ?? ws?.eventLoopLag ?? 0
-      const cpuLoad = ws?.cpu?.nodelinkLoad ?? 0
-      const stuckRecoveries = ws?.stuckRecoveries ?? 0
-      const playingCount = localLoad
 
-      const admissionDenied =
-        lagP99 > this.scalingConfig.lagPenaltyLimit * 3 ||
-        cpuLoad > 0.95 ||
-        (stuckRecoveries > playingCount * 0.5 && playingCount > 5)
-
-      if (admissionDenied && this.workers.length < this.maxWorkers) {
-        logger(
-          'warn',
-          'Cluster',
-          `Worker #${bestWorker.id} admission denied (lagP99=${lagP99.toFixed(1)}ms, cpu=${cpuLoad.toFixed(2)}, stuckRecoveries=${stuckRecoveries}). Forking new worker.`
-        )
-        const newWorker = this.forkWorker()
-        if (newWorker) {
-          this.assignGuildToWorker(playerKey, newWorker)
-          return newWorker
-        }
-      } else if (admissionDenied) {
-        logger(
-          'warn',
-          'Cluster',
-          `Worker #${bestWorker.id} admission denied but at max workers. Assigning anyway.`
-        )
-      }
-    }
 
     const threshold = this.scalingConfig.maxPlayersPerWorker
     const hasConnectedWorker = !!bestWorker

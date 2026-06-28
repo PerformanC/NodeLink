@@ -81,9 +81,6 @@ export default class ConnectionManager {
     this._lastPingMs = undefined
   }
 
-  /**
-   * Starts the periodic connection monitor.
-   */
   start(): void {
     const checkInterval = Math.max(1, this.config.interval || 300000)
     if (checkInterval > 0) {
@@ -92,8 +89,11 @@ export default class ConnectionManager {
         'ConnectionManager',
         `Starting connection checks every ${checkInterval}ms.`
       )
-      this.checkConnection()
-      this.interval = setInterval(() => this.checkConnection(), checkInterval)
+      // Delay the first check so it doesn't feel like part of the startup latency
+      setTimeout(() => {
+        this.checkConnection().catch(() => {})
+      }, 5000)
+      this.interval = setInterval(() => this.checkConnection().catch(() => {}), checkInterval)
     }
   }
 

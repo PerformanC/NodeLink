@@ -459,8 +459,12 @@ if (!cluster.isWorker) {
   process.stdout.write(`\x1b[32m${ascii}\x1b[0m\n`)
 }
 
-await checkForUpdates()
-await checkDependencyUpdates()
+checkForUpdates().catch((e) =>
+  logger('error', 'Git', `Update check failed: ${e.message}`)
+)
+checkDependencyUpdates().catch((e) =>
+  logger('error', 'Git', `Dependency check failed: ${e.message}`)
+)
 memoryTrace('bootstrap:after-check-for-updates')
 
 /**

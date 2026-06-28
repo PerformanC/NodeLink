@@ -2,15 +2,6 @@ import { PassThrough } from 'node:stream';
 import HLSHandler from "../../playback/hls/HLSHandler.js";
 import { getBestMatch, http1makeRequest, logger, makeRequest } from "../../utils.js";
 import CipherManager from "./CipherManager.js";
-import Android from "./clients/Android.js";
-import AndroidVR from "./clients/AndroidVR.js";
-import IOS from "./clients/IOS.js";
-import Music from "./clients/Music.js";
-import TV from "./clients/TV.js";
-import TVCast from "./clients/TVCast.js";
-import Web from "./clients/Web.js";
-import WebRemix from "./clients/Web_Remix.js";
-import WebEmbedded from "./clients/WebEmbedded.js";
 import { checkURLType, YOUTUBE_CONSTANTS } from "./common.js";
 import YouTubeLiveChat from "./LiveChat.js";
 import OAuth from "./OAuth.js";
@@ -241,6 +232,17 @@ export default class YouTubeSource {
     async setup() {
         logger('info', 'YouTube', 'Setting up YouTube source...');
         this.oauth = new OAuth(this.nodelink);
+        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TVCast }, { default: Web }, { default: WebEmbedded }] = await Promise.all([
+            import("./clients/Android.js"),
+            import("./clients/AndroidVR.js"),
+            import("./clients/IOS.js"),
+            import("./clients/Music.js"),
+            import("./clients/Web_Remix.js"),
+            import("./clients/TV.js"),
+            import("./clients/TVCast.js"),
+            import("./clients/Web.js"),
+            import("./clients/WebEmbedded.js")
+        ]);
         const clientClasses = {
             Android,
             AndroidVR,
@@ -261,7 +263,6 @@ export default class YouTubeSource {
         logger('debug', 'YouTube', `Initialized clients: ${Object.keys(this.clients).join(', ')}`);
         await this._fetchVisitorData();
         await this.cipherManager.getCachedPlayerScript();
-        await this.cipherManager.checkCipherServerStatus();
         if (this.visitorDataInterval)
             clearInterval(this.visitorDataInterval);
         this.visitorDataInterval = setInterval(() => this._fetchVisitorData(), VISITOR_DATA_INTERVAL);
@@ -307,9 +308,17 @@ export default class YouTubeSource {
      */
     async _fetchVisitorData() {
         const cachedPlayerScript = this.nodelink.credentialManager?.get('yt_player_script_url');
+        const cachedVisitorData = this.nodelink.credentialManager?.get('yt_visitor_data');
         if (cachedPlayerScript) {
             this.cipherManager.setPlayerScriptUrl(cachedPlayerScript);
             logger('debug', 'YouTube', 'Player script URL loaded from cache.');
+        }
+        if (cachedVisitorData) {
+            this.ytContext.client.visitorData = cachedVisitorData;
+            logger('debug', 'YouTube', 'Visitor data loaded from cache.');
+        }
+        if (cachedPlayerScript && cachedVisitorData) {
+            return;
         }
         let visitorFound = false;
         let playerScriptUrl = null;

@@ -32,15 +32,6 @@ import {
   makeRequest
 } from '../../utils.ts'
 import CipherManager from './CipherManager.ts'
-import Android from './clients/Android.ts'
-import AndroidVR from './clients/AndroidVR.ts'
-import IOS from './clients/IOS.ts'
-import Music from './clients/Music.ts'
-import TV from './clients/TV.ts'
-import TVCast from './clients/TVCast.ts'
-import Web from './clients/Web.ts'
-import WebRemix from './clients/Web_Remix.ts'
-import WebEmbedded from './clients/WebEmbedded.ts'
 import {
   checkURLType,
   YOUTUBE_CONSTANTS,
@@ -317,6 +308,28 @@ export default class YouTubeSource {
 
     this.oauth = new OAuth(this.nodelink)
 
+    const [
+      { default: Android },
+      { default: AndroidVR },
+      { default: IOS },
+      { default: Music },
+      { default: WebRemix },
+      { default: TV },
+      { default: TVCast },
+      { default: Web },
+      { default: WebEmbedded }
+    ] = await Promise.all([
+      import('./clients/Android.ts'),
+      import('./clients/AndroidVR.ts'),
+      import('./clients/IOS.ts'),
+      import('./clients/Music.ts'),
+      import('./clients/Web_Remix.ts'),
+      import('./clients/TV.ts'),
+      import('./clients/TVCast.ts'),
+      import('./clients/Web.ts'),
+      import('./clients/WebEmbedded.ts')
+    ])
+
     const clientClasses: ClientClassMap = {
       Android,
       AndroidVR,
@@ -343,7 +356,6 @@ export default class YouTubeSource {
 
     await this._fetchVisitorData()
     await this.cipherManager.getCachedPlayerScript()
-    await this.cipherManager.checkCipherServerStatus()
 
     if (this.visitorDataInterval) clearInterval(this.visitorDataInterval)
     this.visitorDataInterval = setInterval(
@@ -402,10 +414,22 @@ export default class YouTubeSource {
     const cachedPlayerScript = this.nodelink.credentialManager?.get<string>(
       'yt_player_script_url'
     )
+    const cachedVisitorData = this.nodelink.credentialManager?.get<string>(
+      'yt_visitor_data'
+    )
 
     if (cachedPlayerScript) {
       this.cipherManager.setPlayerScriptUrl(cachedPlayerScript)
       logger('debug', 'YouTube', 'Player script URL loaded from cache.')
+    }
+
+    if (cachedVisitorData) {
+      this.ytContext.client.visitorData = cachedVisitorData
+      logger('debug', 'YouTube', 'Visitor data loaded from cache.')
+    }
+
+    if (cachedPlayerScript && cachedVisitorData) {
+      return
     }
 
     let visitorFound = false

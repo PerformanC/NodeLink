@@ -174,7 +174,7 @@ function getLogFileName(): string {
  * Failures are reported to stderr but do not crash the process.
  * @internal
  */
-function cleanOldLogs(): void {
+async function cleanOldLogs(): Promise<void> {
   if (!loggingConfig.file?.enabled) return
 
   const logDir = loggingConfig.file.path || 'logs'
@@ -183,20 +183,25 @@ function cleanOldLogs(): void {
   const now = Date.now()
 
   try {
-    if (!fs.existsSync(logDir)) return
+    const fsPromises = await import('node:fs/promises')
+    try {
+      await fsPromises.access(logDir)
+    } catch {
+      return
+    }
 
-    const files = fs.readdirSync(logDir)
+    const files = await fsPromises.readdir(logDir)
     let cleanedCount = 0
 
     for (const file of files) {
       if (!file.startsWith('nodelink-') || !file.endsWith('.log')) continue
 
       const filePath = path.join(logDir, file)
-      const stats = fs.statSync(filePath)
+      const stats = await fsPromises.stat(filePath)
       const fileAge = now - stats.mtimeMs
 
       if (fileAge > ttlMs) {
-        fs.unlinkSync(filePath)
+        await fsPromises.unlink(filePath)
         cleanedCount++
       }
     }
@@ -234,9 +239,7 @@ function rotateLogFile(): void {
     logStream = null
   }
 
-  if (!fs.existsSync(logDir)) {
-    fs.mkdirSync(logDir, { recursive: true })
-  }
+  fs.mkdirSync(logDir, { recursive: true })
 
   currentLogFile = newLogFilePath
   logStream = fs.createWriteStream(currentLogFile, { flags: 'a' })
@@ -622,17 +625,26 @@ function getGitInfo(): GitInfo {
   if (gitInfoCache) return gitInfoCache
 
   try {
-    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
-      encoding: 'utf8'
-    }).trim()
-    const commit = execSync('git rev-parse --short HEAD', {
-      encoding: 'utf8'
-    }).trim()
-    const commitTime =
-      Number.parseInt(
-        execSync('git log -1 --format=%ct', { encoding: 'utf8' }).trim(),
-        10
-      ) * 1000
+    const output = execSync(
+      'git log -1 --format=%D%n%h%n%ct',
+      { encoding: 'utf8' }
+    ).trim()
+    const lines = output.split('\n')
+    const refsLine = lines[0] || ''
+    const commit = (lines[1] || 'unknown').trim()
+    const commitTime = Number.parseInt((lines[2] || '0').trim(), 10) * 1000
+
+    let branch = 'unknown'
+    const headMatch = refsLine.match(/HEAD -> ([^,]+)/)
+    if (headMatch) {
+      branch = headMatch[1]!.trim()
+    } else {
+      try {
+        branch = execSync('git rev-parse --abbrev-ref HEAD', {
+          encoding: 'utf8'
+        }).trim()
+      } catch {}
+    }
 
     gitInfoCache = {
       branch,
@@ -2191,26 +2203,30 @@ async function checkDependencyUpdates(
 async function checkForUpdates(): Promise<void> {
   logger('info', 'Git', 'Checking for updates...')
   try {
-    execSync('git fetch', { stdio: 'ignore' })
+    const { exec } = await import('node:child_process')
+    const util = await import('node:util')
+    const execAsync = util.promisify(exec)
 
-    const local = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim()
-    const remote = execSync('git rev-parse @{u}', { encoding: 'utf8' }).trim()
+    await execAsync('git fetch', { stdio: 'ignore' } as any)
 
-    if (local !== remote) {
-      const behind = execSync('git rev-list --right-only --count HEAD...@{u}', {
+    const { stdout: local } = await execAsync('git rev-parse HEAD', { encoding: 'utf8' })
+    const { stdout: remote } = await execAsync('git rev-parse @{u}', { encoding: 'utf8' })
+
+    if (local.trim() !== remote.trim()) {
+      const { stdout: behind } = await execAsync('git rev-list --right-only --count HEAD...@{u}', {
         encoding: 'utf8'
-      }).trim()
-      const remoteCommit = execSync(
+      })
+      const { stdout: remoteCommit } = await execAsync(
         'git log -1 --pretty=format:"%h - %s (%cr)" @{u}',
         { encoding: 'utf8' }
-      ).trim()
+      )
 
       logger(
         'warn',
         'Git',
-        `Your version is ${behind} commits behind the remote.`
+        `Your version is ${behind.trim()} commits behind the remote.`
       )
-      logger('warn', 'Git', `Latest commit: ${remoteCommit}`)
+      logger('warn', 'Git', `Latest commit: ${remoteCommit.trim()}`)
       logger('warn', 'Git', 'Please run "git pull" to update.')
     } else {
       logger('info', 'Git', 'You are running the latest version.')

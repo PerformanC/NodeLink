@@ -94,51 +94,12 @@ class MonochromeSource {
                 logger('warn', 'Monochrome', 'Source failed to initialize: No instances available.');
                 return false;
             }
-            logger('info', 'Monochrome', `Initializing latency check for ${apiCount} instances...`);
-            const checkInstance = async (instance) => {
-                const start = Date.now();
-                try {
-                    const { statusCode } = await http1makeRequest(`${instance.url}/`, {
-                        method: 'GET',
-                        timeout: 3000
-                    });
-                    const latency = Date.now() - start;
-                    if (statusCode === 200 || statusCode === 404 || statusCode === 302) {
-                        // Success (or at least reachable)
-                        if (latency < 500)
-                            instance.score = 100;
-                        else if (latency < 1500)
-                            instance.score = 80;
-                        else if (latency < 3000)
-                            instance.score = 50;
-                        else
-                            instance.score = 20;
-                        logger('debug', 'Monochrome', `Instance ${instance.url} - Latency: ${latency}ms, Initial Score: ${instance.score}`);
-                    }
-                    else {
-                        instance.score = 0;
-                        instance.lastFailure = Date.now();
-                        logger('debug', 'Monochrome', `Instance ${instance.url} - Error: Status ${statusCode}, Score: 0`);
-                    }
-                }
-                catch (_e) {
-                    instance.score = 0;
-                    instance.lastFailure = Date.now();
-                    logger('debug', 'Monochrome', `Instance ${instance.url} - Connection Failed, Score: 0`);
-                }
-            };
-            await Promise.allSettled(this.apiInstances.map(checkInstance));
-            // Sync streaming scores if they use the same URLs
             for (const s of this.streamingInstances) {
                 const api = this.apiInstances.find((a) => a.url === s.url);
                 if (api)
                     s.score = api.score;
             }
-            const reachable = this.apiInstances.filter((i) => i.score > 0).length;
-            logger('info', 'Monochrome', `Source is ready with ${apiCount} API (${reachable} reachable) and ${streamCount} streaming instances.`);
-            if (reachable === 0) {
-                logger('warn', 'Monochrome', 'No reachable Monochrome instances at startup. Source will stay loaded but degraded.');
-            }
+            logger('info', 'Monochrome', `Source is ready with ${apiCount} API and ${streamCount} streaming instances.`);
             return true;
         }
         catch (error) {
