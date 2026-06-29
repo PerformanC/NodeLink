@@ -1196,9 +1196,15 @@ async function _internalHttp1Request(urlString, options = {}) {
             else if (encoding === 'deflate') {
                 finalStream = res.pipe(zlib.createInflate());
             }
-            res.on('error', (err) => reject(new Error(`Response error for ${urlString}: ${err.message}`)));
+            res.on('error', (err) => {
+                cleanupReq();
+                reject(new Error(`Response error for ${urlString}: ${err.message}`));
+            });
             if (finalStream !== res) {
-                finalStream.on('error', (err) => reject(new Error(`Decompression error for ${urlString}: ${err.message}`)));
+                finalStream.on('error', (err) => {
+                    cleanupReq();
+                    reject(new Error(`Decompression error for ${urlString}: ${err.message}`));
+                });
             }
             if (streamOnly) {
                 resolve({
@@ -1221,6 +1227,7 @@ async function _internalHttp1Request(urlString, options = {}) {
                 chunks.push(chunk);
             });
             finalStream.on('end', () => {
+                cleanupReq();
                 try {
                     const responseBuffer = Buffer.concat(chunks);
                     if (options.responseType === 'buffer') {
@@ -1253,10 +1260,19 @@ async function _internalHttp1Request(urlString, options = {}) {
                 }
             });
         });
-        req.on('error', (err) => reject(err));
-        req.on('timeout', () => {
+        const reqErrorHandler = (err) => {
+            cleanupReq();
+            reject(err);
+        };
+        const reqTimeoutHandler = () => {
             req.destroy(new Error(`Request timed out after ${timeout}ms for ${urlString}`));
-        });
+        };
+        const cleanupReq = () => {
+            req.removeListener('error', reqErrorHandler);
+            req.removeListener('timeout', reqTimeoutHandler);
+        };
+        req.on('error', reqErrorHandler);
+        req.on('timeout', reqTimeoutHandler);
         if (payloadBuffer) {
             req.end(payloadBuffer);
         }

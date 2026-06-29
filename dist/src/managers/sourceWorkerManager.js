@@ -50,7 +50,8 @@ const buildSourceWorkerExecArgv = (options = null) => {
     const runtime = options?.cluster?.runtime || {};
     const env = process.env;
     for (const arg of Array.from(args)) {
-        if (arg.startsWith('--max-old-space-size='))
+        if (arg.startsWith('--max-old-space-size=') ||
+            arg === '--expose-gc')
             args.delete(arg);
     }
     const maxOldSpaceMb = parsePositiveInt(env.NODELINK_SOURCE_WORKER_MAX_OLD_SPACE_MB ??

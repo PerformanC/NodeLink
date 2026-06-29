@@ -133,16 +133,32 @@ export function createVoiceRelay({ enabled, format, sendFrame, logger }) {
         if (!conn || conn._voiceRelayAttached)
             return;
         conn._voiceRelayAttached = true;
-        conn.on('speakStart', (userId, ssrc) => {
+        const speakStartHandler = (userId, ssrc) => {
             void handleSpeakStart(guildId, userId, ssrc).catch((err) => {
                 if (logger) {
                     logger('warn', 'Voice', `Failed to initialize voice relay stream: ${err.message}`);
                 }
             });
-        });
-        conn.on('speakEnd', (userId, ssrc) => {
+        };
+        const speakEndHandler = (userId, ssrc) => {
             handleSpeakStop(guildId, userId, ssrc);
-        });
+        };
+        conn._voiceRelaySpeakStart = speakStartHandler;
+        conn._voiceRelaySpeakEnd = speakEndHandler;
+        conn.on('speakStart', speakStartHandler);
+        conn.on('speakEnd', speakEndHandler);
     };
-    return { attach };
+    const detach = (connection) => {
+        const conn = connection;
+        if (!conn._voiceRelayAttached)
+            return;
+        if (conn._voiceRelaySpeakStart) {
+            conn.removeListener('speakStart', conn._voiceRelaySpeakStart);
+        }
+        if (conn._voiceRelaySpeakEnd) {
+            conn.removeListener('speakEnd', conn._voiceRelaySpeakEnd);
+        }
+        conn._voiceRelayAttached = false;
+    };
+    return { attach, detach };
 }

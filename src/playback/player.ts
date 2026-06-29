@@ -82,6 +82,7 @@ export class Player {
   private holoTrack: PlayerTrack | null = null
   private nextTrack: PlayerTrack | null = null
   private nextResource: AudioResource | null = null
+  private _currentResource: AudioResource | null = null
   private nextStreamInfo: StreamInfo = null
   public isPaused = false
   public volumePercent: number
@@ -147,6 +148,18 @@ export class Player {
   public stuckRecoveryCount = 0
   private _positionAtRecoveryStart = 0
   private static MAX_STUCK_RECOVERY_ATTEMPTS = 3
+
+  private _connStateHandler: (
+    _: VoiceConnectionState | null,
+    s: VoiceConnectionState
+  ) => void = () => {}
+  private _connPlayHandler: (
+    _: VoicePlayerState | null,
+    s: VoicePlayerState & { reason?: string }
+  ) => void = () => {}
+  private _connErrorHandler: (err: Error) => void = () => {}
+  private _connStuckHandler: () => void = () => {}
+  private _connSpeakStartHandler: (userId: string, ssrc: number) => void = () => {}
 
   constructor(options: PlayerOptions) {
     if (
@@ -365,23 +378,24 @@ export class Player {
         this.nodelink.options.playback.trackStuckThresholdMs ?? 10000,
         30000
       ) + 5000
-    this.connection.on(
-      'stateChange',
-      (_: VoiceConnectionState | null, s: VoiceConnectionState) => {
-        logger(
-          'debug',
-          'Player',
-          `Voice connection state change for guild ${this.guildId} in session ${this.session.id}: ${s.status}`
-        )
-        this._onConn(s)
-      }
-    )
-    this.connection.on(
-      'playerStateChange',
-      (_: VoicePlayerState | null, s: VoicePlayerState & { reason?: string }) =>
-        this._onPlay(s)
-    )
-    this.connection.on('error', (err) => {
+    this._connStateHandler = (
+      _: VoiceConnectionState | null,
+      s: VoiceConnectionState
+    ) => {
+      logger(
+        'debug',
+        'Player',
+        `Voice connection state change for guild ${this.guildId} in session ${this.session.id}: ${s.status}`
+      )
+      this._onConn(s)
+    }
+    this.connection.on('stateChange', this._connStateHandler)
+    this._connPlayHandler = (
+      _: VoicePlayerState | null,
+      s: VoicePlayerState & { reason?: string }
+    ) => this._onPlay(s)
+    this.connection.on('playerStateChange', this._connPlayHandler)
+    this._connErrorHandler = (err: Error) => {
       logger(
         'error',
         'Player',
@@ -404,15 +418,27 @@ export class Player {
 
         this._onError(err)
       })
-    })
-    this.connection.on('stuck', () => {
+    }
+    this.connection.on('error', this._connErrorHandler)
+    this._connStuckHandler = () => {
       if (this.destroying) return
       logger(
         'warn',
         'Player',
         `Voice library detected stuck stream for guild ${this.guildId}`
       )
-    })
+    }
+    this.connection.on('stuck', this._connStuckHandler)
+
+    // Automatically drain incoming voice streams to prevent memory leaks
+    this._connSpeakStartHandler = (_userId: string, ssrc: number) => {
+      if (this.destroying || !this.connection) return
+      const stream = this.connection.getSpeakStream?.(ssrc)
+      if (stream && !stream.destroyed) {
+        stream.resume()
+      }
+    }
+    this.connection.on('speakStart', this._connSpeakStartHandler)
 
     if (this.nodelink.voiceRelay?.attach) {
       this.nodelink.voiceRelay.attach(this.connection, this.guildId)
@@ -579,7 +605,12 @@ export class Player {
         this._lyricsBasePackets =
           this.connection?.statistics?.packetsExpected ?? 0
 
-        this.connection?.play(resource as unknown)
+        const oldStream = this.connection?.play(resource as unknown)
+        if (oldStream) oldStream.destroy()
+        if (this._currentResource && this._currentResource !== resource) {
+          try { this._currentResource.destroy() } catch {}
+        }
+        this._currentResource = resource
 
         return
       }
@@ -758,6 +789,8 @@ export class Player {
     this.position = 0
     this._pausedAtPosition = undefined
     this._lastStreamDataTime = 0
+    this.streamInfo = null
+    this.sponsorBlock.segments = []
     this.currentLyrics = null
     this.lyricsLineIndex = -1
     this._fading('reset')
@@ -797,12 +830,34 @@ export class Player {
       `[Cleanup] Triggering stream cleanup for guild ${this.guildId}. Context: ${context}`
     )
     const conn = this.connection
+
+    const mls = this.connection?.mlsSession
+    if (mls?._pendingKeyPackage) mls._pendingKeyPackage = null
+
     const audioStream = conn?.audioStream as
       | ExtendedAudioStream
       | undefined
       | null
 
-    if (!audioStream) return
+    if (this._currentResource) {
+      try {
+        this._currentResource.destroy()
+      } catch (err) {
+        logger(
+          'debug',
+          'Player',
+          `Resource destroy failed during ${context} for guild ${this.guildId}: ${
+            (err as Error)?.message ?? String(err)
+          }`
+        )
+      }
+      this._currentResource = null
+    }
+
+    if (!audioStream) {
+      this._cleanupSSRCStreams(conn)
+      return
+    }
 
     try {
       audioStream._cleanupListeners?.()
@@ -812,6 +867,7 @@ export class Player {
 
     if (audioStream.destroyed) {
       if (conn) conn.audioStream = null
+      this._cleanupSSRCStreams(conn)
       return
     }
 
@@ -835,6 +891,18 @@ export class Player {
       )
     } finally {
       if (conn) conn.audioStream = null
+      this._cleanupSSRCStreams(conn)
+    }
+  }
+
+  private _cleanupSSRCStreams(conn: ExtendedVoiceConnection | null): void {
+    if (!conn?.ssrcs) return
+    for (const entry of conn.ssrcs.values()) {
+      const s = entry?.stream as import('node:stream').Readable & { destroyed?: boolean; destroy?: () => void }
+      if (s && !s.destroyed) {
+        s.resume()
+        s.destroy?.()
+      }
     }
   }
 
@@ -1026,28 +1094,23 @@ export class Player {
       return { exception: { message: 'Stream processor not initialized' } }
     }
 
-    const additionalData: Record<string, unknown> & {
-      startTime?: number
-      position?: number
-      positionCallback?: (positionMs: number) => void
-    } = {
-      ...urlData.additionalData
-    }
-    if (startTime !== undefined) {
-      additionalData.startTime = startTime
-      // Keep both keys for source compatibility while seek handling is unified.
-      additionalData.position = startTime
-    }
-    additionalData.guildId = this.guildId
-    additionalData.positionCallback = (positionMs: number) => {
-      if (!Number.isFinite(positionMs) || positionMs < 0) return
-      this.position = positionMs
+    const additionalData = {
+      ...urlData.additionalData,
+      ...(startTime !== undefined ? { startTime, position: startTime } : {}),
+      guildId: this.guildId,
+      positionCallback: (positionMs: number) => {
+        if (!Number.isFinite(positionMs) || positionMs < 0) return
+        this.position = positionMs
+      }
     }
 
-    urlData.additionalData = additionalData
+    const resolvedUrlData = {
+      ...urlData,
+      additionalData
+    }
 
-    const track = urlData?.newTrack
-      ? (urlData?.newTrack?.info as TrackInfoExtended)
+    const track = resolvedUrlData?.newTrack
+      ? (resolvedUrlData?.newTrack?.info as TrackInfoExtended)
       : info
 
     logger(
@@ -1056,14 +1119,14 @@ export class Player {
       `Fetching stream resource from source for guild ${this.guildId}`,
       {
         source: track.sourceName,
-        url: urlData.url
+        url: resolvedUrlData.url
       }
     )
 
     const fetched = await this.nodelink.sources.getTrackStream(
       track,
-      urlData.url as string,
-      urlData.protocol as string,
+      resolvedUrlData.url as string,
+      resolvedUrlData.protocol as string,
       additionalData
     )
     if (fetched.exception) {
@@ -1083,7 +1146,7 @@ export class Player {
     const fetchedStream = fetched.stream as NonNullable<typeof fetched.stream>
     const totalBytesRaw =
       (
-        urlData.additionalData as
+        resolvedUrlData.additionalData as
           | { contentLength?: number | string }
           | null
           | undefined
@@ -1130,11 +1193,25 @@ export class Player {
       eventStream.on?.('eternalboxJump', eternalboxHandler)
       eventStream.on?.('icyMetadata', icyHandler)
 
+      let listenersCleaned = false
       const cleanupListeners = () => {
+        if (listenersCleaned) return
+        listenersCleaned = true
         eventStream.off?.('eternalboxJump', eternalboxHandler)
         eventStream.off?.('icyMetadata', icyHandler)
         profilerTap.off('data', profilerHandler)
-        profilerTap.destroy()
+        streamForResource.off('close', cleanupListeners)
+        streamForResource.off('error', cleanupListeners)
+        streamForResource.off('end', cleanupListeners)
+        const src = (profilerTap as unknown as { _sourceStream?: Readable })
+          ._sourceStream
+        if (src && !src.destroyed) {
+          try { src.destroy() } catch {}
+        }
+        delete (profilerTap as unknown as Record<string, unknown>)._sourceStream
+        if (!profilerTap.destroyed) {
+          try { profilerTap.destroy() } catch {}
+        }
       }
 
       streamForResource.on('close', cleanupListeners)
@@ -1149,7 +1226,7 @@ export class Player {
     const resource = audioResourceFactory(
       this.guildId,
       streamForResource,
-      fetched.type || urlData.format,
+      fetched.type || resolvedUrlData.format,
       this.nodelink,
       this.filters,
       this.volumePercent / 100,
@@ -1541,6 +1618,7 @@ export class Player {
     this.setFilters(this.filters)
 
     logger('debug', 'Player', playLogMessage)
+    this._currentResource = resource
     this.connection.play(resource as unknown)
 
     await this.waitEvent(
@@ -2096,6 +2174,10 @@ export class Player {
       if (oldStream) {
         oldStream.destroy()
       }
+      if (this._currentResource && this._currentResource !== resource) {
+        try { this._currentResource.destroy() } catch {}
+      }
+      this._currentResource = resource
 
       this._lyricsBasePosition = position
       this._lyricsBasePackets =
@@ -2214,6 +2296,7 @@ export class Player {
       'Player',
       `Playing resource for guild ${this.guildId} after legacy seek`
     )
+    this._currentResource = resource
     this.connection.play(resource as unknown)
     await this.waitEvent(
       'playerStateChange',
@@ -2793,6 +2876,17 @@ export class Player {
     this.destroying = true
     if (this.connection) {
       try {
+        this.connection.removeListener('stateChange', this._connStateHandler)
+        this.connection.removeListener(
+          'playerStateChange',
+          this._connPlayHandler
+        )
+        this.connection.removeListener('error', this._connErrorHandler)
+        this.connection.removeListener('stuck', this._connStuckHandler)
+        this.connection.removeListener('speakStart', this._connSpeakStartHandler)
+        if (this.nodelink.voiceRelay?.detach) {
+          this.nodelink.voiceRelay.detach(this.connection)
+        }
         if (this.connection.audioStream) {
           this.connection.stop(EndReasons.CLEANUP)
           this._cleanupCurrentAudioStream('destroy')
@@ -2824,6 +2918,11 @@ export class Player {
       this.audioMixer = null
     }
     this._audioMixerInitPromise = null
+
+    if (this._currentResource) {
+      try { this._currentResource.destroy() } catch {}
+      this._currentResource = null
+    }
 
     this._resetTrack()
     this.connStatus = 'destroyed'

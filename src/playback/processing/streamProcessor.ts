@@ -594,6 +594,9 @@ class BaseAudioResource {
   canStop?: boolean
   protected _destroyed: boolean
   protected guildId: string
+  protected _forwardFinishBuffering:
+    | ((...args: unknown[]) => void)
+    | null = null
 
   constructor(guildId?: string) {
     this.guildId = guildId || 'api-stream'
@@ -624,6 +627,7 @@ class BaseAudioResource {
           curve?: string
         ) => void
         setLoudnessNormalizer?: (enabled: boolean) => void
+        isPipelineFinished?: () => boolean
       }
     voiceStream.setVolume = (volume: number) => this.setVolume(volume)
     voiceStream.setFilters = (filters: FiltersState) => this.setFilters(filters)
@@ -647,6 +651,7 @@ class BaseAudioResource {
     ) => this.tapeTo(durationMs, type, curve)
     voiceStream.setLoudnessNormalizer = (enabled: boolean) =>
       this.setLoudnessNormalizer(enabled)
+    voiceStream.isPipelineFinished = () => this.isPipelineFinished()
     this.stream = voiceStream
   }
 
@@ -657,6 +662,20 @@ class BaseAudioResource {
     const firstPipe = this.pipes[0] as Readable & {
       stopHls?: () => void
       responseStream?: { destroyed: boolean; destroy: () => void }
+      _sourceStream?: Readable & {
+        off?: (event: string, handler: (...args: unknown[]) => void) => void
+        destroyed?: boolean
+        destroy?: (err?: Error) => void
+      }
+      _cleanupListeners?: () => void
+    }
+
+    if (typeof firstPipe?._cleanupListeners === 'function') {
+      try { firstPipe._cleanupListeners() } catch {}
+    }
+
+    if (this._forwardFinishBuffering && firstPipe?._sourceStream) {
+      try { firstPipe._sourceStream.off?.('finishBuffering', this._forwardFinishBuffering) } catch {}
     }
 
     if (firstPipe?.stopHls) {
@@ -667,14 +686,9 @@ class BaseAudioResource {
       firstPipe.responseStream.destroy()
     }
 
-    const src = firstPipe as Readable & {
-      _sourceStream?: Readable & {
-        destroyed?: boolean
-        destroy?: (err?: Error) => void
-      }
-    }
-    if (src._sourceStream && !src._sourceStream.destroyed) {
-      src._sourceStream.destroy()
+    if (firstPipe?._sourceStream && !firstPipe._sourceStream.destroyed) {
+      try { firstPipe._sourceStream.destroy() } catch {}
+      try { delete (firstPipe as unknown as Record<string, unknown>)._sourceStream } catch {}
     }
 
     for (let i = this.pipes.length - 1; i >= 0; i--) {
@@ -1825,6 +1839,7 @@ class MP4ToAACStream extends Transform {
     if (this.mp4boxFile) {
       try {
         this.mp4boxFile.stop()
+        this.mp4boxFile.flush()
       } catch {}
       this.mp4boxFile.onReady = null
       this.mp4boxFile.onSamples = null
@@ -2801,6 +2816,7 @@ class StreamAudioResource extends BaseAudioResource {
         this.stream?.emit('finishBuffering')
       }
     }
+    this._forwardFinishBuffering = forwardFinishBuffering
 
     inputStream.on('finishBuffering', forwardFinishBuffering)
 

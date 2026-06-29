@@ -171,7 +171,11 @@ const buildSourceWorkerExecArgv = (
   const env = process.env as NodeJS.ProcessEnv & SourceWorkerEnv
 
   for (const arg of Array.from(args)) {
-    if (arg.startsWith('--max-old-space-size=')) args.delete(arg)
+    if (
+      arg.startsWith('--max-old-space-size=') ||
+      arg === '--expose-gc'
+    )
+      args.delete(arg)
   }
 
   const maxOldSpaceMb = parsePositiveInt(

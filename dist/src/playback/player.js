@@ -37,6 +37,7 @@ export class Player {
     holoTrack = null;
     nextTrack = null;
     nextResource = null;
+    _currentResource = null;
     nextStreamInfo = null;
     isPaused = false;
     volumePercent;
@@ -88,6 +89,11 @@ export class Player {
     stuckRecoveryCount = 0;
     _positionAtRecoveryStart = 0;
     static MAX_STUCK_RECOVERY_ATTEMPTS = 3;
+    _connStateHandler = () => { };
+    _connPlayHandler = () => { };
+    _connErrorHandler = () => { };
+    _connStuckHandler = () => { };
+    _connSpeakStartHandler = () => { };
     constructor(options) {
         if (!options.nodelink ||
             !options.session?.socket ||
@@ -241,12 +247,14 @@ export class Player {
         });
         this.connection.stuckTimeout =
             Math.max(this.nodelink.options.playback.trackStuckThresholdMs ?? 10000, 30000) + 5000;
-        this.connection.on('stateChange', (_, s) => {
+        this._connStateHandler = (_, s) => {
             logger('debug', 'Player', `Voice connection state change for guild ${this.guildId} in session ${this.session.id}: ${s.status}`);
             this._onConn(s);
-        });
-        this.connection.on('playerStateChange', (_, s) => this._onPlay(s));
-        this.connection.on('error', (err) => {
+        };
+        this.connection.on('stateChange', this._connStateHandler);
+        this._connPlayHandler = (_, s) => this._onPlay(s);
+        this.connection.on('playerStateChange', this._connPlayHandler);
+        this._connErrorHandler = (err) => {
             logger('error', 'Player', `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`, err);
             process.nextTick(() => {
                 if (this.destroying)
@@ -258,12 +266,24 @@ export class Player {
                 }
                 this._onError(err);
             });
-        });
-        this.connection.on('stuck', () => {
+        };
+        this.connection.on('error', this._connErrorHandler);
+        this._connStuckHandler = () => {
             if (this.destroying)
                 return;
             logger('warn', 'Player', `Voice library detected stuck stream for guild ${this.guildId}`);
-        });
+        };
+        this.connection.on('stuck', this._connStuckHandler);
+        // Automatically drain incoming voice streams to prevent memory leaks
+        this._connSpeakStartHandler = (_userId, ssrc) => {
+            if (this.destroying || !this.connection)
+                return;
+            const stream = this.connection.getSpeakStream?.(ssrc);
+            if (stream && !stream.destroyed) {
+                stream.resume();
+            }
+        };
+        this.connection.on('speakStart', this._connSpeakStartHandler);
         if (this.nodelink.voiceRelay?.attach) {
             this.nodelink.voiceRelay.attach(this.connection, this.guildId);
         }
@@ -377,7 +397,16 @@ export class Player {
                 this._lyricsBasePosition = 0;
                 this._lyricsBasePackets =
                     this.connection?.statistics?.packetsExpected ?? 0;
-                this.connection?.play(resource);
+                const oldStream = this.connection?.play(resource);
+                if (oldStream)
+                    oldStream.destroy();
+                if (this._currentResource && this._currentResource !== resource) {
+                    try {
+                        this._currentResource.destroy();
+                    }
+                    catch { }
+                }
+                this._currentResource = resource;
                 return;
             }
             if ((this.isUpdatingTrack || this._isSeeking) &&
@@ -503,6 +532,8 @@ export class Player {
         this.position = 0;
         this._pausedAtPosition = undefined;
         this._lastStreamDataTime = 0;
+        this.streamInfo = null;
+        this.sponsorBlock.segments = [];
         this.currentLyrics = null;
         this.lyricsLineIndex = -1;
         this._fading('reset');
@@ -529,9 +560,23 @@ export class Player {
     _cleanupCurrentAudioStream(context) {
         logger('debug', 'Player', `[Cleanup] Triggering stream cleanup for guild ${this.guildId}. Context: ${context}`);
         const conn = this.connection;
+        const mls = this.connection?.mlsSession;
+        if (mls?._pendingKeyPackage)
+            mls._pendingKeyPackage = null;
         const audioStream = conn?.audioStream;
-        if (!audioStream)
+        if (this._currentResource) {
+            try {
+                this._currentResource.destroy();
+            }
+            catch (err) {
+                logger('debug', 'Player', `Resource destroy failed during ${context} for guild ${this.guildId}: ${err?.message ?? String(err)}`);
+            }
+            this._currentResource = null;
+        }
+        if (!audioStream) {
+            this._cleanupSSRCStreams(conn);
             return;
+        }
         try {
             audioStream._cleanupListeners?.();
         }
@@ -541,6 +586,7 @@ export class Player {
         if (audioStream.destroyed) {
             if (conn)
                 conn.audioStream = null;
+            this._cleanupSSRCStreams(conn);
             return;
         }
         try {
@@ -558,6 +604,18 @@ export class Player {
         finally {
             if (conn)
                 conn.audioStream = null;
+            this._cleanupSSRCStreams(conn);
+        }
+    }
+    _cleanupSSRCStreams(conn) {
+        if (!conn?.ssrcs)
+            return;
+        for (const entry of conn.ssrcs.values()) {
+            const s = entry?.stream;
+            if (s && !s.destroyed) {
+                s.resume();
+                s.destroy?.();
+            }
         }
     }
     /**
@@ -688,35 +746,34 @@ export class Player {
             return { exception: { message: 'Stream processor not initialized' } };
         }
         const additionalData = {
-            ...urlData.additionalData
+            ...urlData.additionalData,
+            ...(startTime !== undefined ? { startTime, position: startTime } : {}),
+            guildId: this.guildId,
+            positionCallback: (positionMs) => {
+                if (!Number.isFinite(positionMs) || positionMs < 0)
+                    return;
+                this.position = positionMs;
+            }
         };
-        if (startTime !== undefined) {
-            additionalData.startTime = startTime;
-            // Keep both keys for source compatibility while seek handling is unified.
-            additionalData.position = startTime;
-        }
-        additionalData.guildId = this.guildId;
-        additionalData.positionCallback = (positionMs) => {
-            if (!Number.isFinite(positionMs) || positionMs < 0)
-                return;
-            this.position = positionMs;
+        const resolvedUrlData = {
+            ...urlData,
+            additionalData
         };
-        urlData.additionalData = additionalData;
-        const track = urlData?.newTrack
-            ? urlData?.newTrack?.info
+        const track = resolvedUrlData?.newTrack
+            ? resolvedUrlData?.newTrack?.info
             : info;
         logger('debug', 'Player', `Fetching stream resource from source for guild ${this.guildId}`, {
             source: track.sourceName,
-            url: urlData.url
+            url: resolvedUrlData.url
         });
-        const fetched = await this.nodelink.sources.getTrackStream(track, urlData.url, urlData.protocol, additionalData);
+        const fetched = await this.nodelink.sources.getTrackStream(track, resolvedUrlData.url, resolvedUrlData.protocol, additionalData);
         if (fetched.exception) {
             logger('error', 'Player', `Stream resource fetch failed for guild ${this.guildId}`, fetched.exception);
             return fetched;
         }
         logger('debug', 'Player', `Successfully fetched stream resource for guild ${this.guildId}`);
         const fetchedStream = fetched.stream;
-        const totalBytesRaw = urlData.additionalData?.contentLength ?? null;
+        const totalBytesRaw = resolvedUrlData.additionalData?.contentLength ?? null;
         const totalBytesNum = Number(totalBytesRaw);
         this.profilerStreamStats = {
             downloadedBytes: 0,
@@ -755,18 +812,39 @@ export class Player {
             };
             eventStream.on?.('eternalboxJump', eternalboxHandler);
             eventStream.on?.('icyMetadata', icyHandler);
+            let listenersCleaned = false;
             const cleanupListeners = () => {
+                if (listenersCleaned)
+                    return;
+                listenersCleaned = true;
                 eventStream.off?.('eternalboxJump', eternalboxHandler);
                 eventStream.off?.('icyMetadata', icyHandler);
                 profilerTap.off('data', profilerHandler);
-                profilerTap.destroy();
+                streamForResource.off('close', cleanupListeners);
+                streamForResource.off('error', cleanupListeners);
+                streamForResource.off('end', cleanupListeners);
+                const src = profilerTap
+                    ._sourceStream;
+                if (src && !src.destroyed) {
+                    try {
+                        src.destroy();
+                    }
+                    catch { }
+                }
+                delete profilerTap._sourceStream;
+                if (!profilerTap.destroyed) {
+                    try {
+                        profilerTap.destroy();
+                    }
+                    catch { }
+                }
             };
             streamForResource.on('close', cleanupListeners);
             streamForResource.on('error', cleanupListeners);
             streamForResource.on('end', cleanupListeners);
             streamForResource._cleanupListeners = cleanupListeners;
         }
-        const resource = audioResourceFactory(this.guildId, streamForResource, fetched.type || urlData.format, this.nodelink, this.filters, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer);
+        const resource = audioResourceFactory(this.guildId, streamForResource, fetched.type || resolvedUrlData.format, this.nodelink, this.filters, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer);
         return { stream: resource };
     }
     /**
@@ -1017,6 +1095,7 @@ export class Player {
         this._fading(fadingAction, { resource });
         this.setFilters(this.filters);
         logger('debug', 'Player', playLogMessage);
+        this._currentResource = resource;
         this.connection.play(resource);
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
         this._lyricsBasePosition = position;
@@ -1341,6 +1420,13 @@ export class Player {
             if (oldStream) {
                 oldStream.destroy();
             }
+            if (this._currentResource && this._currentResource !== resource) {
+                try {
+                    this._currentResource.destroy();
+                }
+                catch { }
+            }
+            this._currentResource = resource;
             this._lyricsBasePosition = position;
             this._lyricsBasePackets =
                 this.connection?.statistics?.packetsExpected ?? 0;
@@ -1413,6 +1499,7 @@ export class Player {
         this._fading('seekPrepare', { resource });
         this.setFilters(this.filters);
         logger('debug', 'Player', `Playing resource for guild ${this.guildId} after legacy seek`);
+        this._currentResource = resource;
         this.connection.play(resource);
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
         this._lyricsBasePosition = position;
@@ -1833,6 +1920,14 @@ export class Player {
         this.destroying = true;
         if (this.connection) {
             try {
+                this.connection.removeListener('stateChange', this._connStateHandler);
+                this.connection.removeListener('playerStateChange', this._connPlayHandler);
+                this.connection.removeListener('error', this._connErrorHandler);
+                this.connection.removeListener('stuck', this._connStuckHandler);
+                this.connection.removeListener('speakStart', this._connSpeakStartHandler);
+                if (this.nodelink.voiceRelay?.detach) {
+                    this.nodelink.voiceRelay.detach(this.connection);
+                }
                 if (this.connection.audioStream) {
                     this.connection.stop(EndReasons.CLEANUP);
                     this._cleanupCurrentAudioStream('destroy');
@@ -1860,6 +1955,13 @@ export class Player {
             this.audioMixer = null;
         }
         this._audioMixerInitPromise = null;
+        if (this._currentResource) {
+            try {
+                this._currentResource.destroy();
+            }
+            catch { }
+            this._currentResource = null;
+        }
         this._resetTrack();
         this.connStatus = 'destroyed';
         this.volumePercent = this.nodelink.options?.defaultVolume ?? 100;

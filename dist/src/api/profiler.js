@@ -655,8 +655,8 @@ async function runMasterProfilerCommand(action, payload) {
 async function runWorkerProfilerCommand(manager, workers, action, payload) {
     const timeoutMs = getTimeoutForAction(action);
     const commandPayload = {
-        action,
-        ...(payload ?? {})
+        ...(payload ?? {}),
+        action
     };
     const settled = await Promise.allSettled(workers.map(async (worker) => {
         const response = await manager.execute(worker, 'profilerCommand', commandPayload, { timeoutMs });
@@ -741,7 +741,7 @@ async function collectActionSnapshot(nodelink, action, payload) {
                 'Specialized source workers are not enabled or do not support profiling.';
         }
         else {
-            output.sourceWorkers = await sourceManager.executeAll('profilerCommand', { action, ...safePayload }, { timeoutMs: getTimeoutForAction(action), parseJson: true });
+            output.sourceWorkers = await sourceManager.executeAll('profilerCommand', { ...safePayload, action }, { timeoutMs: getTimeoutForAction(action), parseJson: true });
         }
     }
     return output;

@@ -1431,15 +1431,17 @@ async function _internalHttp1Request(
         finalStream = res.pipe(zlib.createInflate())
       }
 
-      res.on('error', (err) =>
+      res.on('error', (err) => {
+        cleanupReq()
         reject(new Error(`Response error for ${urlString}: ${err.message}`))
-      )
+      })
       if (finalStream !== res) {
-        finalStream.on('error', (err) =>
+        finalStream.on('error', (err) => {
+          cleanupReq()
           reject(
             new Error(`Decompression error for ${urlString}: ${err.message}`)
           )
-        )
+        })
       }
 
       if (streamOnly) {
@@ -1471,6 +1473,7 @@ async function _internalHttp1Request(
         chunks.push(chunk)
       })
       finalStream.on('end', () => {
+        cleanupReq()
         try {
           const responseBuffer = Buffer.concat(chunks)
 
@@ -1509,12 +1512,23 @@ async function _internalHttp1Request(
       })
     })
 
-    req.on('error', (err) => reject(err))
-    req.on('timeout', () => {
+    const reqErrorHandler = (err: Error) => {
+      cleanupReq()
+      reject(err)
+    }
+    const reqTimeoutHandler = () => {
       req.destroy(
         new Error(`Request timed out after ${timeout}ms for ${urlString}`)
       )
-    })
+    }
+
+    const cleanupReq = () => {
+      req.removeListener('error', reqErrorHandler)
+      req.removeListener('timeout', reqTimeoutHandler)
+    }
+
+    req.on('error', reqErrorHandler)
+    req.on('timeout', reqTimeoutHandler)
 
     if (payloadBuffer) {
       req.end(payloadBuffer)

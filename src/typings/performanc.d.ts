@@ -196,6 +196,11 @@ declare module '@performanc/voice' {
       channel_id?: string
     }): void
     connect(callback?: () => void, reconnection?: boolean): void
+    getSpeakStream?(ssrc: number): Readable | null
+
+    // Internal @performanc/voice state
+    mlsSession?: { _pendingKeyPackage?: Uint8Array | null }
+    ssrcs?: Map<number, { stream?: Readable }>
   }
 
   export interface JoinVoiceChannelOptions {

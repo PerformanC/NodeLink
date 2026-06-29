@@ -1704,8 +1704,8 @@ async function runWorkerProfilerCommand(
 ): Promise<WorkerCommandResult[]> {
   const timeoutMs = getTimeoutForAction(action)
   const commandPayload = {
-    action,
-    ...(payload ?? {})
+    ...(payload ?? {}),
+    action
   }
 
   const settled = await Promise.allSettled(
@@ -1818,7 +1818,7 @@ async function collectActionSnapshot(
     } else {
       output.sourceWorkers = await sourceManager.executeAll(
         'profilerCommand',
-        { action, ...safePayload },
+        { ...safePayload, action },
         { timeoutMs: getTimeoutForAction(action), parseJson: true }
       )
     }

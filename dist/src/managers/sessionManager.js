@@ -160,8 +160,15 @@ export default class SessionManager {
         }
         else {
             for (const player of players.players.values()) {
-                player.destroy?.();
+                try {
+                    player.destroy?.();
+                }
+                catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    logger('error', 'SessionManager', `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`);
+                }
             }
+            players.players.clear();
         }
         session.socket?.destroy?.();
     }

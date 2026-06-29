@@ -750,7 +750,7 @@ export class SabrStream extends PassThrough {
     this.cachedBufferedRanges = null
     this.lastReportedRanges = new Set()
 
-    this.enableTrafficLog = true
+    this.enableTrafficLog = false
     this.trafficLogPath = path.join(process.cwd(), 'sabr_traffic.jsonl')
     this.enableTrafficDump = true
     this.trafficDumpMaxBytes = 64 * 1024
@@ -1033,6 +1033,22 @@ export class SabrStream extends PassThrough {
     if (this._aborted) return this
     this._aborted = true
     this.abortController.abort()
+    this.initializedFormatsMap.clear()
+    this.partialSegmentQueue.clear()
+    this.sabrContexts.clear()
+    this.activeSabrContextTypes.clear()
+    this.formatSequenceCounters.clear()
+    this.downloadedSegmentsByItag.clear()
+    this.endSegmentNumbers.clear()
+    this.pendingRangesHeaders.clear()
+    this.cachedBufferedRanges = null
+    this.lastReportedRanges.clear()
+    this.nextRequestPolicy = undefined
+    this.formatIds = []
+    this.poToken = null
+    this.videoPlaybackUstreamerConfig = undefined
+    this.clientInfo = undefined
+    this.config = {} as SabrStreamConfig
     super.destroy(err)
     return this
   }

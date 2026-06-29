@@ -389,6 +389,7 @@ class BaseAudioResource {
     canStop;
     _destroyed;
     guildId;
+    _forwardFinishBuffering = null;
     constructor(guildId) {
         this.guildId = guildId || 'api-stream';
         this.pipes = [];
@@ -410,6 +411,7 @@ class BaseAudioResource {
         voiceStream.fadeTo = (volume, durationMs, curve) => this.fadeTo(volume, durationMs, curve);
         voiceStream.tapeTo = (durationMs, type, curve) => this.tapeTo(durationMs, type, curve);
         voiceStream.setLoudnessNormalizer = (enabled) => this.setLoudnessNormalizer(enabled);
+        voiceStream.isPipelineFinished = () => this.isPipelineFinished();
         this.stream = voiceStream;
     }
     _end() {
@@ -417,15 +419,33 @@ class BaseAudioResource {
             return;
         this._destroyed = true;
         const firstPipe = this.pipes[0];
+        if (typeof firstPipe?._cleanupListeners === 'function') {
+            try {
+                firstPipe._cleanupListeners();
+            }
+            catch { }
+        }
+        if (this._forwardFinishBuffering && firstPipe?._sourceStream) {
+            try {
+                firstPipe._sourceStream.off?.('finishBuffering', this._forwardFinishBuffering);
+            }
+            catch { }
+        }
         if (firstPipe?.stopHls) {
             firstPipe.stopHls();
         }
         if (firstPipe?.responseStream?.destroyed === false) {
             firstPipe.responseStream.destroy();
         }
-        const src = firstPipe;
-        if (src._sourceStream && !src._sourceStream.destroyed) {
-            src._sourceStream.destroy();
+        if (firstPipe?._sourceStream && !firstPipe._sourceStream.destroyed) {
+            try {
+                firstPipe._sourceStream.destroy();
+            }
+            catch { }
+            try {
+                delete firstPipe._sourceStream;
+            }
+            catch { }
         }
         for (let i = this.pipes.length - 1; i >= 0; i--) {
             const pipe = this.pipes[i];
@@ -1341,6 +1361,7 @@ class MP4ToAACStream extends Transform {
         if (this.mp4boxFile) {
             try {
                 this.mp4boxFile.stop();
+                this.mp4boxFile.flush();
             }
             catch { }
             this.mp4boxFile.onReady = null;
@@ -2110,6 +2131,7 @@ class StreamAudioResource extends BaseAudioResource {
                 this.stream?.emit('finishBuffering');
             }
         };
+        this._forwardFinishBuffering = forwardFinishBuffering;
         inputStream.on('finishBuffering', forwardFinishBuffering);
         const wrappedSource = inputStream._sourceStream;
         wrappedSource?.on?.('finishBuffering', forwardFinishBuffering);

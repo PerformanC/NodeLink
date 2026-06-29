@@ -53,6 +53,16 @@ const MAX_URL_REFRESH = 10
 /** Interval in milliseconds between visitor data refreshes. */
 const VISITOR_DATA_INTERVAL = 3_600_000
 
+/** PassThrough buffer size. 48KB = ~3s of 128kbps Opus, enough to cover reconnect gaps. */
+const STREAM_BUFFER_SIZE = 48 * 1024
+
+/** Refresh URL before YouTube's ~6h expiry. */
+const URL_MAX_AGE_MS = 4.5 * 60 * 60 * 1000
+
+/** Recovery base delay with exponential backoff. So 2s, 4s, 8s, etc. */
+const RECOVER_BASE_DELAY_MS = 2000
+const MAX_RETRY_DELAY_MS = 8000
+
 /**
  * Manages a scored pool of proxies with automatic health tracking.
  *
@@ -212,6 +222,9 @@ export default class YouTubeSource {
 
   /** YouTube innertube request context sent with every API call (device info, locale, visitor data). */
   private ytContext: YouTubeContext
+
+  /** Dynamic bandwidth estimate in bits per second (starts at 128kbps/16KB/s). */
+  private bandwidthEstimate = 128_000
 
   // -- Public fields consumed by the framework --
 
@@ -417,7 +430,6 @@ export default class YouTubeSource {
     if (cachedPlayerScript) {
       this.cipherManager.setPlayerScriptUrl(cachedPlayerScript)
       logger('debug', 'YouTube', 'Player script URL loaded from cache.')
-      return
     }
 
     let visitorFound = false
@@ -431,7 +443,7 @@ export default class YouTubeSource {
       } = await makeRequest('https://www.youtube.com/embed', {
         method: 'GET',
         headers: {
-          Cookie: 'YSC=cz5kYp3ZuIE; VISITOR_INFO1_LIVE=U-0T5oUyzf8;'
+          Cookie: 'YSC=LUAfwHpna4E; VISITOR_INFO1_LIVE=Zuih2uZbq3I;'
         }
       })
 
@@ -444,18 +456,20 @@ export default class YouTubeSource {
           logger('debug', 'YouTube', 'visitorData refreshed from embed.')
         }
 
-        const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/)
-        if (playerScriptMatch?.[1]) {
-          playerScriptUrl = playerScriptMatch[1].replace(
-            /\/[a-z]{2}_[A-Z]{2}\//,
-            '/en_US/'
-          )
-          this.nodelink.credentialManager?.set(
-            'yt_player_script_url',
-            playerScriptUrl,
-            12 * 60 * 60 * 1000
-          )
-          logger('debug', 'YouTube', `Player script URL: ${playerScriptUrl}`)
+        if (!cachedPlayerScript) {
+          const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/)
+          if (playerScriptMatch?.[1]) {
+            playerScriptUrl = playerScriptMatch[1].replace(
+              /\/[a-z]{2}_[A-Z]{2}\//,
+              '/en_US/'
+            )
+            this.nodelink.credentialManager?.set(
+              'yt_player_script_url',
+              playerScriptUrl,
+              12 * 60 * 60 * 1000
+            )
+            logger('debug', 'YouTube', `Player script URL: ${playerScriptUrl}`)
+          }
         }
       } else {
         logger(
@@ -487,17 +501,9 @@ export default class YouTubeSource {
           this.ytContext.client.visitorData =
             guideBody.responseContext.visitorData
           visitorFound = true
-          logger(
-            'debug',
-            'YouTube',
-            'visitorData refreshed via guide.'
-          )
+          logger('debug', 'YouTube', 'visitorData refreshed via guide.')
         } else {
-          logger(
-            'warn',
-            'YouTube',
-            'Failed to refresh visitorData via guide.'
-          )
+          logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.')
         }
       }
     } catch (e) {
@@ -1705,9 +1711,9 @@ export default class YouTubeSource {
         logger(
           'debug',
           'YouTube',
-          `Using range buffering for ${decodedTrack.title} (${Math.round(contentLength / 1024 / 1024)}MB)`
+          `Using Chunked HTTP buffering for ${decodedTrack.title} (${Math.round(contentLength / 1024 / 1024)}MB)`
         )
-        return this._streamWithRangeRequests(
+        return this._streamChunkedHttp(
           url,
           contentLength,
           decodedTrack,
@@ -1813,7 +1819,8 @@ export default class YouTubeSource {
         sabr.pause()
       }
     })
-    stream.on('drain', () => sabr.resume())
+    const onSabrDrain = () => sabr.resume()
+    stream.on('drain', onSabrDrain)
 
     sabr.on('end', () => {
       if (!readyResolved) {
@@ -1908,6 +1915,7 @@ export default class YouTubeSource {
     stream.destroy = ((err?: Error) => {
       if (isDestroying) return stream
       isDestroying = true
+      stream.removeListener('drain', onSabrDrain)
       sabr.destroy(err)
       this.activeStreams.delete(streamKey)
       originalDestroy(err)
@@ -1917,6 +1925,7 @@ export default class YouTubeSource {
     stream.once('close', () => {
       if (isDestroying) return
       isDestroying = true
+      stream.removeListener('drain', onSabrDrain)
       sabr.destroy()
       this.activeStreams.delete(streamKey)
     })
@@ -2063,10 +2072,14 @@ export default class YouTubeSource {
       responseStream
 
     let cleanedUp = false
+    const onDrain = () => {
+      if (!responseStream.destroyed) responseStream.resume()
+    }
     const cleanup = () => {
       if (cleanedUp) return
       cleanedUp = true
       cancelSignal.aborted = true
+      stream.removeListener('drain', onDrain)
       responseStream.removeAllListeners()
       if (!responseStream.destroyed) responseStream.destroy()
       this.activeStreams.delete(streamKey)
@@ -2079,9 +2092,7 @@ export default class YouTubeSource {
       }
     })
 
-    stream.on('drain', () => {
-      if (!responseStream.destroyed) responseStream.resume()
-    })
+    stream.on('drain', onDrain)
 
     responseStream.on('end', () => {
       cleanup()
@@ -2549,6 +2560,487 @@ export default class YouTubeSource {
       originalDestroy(err)
       return stream
     }) as typeof stream.destroy
+
+    return { stream }
+  }
+  /**
+   * Streams audio using chunked range requests. This tries to "Replicate" on how the browser
+   * streams audio directly from youtube with code status 206.
+   *
+   * Uses dynamic chunk sizing (256 KB – 512 KB) based on per-stream bandwidth
+   * The limit is around ~570 KB per chunk. But setted to 512KB for better memory efficiency.
+   * Fast-reconnects on ECONNRESET without refreshing the URL until the third consecutive failure.
+   * Opens only 1 connection per stream, reusing it for multiple chunks.
+   * This is the same ideia used for _streamWithRangeRequests, but this tries to limit to 1 connection only.
+   *
+   *
+   * @param url - Initial playback URL.
+   * @param contentLength - Total content length in bytes.
+   * @param decodedTrack - Track metadata for URL recovery.
+   * @param cancelSignal - Shared cancel token for stream abort.
+   * @param streamKey - Unique key for tracking this stream.
+   * @param additionalData - Optional proxy and format info.
+   * @returns StreamResult with the PassThrough stream.
+   */
+  private async _streamChunkedHttp(
+    url: string,
+    contentLength: number,
+    decodedTrack: TrackInfo,
+    cancelSignal: CancelSignal,
+    streamKey: string | symbol,
+    additionalData?: TrackUrlAdditionalData
+  ): Promise<StreamResult> {
+    const stream = new PassThrough({
+      highWaterMark: STREAM_BUFFER_SIZE
+    })
+
+    let currentUrl = url
+    let currentProxy = additionalData?.proxy as unknown as
+      | HttpProxyConfig
+      | undefined
+    if (!currentProxy) {
+      currentProxy = this.getProxy() as unknown as HttpProxyConfig
+    }
+    let urlFetchTime = Date.now()
+    let isDestroyed = false
+    let totalBytesReceived = 0
+    let currentItag = additionalData?.itag
+    let availableFormats = additionalData?.formats || []
+    const failedItags = new Set<number>()
+    let refreshAttempts = 0
+    let consecutiveResets = 0
+    let activeResponseStream:
+      | (NodeJS.ReadableStream & {
+          destroyed: boolean
+          destroy: () => void
+          resume: () => void
+          pause: () => void
+        })
+      | null = null
+
+    let bandwidthEstimate = this.bandwidthEstimate || 128_000
+    const updateBandwidthEstimate = (
+      bytes: number,
+      durationMs: number
+    ): void => {
+      if (bytes <= 0 || durationMs <= 0) return
+      const bits = bytes * 8
+      const throughput = (bits / durationMs) * 1000
+      const alpha = 0.25
+      bandwidthEstimate = Math.max(
+        128_000,
+        alpha * throughput + (1 - alpha) * bandwidthEstimate
+      )
+      // this will update the class-level bandwidth estimate for future streams,
+      // so that it can be used to seed the estimate for new streams and cause less errors hopefully.
+      this.bandwidthEstimate = bandwidthEstimate
+    }
+
+    const onDrain = () => {
+      if (activeResponseStream && !activeResponseStream.destroyed) {
+        activeResponseStream.resume()
+      }
+    }
+
+    let _wakeUp: (() => void) | null = null
+    const cancelSleep = () => {
+      _wakeUp?.()
+      _wakeUp = null
+    }
+    const sleep = (ms: number): Promise<void> =>
+      new Promise<void>((r) => {
+        const t = setTimeout(() => {
+          _wakeUp = null
+          r()
+        }, ms)
+        t.unref?.()
+        _wakeUp = () => {
+          clearTimeout(t)
+          r()
+        }
+      })
+
+    const cleanup = (err?: Error): void => {
+      if (isDestroyed) return
+      isDestroyed = true
+      cancelSignal.aborted = true
+      cancelSleep()
+      stream.removeListener('drain', onDrain)
+
+      if (activeResponseStream && !activeResponseStream.destroyed) {
+        activeResponseStream.destroy()
+        activeResponseStream = null
+      }
+
+      if (!stream.destroyed) stream.destroy(err)
+      this.activeStreams.delete(streamKey)
+    }
+
+    stream.once('close', () => cleanup())
+    stream.once('error', (err: Error) => cleanup(err))
+
+    stream.on('drain', onDrain)
+
+    const refreshUrl = async (reason: string): Promise<string | null> => {
+      if (isDestroyed || cancelSignal.aborted) return null
+      if (++refreshAttempts > MAX_URL_REFRESH) {
+        logger(
+          'error',
+          'YouTube',
+          `Max URL refresh (${MAX_URL_REFRESH}) reached for ${decodedTrack.title}`
+        )
+        return null
+      }
+
+      logger(
+        'debug',
+        'YouTube',
+        `Refreshing URL for "${decodedTrack.title}" (reason: ${reason}, ${refreshAttempts}/${MAX_URL_REFRESH})`
+      )
+
+      try {
+        let itagToTry: number | null = null
+        if (
+          currentItag &&
+          failedItags.has(currentItag) &&
+          availableFormats.length > 0
+        ) {
+          const currentMime =
+            availableFormats.find((f) => f.itag === currentItag)?.mimeType || ''
+          const isWebm = currentMime.includes('webm')
+          const fallback = availableFormats
+            .filter(
+              (f) =>
+                f.itag !== currentItag &&
+                !failedItags.has(f.itag) &&
+                f.mimeType?.includes('audio') &&
+                (isWebm
+                  ? f.mimeType.includes('webm')
+                  : f.mimeType.includes('mp4'))
+            )
+            .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0]
+
+          if (fallback) {
+            itagToTry = fallback.itag as number
+            logger(
+              'info',
+              'YouTube',
+              `Switching to itag ${itagToTry} for "${decodedTrack.title}"`
+            )
+          }
+        }
+
+        const newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true)
+        if (isDestroyed || cancelSignal.aborted) return null
+        if (newUrlData.exception || !newUrlData.url) return null
+
+        currentUrl = newUrlData.url
+        const newAd = newUrlData.additionalData as
+          | TrackUrlAdditionalData
+          | undefined
+        currentProxy =
+          (newAd?.proxy as unknown as HttpProxyConfig | undefined) ||
+          currentProxy
+        currentItag = newUrlData.itag || currentItag
+        if (newUrlData.formats) availableFormats = newUrlData.formats
+        urlFetchTime = Date.now()
+        consecutiveResets = 0
+
+        logger(
+          'debug',
+          'YouTube',
+          `URL refreshed for "${decodedTrack.title}" (itag ${currentItag})`
+        )
+        return currentUrl
+      } catch (err) {
+        logger(
+          'error',
+          'YouTube',
+          `URL refresh failed: ${(err as Error).message}`
+        )
+        return null
+      }
+    }
+
+    const startStreaming = async (): Promise<void> => {
+      const MIN_TARGET_SECONDS = 2
+      const MAX_TARGET_SECONDS = 30
+      const INITIAL_TARGET_SECONDS = 4
+      let targetSeconds = INITIAL_TARGET_SECONDS
+
+      const ABS_MIN_BYTES = 64 * 1024
+      const ABS_MAX_BYTES = 2 * 1024 * 1024
+
+      const trackBytesPerSecond =
+        contentLength > 0 && decodedTrack.length > 0
+          ? contentLength / (decodedTrack.length / 1000)
+          : 16_000
+
+      let chunkCount = 0
+
+      while (
+        !isDestroyed &&
+        !cancelSignal.aborted &&
+        totalBytesReceived < contentLength
+      ) {
+        const urlAge = Date.now() - urlFetchTime
+        if (urlAge > URL_MAX_AGE_MS) {
+          const refreshed = await refreshUrl('URL age > 4.5h')
+          if (!refreshed) {
+            cleanup(new Error('Failed to refresh expired URL'))
+            return
+          }
+        }
+
+        const proxyToUse = currentProxy
+        const fetchStartTime = Date.now()
+
+        const bytesPerSecond = bandwidthEstimate / 8
+        let dynamicChunkSize = Math.floor(bytesPerSecond * targetSeconds)
+        dynamicChunkSize = Math.max(
+          ABS_MIN_BYTES,
+          Math.min(dynamicChunkSize, ABS_MAX_BYTES)
+        )
+
+        const start = totalBytesReceived
+        const end = Math.min(start + dynamicChunkSize - 1, contentLength - 1)
+        const rangeHeader = `bytes=${start}-${end}`
+
+        try {
+          const result = await http1makeRequest(currentUrl, {
+            method: 'GET',
+            streamOnly: true,
+            proxy: proxyToUse,
+            timeout: 30000,
+            headers: {
+              Range: rangeHeader,
+              'Accept-Encoding': 'identity;q=1, *;q=0',
+              'Sec-Fetch-Dest': 'video',
+              'Sec-Fetch-Mode': 'no-cors',
+              'Sec-Fetch-Site': 'same-origin',
+              Referer: currentUrl,
+              Accept: '*/*',
+              'Accept-Language': 'en-US,en;q=0.9',
+              'Cache-Control': 'no-cache',
+              Pragma: 'no-cache',
+              Priority: 'i'
+            }
+          })
+
+          if (isDestroyed || cancelSignal.aborted) {
+            const s = result.stream as NodeJS.ReadableStream & {
+              destroyed?: boolean
+              destroy: () => void
+            }
+            if (s && !s.destroyed) {
+              s.destroy()
+            }
+            return
+          }
+
+          this.reportProxyStatus(
+            proxyToUse as unknown as ProxySnapshot,
+            !result.error &&
+              (result.statusCode === 200 || result.statusCode === 206),
+            result.statusCode || 0,
+            Date.now() - fetchStartTime
+          )
+
+          if (
+            result.error ||
+            (result.statusCode !== 200 && result.statusCode !== 206)
+          ) {
+            if (result.statusCode === 403 || result.statusCode === 404) {
+              logger(
+                'warn',
+                'YouTube',
+                `HTTP ${result.statusCode} for "${decodedTrack.title}" -- refreshing...`
+              )
+              if (currentItag) failedItags.add(currentItag)
+              const refreshed = await refreshUrl(`HTTP ${result.statusCode}`)
+              if (refreshed) continue
+              cleanup(
+                new Error(`HTTP ${result.statusCode}: max URL refresh reached`)
+              )
+              return
+            }
+
+            const retryDelay = Math.min(
+              RECOVER_BASE_DELAY_MS * 2 ** Math.max(0, refreshAttempts - 1),
+              MAX_RETRY_DELAY_MS
+            )
+            logger(
+              'warn',
+              'YouTube',
+              `HTTP ${result.statusCode}, retrying in ${retryDelay}ms...`
+            )
+            await sleep(retryDelay)
+            continue
+          }
+
+          const responseStream = result.stream as NodeJS.ReadableStream & {
+            destroyed: boolean
+            destroy: () => void
+            pause: () => void
+            resume: () => void
+          }
+
+          activeResponseStream = responseStream
+          let bytesThisChunk = 0
+          let dataStartTime = 0
+
+          await new Promise<void>((resolve, reject) => {
+            if (isDestroyed || cancelSignal.aborted) {
+              if (!responseStream.destroyed) responseStream.destroy()
+              return resolve()
+            }
+
+            const onData = (chunk: Buffer) => {
+              if (isDestroyed || cancelSignal.aborted) {
+                responseStream.destroy()
+                return
+              }
+              if (dataStartTime === 0) dataStartTime = Date.now()
+              bytesThisChunk += chunk.length
+              totalBytesReceived += chunk.length
+              if (!stream.write(chunk)) {
+                responseStream.pause()
+              }
+            }
+
+            const onEnd = () => {
+              responseStream.removeListener('data', onData)
+              responseStream.removeListener('error', onError)
+              activeResponseStream = null
+              resolve()
+            }
+
+            const onError = (err: Error) => {
+              responseStream.removeListener('data', onData)
+              responseStream.removeListener('end', onEnd)
+              activeResponseStream = null
+              if (isDestroyed || cancelSignal.aborted) resolve()
+              else reject(err)
+            }
+
+            responseStream.once('end', onEnd)
+            responseStream.once('error', onError)
+            responseStream.on('data', onData)
+          })
+
+          if (!responseStream.destroyed) {
+            responseStream.destroy()
+          }
+
+          const transferDuration = dataStartTime
+            ? Date.now() - dataStartTime
+            : Date.now() - fetchStartTime
+          updateBandwidthEstimate(bytesThisChunk, transferDuration)
+
+          chunkCount++
+          if (chunkCount <= 2) {
+            targetSeconds = MIN_TARGET_SECONDS
+          } else if (chunkCount <= 5) {
+            targetSeconds = INITIAL_TARGET_SECONDS
+          } else {
+            const estimatedSecondsInChunk = bytesThisChunk / trackBytesPerSecond
+            if (estimatedSecondsInChunk >= targetSeconds * 0.8) {
+              targetSeconds = Math.min(targetSeconds + 2, MAX_TARGET_SECONDS)
+            } else {
+              targetSeconds = Math.max(targetSeconds - 2, MIN_TARGET_SECONDS)
+            }
+          }
+
+          /*
+          logger(
+            'debug',
+            'YouTube',
+            `Chunk #${chunkCount} complete: ${bytesThisChunk} bytes in ${Date.now() - fetchStartTime}ms (${totalBytesReceived}/${contentLength} total, target=${targetSeconds}s)`
+          ) */
+          // i was using this for debugging, so i will keep this commented incase i need it later.
+
+          if (totalBytesReceived >= contentLength) {
+            if (!stream.writableEnded) {
+              stream.emit('finishBuffering')
+              stream.end()
+            }
+            return
+          }
+
+          consecutiveResets = 0
+        } catch (err) {
+          if (isDestroyed || cancelSignal.aborted) return
+          const error = err as Error & { code?: string }
+
+          if (
+            error.code === 'ECONNRESET' ||
+            error.code === 'ERR_STREAM_DESTROYED'
+          ) {
+            bandwidthEstimate = Math.max(128_000, bandwidthEstimate * 0.7)
+
+            logger(
+              'warn',
+              'YouTube',
+              `Connection reset at ${totalBytesReceived} bytes.`
+            )
+
+            // Try same URL first (it's probably still valid) since it takes ~6 hours for an URL to expire
+            const retryDelay = Math.min(1000 * 2 ** consecutiveResets, 4000)
+            consecutiveResets++
+            logger(
+              'warn',
+              'YouTube',
+              `Retrying same URL in ${retryDelay}ms (consecutive reset ${consecutiveResets})...`
+            )
+            await sleep(retryDelay)
+
+            if (consecutiveResets >= 3) {
+              logger(
+                'warn',
+                'YouTube',
+                `Same URL failed ${consecutiveResets} times, refreshing...`
+              )
+              consecutiveResets = 0
+              const refreshed = await refreshUrl(
+                'multiple ECONNRESET on same URL'
+              )
+              if (refreshed) continue
+              cleanup(new Error('ECONNRESET: max URL refresh reached'))
+              return
+            } else {
+              continue
+            }
+          }
+
+          if (
+            error.message?.includes('403') ||
+            error.message?.includes('404')
+          ) {
+            if (currentItag) failedItags.add(currentItag)
+            const refreshed = await refreshUrl('mid-stream 403/404')
+            if (refreshed) continue
+            cleanup(new Error('mid-stream 403/404: max URL refresh reached'))
+            return
+          }
+
+          const retryDelay = Math.min(
+            RECOVER_BASE_DELAY_MS * 2 ** Math.max(0, refreshAttempts - 1),
+            MAX_RETRY_DELAY_MS
+          )
+          logger(
+            'warn',
+            'YouTube',
+            `Stream error for "${decodedTrack.title}": ${error.message}. Retrying in ${retryDelay}ms...`
+          )
+          await sleep(retryDelay)
+        }
+      }
+    }
+
+    startStreaming().catch((err: Error) => {
+      logger('error', 'YouTube', `Fatal streaming error: ${err.message}`)
+      cleanup(err)
+    })
 
     return { stream }
   }

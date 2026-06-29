@@ -439,6 +439,7 @@ export interface NodeLink {
   statsManager: StatsManagerLike
   voiceRelay?: {
     attach?: (connection: VoiceConnection, guildId: string) => void
+    detach?: (connection: VoiceConnection) => void
   }
   sources: SourceManagerLike
   lyrics: LyricsManagerLike | null
