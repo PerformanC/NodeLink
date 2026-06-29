@@ -443,7 +443,7 @@ export class Player {
                 this._emitTrackStart().catch((err) => this._onError(err));
             }
         }
-        else if (state.status === 'idle' && state.reason === 'paused') {
+        else if (state.status === 'idle' && (state.reason === 'paused' || state.reason === 'requested')) {
             this.isPaused = true;
         }
         else if (state.status === 'idle' && state.reason === 'reconnecting') {

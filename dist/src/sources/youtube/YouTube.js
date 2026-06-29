@@ -1743,6 +1743,7 @@ export default class YouTubeSource {
         }
         let urlFetchTime = Date.now();
         let isDestroyed = false;
+        let isBackpressured = false;
         let totalBytesReceived = 0;
         let currentItag = additionalData?.itag;
         let availableFormats = additionalData?.formats || [];
@@ -1763,6 +1764,7 @@ export default class YouTubeSource {
             this.bandwidthEstimate = bandwidthEstimate;
         };
         const onDrain = () => {
+            isBackpressured = false;
             if (activeResponseStream && !activeResponseStream.destroyed) {
                 activeResponseStream.resume();
             }
@@ -1798,6 +1800,17 @@ export default class YouTubeSource {
                 stream.destroy(err);
             this.activeStreams.delete(streamKey);
         };
+        // Waits for the PassThrough to drain after a backpressure-caused reset,
+        // without leaving a dangling listener for whichever event didn't fire.
+        const waitForDrainOrClose = () => new Promise((resolve) => {
+            const onReady = () => {
+                stream.removeListener('drain', onReady);
+                stream.removeListener('close', onReady);
+                resolve();
+            };
+            stream.once('drain', onReady);
+            stream.once('close', onReady);
+        });
         stream.once('close', () => cleanup());
         stream.once('error', (err) => cleanup(err));
         stream.on('drain', onDrain);
@@ -1948,6 +1961,7 @@ export default class YouTubeSource {
                             bytesThisChunk += chunk.length;
                             totalBytesReceived += chunk.length;
                             if (!stream.write(chunk)) {
+                                isBackpressured = true;
                                 responseStream.pause();
                             }
                         };
@@ -2008,6 +2022,7 @@ export default class YouTubeSource {
                         return;
                     }
                     consecutiveResets = 0;
+                    isBackpressured = false;
                 }
                 catch (err) {
                     if (isDestroyed || cancelSignal.aborted)
@@ -2016,6 +2031,15 @@ export default class YouTubeSource {
                     if (error.code === 'ECONNRESET' ||
                         error.code === 'ERR_STREAM_DESTROYED') {
                         bandwidthEstimate = Math.max(128_000, bandwidthEstimate * 0.7);
+                        if (isBackpressured) {
+                            consecutiveResets = 0;
+                            isBackpressured = false;
+                            logger('debug', 'YouTube', `Buffer-drain recovery at ${totalBytesReceived} bytes (consecutive resets cleared).`);
+                            if (stream.writableLength > 0) {
+                                await waitForDrainOrClose();
+                            }
+                            continue;
+                        }
                         logger('warn', 'YouTube', `Connection reset at ${totalBytesReceived} bytes.`);
                         // Try same URL first (it's probably still valid) since it takes ~6 hours for an URL to expire
                         const retryDelay = Math.min(1000 * 2 ** consecutiveResets, 4000);

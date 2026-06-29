@@ -2603,6 +2603,7 @@ export default class YouTubeSource {
     }
     let urlFetchTime = Date.now()
     let isDestroyed = false
+    let isBackpressured = false
     let totalBytesReceived = 0
     let currentItag = additionalData?.itag
     let availableFormats = additionalData?.formats || []
@@ -2637,6 +2638,7 @@ export default class YouTubeSource {
     }
 
     const onDrain = () => {
+      isBackpressured = false
       if (activeResponseStream && !activeResponseStream.destroyed) {
         activeResponseStream.resume()
       }
@@ -2675,6 +2677,19 @@ export default class YouTubeSource {
       if (!stream.destroyed) stream.destroy(err)
       this.activeStreams.delete(streamKey)
     }
+
+    // Waits for the PassThrough to drain after a backpressure-caused reset,
+    // without leaving a dangling listener for whichever event didn't fire.
+    const waitForDrainOrClose = (): Promise<void> =>
+      new Promise<void>((resolve) => {
+        const onReady = () => {
+          stream.removeListener('drain', onReady)
+          stream.removeListener('close', onReady)
+          resolve()
+        }
+        stream.once('drain', onReady)
+        stream.once('close', onReady)
+      })
 
     stream.once('close', () => cleanup())
     stream.once('error', (err: Error) => cleanup(err))
@@ -2904,6 +2919,7 @@ export default class YouTubeSource {
               bytesThisChunk += chunk.length
               totalBytesReceived += chunk.length
               if (!stream.write(chunk)) {
+                isBackpressured = true
                 responseStream.pause()
               }
             }
@@ -2968,6 +2984,7 @@ export default class YouTubeSource {
           }
 
           consecutiveResets = 0
+          isBackpressured = false
         } catch (err) {
           if (isDestroyed || cancelSignal.aborted) return
           const error = err as Error & { code?: string }
@@ -2977,6 +2994,20 @@ export default class YouTubeSource {
             error.code === 'ERR_STREAM_DESTROYED'
           ) {
             bandwidthEstimate = Math.max(128_000, bandwidthEstimate * 0.7)
+
+            if (isBackpressured) {
+              consecutiveResets = 0
+              isBackpressured = false
+              logger(
+                'debug',
+                'YouTube',
+                `Buffer-drain recovery at ${totalBytesReceived} bytes (consecutive resets cleared).`
+              )
+              if (stream.writableLength > 0) {
+                await waitForDrainOrClose()
+              }
+              continue
+            }
 
             logger(
               'warn',
