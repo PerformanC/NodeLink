@@ -2363,7 +2363,7 @@ export abstract class BaseClient {
         exception: {
           message,
           severity: 'common',
-          cause: 'Unplayable'
+          cause: 'UpstreamPlayability'
         }
       }
     }

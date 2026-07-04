@@ -545,7 +545,7 @@ export default class YouTubeSource {
                         return result;
                     }
                     if (result?.loadType === 'error' &&
-                        result.data?.cause === 'UpstreamPlayability') {
+                        result.exception?.cause === 'UpstreamPlayability') {
                         const listIdMatch = url.match(/[?&]list=([\w-]+)/);
                         const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
                         const listId = listIdMatch ? listIdMatch[1] : null;
@@ -588,7 +588,7 @@ export default class YouTubeSource {
                             }
                         }
                     }
-                    const errorMessage = result?.data?.message ||
+                    const errorMessage = result?.exception?.message ||
                         `${clientName} client returned empty or failed.`;
                     clientErrors.push({ client: clientName, message: errorMessage });
                     logger('debug', 'YouTube', `${clientName} client returned empty or failed for Music URL.`);

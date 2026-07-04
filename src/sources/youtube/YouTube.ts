@@ -794,7 +794,7 @@ export default class YouTubeSource {
 
           if (
             result?.loadType === 'error' &&
-            (result.data as { cause?: string })?.cause === 'UpstreamPlayability'
+            result.exception?.cause === 'UpstreamPlayability'
           ) {
             const listIdMatch = url.match(/[?&]list=([\w-]+)/)
             const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
@@ -859,7 +859,7 @@ export default class YouTubeSource {
           }
 
           const errorMessage =
-            (result?.data as { message?: string })?.message ||
+            result?.exception?.message ||
             `${clientName} client returned empty or failed.`
           clientErrors.push({ client: clientName, message: errorMessage })
           logger(
