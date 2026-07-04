@@ -289,7 +289,7 @@ export default class DeezerSource {
                 if (tracks.length === 0)
                     return { loadType: 'empty', data: {} };
                 return {
-                    loadType: type,
+                    loadType: 'playlist',
                     data: {
                         info: {
                             name: entity.title ?? 'Unknown Deezer Collection',
