@@ -397,7 +397,27 @@ export default class DeezerSource {
                 }
             }
             catch (error) {
-                logger('warn', 'Deezer', `Direct stream failed for ${decodedTrack.title}: ${this.getErrorMessage(error)}. Falling back to default search.`);
+                const errMsg = this.getErrorMessage(error);
+                if (errMsg.toLowerCase().includes('csrf') &&
+                    !forceRefresh) {
+                    logger('warn', 'Deezer', `CSRF token expired (${errMsg}). Evicting cache and refreshing credentials...`);
+                    const cm = this.nodelink.credentialManager;
+                    cm?.delete?.('deezer_csrf_token');
+                    cm?.delete?.('deezer_license_token');
+                    cm?.delete?.('deezer_cookie');
+                    this.csrfToken = null;
+                    this.licenseToken = null;
+                    this.cookie = null;
+                    const success = await this.performSetup();
+                    if (success && this.cookie && this.csrfToken && this.licenseToken) {
+                        logger('info', 'Deezer', 'Credentials refreshed. Retrying direct stream...');
+                        return this.getTrackUrl(decodedTrack, _itag, true);
+                    }
+                    logger('warn', 'Deezer', 'Failed to refresh credentials. Falling back to search.');
+                }
+                else {
+                    logger('warn', 'Deezer', `Direct stream failed for ${decodedTrack.title}: ${errMsg}. Falling back to default search.`);
+                }
             }
         }
         const sourceManager = this.getSourceManager();
