@@ -426,6 +426,7 @@ export interface SymphoniaDecoderStreamOptions extends TransformOptions {
 export interface AACDecoderStreamOptions extends TransformOptions {
   /** Desired resampling quality. */
   resamplingQuality?: ResamplingQuality
+  state?: { isAlac: boolean }
 }
 
 /**

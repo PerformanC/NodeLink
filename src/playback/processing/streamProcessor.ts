@@ -271,6 +271,12 @@ const _getSymphoniaCodecHint = (type: string): string | null => {
   if (lowerType.includes('mp3') || lowerType.includes('mpeg')) return 'mp3'
   if (lowerType.includes('ogg') || lowerType.includes('vorbis')) return 'ogg'
   if (lowerType.includes('wav') || lowerType.includes('wave')) return 'wav'
+  if (
+    lowerType.includes('alac') ||
+    lowerType.includes('mp4') ||
+    lowerType.includes('m4a')
+  )
+    return 'm4a'
   return null
 }
 const _tightBuffer = (buf: Buffer): Buffer =>
@@ -594,9 +600,9 @@ class BaseAudioResource {
   canStop?: boolean
   protected _destroyed: boolean
   protected guildId: string
-  protected _forwardFinishBuffering:
-    | ((...args: unknown[]) => void)
-    | null = null
+  protected _forwardFinishBuffering: ((...args: unknown[]) => void) | null =
+    null
+  protected _finishBufferingEmitted: boolean
 
   constructor(guildId?: string) {
     this.guildId = guildId || 'api-stream'
@@ -604,6 +610,7 @@ class BaseAudioResource {
     this.stream = null
     this.canStop = false
     this._destroyed = false
+    this._finishBufferingEmitted = false
   }
 
   protected _assignStream(stream: Transform): void {
@@ -652,6 +659,24 @@ class BaseAudioResource {
     voiceStream.setLoudnessNormalizer = (enabled: boolean) =>
       this.setLoudnessNormalizer(enabled)
     voiceStream.isPipelineFinished = () => this.isPipelineFinished()
+
+    /*
+     * This will prevent a race condition where fast CDN/network streams finish buffering and emit
+     * 'finishBuffering' before the voice connection finishes starting and subscribes to the event.
+     * Using 'newListener' event, if the voice player subscribes after the stream has
+     * already buffered, we will re-emit 'finishBuffering' immediately, allowing the track to be stoppable
+     * and transition to trackEnd naturally.
+     *
+     * ... i hate nodejs sometimes...
+     */
+    voiceStream.on('newListener', (event) => {
+      if (event === 'finishBuffering' && this._finishBufferingEmitted) {
+        setImmediate(() => {
+          voiceStream.emit('finishBuffering')
+        })
+      }
+    })
+
     this.stream = voiceStream
   }
 
@@ -671,11 +696,18 @@ class BaseAudioResource {
     }
 
     if (typeof firstPipe?._cleanupListeners === 'function') {
-      try { firstPipe._cleanupListeners() } catch {}
+      try {
+        firstPipe._cleanupListeners()
+      } catch {}
     }
 
     if (this._forwardFinishBuffering && firstPipe?._sourceStream) {
-      try { firstPipe._sourceStream.off?.('finishBuffering', this._forwardFinishBuffering) } catch {}
+      try {
+        firstPipe._sourceStream.off?.(
+          'finishBuffering',
+          this._forwardFinishBuffering
+        )
+      } catch {}
     }
 
     if (firstPipe?.stopHls) {
@@ -687,8 +719,12 @@ class BaseAudioResource {
     }
 
     if (firstPipe?._sourceStream && !firstPipe._sourceStream.destroyed) {
-      try { firstPipe._sourceStream.destroy() } catch {}
-      try { delete (firstPipe as unknown as Record<string, unknown>)._sourceStream } catch {}
+      try {
+        firstPipe._sourceStream.destroy()
+      } catch {}
+      try {
+        delete (firstPipe as unknown as Record<string, unknown>)._sourceStream
+      } catch {}
     }
 
     for (let i = this.pipes.length - 1; i >= 0; i--) {
@@ -1305,11 +1341,14 @@ class AACDecoderStream extends Transform {
   private resamplerCreationPromise: Promise<ResamplerLike> | null
   private static readonly MAX_PENDING_CHUNKS = 200
 
+  private state: { isAlac: boolean } | null
+
   constructor(options: AACDecoderStreamOptions) {
     super({
       ...options,
       highWaterMark: AUDIO_CONFIG.highWaterMark
     })
+    this.state = options.state ?? null
     this.decoder = new FAAD2NodeDecoder() as unknown as FAAD2DecoderLike
     this.resampler = null
     this.isDecoderReady = false
@@ -1466,6 +1505,12 @@ class AACDecoderStream extends Transform {
     encoding: BufferEncoding,
     callback: TransformCallback
   ): void {
+    if (this.state?.isAlac) {
+      this.push(chunk)
+      callback()
+      return
+    }
+
     if (!this.isDecoderReady || this.pendingChunks.length > 0) {
       if (this.pendingChunks.length >= AACDecoderStream.MAX_PENDING_CHUNKS) {
         this.pendingChunks.shift()
@@ -1566,6 +1611,11 @@ class AACDecoderStream extends Transform {
   }
 
   override _flush(callback: TransformCallback): void {
+    if (this.state?.isAlac) {
+      callback()
+      return
+    }
+
     if (this.ringBuffer.length > 0 && this.isConfigured) {
       try {
         const frameInfo = this._findADTSFrame()
@@ -1593,6 +1643,86 @@ class AACDecoderStream extends Transform {
 }
 type MP4PrefetchChunk = { fileStart: number; data: ArrayBuffer }
 
+function patchMoovOffsets(moovBuffer: Buffer, shift: number): void {
+  let idx = 0
+  while (true) {
+    idx = moovBuffer.indexOf('stco', idx)
+    if (idx === -1) break
+    const boxStart = idx - 4
+    if (boxStart >= 0) {
+      const boxSize = moovBuffer.readUInt32BE(boxStart)
+      const entryCount = moovBuffer.readUInt32BE(idx + 8)
+      if (boxSize === 16 + entryCount * 4) {
+        for (let i = 0; i < entryCount; i++) {
+          const offsetPos = idx + 12 + i * 4
+          const originalOffset = moovBuffer.readUInt32BE(offsetPos)
+          moovBuffer.writeUInt32BE(originalOffset + shift, offsetPos)
+        }
+      }
+    }
+    idx += 4
+  }
+
+  idx = 0
+  while (true) {
+    idx = moovBuffer.indexOf('co64', idx)
+    if (idx === -1) break
+    const boxStart = idx - 4
+    if (boxStart >= 0) {
+      const boxSize = moovBuffer.readUInt32BE(boxStart)
+      const entryCount = moovBuffer.readUInt32BE(idx + 8)
+      if (boxSize === 16 + entryCount * 8) {
+        for (let i = 0; i < entryCount; i++) {
+          const offsetPos = idx + 12 + i * 8
+          const high = moovBuffer.readUInt32BE(offsetPos)
+          const low = moovBuffer.readUInt32BE(offsetPos + 4)
+          const originalOffset = high * 0x100000000 + low
+          const newOffset = originalOffset + shift
+          const newHigh = Math.floor(newOffset / 0x100000000)
+          const newLow = newOffset % 0x100000000
+          moovBuffer.writeUInt32BE(newHigh, offsetPos)
+          moovBuffer.writeUInt32BE(newLow, offsetPos + 4)
+        }
+      }
+    }
+    idx += 4
+  }
+}
+
+/* INFO: for context of why i did this: https://github.com/pdeljanov/Symphonia/issues/289, still seems to be broken. */
+function reorderMp4Boxes(originalBuffer: Buffer): Buffer {
+  const topBoxes = _parseBoxes(originalBuffer)
+  const ftyp = topBoxes.find((b) => b.type === 'ftyp')
+  const moov = topBoxes.find((b) => b.type === 'moov')
+  const mdat = topBoxes.find((b) => b.type === 'mdat')
+
+  if (!ftyp || !moov || !mdat) {
+    return originalBuffer
+  }
+
+  if (moov.offset < mdat.offset) {
+    return originalBuffer
+  }
+
+  const ftypBuffer = originalBuffer.subarray(
+    ftyp.offset,
+    ftyp.offset + ftyp.size
+  )
+  const moovBuffer = Buffer.from(
+    originalBuffer.subarray(moov.offset, moov.offset + moov.size)
+  )
+
+  patchMoovOffsets(moovBuffer, moov.size)
+
+  const beforeMoov = originalBuffer.subarray(
+    ftyp.offset + ftyp.size,
+    moov.offset
+  )
+  const afterMoov = originalBuffer.subarray(moov.offset + moov.size)
+
+  return Buffer.concat([ftypBuffer, moovBuffer, beforeMoov, afterMoov])
+}
+
 type MP4ToAACStreamOptions = TransformOptions & {
   prefetch?: MP4PrefetchChunk[]
   baseFileStart?: number
@@ -1607,8 +1737,13 @@ class MP4ToAACStream extends Transform {
   private _prefetchDone: boolean
   private _opts: MP4ToAACStreamOptions
   private _initPromise: Promise<void> | null
+  private state: { isAlac: boolean } | null
+  private symphoniaDecoder: SymphoniaDecoderStream | null
+  private headerChunks: Buffer[]
 
-  constructor(options: MP4ToAACStreamOptions = {}) {
+  constructor(
+    options: MP4ToAACStreamOptions & { state?: { isAlac: boolean } } = {}
+  ) {
     super({ ...options, highWaterMark: AUDIO_CONFIG.highWaterMark })
 
     this._opts = options
@@ -1618,6 +1753,9 @@ class MP4ToAACStream extends Transform {
     this._aborted = false
     this._prefetchDone = false
     this._initPromise = null
+    this.state = options.state ?? null
+    this.symphoniaDecoder = null
+    this.headerChunks = []
   }
 
   private async _initMp4Box(): Promise<void> {
@@ -1639,6 +1777,9 @@ class MP4ToAACStream extends Transform {
   abort(): void {
     this._aborted = true
     this._cleanupMp4Box()
+    if (this.symphoniaDecoder) {
+      this.symphoniaDecoder.abort?.()
+    }
   }
 
   private _appendPrefetchIfNeeded(): void {
@@ -1663,44 +1804,65 @@ class MP4ToAACStream extends Transform {
     this.mp4boxFile.onReady = (info: MP4BoxInfo): void => {
       if (this._aborted || !this.mp4boxFile) return
 
-      const audioTrack = info.tracks.find((t: MP4BoxTrack) =>
-        t.codec?.startsWith('mp4a')
+      const audioTrack = info.tracks.find(
+        (t: MP4BoxTrack) =>
+          t.codec?.startsWith('mp4a') || t.codec?.startsWith('alac')
       )
-      if (!audioTrack) throw new Error('No AAC track found in MP4')
-
-      this.audioConfig = this._getAudioConfig(audioTrack)
-
-      this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
-        nbSamples: 50
-      })
-
-      if (typeof this._opts.seekTimeSec === 'number') {
-        const mp4boxFile = this.mp4boxFile as unknown as {
-          seek: (time: number, async: boolean) => MP4BoxSeekResult
-        }
-        const seekRes = mp4boxFile.seek(
-          this._opts.seekTimeSec,
-          true
-        ) as MP4BoxSeekResult
-        const expectedOffset = _seekOffset(seekRes)
-
-        if (
-          typeof this._opts.baseFileStart === 'number' &&
-          this._opts.baseFileStart !== expectedOffset
-        ) {
-          logger(
-            'warn',
-            'MP4ToAACStream',
-            `MP4 seek mismatch: stream starts at ${this._opts.baseFileStart} but MP4Box requested ${expectedOffset}`
-          )
-        }
-
-        if (typeof this._opts.baseFileStart !== 'number') {
-          this.offset = expectedOffset
-        }
+      if (!audioTrack) {
+        throw new Error('No supported track found in MP4')
       }
 
-      this.mp4boxFile.start()
+      if (audioTrack.codec?.startsWith('alac')) {
+        if (this.state) this.state.isAlac = true
+        this._cleanupMp4Box()
+        this.symphoniaDecoder = new SymphoniaDecoderStream({
+          codecRegistryHint: 'm4a'
+        })
+        this.symphoniaDecoder.on('data', (pcm: Buffer) => {
+          this.push(pcm)
+        })
+        this.symphoniaDecoder.on('error', (err) => {
+          this.emit('error', err)
+        })
+        const fullBuffer = Buffer.concat(this.headerChunks)
+        const reordered = reorderMp4Boxes(fullBuffer)
+        this.headerChunks = []
+        this.symphoniaDecoder.write(reordered)
+      } else {
+        this.audioConfig = this._getAudioConfig(audioTrack)
+
+        this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
+          nbSamples: 50
+        })
+
+        if (typeof this._opts.seekTimeSec === 'number') {
+          const mp4boxFile = this.mp4boxFile as unknown as {
+            seek: (time: number, async: boolean) => MP4BoxSeekResult
+          }
+          const seekRes = mp4boxFile.seek(
+            this._opts.seekTimeSec,
+            true
+          ) as MP4BoxSeekResult
+          const expectedOffset = _seekOffset(seekRes)
+
+          if (
+            typeof this._opts.baseFileStart === 'number' &&
+            this._opts.baseFileStart !== expectedOffset
+          ) {
+            logger(
+              'warn',
+              'MP4ToAACStream',
+              `MP4 seek mismatch: stream starts at ${this._opts.baseFileStart} but MP4Box requested ${expectedOffset}`
+            )
+          }
+
+          if (typeof this._opts.baseFileStart !== 'number') {
+            this.offset = expectedOffset
+          }
+        }
+
+        this.mp4boxFile.start()
+      }
     }
 
     this.mp4boxFile.onSamples = (
@@ -1791,6 +1953,14 @@ class MP4ToAACStream extends Transform {
       return
     }
 
+    if (this.symphoniaDecoder) {
+      this.symphoniaDecoder.write(chunk)
+      callback()
+      return
+    }
+
+    this.headerChunks.push(chunk)
+
     try {
       await this._initMp4Box()
       if (!this.mp4boxFile) {
@@ -1817,11 +1987,26 @@ class MP4ToAACStream extends Transform {
   }
 
   override _flush(callback: TransformCallback): void {
+    const decoderInstance = this
+      .symphoniaDecoder as SymphoniaDecoderStream | null
+    if (decoderInstance) {
+      decoderInstance.end(callback)
+      return
+    }
+
     if (!this._aborted && this.mp4boxFile) {
       try {
         this.mp4boxFile.flush()
       } catch {}
     }
+
+    const decoderInstanceAfter = this
+      .symphoniaDecoder as SymphoniaDecoderStream | null
+    if (decoderInstanceAfter) {
+      decoderInstanceAfter.end(callback)
+      return
+    }
+
     this._cleanupMp4Box()
     callback()
   }
@@ -1832,6 +2017,11 @@ class MP4ToAACStream extends Transform {
   ): void {
     this._aborted = true
     this._cleanupMp4Box()
+    this.headerChunks = []
+    if (this.symphoniaDecoder) {
+      this.symphoniaDecoder.destroy()
+      this.symphoniaDecoder = null
+    }
     super._destroy(err, callback)
   }
 
@@ -2460,6 +2650,7 @@ class StreamAudioResource extends BaseAudioResource {
       case SupportedFormats.FLAC:
       case SupportedFormats.OGG_VORBIS:
       case SupportedFormats.WAV:
+      case SupportedFormats.ALAC:
         return this._createSymphoniaPipeline(stream, type)
 
       case SupportedFormats.OPUS:
@@ -2499,6 +2690,7 @@ class StreamAudioResource extends BaseAudioResource {
     const lowerType = type.toLowerCase()
     const _aacStream = stream
     const streams: (Readable | Transform)[] = [stream]
+    const state = { isAlac: false }
 
     if (_isFmp4Format(lowerType)) {
       const bufferMode = lowerType.includes('fmp4-buffered')
@@ -2536,15 +2728,17 @@ class StreamAudioResource extends BaseAudioResource {
           ? {
               prefetch: seekOpts.prefetch,
               baseFileStart: seekOpts.baseFileStart,
-              seekTimeSec: seekOpts.seekTimeSec
+              seekTimeSec: seekOpts.seekTimeSec,
+              state
             }
-          : {}
+          : { state }
       )
       streams.push(demuxer)
     }
 
     const decoder = new AACDecoderStream({
-      resamplingQuality: resamplingQuality as ResamplingQuality
+      resamplingQuality: resamplingQuality as ResamplingQuality,
+      state
     })
     streams.push(decoder)
 
@@ -2813,6 +3007,7 @@ class StreamAudioResource extends BaseAudioResource {
   _setupEventHandlers(inputStream: Readable): void {
     const forwardFinishBuffering = (): void => {
       if (!this._destroyed) {
+        this._finishBufferingEmitted = true
         this.stream?.emit('finishBuffering')
       }
     }
@@ -3017,6 +3212,7 @@ export const createPCMStream = (
   switch (normalizedType) {
     case SupportedFormats.AAC: {
       const lowerType = type.toLowerCase()
+      const state = { isAlac: false }
 
       if (_isFmp4Format(lowerType)) {
         const bufferMode = lowerType.includes('fmp4-buffered')
@@ -3032,11 +3228,13 @@ export const createPCMStream = (
           )
           break
         }
-      } else if (_isMp4Format(lowerType)) streams.push(new MP4ToAACStream())
+      } else if (_isMp4Format(lowerType))
+        streams.push(new MP4ToAACStream({ state }))
 
       streams.push(
         new AACDecoderStream({
-          resamplingQuality: resamplingQuality as ResamplingQuality
+          resamplingQuality: resamplingQuality as ResamplingQuality,
+          state
         })
       )
       break
@@ -3055,7 +3253,8 @@ export const createPCMStream = (
     case SupportedFormats.MPEG:
     case SupportedFormats.FLAC:
     case SupportedFormats.OGG_VORBIS:
-    case SupportedFormats.WAV: {
+    case SupportedFormats.WAV:
+    case SupportedFormats.ALAC: {
       streams.push(
         new SymphoniaDecoderStream({
           codecRegistryHint: _getSymphoniaCodecHint(type)

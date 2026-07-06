@@ -316,6 +316,8 @@ export const SupportedFormats = {
   WAV: 'wav',
   /** Flash Video container format */
   FLV: 'flv',
+  /** Apple Lossless Audio Codec */
+  ALAC: 'alac',
   /** Unknown or unsupported audio format */
   UNKNOWN: 'unknown'
 } as const
@@ -440,6 +442,8 @@ export function normalizeFormat(
 ): SupportedFormat {
   if (!type) return SupportedFormats.UNKNOWN
   const lowerType = type.toLowerCase()
+
+  if (lowerType.includes('alac')) return SupportedFormats.ALAC
 
   if (
     lowerType.includes('opus') ||
