@@ -1,4 +1,4 @@
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 const IHEART_API_V2 = 'https://us.api.iheart.com/api/v2';
 const IHEART_API_V1 = 'https://api2.iheart.com/api/v1';
 const IHEART_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';

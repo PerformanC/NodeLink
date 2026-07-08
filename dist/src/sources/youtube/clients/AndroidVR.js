@@ -8,8 +8,8 @@
  * @packageDocumentation
  * @module YouTubeAndroidVRClient
  */
-import { logger, makeRequest } from "../../../utils.js";
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
+import { logger, makeRequest } from '../../../utils.js';
+import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube ANDROID_VR innertube client.
  *

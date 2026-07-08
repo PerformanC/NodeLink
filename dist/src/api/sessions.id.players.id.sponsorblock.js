@@ -1,4 +1,4 @@
-import { sendErrorResponse } from "../utils.js";
+import { sendErrorResponse } from '../utils.js';
 /**
  * Builds a strongly typed runtime view for the SponsorBlock route.
  *

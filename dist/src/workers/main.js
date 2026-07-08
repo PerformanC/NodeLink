@@ -15,31 +15,31 @@ import { resolve as resolvePath } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import v8 from 'node:v8';
-import { GatewayEvents } from "../constants.js";
-import ConnectionManager from "../managers/connectionManager.js";
-import CredentialManager from "../managers/credentialManager.js";
-import PluginManager from "../managers/pluginManager.js";
-import RoutePlannerManager from "../managers/routePlannerManager.js";
-import SourceManager from "../managers/sourceManager.js";
-import StatsManager from "../managers/statsManager.js";
-import TrackCacheManager from "../managers/trackCacheManager.js";
-import { migrateConfig } from "../modules/config/configMigration.js";
-import { getWebmOpusProfilerStats } from "../playback/demuxers/WebmOpus.js";
-import { bufferPool } from "../playback/structs/BufferPool.js";
-import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from "../utils.js";
-import { createVoiceRelay } from "../voice/voiceRelay.js";
-import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from "./headQueue.js";
+import { GatewayEvents } from '../constants.js';
+import ConnectionManager from '../managers/connectionManager.js';
+import CredentialManager from '../managers/credentialManager.js';
+import PluginManager from '../managers/pluginManager.js';
+import RoutePlannerManager from '../managers/routePlannerManager.js';
+import SourceManager from '../managers/sourceManager.js';
+import StatsManager from '../managers/statsManager.js';
+import TrackCacheManager from '../managers/trackCacheManager.js';
+import { migrateConfig } from '../modules/config/configMigration.js';
+import { getWebmOpusProfilerStats } from '../playback/demuxers/WebmOpus.js';
+import { bufferPool } from '../playback/structs/BufferPool.js';
+import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from '../utils.js';
+import { createVoiceRelay } from '../voice/voiceRelay.js';
+import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from './headQueue.js';
 let playerClassPromise = null;
 let createPCMStreamPromise = null;
 const getPlayerClass = async () => {
     if (!playerClassPromise) {
-        playerClassPromise = import("../playback/player.js").then((module) => module.Player);
+        playerClassPromise = import('../playback/player.js').then((module) => module.Player);
     }
     return playerClassPromise;
 };
 const getCreatePCMStream = async () => {
     if (!createPCMStreamPromise) {
-        createPCMStreamPromise = import("../playback/processing/streamProcessor.js").then((module) => module.createPCMStream);
+        createPCMStreamPromise = import('../playback/processing/streamProcessor.js').then((module) => module.createPCMStream);
     }
     return createPCMStreamPromise;
 };
@@ -1095,7 +1095,7 @@ let lyricsManagerPromise = null;
 let meaningManagerPromise = null;
 const getLyricsManager = async () => {
     if (!lyricsManagerPromise) {
-        lyricsManagerPromise = import("../managers/lyricsManager.js").then(async (module) => {
+        lyricsManagerPromise = import('../managers/lyricsManager.js').then(async (module) => {
             const manager = new module.default(nodelink);
             await manager.loadFolder();
             nodelink.lyrics = manager;
@@ -1106,7 +1106,7 @@ const getLyricsManager = async () => {
 };
 const getMeaningManager = async () => {
     if (!meaningManagerPromise) {
-        meaningManagerPromise = import("../managers/meaningManager.js").then(async (module) => {
+        meaningManagerPromise = import('../managers/meaningManager.js').then(async (module) => {
             const manager = new module.default(nodelink);
             await manager.loadFolder();
             nodelink.meanings = manager;

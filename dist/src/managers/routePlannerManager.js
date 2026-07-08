@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const normalizeIpBlocks = (blocks) => {
     if (!Array.isArray(blocks))
         return [];

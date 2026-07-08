@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const LASTFM_PATTERN = /^https?:\/\/(?:www\.)?last\.fm\/(?:[a-z]{2}\/)?music\/.+/;
 const YOUTUBE_LINK_PATTERN = /header-new-playlink[^>]*href="([^"]*youtube\.com[^"]+)"/;
 const YOUTUBE_URL_PATTERN = /https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[a-zA-Z0-9_-]+/;

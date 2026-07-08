@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for the Twitch GraphQL API.
  * @internal

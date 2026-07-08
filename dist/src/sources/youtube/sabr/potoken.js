@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { appendFile } from 'node:fs/promises';
 import path from 'node:path';
-import { logger } from "../../../utils.js";
-import { base64ToU8 } from "./protor.js";
+import { logger } from '../../../utils.js';
+import { base64ToU8 } from './protor.js';
 /**
  * Path to the log file for PO tokens.
  * @internal
@@ -340,7 +340,7 @@ export class PoTokenManager {
      */
     async _initializeWithDom() {
         this._cleanupDom();
-        const { NativeDOM } = await import("./nativeDOM.js");
+        const { NativeDOM } = await import('./nativeDOM.js');
         this._dom = new NativeDOM({
             url: 'https://www.youtube.com/',
             referrer: 'https://www.youtube.com/',

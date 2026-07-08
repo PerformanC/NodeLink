@@ -598,7 +598,7 @@ export interface YouTubePlayerResponse {
       category?: string
       likeCount?: string | number
       [key: string]: unknown
-    },
+    }
     microformatDataRenderer: {
       urlCanonical: string
       title: string

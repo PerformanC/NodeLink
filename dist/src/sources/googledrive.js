@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import { encodeTrack, http1makeRequest, logger, makeRequest } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Google Drive source implementation.
  * Follows HttpSource pattern.

@@ -1,4 +1,4 @@
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 const SONG_LINK_PATTERN = /^https?:\/\/(?:www\.)?(song\.link|album\.link|artist\.link|pods\.link|odesli\.co)\/.+/i;
 const DEFAULT_PLATFORM_ORDER = [
     'spotify',

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
-import { RingBuffer } from "../structs/RingBuffer.js";
+import { RingBuffer } from '../structs/RingBuffer.js';
 const LAYER_BUFFER_SIZE = 1024 * 1024;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const FRAME_SIZE = 3840;

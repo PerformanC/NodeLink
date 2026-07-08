@@ -1,4 +1,4 @@
-import { generateRandomLetters, logger } from "../utils.js";
+import { generateRandomLetters, logger } from '../utils.js';
 /**
  * Manages active and resumable WebSocket sessions for NodeLink.
  * Handles the full lifecycle of a session, including creation, pausing for resumption,

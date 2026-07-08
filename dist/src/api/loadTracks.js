@@ -1,5 +1,5 @@
-import { logger, sendErrorResponse } from "../utils.js";
-import { validator } from "../validators.js";
+import { logger, sendErrorResponse } from '../utils.js';
+import { validator } from '../validators.js';
 /**
  * Quick protocol matcher for absolute URLs.
  */

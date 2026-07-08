@@ -1,5 +1,5 @@
 import { PassThrough, pipeline } from 'node:stream';
-import { encodeTrack, logger, makeRequest } from "../utils.js";
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 const BANDCAMP_BASE_URL = 'https://bandcamp.com';
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`;
 const BANDCAMP_TRACK_PATTERN = /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/;

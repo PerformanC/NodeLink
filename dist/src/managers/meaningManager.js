@@ -9,7 +9,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 /**
  * Checks whether a meaning source is enabled in config.
  * @param meaningsConfig - Meanings configuration bucket.

@@ -1,4 +1,4 @@
-import { decodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Builds a strongly typed runtime view for the mix collection route.
  *

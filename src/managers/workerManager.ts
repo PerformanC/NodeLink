@@ -1563,8 +1563,6 @@ export default class WorkerManager {
       }
     }
 
-
-
     const threshold = this.scalingConfig.maxPlayersPerWorker
     const hasConnectedWorker = !!bestWorker
 

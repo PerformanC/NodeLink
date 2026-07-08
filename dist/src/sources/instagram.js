@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import { URLSearchParams } from 'node:url';
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Instagram source implementation.
  *

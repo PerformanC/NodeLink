@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendErrorResponse } from "../utils.js";
+import { sendErrorResponse } from '../utils.js';
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

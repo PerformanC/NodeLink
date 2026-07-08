@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const DEFAULT_CONFIG = {
     enabled: true,
     thresholds: {

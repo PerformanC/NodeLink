@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const LETRAS_PATTERN = /^https?:\/\/(?:www\.)?letras\.(?:mus\.br|com)\/[a-z0-9-]+\/[^/]+\/?/i;
 const ARTIST_PATTERN = /^https?:\/\/(?:www\.)?letras\.(?:mus\.br|com)\/([a-z0-9-]+)\//i;
 const SOLR_ENDPOINT = 'https://solr.sscdn.co/letras/m1/';

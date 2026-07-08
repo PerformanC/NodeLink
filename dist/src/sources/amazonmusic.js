@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * User agent string used for general browsing and scraping operations.
  * @internal

@@ -1,5 +1,5 @@
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Base URL for the VK API.
  * @internal

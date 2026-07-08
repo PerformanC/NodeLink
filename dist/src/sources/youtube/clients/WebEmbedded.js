@@ -1,5 +1,5 @@
-import { logger, makeRequest } from "../../../utils.js";
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
+import { logger, makeRequest } from '../../../utils.js';
+import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
 export default class WebEmbedded extends BaseClient {
     /**
      * Creates a new WebEmbedded client instance.

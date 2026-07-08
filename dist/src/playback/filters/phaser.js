@@ -1,8 +1,8 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import Allpass from "./dsp/allpass.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import Allpass from './dsp/allpass.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_STAGES = 12;
 /**

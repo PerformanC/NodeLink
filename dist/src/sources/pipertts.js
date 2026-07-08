@@ -1,5 +1,5 @@
 import { PassThrough, pipeline } from 'node:stream';
-import { encodeTrack, logger, makeRequest } from "../utils.js";
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 /**
  * Piper TTS source implementation.
  */

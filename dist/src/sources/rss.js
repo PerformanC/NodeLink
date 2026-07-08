@@ -1,4 +1,4 @@
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 const RSS_PATTERN = /https?:\/\/.+(\.rss|\.rrs)(\?.*)?$/i;
 const PODCAST_RSS_PATTERN = /https?:\/\/.+\/podcast\/rss(\?.*)?$/i;
 /**

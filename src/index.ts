@@ -478,7 +478,7 @@ if (!cluster.isWorker) {
   } catch (e: unknown) {
     logger('error', 'Git', `Update check failed: ${(e as Error).message}`)
   }
-  
+
   try {
     await checkDependencyUpdates()
   } catch (e: unknown) {

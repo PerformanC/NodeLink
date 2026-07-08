@@ -1,5 +1,5 @@
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * NicoVideo source implementation.
  */

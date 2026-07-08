@@ -1,5 +1,5 @@
 import { Transform } from 'node:stream';
-import { logger, makeRequest } from "../../utils.js";
+import { logger, makeRequest } from '../../utils.js';
 const PREFETCH_COUNT = 4;
 const MAX_BUFFERED = 16 * 1024;
 /**

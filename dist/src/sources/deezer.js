@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import BlowfishCBC from "../decrypters/blowfish-cbc.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import BlowfishCBC from '../decrypters/blowfish-cbc.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
  */
@@ -398,8 +398,7 @@ export default class DeezerSource {
             }
             catch (error) {
                 const errMsg = this.getErrorMessage(error);
-                if (errMsg.toLowerCase().includes('csrf') &&
-                    !forceRefresh) {
+                if (errMsg.toLowerCase().includes('csrf') && !forceRefresh) {
                     logger('warn', 'Deezer', `CSRF token expired (${errMsg}). Evicting cache and refreshing credentials...`);
                     const cm = this.nodelink.credentialManager;
                     cm?.delete?.('deezer_csrf_token');

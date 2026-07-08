@@ -1,5 +1,5 @@
 import { PassThrough, pipeline } from 'node:stream';
-import { encodeTrack, logger, makeRequest } from "../utils.js";
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3';
 const REDDIT_BASE = 'https://www.reddit.com';
 const COMMENTS_REGEX = /\/comments\/([^/?]+)/;

@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { Transform } from 'node:stream';
-import { bufferPool } from "../structs/BufferPool.js";
+import { bufferPool } from '../structs/BufferPool.js';
 const require = createRequire(import.meta.url);
 const OPUS_CTL = {
     BITRATE: 4002,

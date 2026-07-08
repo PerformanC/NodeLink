@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { logger, parseClient, verifyDiscordID } from "../utils.js";
+import { logger, parseClient, verifyDiscordID } from '../utils.js';
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/;
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/;
 /**

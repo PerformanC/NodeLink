@@ -1,5 +1,5 @@
 import { PassThrough, Transform } from 'node:stream';
-import { encodeTrack, getVersion, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getVersion, http1makeRequest, logger } from '../utils.js';
 /**
  * Default user agent for HTTP source requests.
  * @internal

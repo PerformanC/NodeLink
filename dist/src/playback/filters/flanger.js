@@ -1,8 +1,8 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import DelayLine from "./dsp/delay.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import DelayLine from './dsp/delay.js';
+import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 10;
 const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);

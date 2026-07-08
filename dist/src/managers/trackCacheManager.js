@@ -1,4 +1,4 @@
-import BaseCacheManager from "./baseCacheManager.js";
+import BaseCacheManager from './baseCacheManager.js';
 const TRACK_CACHE_SALT = 'nodelink-track-salt';
 const DEFAULT_CACHE_FILE = './.cache/tracks.bin';
 const DEFAULT_SAVE_DELAY_MS = 5000;

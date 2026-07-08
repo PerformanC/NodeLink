@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream';
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * Pinterest source implementation.
  */

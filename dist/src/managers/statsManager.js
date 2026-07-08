@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const MAX_ENDPOINT_ENTRIES = 500;
 const MAX_ENDPOINT_LENGTH = 200;
 const safeNumber = (value) => typeof value === 'number' && Number.isFinite(value) ? value : 0;

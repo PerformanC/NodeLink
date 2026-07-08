@@ -3,8 +3,8 @@ import dns from 'node:dns';
 import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { promisify } from 'node:util';
-import { GatewayEvents } from "../constants.js";
-import { http1makeRequest, logger } from "../utils.js";
+import { GatewayEvents } from '../constants.js';
+import { http1makeRequest, logger } from '../utils.js';
 const execAsync = promisify(exec);
 const dnsLookup = promisify(dns.lookup);
 const DEFAULT_TEST_ENDPOINTS = [

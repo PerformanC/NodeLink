@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger, makeRequest } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Mixin key encoding table for Bilibili WBI signatures.
  * @internal

@@ -1,4 +1,4 @@
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for Audius discovery nodes.
  * @internal

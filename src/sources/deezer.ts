@@ -1107,10 +1107,7 @@ export default class DeezerSource {
         }
       } catch (error) {
         const errMsg = this.getErrorMessage(error)
-        if (
-          errMsg.toLowerCase().includes('csrf') &&
-          !forceRefresh
-        ) {
+        if (errMsg.toLowerCase().includes('csrf') && !forceRefresh) {
           logger(
             'warn',
             'Deezer',

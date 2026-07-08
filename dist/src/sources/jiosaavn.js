@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
-import { desEcbDecryptBase64ToUtf8 } from "../decrypters/des-ecb.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { desEcbDecryptBase64ToUtf8 } from '../decrypters/des-ecb.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_BASE = 'https://www.jiosaavn.com/api.php';
 const J_BUFFER = Buffer.from('38346591');
 const HEADERS = {

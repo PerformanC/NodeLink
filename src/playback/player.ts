@@ -159,7 +159,8 @@ export class Player {
   ) => void = () => {}
   private _connErrorHandler: (err: Error) => void = () => {}
   private _connStuckHandler: () => void = () => {}
-  private _connSpeakStartHandler: (userId: string, ssrc: number) => void = () => {}
+  private _connSpeakStartHandler: (userId: string, ssrc: number) => void =
+    () => {}
 
   constructor(options: PlayerOptions) {
     if (
@@ -608,7 +609,9 @@ export class Player {
         const oldStream = this.connection?.play(resource as unknown)
         if (oldStream) oldStream.destroy()
         if (this._currentResource && this._currentResource !== resource) {
-          try { this._currentResource.destroy() } catch {}
+          try {
+            this._currentResource.destroy()
+          } catch {}
         }
         this._currentResource = resource
 
@@ -661,7 +664,10 @@ export class Player {
         this._fading('trackStart')
         this._emitTrackStart().catch((err) => this._onError(err))
       }
-    } else if (state.status === 'idle' && (state.reason === 'paused' || state.reason === 'requested')) {
+    } else if (
+      state.status === 'idle' &&
+      (state.reason === 'paused' || state.reason === 'requested')
+    ) {
       this.isPaused = true
     } else if (state.status === 'idle' && state.reason === 'reconnecting') {
       logger(
@@ -898,7 +904,10 @@ export class Player {
   private _cleanupSSRCStreams(conn: ExtendedVoiceConnection | null): void {
     if (!conn?.ssrcs) return
     for (const entry of conn.ssrcs.values()) {
-      const s = entry?.stream as import('node:stream').Readable & { destroyed?: boolean; destroy?: () => void }
+      const s = entry?.stream as import('node:stream').Readable & {
+        destroyed?: boolean
+        destroy?: () => void
+      }
       if (s && !s.destroyed) {
         s.resume()
         s.destroy?.()
@@ -1206,11 +1215,15 @@ export class Player {
         const src = (profilerTap as unknown as { _sourceStream?: Readable })
           ._sourceStream
         if (src && !src.destroyed) {
-          try { src.destroy() } catch {}
+          try {
+            src.destroy()
+          } catch {}
         }
         delete (profilerTap as unknown as Record<string, unknown>)._sourceStream
         if (!profilerTap.destroyed) {
-          try { profilerTap.destroy() } catch {}
+          try {
+            profilerTap.destroy()
+          } catch {}
         }
       }
 
@@ -2175,7 +2188,9 @@ export class Player {
         oldStream.destroy()
       }
       if (this._currentResource && this._currentResource !== resource) {
-        try { this._currentResource.destroy() } catch {}
+        try {
+          this._currentResource.destroy()
+        } catch {}
       }
       this._currentResource = resource
 
@@ -2883,7 +2898,10 @@ export class Player {
         )
         this.connection.removeListener('error', this._connErrorHandler)
         this.connection.removeListener('stuck', this._connStuckHandler)
-        this.connection.removeListener('speakStart', this._connSpeakStartHandler)
+        this.connection.removeListener(
+          'speakStart',
+          this._connSpeakStartHandler
+        )
         if (this.nodelink.voiceRelay?.detach) {
           this.nodelink.voiceRelay.detach(this.connection)
         }
@@ -2920,7 +2938,9 @@ export class Player {
     this._audioMixerInitPromise = null
 
     if (this._currentResource) {
-      try { this._currentResource.destroy() } catch {}
+      try {
+        this._currentResource.destroy()
+      } catch {}
       this._currentResource = null
     }
 

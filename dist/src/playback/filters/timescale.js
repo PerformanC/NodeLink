@@ -1,8 +1,8 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import { resample } from "./timescale/resampler.js";
-import TimeStretch from "./timescale/timeStretch.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import { resample } from './timescale/resampler.js';
+import TimeStretch from './timescale/timeStretch.js';
 const CHANNELS = 2;
 const BYTES_PER_SAMPLE = 2;
 const FRAME_SIZE = CHANNELS * BYTES_PER_SAMPLE;

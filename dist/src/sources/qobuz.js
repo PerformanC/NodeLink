@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
 /**

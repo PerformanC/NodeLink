@@ -1,6 +1,6 @@
-import { getLocalToken } from "../modules/spotifyAuth.js";
-import { fetchCanvas } from "../modules/spotifyCanvas.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { getLocalToken } from '../modules/spotifyAuth.js';
+import { fetchCanvas } from '../modules/spotifyCanvas.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for the official Spotify Web API.
  * Used for standard catalog data and public resource resolution.
@@ -609,7 +609,7 @@ export default class SpotifySource {
         if (term && this.recommendationTerm.includes(term))
             return this.getRecommendations(query);
         try {
-            let limit = Math.min(Math.max(this.nodelink.options.search.maxResults ?? 10, 1), 50);
+            const limit = Math.min(Math.max(this.nodelink.options.search.maxResults ?? 10, 1), 50);
             // Priority 1: Internal Search (Rich nodes + Local matching)
             if (this.anonymousToken || this.config.sp_dc) {
                 const data = await this._internalApiRequest(QUERIES.searchDesktop || {

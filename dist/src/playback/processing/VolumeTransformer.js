@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { Transform } from 'node:stream';
-import { LoudnessNormalizer } from "./LoudnessNormalizer.js";
+import { LoudnessNormalizer } from './LoudnessNormalizer.js';
 const INT16_MAX = 32767;
 const INT16_MIN = -32768;
 const DEFAULT_CURVE = 'sinusoidal';

@@ -1,5 +1,5 @@
-import { logger } from "../utils.js";
-import { validator } from "../validators.js";
+import { logger } from '../utils.js';
+import { validator } from '../validators.js';
 /**
  * Validates the NodeLink configuration object using a schema-based approach.
  * Supports the new hierarchical configuration structure.

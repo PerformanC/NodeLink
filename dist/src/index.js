@@ -12,20 +12,20 @@ import http from 'node:http';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import WebSocketServer from '@performanc/pwsl-server';
-import RoutePlannerManager from "./managers/routePlannerManager.js";
-import SessionManager from "./managers/sessionManager.js";
-import StatsManager from "./managers/statsManager.js";
-import { migrateConfig, persistConfig } from "./modules/config/configMigration.js";
-import { cleanupBunServer, createBunServer } from "./server/bunServer.js";
-import { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
+import RoutePlannerManager from './managers/routePlannerManager.js';
+import SessionManager from './managers/sessionManager.js';
+import StatsManager from './managers/statsManager.js';
+import { migrateConfig, persistConfig } from './modules/config/configMigration.js';
+import { cleanupBunServer, createBunServer } from './server/bunServer.js';
+import { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from './utils.js';
 import 'dotenv/config';
-import { GatewayEvents, MINIMUM_NODE_VERSION } from "./constants.js";
-import ConfigValidationManager from "./managers/configValidationManager.js";
-import DosProtectionManager from "./managers/dosProtectionManager.js";
-import PluginManager from "./managers/pluginManager.js";
-import RateLimitManager from "./managers/rateLimitManager.js";
-import { parseVoiceFrameHeader } from "./voice/voiceFrames.js";
-import { createVoiceRelay } from "./voice/voiceRelay.js";
+import { GatewayEvents, MINIMUM_NODE_VERSION } from './constants.js';
+import ConfigValidationManager from './managers/configValidationManager.js';
+import DosProtectionManager from './managers/dosProtectionManager.js';
+import PluginManager from './managers/pluginManager.js';
+import RateLimitManager from './managers/rateLimitManager.js';
+import { parseVoiceFrameHeader } from './voice/voiceFrames.js';
+import { createVoiceRelay } from './voice/voiceRelay.js';
 let requestHandlerPromise = null;
 let profilerApiPromise = null;
 const isRuntimeAtLeast = (current, minimum) => current
@@ -89,13 +89,13 @@ const getLatestNodeLtsVersion = async (credentialManager) => {
 };
 const getRequestHandler = async () => {
     if (!requestHandlerPromise) {
-        requestHandlerPromise = import("./api/index.js").then((module) => module.default);
+        requestHandlerPromise = import('./api/index.js').then((module) => module.default);
     }
     return requestHandlerPromise;
 };
 const getProfilerApi = async () => {
     if (!profilerApiPromise) {
-        profilerApiPromise = import("./api/profiler.js");
+        profilerApiPromise = import('./api/profiler.js');
     }
     return profilerApiPromise;
 };
@@ -123,35 +123,35 @@ const memoryTrace = (stage) => {
 let playerManagerClassPromise = null;
 const getPlayerManagerClass = async () => {
     if (!playerManagerClassPromise) {
-        playerManagerClassPromise = import("./managers/playerManager.js").then((module) => module.default);
+        playerManagerClassPromise = import('./managers/playerManager.js').then((module) => module.default);
     }
     return playerManagerClassPromise;
 };
 let workerManagerClassPromise = null;
 const getWorkerManagerClass = async () => {
     if (!workerManagerClassPromise) {
-        workerManagerClassPromise = import("./managers/workerManager.js").then((module) => module.default);
+        workerManagerClassPromise = import('./managers/workerManager.js').then((module) => module.default);
     }
     return workerManagerClassPromise;
 };
 let sourceWorkerManagerClassPromise = null;
 const getSourceWorkerManagerClass = async () => {
     if (!sourceWorkerManagerClassPromise) {
-        sourceWorkerManagerClassPromise = import("./managers/sourceWorkerManager.js").then((module) => module.default);
+        sourceWorkerManagerClassPromise = import('./managers/sourceWorkerManager.js').then((module) => module.default);
     }
     return sourceWorkerManagerClassPromise;
 };
 let credentialManagerClassPromise = null;
 const getCredentialManagerClass = async () => {
     if (!credentialManagerClassPromise) {
-        credentialManagerClassPromise = import("./managers/credentialManager.js").then((module) => module.default);
+        credentialManagerClassPromise = import('./managers/credentialManager.js').then((module) => module.default);
     }
     return credentialManagerClassPromise;
 };
 let trackCacheManagerClassPromise = null;
 const getTrackCacheManagerClass = async () => {
     if (!trackCacheManagerClassPromise) {
-        trackCacheManagerClassPromise = import("./managers/trackCacheManager.js").then((module) => module.default);
+        trackCacheManagerClassPromise = import('./managers/trackCacheManager.js').then((module) => module.default);
     }
     return trackCacheManagerClassPromise;
 };
@@ -428,9 +428,9 @@ class NodelinkServer extends EventEmitter {
     async _initSources(isClusterPrimary, _options) {
         if (!isClusterPrimary) {
             const [{ default: sourceMan }, { default: lyricsMan }, { default: meaningMan }] = await Promise.all([
-                import("./managers/sourceManager.js"),
-                import("./managers/lyricsManager.js"),
-                import("./managers/meaningManager.js")
+                import('./managers/sourceManager.js'),
+                import('./managers/lyricsManager.js'),
+                import('./managers/meaningManager.js')
             ]);
             this.sources = new sourceMan(this);
             this.lyrics = new lyricsMan(this);
@@ -444,7 +444,7 @@ class NodelinkServer extends EventEmitter {
             await this._connectionManagerInitPromise;
             return;
         }
-        this._connectionManagerInitPromise = import("./managers/connectionManager.js")
+        this._connectionManagerInitPromise = import('./managers/connectionManager.js')
             .then(({ default: ConnectionManagerClass }) => {
             if (!this.connectionManager) {
                 this.connectionManager = new ConnectionManagerClass(this);
@@ -1637,7 +1637,7 @@ process.on('unhandledRejection', (reason, promise) => {
 if (clusterEnabled && cluster.isPrimary) {
     if (config.sources?.youtube?.getOAuthToken) {
         // dynamically import OAuth (if enabled)
-        const OAuth = (await import("./sources/youtube/OAuth.js").catch((e) => {
+        const OAuth = (await import('./sources/youtube/OAuth.js').catch((e) => {
             logger('error', 'youtube', `\x1b[1m\x1b[31mOAuth class not found Error: ${e.message}\x1b[0m`);
             process.exit(1);
         })).default;
@@ -1712,7 +1712,7 @@ if (clusterEnabled && cluster.isPrimary) {
     });
 }
 else if (clusterEnabled && cluster.isWorker) {
-    await import("./workers/main.js");
+    await import('./workers/main.js');
 }
 else {
     const serverInstancePromise = (async () => {

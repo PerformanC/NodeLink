@@ -1,4 +1,4 @@
-import { logger, makeRequest } from "../utils.js";
+import { logger, makeRequest } from '../utils.js';
 /**
  * Monochrome lyrics provider.
  *

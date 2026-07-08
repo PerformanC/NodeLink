@@ -1,5 +1,5 @@
 import { pipeline } from 'node:stream';
-import { decodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Cached dynamic import for the stream processor module.
  */
@@ -19,7 +19,7 @@ const LOAD_STREAM_HEADERS = {
  */
 function getStreamProcessorModule() {
     if (!streamProcessorModulePromise) {
-        streamProcessorModulePromise = import("../playback/processing/streamProcessor.js");
+        streamProcessorModulePromise = import('../playback/processing/streamProcessor.js');
     }
     return streamProcessorModulePromise;
 }

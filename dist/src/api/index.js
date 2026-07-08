@@ -9,8 +9,8 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PATH_VERSION } from "../constants.js";
-import { logger, sendErrorResponse, sendResponse, verifyMethod } from "../utils.js";
+import { PATH_VERSION } from '../constants.js';
+import { logger, sendErrorResponse, sendResponse, verifyMethod } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const defaultMethods = ['GET'];

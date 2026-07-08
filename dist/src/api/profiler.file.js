@@ -1,7 +1,7 @@
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendErrorResponse, sendResponse } from "../utils.js";
+import { sendErrorResponse, sendResponse } from '../utils.js';
 /**
  * Loopback addresses allowed to access the profiler endpoints when external
  * access is disabled.

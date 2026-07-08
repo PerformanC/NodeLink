@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { http1makeRequest, logger } from "../utils.js";
+import { http1makeRequest, logger } from '../utils.js';
 /**
  * Built-in encoded TOTP secrets used as primary/fallback bootstrap.
  * @internal

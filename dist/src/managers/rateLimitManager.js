@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const DEFAULT_PER_USER = {
     maxRequests: 50,
     timeWindowMs: 5000

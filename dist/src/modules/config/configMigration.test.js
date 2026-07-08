@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import defaultConfig from "../../../config.default.js";
-import { migrateConfig, toTsLiteral } from "./configMigration.js";
+import defaultConfig from '../../../config.default.js';
+import { migrateConfig, toTsLiteral } from './configMigration.js';
 test('migrateConfig maps legacy flat config to hierarchical structure', () => {
     const legacy = {
         server: {

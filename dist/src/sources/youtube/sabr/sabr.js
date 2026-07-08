@@ -13,9 +13,9 @@ import { createHash } from 'node:crypto';
 import { appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { logger } from "../../../utils.js";
-import { poTokenManager } from "./potoken.js";
-import { base64ToU8, concatenateChunks, FormatInitializationMetadata, MediaHeader, NextRequestPolicy, PlaybackStartPolicy, ProtoReader, ReloadPlaybackContext, RequestCancellationPolicy, RequestIdentifier, SabrContextSendingPolicy, SabrContextUpdate, SabrError, SabrRedirect, StreamProtectionStatus, UMPPartId, VideoPlaybackAbrRequest } from "./protor.js";
+import { logger } from '../../../utils.js';
+import { poTokenManager } from './potoken.js';
+import { base64ToU8, concatenateChunks, FormatInitializationMetadata, MediaHeader, NextRequestPolicy, PlaybackStartPolicy, ProtoReader, ReloadPlaybackContext, RequestCancellationPolicy, RequestIdentifier, SabrContextSendingPolicy, SabrContextUpdate, SabrError, SabrRedirect, StreamProtectionStatus, UMPPartId, VideoPlaybackAbrRequest } from './protor.js';
 /**
  * Default User-Agent header for SABR HTTP requests.
  * @internal

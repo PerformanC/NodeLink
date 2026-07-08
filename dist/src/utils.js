@@ -10,7 +10,7 @@ import { URL } from 'node:url';
 import util from 'node:util';
 import zlib from 'node:zlib';
 import packageJson from '../package.json' with { type: 'json' };
-import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from "./constants.js";
+import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from './constants.js';
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
  *
@@ -500,7 +500,9 @@ function getGitInfo() {
     if (gitInfoCache)
         return gitInfoCache;
     try {
-        const output = execSync('git log -1 --format=%D%n%h%n%ct', { encoding: 'utf8' }).trim();
+        const output = execSync('git log -1 --format=%D%n%h%n%ct', {
+            encoding: 'utf8'
+        }).trim();
         const lines = output.split('\n');
         const refsLine = lines[0] || '';
         const commit = (lines[1] || 'unknown').trim();
@@ -1788,8 +1790,12 @@ async function checkForUpdates() {
         const util = await import('node:util');
         const execAsync = util.promisify(exec);
         await execAsync('git fetch', { stdio: 'ignore' });
-        const { stdout: local } = await execAsync('git rev-parse HEAD', { encoding: 'utf8' });
-        const { stdout: remote } = await execAsync('git rev-parse @{u}', { encoding: 'utf8' });
+        const { stdout: local } = await execAsync('git rev-parse HEAD', {
+            encoding: 'utf8'
+        });
+        const { stdout: remote } = await execAsync('git rev-parse @{u}', {
+            encoding: 'utf8'
+        });
         if (local.trim() !== remote.trim()) {
             const { stdout: behind } = await execAsync('git rev-list --right-only --count HEAD...@{u}', {
                 encoding: 'utf8'

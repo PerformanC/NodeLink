@@ -625,10 +625,9 @@ function getGitInfo(): GitInfo {
   if (gitInfoCache) return gitInfoCache
 
   try {
-    const output = execSync(
-      'git log -1 --format=%D%n%h%n%ct',
-      { encoding: 'utf8' }
-    ).trim()
+    const output = execSync('git log -1 --format=%D%n%h%n%ct', {
+      encoding: 'utf8'
+    }).trim()
     const lines = output.split('\n')
     const refsLine = lines[0] || ''
     const commit = (lines[1] || 'unknown').trim()
@@ -2223,13 +2222,20 @@ async function checkForUpdates(): Promise<void> {
 
     await execAsync('git fetch', { stdio: 'ignore' } as any)
 
-    const { stdout: local } = await execAsync('git rev-parse HEAD', { encoding: 'utf8' })
-    const { stdout: remote } = await execAsync('git rev-parse @{u}', { encoding: 'utf8' })
+    const { stdout: local } = await execAsync('git rev-parse HEAD', {
+      encoding: 'utf8'
+    })
+    const { stdout: remote } = await execAsync('git rev-parse @{u}', {
+      encoding: 'utf8'
+    })
 
     if (local.trim() !== remote.trim()) {
-      const { stdout: behind } = await execAsync('git rev-list --right-only --count HEAD...@{u}', {
-        encoding: 'utf8'
-      })
+      const { stdout: behind } = await execAsync(
+        'git rev-list --right-only --count HEAD...@{u}',
+        {
+          encoding: 'utf8'
+        }
+      )
       const { stdout: remoteCommit } = await execAsync(
         'git log -1 --pretty=format:"%h - %s (%cr)" @{u}',
         { encoding: 'utf8' }

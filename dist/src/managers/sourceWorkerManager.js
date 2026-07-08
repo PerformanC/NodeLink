@@ -5,7 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const hasSocketSend = (res) => typeof res.send === 'function';
@@ -50,8 +50,7 @@ const buildSourceWorkerExecArgv = (options = null) => {
     const runtime = options?.cluster?.runtime || {};
     const env = process.env;
     for (const arg of Array.from(args)) {
-        if (arg.startsWith('--max-old-space-size=') ||
-            arg === '--expose-gc')
+        if (arg.startsWith('--max-old-space-size=') || arg === '--expose-gc')
             args.delete(arg);
     }
     const maxOldSpaceMb = parsePositiveInt(env.NODELINK_SOURCE_WORKER_MAX_OLD_SPACE_MB ??

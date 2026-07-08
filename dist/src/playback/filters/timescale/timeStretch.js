@@ -1,4 +1,4 @@
-import FloatFifoBuffer from "./floatFifoBuffer.js";
+import FloatFifoBuffer from './floatFifoBuffer.js';
 const DEFAULT_FRAME_SIZE = 1024;
 const DEFAULT_OVERLAP = 256;
 const DEFAULT_SEARCH = 128;

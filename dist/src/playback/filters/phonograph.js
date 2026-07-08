@@ -1,7 +1,7 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import LFO from './dsp/lfo.js';
 const MAX_DELAY_MS = 60;
 const MAX_DELAY_SAMPLES = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
 class XorShift32 {

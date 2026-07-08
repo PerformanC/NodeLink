@@ -1,4 +1,4 @@
-import BaseCacheManager from "./baseCacheManager.js";
+import BaseCacheManager from './baseCacheManager.js';
 const CREDENTIALS_SALT = 'nodelink-salt';
 const CREDENTIALS_VERSION = 1;
 const DEFAULT_SAVE_DELAY_MS = 1000;

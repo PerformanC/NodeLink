@@ -1,4 +1,4 @@
-import { sendErrorResponse, sendResponse } from "../utils.js";
+import { sendErrorResponse, sendResponse } from '../utils.js';
 /**
  * Builds a strongly typed runtime view for the route planner endpoint.
  *

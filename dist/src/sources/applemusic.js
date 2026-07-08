@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest } from '../utils.js';
 /**
  * Apple Music source implementation.
  * Provides integration with the Apple Music Catalog API for track resolution and searching.

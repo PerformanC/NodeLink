@@ -4,8 +4,8 @@ import http from 'node:http';
 import https from 'node:https';
 import { PassThrough } from 'node:stream';
 import zlib from 'node:zlib';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, logger } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, logger } from '../utils.js';
 const VIMEO_PATTERNS = [
     /^https?:\/\/(?:www\.)?vimeo\.com\/(\d+)(?:|[/?#])/i,
     /^https?:\/\/player\.vimeo\.com\/video\/(\d+)(?:|[/?#])/i,

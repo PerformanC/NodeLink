@@ -2,15 +2,15 @@ import { PassThrough } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { SeekError } from '@ecliptia/seekable-stream';
 import discordVoice from '@performanc/voice';
-import { EndReasons, GatewayEvents } from "../constants.js";
-import { logger } from "../utils.js";
+import { EndReasons, GatewayEvents } from '../constants.js';
+import { logger } from '../utils.js';
 let createAudioResource = null;
 let createSeekeableAudioResource = null;
 const trackFinishMemoryTraceEnabled = process.env.NODELINK_TRACK_FINISH_MEMORY_TRACE?.toLowerCase() === 'true';
 async function getStreamProcessor() {
     if (createAudioResource && createSeekeableAudioResource)
         return;
-    const processor = await import("./processing/streamProcessor.js");
+    const processor = await import('./processing/streamProcessor.js');
     createAudioResource = processor.createAudioResource;
     createSeekeableAudioResource =
         processor.createSeekeableAudioResource;
@@ -189,7 +189,7 @@ export class Player {
     async _initAudioMixer() {
         if (this.audioMixer)
             return;
-        const { AudioMixer: Mixer } = await import("./processing/AudioMixer.js");
+        const { AudioMixer: Mixer } = await import('./processing/AudioMixer.js');
         this.audioMixer = new Mixer(this.nodelink.options?.playback.mix ?? {
             enabled: true,
             defaultVolume: 0.8,
@@ -443,7 +443,8 @@ export class Player {
                 this._emitTrackStart().catch((err) => this._onError(err));
             }
         }
-        else if (state.status === 'idle' && (state.reason === 'paused' || state.reason === 'requested')) {
+        else if (state.status === 'idle' &&
+            (state.reason === 'paused' || state.reason === 'requested')) {
             this.isPaused = true;
         }
         else if (state.status === 'idle' && state.reason === 'reconnecting') {
@@ -1134,7 +1135,7 @@ export class Player {
             const sbConfig = this.nodelink.options.playback.sponsorblock;
             if (this.sponsorBlock.enabled) {
                 logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Initiating segment fetch for video ${videoId}`);
-                const { fetchSponsorBlockSegments } = await import("../utils.js");
+                const { fetchSponsorBlockSegments } = await import('../utils.js');
                 fetchSponsorBlockSegments(videoId, this.sponsorBlock.categories, this.sponsorBlock.actionTypes, sbConfig?.api)
                     .then((segments) => {
                     if (this.destroying ||
@@ -1990,7 +1991,7 @@ export class Player {
             throw new Error(`Maximum number of mix layers(${mixConfig.maxLayersMix}) reached`);
         }
         const mixVolume = volume ?? mixConfig.defaultVolume ?? 0.8;
-        const { createAudioResource: createResource } = await import("./processing/streamProcessor.js");
+        const { createAudioResource: createResource } = await import('./processing/streamProcessor.js');
         const urlData = await this.nodelink.sources.getTrackUrl(trackPayload.info);
         if (!urlData?.url) {
             throw new Error('Failed to get stream URL for mix track');

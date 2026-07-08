@@ -1,12 +1,12 @@
 import { Buffer } from 'node:buffer';
-import { buildVoiceFrame, resolveVoiceFormat, VOICE_FORMATS, VOICE_FRAME_OPS } from "./voiceFrames.js";
+import { buildVoiceFrame, resolveVoiceFormat, VOICE_FORMATS, VOICE_FRAME_OPS } from './voiceFrames.js';
 const EMPTY_BUFFER = Buffer.alloc(0);
 let voiceRuntimePromise = null;
 const getVoiceRuntime = async () => {
     if (!voiceRuntimePromise) {
         voiceRuntimePromise = Promise.all([
             import('@performanc/voice'),
-            import("../playback/opus/Opus.js")
+            import('../playback/opus/Opus.js')
         ]).then(([discordVoiceModule, opusModule]) => ({
             discordVoice: discordVoiceModule.default,
             OpusDecoder: opusModule.Decoder

@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import * as MP4Box from 'mp4box';
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * Common sampling rates for AAC audio.
  * @internal

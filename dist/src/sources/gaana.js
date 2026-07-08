@@ -1,8 +1,8 @@
 import { createDecipheriv } from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { parse as parsePlaylist } from "../playback/hls/PlaylistParser.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { parse as parsePlaylist } from '../playback/hls/PlaylistParser.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const API_URL = 'https://gaana.com/apiv2';
 const STREAM_URL_API = 'https://gaana.com/api/stream-url';

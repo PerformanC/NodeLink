@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 /**
  * Session-scoped manager that controls player lifecycle and player commands.
  *
@@ -224,7 +224,7 @@ export default class PlayerManager {
             eventQueue: session.eventQueue,
             isPaused: session.isPaused
         };
-        const { Player } = await import("../playback/player.js");
+        const { Player } = await import('../playback/player.js');
         logger('debug', 'PlayerManager', `Creating new player for guild ${guildId} (session: ${this.sessionId})`);
         const player = new Player({
             nodelink: this.nodelink,

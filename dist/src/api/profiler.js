@@ -3,7 +3,7 @@ import fsPromises from 'node:fs/promises';
 import inspector from 'node:inspector';
 import os from 'node:os';
 import v8 from 'node:v8';
-import { sendErrorResponse, sendResponse } from "../utils.js";
+import { sendErrorResponse, sendResponse } from '../utils.js';
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const { NODELINK_PROFILER_DIR: profilerDirectoryEnv } = process.env;
 const profilerBaseDir = profilerDirectoryEnv || '.profiles';

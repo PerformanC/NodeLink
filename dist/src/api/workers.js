@@ -1,4 +1,4 @@
-import { sendErrorResponse, sendResponse } from "../utils.js";
+import { sendErrorResponse, sendResponse } from '../utils.js';
 /**
  * Loopback addresses allowed to access the workers patch endpoint when
  * external patching is disabled.

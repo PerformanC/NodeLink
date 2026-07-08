@@ -1,6 +1,6 @@
 import { PassThrough, pipeline } from 'node:stream';
 import { URL } from 'node:url';
-import { encodeTrack, logger, makeRequest } from "../utils.js";
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 /**
  * Flowery TTS source implementation.
  */

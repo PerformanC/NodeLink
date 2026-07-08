@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
-import { http1makeRequest, logger } from "../../utils.js";
-import { parse as parsePlaylist } from "./PlaylistParser.js";
-import SegmentFetcher from "./SegmentFetcher.js";
+import { http1makeRequest, logger } from '../../utils.js';
+import { parse as parsePlaylist } from './PlaylistParser.js';
+import SegmentFetcher from './SegmentFetcher.js';
 const MAX_HISTORY = 200;
 const MAX_GAP = 30;
 const MASTER_REFRESH_INTERVAL = 3;

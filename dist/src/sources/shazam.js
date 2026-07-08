@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const SHAZAM_PATTERN = /^https?:\/\/(?:www\.)?shazam\.com\/song\/\d+(?:\/[^/?#]+)?\/?(?:[?#].*)?$/;
 const SHAZAM_SEARCH_BASE = 'https://www.shazam.com/services/amapi/v1/catalog/US/search';
 /**

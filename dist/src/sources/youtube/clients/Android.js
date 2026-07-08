@@ -1,5 +1,5 @@
-import { logger, makeRequest } from "../../../utils.js";
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
+import { logger, makeRequest } from '../../../utils.js';
+import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube Android innertube client implementation.
  *

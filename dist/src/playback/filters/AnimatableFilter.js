@@ -1,4 +1,4 @@
-import { BaseFilter } from "./BaseFilter.js";
+import { BaseFilter } from './BaseFilter.js';
 const SUPPORTED_CURVES = new Set([
     'linear',
     'exponential',

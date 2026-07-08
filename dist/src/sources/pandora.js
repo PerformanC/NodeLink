@@ -3,7 +3,7 @@
  * Provides search, playlist, station, artist, and podcast resolution.
  * @module sources/pandora
  */
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Default credential cache TTL (24 hours).
  * @internal

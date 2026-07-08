@@ -1,11 +1,11 @@
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../../playback/hls/HLSHandler.js";
-import { getBestMatch, http1makeRequest, logger, makeRequest } from "../../utils.js";
-import CipherManager from "./CipherManager.js";
-import { checkURLType, YOUTUBE_CONSTANTS } from "./common.js";
-import YouTubeLiveChat from "./LiveChat.js";
-import OAuth from "./OAuth.js";
-import { SabrStream } from "./sabr/sabr.js";
+import HLSHandler from '../../playback/hls/HLSHandler.js';
+import { getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
+import CipherManager from './CipherManager.js';
+import { checkURLType, YOUTUBE_CONSTANTS } from './common.js';
+import YouTubeLiveChat from './LiveChat.js';
+import OAuth from './OAuth.js';
+import { SabrStream } from './sabr/sabr.js';
 /** Size in bytes of each range-request chunk for direct HTTP streaming. */
 const CHUNK_SIZE = 64 * 1024;
 /** Maximum consecutive errors before triggering URL recovery. */
@@ -242,15 +242,15 @@ export default class YouTubeSource {
         logger('info', 'YouTube', 'Setting up YouTube source...');
         this.oauth = new OAuth(this.nodelink);
         const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TVCast }, { default: Web }, { default: WebEmbedded }] = await Promise.all([
-            import("./clients/Android.js"),
-            import("./clients/AndroidVR.js"),
-            import("./clients/IOS.js"),
-            import("./clients/Music.js"),
-            import("./clients/Web_Remix.js"),
-            import("./clients/TV.js"),
-            import("./clients/TVCast.js"),
-            import("./clients/Web.js"),
-            import("./clients/WebEmbedded.js")
+            import('./clients/Android.js'),
+            import('./clients/AndroidVR.js'),
+            import('./clients/IOS.js'),
+            import('./clients/Music.js'),
+            import('./clients/Web_Remix.js'),
+            import('./clients/TV.js'),
+            import('./clients/TVCast.js'),
+            import('./clients/Web.js'),
+            import('./clients/WebEmbedded.js')
         ]);
         const clientClasses = {
             Android,
@@ -714,7 +714,7 @@ export default class YouTubeSource {
             const playerBody = playerResult?.body;
             if (!playerBody || playerBody.error)
                 return vanillaTrack;
-            const { buildHoloTrack } = await import("./common.js");
+            const { buildHoloTrack } = await import('./common.js');
             const holoTrack = await buildHoloTrack(info, null, info.sourceName === 'ytmusic' ? 'ytmusic' : 'youtube', playerBody, {
                 fetchChannelInfo: options.fetchChannelInfo ?? false,
                 resolveExternalLinks: options.resolveExternalLinks ?? false,

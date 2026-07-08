@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 const getErrorMessage = (error) => error instanceof Error ? error.message : String(error ?? 'Unknown error');
 const getErrorCode = (error) => {

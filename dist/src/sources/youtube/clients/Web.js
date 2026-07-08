@@ -11,9 +11,9 @@
  * @packageDocumentation
  * @module YouTubeWebClient
  */
-import { logger, makeRequest } from "../../../utils.js";
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
-import { poTokenManager } from "../sabr/potoken.js";
+import { logger, makeRequest } from '../../../utils.js';
+import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
+import { poTokenManager } from '../sabr/potoken.js';
 /**
  * YouTube WEB innertube client.
  *

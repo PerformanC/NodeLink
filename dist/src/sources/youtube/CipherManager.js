@@ -1,4 +1,4 @@
-import { getVersion, http1makeRequest, logger, makeRequest } from "../../utils.js";
+import { getVersion, http1makeRequest, logger, makeRequest } from '../../utils.js';
 const CACHE_DURATION_MS = 12 * 60 * 60 * 1000;
 const VERSION = getVersion();
 /**

@@ -1,4 +1,4 @@
-import { encodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { encodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Validation message used when no usable track payload is provided.
  */

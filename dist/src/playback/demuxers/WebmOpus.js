@@ -1,6 +1,6 @@
 import { Transform } from 'node:stream';
-import { logger } from "../../utils.js";
-import { RingBuffer } from "../structs/RingBuffer.js";
+import { logger } from '../../utils.js';
+import { RingBuffer } from '../structs/RingBuffer.js';
 const TOO_SHORT = Symbol('TOO_SHORT');
 const INVALID_VINT = Symbol('INVALID_VINT');
 const parsePositiveIntEnv = (key, fallback) => {

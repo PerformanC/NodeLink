@@ -1,4 +1,4 @@
-import { sendResponse } from "../utils.js";
+import { sendResponse } from '../utils.js';
 /**
  * Creates a strongly typed runtime view for the connection endpoint.
  *

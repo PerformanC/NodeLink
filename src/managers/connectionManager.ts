@@ -93,7 +93,10 @@ export default class ConnectionManager {
       setTimeout(() => {
         this.checkConnection().catch(() => {})
       }, 5000)
-      this.interval = setInterval(() => this.checkConnection().catch(() => {}), checkInterval)
+      this.interval = setInterval(
+        () => this.checkConnection().catch(() => {}),
+        checkInterval
+      )
     }
   }
 

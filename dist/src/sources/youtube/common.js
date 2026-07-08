@@ -1,5 +1,5 @@
-import { YOUTUBE_CONSTANTS } from "../../typings/sources/youtube.types.js";
-import { encodeTrack, logger, makeRequest } from "../../utils.js";
+import { YOUTUBE_CONSTANTS } from '../../typings/sources/youtube.types.js';
+import { encodeTrack, logger, makeRequest } from '../../utils.js';
 export { YOUTUBE_CONSTANTS };
 /**
  * Fallback strings used when metadata cannot be retrieved from YouTube.
@@ -1679,7 +1679,10 @@ export class BaseClient {
         }
         const videoDetails = playerResponse.videoDetails;
         const playabilityStatus = playerResponse.playabilityStatus?.status;
-        if (playabilityStatus && playabilityStatus !== 'OK' && playerResponse.microformat?.microformatDataRenderer.appName !== 'YouTube Music') {
+        if (playabilityStatus &&
+            playabilityStatus !== 'OK' &&
+            playerResponse.microformat?.microformatDataRenderer.appName !==
+                'YouTube Music') {
             const message = playerResponse.playabilityStatus?.reason || 'Video not playable.';
             logger('warn', `youtube-${this.name}`, `Video/short ${videoId} not playable: ${message}`);
             return {

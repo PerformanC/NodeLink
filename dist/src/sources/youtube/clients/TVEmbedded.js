@@ -8,8 +8,8 @@
  * @packageDocumentation
  * @module YouTubeTVEmbeddedClient
  */
-import { logger, makeRequest } from "../../../utils.js";
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
+import { logger, makeRequest } from '../../../utils.js';
+import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube TVHTML5_SIMPLY_EMBEDDED_PLAYER innertube client.
  *

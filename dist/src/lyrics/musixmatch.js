@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { http1makeRequest, logger } from "../utils.js";
+import { http1makeRequest, logger } from '../utils.js';
 class HttpError extends Error {
     status;
     constructor(status, message) {

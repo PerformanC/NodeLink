@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
-import { DASHHandler } from "../playback/dash/DASHHandler.js";
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { DASHHandler } from '../playback/dash/DASHHandler.js';
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * NodeLink audio source provider for Monochrome (Tidal proxy).
  *

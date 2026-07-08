@@ -1,6 +1,6 @@
 /** biome-ignore-all lint/complexity/useLiteralKeys: <for performance> */
-import { SAMPLE_RATE } from "../../../constants.js";
-import { Waveforms } from "./waves.js";
+import { SAMPLE_RATE } from '../../../constants.js';
+import { Waveforms } from './waves.js';
 /**
  * Low Frequency Oscillator for modulating audio parameters.
  * @public

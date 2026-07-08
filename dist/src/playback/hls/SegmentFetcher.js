@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Transform } from 'node:stream';
-import { http1makeRequest, logger } from "../../utils.js";
+import { http1makeRequest, logger } from '../../utils.js';
 /**
  * A Transform stream that decrypts HLS segments on the fly.
  *

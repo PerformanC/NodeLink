@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import v8 from 'node:v8';
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const getGlobalNodelink = () => globalThis.nodelink;

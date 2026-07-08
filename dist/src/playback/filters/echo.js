@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { Float64DelayLine } from "./dsp/float64Delay.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { Float64DelayLine } from './dsp/float64Delay.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 2000;
 const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);

@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { getVersion } from "../utils.js";
+import { getVersion } from '../utils.js';
 /**
  * Creates a strongly typed runtime view for the info endpoint.
  *
