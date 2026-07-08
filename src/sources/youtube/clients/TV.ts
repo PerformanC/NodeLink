@@ -53,7 +53,7 @@ export default class TV extends BaseClient {
     return {
       client: {
         clientName: 'TVHTML5',
-        clientVersion: '7.20260113.16.00',
+        clientVersion: '7.20260706.14.00',
         userAgent:
           'Mozilla/5.0 (Fuchsia) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 CrKey/1.56.500000',
         hl: context.client.hl,

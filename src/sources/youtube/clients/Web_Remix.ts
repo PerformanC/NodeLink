@@ -52,6 +52,8 @@ export default class WebRemix extends BaseClient {
 
   /**
    * Returns the YouTube Music client context for innertube requests.
+   *
+   * This is only used for getting the videoDetails, no playback.
    * @param context - General YouTube context with language, region, and visitor data
    * @returns Client context configured for WEB_REMIX
    */
@@ -59,12 +61,12 @@ export default class WebRemix extends BaseClient {
     return {
       client: {
         clientName: 'WEB_REMIX',
-        clientVersion: '1.20260302.03.01',
+        clientVersion: '1.20260707.12.00',
         userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
         hl: context.client.hl,
         gl: context.client.gl,
-        visitorData: context.client.visitorData
+        originalUrl: 'https://music.youtube.com/'
       },
       user: { lockedSafetyMode: false },
       request: { useSsl: true }

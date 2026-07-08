@@ -598,6 +598,38 @@ export interface YouTubePlayerResponse {
       category?: string
       likeCount?: string | number
       [key: string]: unknown
+    },
+    microformatDataRenderer: {
+      urlCanonical: string
+      title: string
+      description: string
+      thumbnail: unknown[]
+      siteName: string
+      appName: string
+      androidPackage: string
+      iosAppStoreId: string
+      iosAppArguments: string
+      ogType: string
+      urlApplinksIos: string
+      urlApplinksAndroid: string
+      urlTwitterIos: string
+      urlTwitterAndroid: string
+      twitterCardType: string
+      twitterSiteHandle: string
+      schemaDotOrgType: string
+      noindex: boolean
+      unlisted: boolean
+      paid: boolean
+      familySafe: boolean
+      availableCountries: unknown[]
+      pageOwnerDetails: Record<string, unknown>
+      videoDetails: Record<string, unknown>
+      linkAlternates: unknown[]
+      viewCount: string
+      publishDate: string
+      category: string
+      uploadDate: string
+      [key: string]: unknown
     }
   }
 

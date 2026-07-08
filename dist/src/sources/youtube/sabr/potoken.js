@@ -14,7 +14,7 @@ const TOKENS_LOG_PATH = path.join(process.cwd(), 'po_tokens.jsonl');
  */
 const PO_CONFIG = {
     apiKey: 'AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
     ytBaseUrl: 'https://www.youtube.com',
     googBaseUrl: 'https://jnn-pa.googleapis.com'
 };
@@ -275,13 +275,13 @@ export class PoTokenManager {
                 'user-agent': PO_CONFIG.userAgent,
                 'x-goog-api-key': PO_CONFIG.apiKey,
                 'x-youtube-client-name': '1',
-                'x-youtube-client-version': '2.20260114.01.00'
+                'x-youtube-client-version': '2.20260706.00.00'
             },
             body: JSON.stringify({
                 context: {
                     client: {
                         clientName: 'WEB',
-                        clientVersion: '2.20260114.01.00',
+                        clientVersion: '2.20260706.00.00',
                         visitorData
                     }
                 },

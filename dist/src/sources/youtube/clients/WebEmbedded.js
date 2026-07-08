@@ -20,16 +20,21 @@ export default class WebEmbedded extends BaseClient {
         return {
             client: {
                 clientName: 'WEB_EMBEDDED_PLAYER',
-                clientVersion: '1.20260128.01.00',
+                clientVersion: '2.20260630.09.00',
                 platform: 'DESKTOP',
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36,gzip(gfe)',
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36,gzip(gfe)',
                 hl: context.client.hl,
                 gl: context.client.gl,
                 visitorData: context.client.visitorData
             },
             user: { lockedSafetyMode: false },
             request: { useSsl: true },
-            thirdParty: { embedUrl: 'https://www.google.com/' }
+            thirdParty: {
+                embedUrl: 'https://www.google.com/search?q=youtube',
+                embeddedPlayerContext: {
+                    ancestorOrigins: ['https://www.google.com']
+                }
+            }
         };
     }
     /**

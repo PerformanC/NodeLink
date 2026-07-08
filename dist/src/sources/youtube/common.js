@@ -1679,7 +1679,7 @@ export class BaseClient {
         }
         const videoDetails = playerResponse.videoDetails;
         const playabilityStatus = playerResponse.playabilityStatus?.status;
-        if (playabilityStatus && playabilityStatus !== 'OK') {
+        if (playabilityStatus && playabilityStatus !== 'OK' && playerResponse.microformat?.microformatDataRenderer.appName !== 'YouTube Music') {
             const message = playerResponse.playabilityStatus?.reason || 'Video not playable.';
             logger('warn', `youtube-${this.name}`, `Video/short ${videoId} not playable: ${message}`);
             return {
