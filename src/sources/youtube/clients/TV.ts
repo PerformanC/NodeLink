@@ -50,18 +50,29 @@ export default class TV extends BaseClient {
    * @returns Client context object describing this TVHTML5 client configuration
    */
   override getClient(context: YouTubeContext): YouTubeClientContext {
+    const utc = -Math.floor(new Date().getTimezoneOffset())
     return {
       client: {
         clientName: 'TVHTML5',
-        clientVersion: '7.20260706.14.00',
+        clientVersion: '7.20260708.13.02',
         userAgent:
-          'Mozilla/5.0 (Fuchsia) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 CrKey/1.56.500000',
+          'Mozilla/5.0 (SMART-TV; Linux; Tizen 8.0) Cobalt/Version (unlike Gecko) v8/11.4.233.17-gold Starboard/16, Tizen;Samsung;KantM_2024;8.0/2300.0 (Samsung, QN90D_98, Wired',
         hl: context.client.hl,
         gl: context.client.gl
       },
-      user: { lockedSafetyMode: false },
-      request: { useSsl: true }
-    }
+      user: {
+        lockedSafetyMode: false
+      },
+      request: {
+        useSsl: true
+      },
+      adSignalsInfo: {
+        params: [
+          { key: 'dt', value: Date.now().toString() },
+          { key: 'u_tz', value: `${utc}` }
+        ]
+      }
+    } as unknown as YouTubeClientContext
   }
 
   /**

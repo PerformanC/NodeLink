@@ -1232,55 +1232,32 @@ export default class YouTubeSource {
         }
 
         if (urlData.url) {
-          const check: HttpRequestResult = await http1makeRequest(urlData.url, {
-            method: 'GET',
-            headers: { Range: 'bytes=0-0' },
-            streamOnly: true,
-            proxy: proxyToUse as unknown as HttpProxyConfig
-          })
+          const clientUserAgent =
+            client.getClient(this.ytContext)?.client?.userAgent || ''
 
-          if (check.stream)
-            (
-              check.stream as NodeJS.ReadableStream & { destroy: () => void }
-            ).destroy()
-
-          this.reportProxyStatus(
-            proxyToUse,
-            !check.error &&
-              (check.statusCode === 200 || check.statusCode === 206),
-            check.statusCode || 0,
-            Date.now() - proxyStartTime
-          )
-
-          if (
-            !check.error &&
-            (check.statusCode === 200 || check.statusCode === 206)
-          ) {
-            let contentLength: number | null = null
-            const headers = check.headers as Record<string, string | undefined>
-            if (headers?.['content-range']) {
-              const match = headers['content-range']?.match(/\/(\d+)/)
-              if (match) contentLength = Number.parseInt(match[1] ?? '0', 10)
-            }
-            if (!contentLength && headers?.['content-length']) {
-              contentLength = Number.parseInt(
-                headers['content-length'] as string,
-                10
-              )
-            }
-
+          if (clientName === 'TV') {
             logger(
               'debug',
               'YouTube',
-              `URL pre-flight check successful for client ${clientName}.`
+              `Skipping direct URL pre-flight validation check for client TV.`
             )
+            this.reportProxyStatus(proxyToUse, true, 200, proxyLatency)
+
+            const selectedFormat = urlData.formats?.find(
+              (f) => f.itag === urlData.itag
+            )
+            const contentLength = selectedFormat?.contentLength
+              ? Number.parseInt(selectedFormat.contentLength as string, 10)
+              : null
+
             const result: TrackUrlData = {
               ...urlData,
               additionalData: {
                 contentLength,
                 proxy: proxyToUse,
                 itag: urlData.itag,
-                formats: urlData.formats
+                formats: urlData.formats,
+                userAgent: clientUserAgent
               }
             }
             this.nodelink.trackCacheManager?.set(
@@ -1292,18 +1269,142 @@ export default class YouTubeSource {
             return result
           }
 
-          const errorMessage = `URL pre-flight failed. Status: ${check.statusCode}, Error: ${check.error}`
+          const url = urlData.url
+          const requestCheck = async (): Promise<HttpRequestResult> => {
+            return await http1makeRequest(url, {
+              method: 'GET',
+              headers: {
+                'User-Agent': clientUserAgent,
+                Range: 'bytes=0-0'
+              },
+              streamOnly: true,
+              proxy: proxyToUse as unknown as HttpProxyConfig
+            })
+          }
+
+          let check = await requestCheck()
+          let preflightAttempts = 1
+          while (
+            (check.error ||
+              (check.statusCode &&
+                check.statusCode !== 200 &&
+                check.statusCode !== 206 &&
+                check.statusCode !== 403)) &&
+            preflightAttempts < 3
+          ) {
+            preflightAttempts++
+            const delay = 500 * (preflightAttempts - 1)
+            logger(
+              'warn',
+              'YouTube',
+              `[Preflight] Initial request failed (Status: ${check.statusCode}, Error: ${check.error || 'None'}). Retrying in ${delay}ms... (Attempt ${preflightAttempts}/3)`
+            )
+            if (check.stream) {
+              try {
+                ;(check.stream as unknown as { destroy: () => void }).destroy()
+              } catch {}
+            }
+            await new Promise((resolve) => setTimeout(resolve, delay))
+            check = await requestCheck()
+          }
+
+          if (check.stream) {
+            try {
+              ;(check.stream as unknown as { destroy: () => void }).destroy()
+            } catch {}
+          }
+
+          this.reportProxyStatus(
+            proxyToUse,
+            !check.error &&
+              (check.statusCode === 200 ||
+                check.statusCode === 206 ||
+                check.statusCode === 403),
+            check.statusCode || 0,
+            Date.now() - proxyStartTime
+          )
+
+          if (
+            !check.error &&
+            (check.statusCode === 200 ||
+              check.statusCode === 206 ||
+              check.statusCode === 403)
+          ) {
+            let contentLength: number | null = null
+            if (check.statusCode === 200 || check.statusCode === 206) {
+              const headers = check.headers as Record<
+                string,
+                string | undefined
+              >
+              if (headers?.['content-range']) {
+                const match = headers['content-range']?.match(/\/(\d+)/)
+                if (match) contentLength = Number.parseInt(match[1] ?? '0', 10)
+              }
+              if (!contentLength && headers?.['content-length']) {
+                contentLength = Number.parseInt(
+                  headers['content-length'] as string,
+                  10
+                )
+              }
+            }
+
+            if (!contentLength) {
+              const selectedFormat = urlData.formats?.find(
+                (f) => f.itag === urlData.itag
+              )
+              contentLength = selectedFormat?.contentLength
+                ? Number.parseInt(selectedFormat.contentLength as string, 10)
+                : null
+            }
+
+            if (check.statusCode === 403) {
+              logger(
+                'warn',
+                'YouTube',
+                `URL pre-flight returned 403 for client ${clientName} (expected transient sync delay). Proceeding to playback.`
+              )
+            } else {
+              logger(
+                'debug',
+                'YouTube',
+                `URL pre-flight check successful for client ${clientName}.`
+              )
+            }
+
+            const result: TrackUrlData = {
+              ...urlData,
+              additionalData: {
+                contentLength,
+                proxy: proxyToUse,
+                itag: urlData.itag,
+                formats: urlData.formats,
+                userAgent: clientUserAgent
+              }
+            }
+            this.nodelink.trackCacheManager?.set(
+              'youtube',
+              decodedTrack.identifier,
+              result,
+              1000 * 60 * 60 * 5
+            )
+            return result
+          }
+
+          const errorMessage = `URL pre-flight failed after retries. Status: ${check.statusCode}, Error: ${check.error}`
           clientErrors.push({
             client: clientName,
             message: `Direct URL: ${errorMessage}`
           })
           logger('warn', 'YouTube', `Client ${clientName}: ${errorMessage}`)
 
-          if (check.statusCode === 403 && urlData.hlsUrl) {
+          if (
+            (check.statusCode === 403 || check.statusCode === 404) &&
+            urlData.hlsUrl
+          ) {
             logger(
               'warn',
               'YouTube',
-              `Direct URL 403, attempting HLS fallback for client ${clientName}.`
+              `Direct URL failed, attempting HLS fallback for client ${clientName}.`
             )
             const hlsCheck: HttpRequestResult = await http1makeRequest(
               urlData.hlsUrl,
@@ -1315,12 +1416,13 @@ export default class YouTubeSource {
               }
             )
 
-            if (hlsCheck.stream)
-              (
-                hlsCheck.stream as NodeJS.ReadableStream & {
-                  destroy: () => void
-                }
-              ).destroy()
+            if (hlsCheck.stream) {
+              try {
+                ;(
+                  hlsCheck.stream as unknown as { destroy: () => void }
+                ).destroy()
+              } catch {}
+            }
 
             this.reportProxyStatus(
               proxyToUse,
@@ -1368,10 +1470,11 @@ export default class YouTubeSource {
             }
           )
 
-          if (hlsCheck.stream)
-            (
-              hlsCheck.stream as NodeJS.ReadableStream & { destroy: () => void }
-            ).destroy()
+          if (hlsCheck.stream) {
+            try {
+              ;(hlsCheck.stream as unknown as { destroy: () => void }).destroy()
+            } catch {}
+          }
 
           this.reportProxyStatus(
             proxyToUse,
@@ -1664,9 +1767,12 @@ export default class YouTubeSource {
       let contentLength = additionalData?.contentLength ?? null
 
       if (!contentLength) {
+        const userAgent = additionalData?.userAgent
+
         const testResponse = await http1makeRequest(url, {
           method: 'HEAD',
-          timeout: 5000
+          timeout: 5000,
+          headers: userAgent ? { 'User-Agent': userAgent } : undefined
         })
 
         const headers = testResponse.headers as Record<
@@ -1678,13 +1784,20 @@ export default class YouTubeSource {
         }
 
         if (testResponse.statusCode === 403) {
-          throw new Error('URL returned 403 Forbidden')
+          logger(
+            'warn',
+            'YouTube',
+            `HEAD request for "${decodedTrack.title}" returned 403. Attempting range request fallback.`
+          )
         }
 
         if (!contentLength) {
           const rangeResponse = await http1makeRequest(url, {
             method: 'GET',
-            headers: { Range: 'bytes=0-0' },
+            headers: {
+              ...(userAgent ? { 'User-Agent': userAgent } : {}),
+              Range: 'bytes=0-0'
+            },
             streamOnly: true,
             proxy: this.getProxy() as unknown as HttpProxyConfig
           })
@@ -2036,14 +2149,46 @@ export default class YouTubeSource {
     streamKey: string | symbol,
     additionalData?: TrackUrlAdditionalData
   ): Promise<StreamResult> {
+    const userAgent =
+      (additionalData?.userAgent as string | undefined) ||
+      (this.config.userAgent as string | undefined)
+
     const fetchStartTime = Date.now()
-    const response = await http1makeRequest(url, {
-      method: 'GET',
-      streamOnly: true,
-      proxy: (additionalData?.proxy ||
-        this.getProxy()) as unknown as HttpProxyConfig,
-      timeout: 20000
-    })
+    const requestStream = async (): Promise<
+      Awaited<ReturnType<typeof http1makeRequest>>
+    > => {
+      return await http1makeRequest(url, {
+        method: 'GET',
+        streamOnly: true,
+        proxy: (additionalData?.proxy ||
+          this.getProxy()) as unknown as HttpProxyConfig,
+        timeout: 20000,
+        headers: userAgent ? { 'User-Agent': userAgent } : undefined
+      })
+    }
+
+    let response = await requestStream()
+    let attempt = 0
+    const maxAttempts = 5
+    while (
+      (response.error || (response.statusCode && response.statusCode >= 400)) &&
+      attempt < maxAttempts
+    ) {
+      attempt++
+      const delay = Math.min(1000 * 2 ** (attempt - 1), 2000)
+      logger(
+        'warn',
+        'YouTube',
+        `[DirectStream] Initial stream request failed (Status: ${response.statusCode}, Error: ${response.error || 'None'}). Retrying in ${delay}ms... (Attempt ${attempt}/${maxAttempts})`
+      )
+      if (response.stream) {
+        try {
+          ;(response.stream as unknown as { destroy: () => void }).destroy()
+        } catch {}
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      response = await requestStream()
+    }
 
     this.reportProxyStatus(
       (additionalData?.proxy || this.getProxy(false)) as
@@ -2056,6 +2201,11 @@ export default class YouTubeSource {
     )
 
     if (response.statusCode !== 200 && response.statusCode !== 206) {
+      if (response.stream) {
+        try {
+          ;(response.stream as unknown as { destroy: () => void }).destroy()
+        } catch {}
+      }
       throw new Error(`HTTP status ${response.statusCode}`)
     }
 
@@ -2594,6 +2744,10 @@ export default class YouTubeSource {
       highWaterMark: STREAM_BUFFER_SIZE
     })
 
+    const userAgent =
+      (additionalData?.userAgent as string | undefined) ||
+      (this.config.userAgent as string | undefined)
+
     let currentUrl = url
     let currentProxy = additionalData?.proxy as unknown as
       | HttpProxyConfig
@@ -2792,6 +2946,7 @@ export default class YouTubeSource {
           : 16_000
 
       let chunkCount = 0
+      let transient403Attempts = 0
 
       while (
         !isDestroyed &&
@@ -2828,6 +2983,7 @@ export default class YouTubeSource {
             proxy: proxyToUse,
             timeout: 30000,
             headers: {
+              ...(userAgent ? { 'User-Agent': userAgent } : {}),
               Range: rangeHeader,
               'Accept-Encoding': 'identity;q=1, *;q=0',
               'Sec-Fetch-Dest': 'video',
@@ -2865,13 +3021,65 @@ export default class YouTubeSource {
             result.error ||
             (result.statusCode !== 200 && result.statusCode !== 206)
           ) {
+            if (result.statusCode === 403) {
+              const urlAge = Date.now() - urlFetchTime
+              if (urlAge < 60000 && transient403Attempts < 6) {
+                transient403Attempts++
+                const retryDelay =
+                  transient403Attempts === 1
+                    ? 1500
+                    : transient403Attempts === 2
+                      ? 2000
+                      : 3000
+
+                logger(
+                  'warn',
+                  'YouTube',
+                  `[ChunkedStream] GGC edge sync latency (403) for ${decodedTrack.title}. Retrying same URL in ${retryDelay}ms... (Attempt ${transient403Attempts}/6)`
+                )
+                if (result.stream) {
+                  try {
+                    ;(
+                      result.stream as unknown as { resume: () => void }
+                    ).resume()
+                  } catch {}
+                }
+                await sleep(retryDelay)
+                continue
+              }
+
+              if (transient403Attempts < 5) {
+                transient403Attempts++
+                const retryDelay = Math.min(
+                  1000 * 2 ** (transient403Attempts - 1),
+                  2000
+                )
+                logger(
+                  'warn',
+                  'YouTube',
+                  `[ChunkedStream] Transient 403 detected for ${decodedTrack.title}. Retrying same URL in ${retryDelay}ms... (Attempt ${transient403Attempts}/5)`
+                )
+                if (result.stream) {
+                  try {
+                    ;(
+                      result.stream as unknown as { resume: () => void }
+                    ).resume()
+                  } catch {}
+                }
+                await sleep(retryDelay)
+                continue
+              }
+              transient403Attempts = 0
+            }
+
             if (result.statusCode === 403 || result.statusCode === 404) {
               logger(
                 'warn',
                 'YouTube',
                 `HTTP ${result.statusCode} for "${decodedTrack.title}" -- refreshing...`
               )
-              if (currentItag) failedItags.add(currentItag)
+              if (result.statusCode === 404 && currentItag)
+                failedItags.add(currentItag)
               const refreshed = await refreshUrl(`HTTP ${result.statusCode}`)
               if (refreshed) continue
               cleanup(
@@ -2892,6 +3100,8 @@ export default class YouTubeSource {
             await sleep(retryDelay)
             continue
           }
+
+          transient403Attempts = 0
 
           const responseStream = result.stream as NodeJS.ReadableStream & {
             destroyed: boolean

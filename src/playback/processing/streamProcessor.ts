@@ -345,17 +345,33 @@ const _extractSeekProxy = (
     : undefined
 }
 
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (SMART-TV; Linux; Tizen 8.0) Cobalt/Version (unlike Gecko) v8/11.4.233.17-gold Starboard/16, Tizen;Samsung;KantM_2024;8.0/2300.0 (Samsung, QN90D_98, Wired'
+
+const _extractSeekUserAgent = (streamInfo: StreamInfo): string | undefined => {
+  const additionalData = streamInfo?.additionalData as
+    | Record<string, unknown>
+    | undefined
+
+  return typeof additionalData?.userAgent === 'string'
+    ? additionalData.userAgent
+    : undefined
+}
+
 async function _fetchRange(
   url: string,
   start: number,
   endInclusive: number,
-  proxy?: HttpProxyConfig
+  proxy?: HttpProxyConfig,
+  userAgent?: string
 ): Promise<Buffer> {
+  const ua = userAgent || DEFAULT_USER_AGENT
   if (proxy) {
     const response = await http1makeRequest(url, {
       method: 'GET',
       headers: {
-        Range: `bytes=${start}-${endInclusive}`
+        Range: `bytes=${start}-${endInclusive}`,
+        'User-Agent': ua
       } as HttpRequestHeaders,
       responseType: 'buffer',
       proxy
@@ -377,7 +393,10 @@ async function _fetchRange(
   }
 
   const res = await fetch(url, {
-    headers: { Range: `bytes=${start}-${endInclusive}` }
+    headers: {
+      Range: `bytes=${start}-${endInclusive}`,
+      'User-Agent': ua
+    }
   })
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} while fetching range`)
@@ -389,13 +408,16 @@ async function _fetchRange(
 async function _openRangeStream(
   url: string,
   start: number,
-  proxy?: HttpProxyConfig
+  proxy?: HttpProxyConfig,
+  userAgent?: string
 ): Promise<Readable> {
+  const ua = userAgent || DEFAULT_USER_AGENT
   if (proxy) {
     const response = await http1makeRequest(url, {
       method: 'GET',
       headers: {
-        Range: `bytes=${start}-`
+        Range: `bytes=${start}-`,
+        'User-Agent': ua
       } as HttpRequestHeaders,
       streamOnly: true,
       proxy
@@ -414,7 +436,10 @@ async function _openRangeStream(
   }
 
   const res = await fetch(url, {
-    headers: { Range: `bytes=${start}-` }
+    headers: {
+      Range: `bytes=${start}-`,
+      'User-Agent': ua
+    }
   })
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} while opening range stream`)
@@ -434,7 +459,8 @@ const _seekOffset = (res: MP4BoxSeekResult): number => {
 async function _buildMp4SeekOptions(
   url: string,
   seekTimeMs: number,
-  proxy?: HttpProxyConfig
+  proxy?: HttpProxyConfig,
+  userAgent?: string
 ): Promise<MP4ToAACStreamOptions> {
   const mp4Box = await getMP4Box()
   const mp4 = mp4Box.createFile() as unknown as MP4BoxFile
@@ -459,7 +485,8 @@ async function _buildMp4SeekOptions(
           url,
           nextStart,
           nextStart + CHUNK - 1,
-          proxy
+          proxy,
+          userAgent
         )
         const ab = _toArrayBufferWithFileStart(buf, nextStart)
 
@@ -524,7 +551,8 @@ type SeekableResponseLike = Readable & {
 }
 
 const _createSeekableProxyRequest = (
-  proxy?: HttpProxyConfig
+  proxy?: HttpProxyConfig,
+  userAgent?: string
 ):
   | ((
       requestUrl: string | URL,
@@ -543,11 +571,16 @@ const _createSeekableProxyRequest = (
       headers?: Record<string, string>
     }
   ): Promise<SeekableResponseLike> => {
+    const headers = {
+      'User-Agent': userAgent || DEFAULT_USER_AGENT,
+      ...(options?.headers ?? {})
+    } as HttpRequestHeaders
+
     const response = await http1makeRequest(
       typeof requestUrl === 'string' ? requestUrl : requestUrl.toString(),
       {
         method: options?.method ?? 'GET',
-        headers: (options?.headers ?? {}) as HttpRequestHeaders,
+        headers,
         streamOnly: true,
         proxy
       }
@@ -3103,6 +3136,7 @@ export const createSeekeableAudioResource = async (
     const ext = _extFromUrl(url)
     const containerGuess = hinted || ext
     const seekProxy = _extractSeekProxy(player.streamInfo)
+    const seekUserAgent = _extractSeekUserAgent(player.streamInfo)
 
     logger(
       'debug',
@@ -3111,12 +3145,18 @@ export const createSeekeableAudioResource = async (
     )
 
     if (_isMp4Format(containerGuess)) {
-      const mp4Seek = await _buildMp4SeekOptions(url, seekTime, seekProxy)
+      const mp4Seek = await _buildMp4SeekOptions(
+        url,
+        seekTime,
+        seekProxy,
+        seekUserAgent
+      )
 
       const ranged = await _openRangeStream(
         url,
         mp4Seek.baseFileStart ?? 0,
-        seekProxy
+        seekProxy,
+        seekUserAgent
       )
 
       const passthroughStream = new PassThrough({
@@ -3161,7 +3201,7 @@ export const createSeekeableAudioResource = async (
       seekTime,
       endTime,
       {},
-      _createSeekableProxyRequest(seekProxy)
+      _createSeekableProxyRequest(seekProxy, seekUserAgent)
     )) as { stream: Readable; meta: SeekableStreamMeta }
 
     const passthroughStream = new PassThrough({
