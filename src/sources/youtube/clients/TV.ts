@@ -60,19 +60,15 @@ export default class TV extends BaseClient {
         hl: context.client.hl,
         gl: context.client.gl
       },
-      user: {
-        lockedSafetyMode: false
-      },
-      request: {
-        useSsl: true
-      },
+      user: { lockedSafetyMode: false },
+      request: { useSsl: true },
       adSignalsInfo: {
         params: [
           { key: 'dt', value: Date.now().toString() },
           { key: 'u_tz', value: `${utc}` }
         ]
       }
-    } as unknown as YouTubeClientContext
+    }
   }
 
   /**
