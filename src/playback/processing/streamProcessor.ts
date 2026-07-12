@@ -345,9 +345,6 @@ const _extractSeekProxy = (
     : undefined
 }
 
-const DEFAULT_USER_AGENT =
-  'Mozilla/5.0 (SMART-TV; Linux; Tizen 8.0) Cobalt/Version (unlike Gecko) v8/11.4.233.17-gold Starboard/16, Tizen;Samsung;KantM_2024;8.0/2300.0 (Samsung, QN90D_98, Wired'
-
 const _extractSeekUserAgent = (streamInfo: StreamInfo): string | undefined => {
   const additionalData = streamInfo?.additionalData as
     | Record<string, unknown>
@@ -365,13 +362,12 @@ async function _fetchRange(
   proxy?: HttpProxyConfig,
   userAgent?: string
 ): Promise<Buffer> {
-  const ua = userAgent || DEFAULT_USER_AGENT
   if (proxy) {
     const response = await http1makeRequest(url, {
       method: 'GET',
       headers: {
         Range: `bytes=${start}-${endInclusive}`,
-        'User-Agent': ua
+        ...(userAgent ? { 'User-Agent': userAgent } : {})
       } as HttpRequestHeaders,
       responseType: 'buffer',
       proxy
@@ -395,7 +391,7 @@ async function _fetchRange(
   const res = await fetch(url, {
     headers: {
       Range: `bytes=${start}-${endInclusive}`,
-      'User-Agent': ua
+      ...(userAgent ? { 'User-Agent': userAgent } : {})
     }
   })
   if (!res.ok) {
@@ -411,13 +407,12 @@ async function _openRangeStream(
   proxy?: HttpProxyConfig,
   userAgent?: string
 ): Promise<Readable> {
-  const ua = userAgent || DEFAULT_USER_AGENT
   if (proxy) {
     const response = await http1makeRequest(url, {
       method: 'GET',
       headers: {
         Range: `bytes=${start}-`,
-        'User-Agent': ua
+        ...(userAgent ? { 'User-Agent': userAgent } : {})
       } as HttpRequestHeaders,
       streamOnly: true,
       proxy
@@ -438,7 +433,7 @@ async function _openRangeStream(
   const res = await fetch(url, {
     headers: {
       Range: `bytes=${start}-`,
-      'User-Agent': ua
+      ...(userAgent ? { 'User-Agent': userAgent } : {})
     }
   })
   if (!res.ok) {
@@ -572,7 +567,7 @@ const _createSeekableProxyRequest = (
     }
   ): Promise<SeekableResponseLike> => {
     const headers = {
-      'User-Agent': userAgent || DEFAULT_USER_AGENT,
+      ...(userAgent ? { 'User-Agent': userAgent } : {}),
       ...(options?.headers ?? {})
     } as HttpRequestHeaders
 
