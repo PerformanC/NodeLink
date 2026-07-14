@@ -241,13 +241,14 @@ export default class YouTubeSource {
     async setup() {
         logger('info', 'YouTube', 'Setting up YouTube source...');
         this.oauth = new OAuth(this.nodelink);
-        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TVCast }, { default: Web }, { default: WebEmbedded }] = await Promise.all([
+        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TV_DOWN }, { default: TVCast }, { default: Web }, { default: WebEmbedded }] = await Promise.all([
             import('./clients/Android.js'),
             import('./clients/AndroidVR.js'),
             import('./clients/IOS.js'),
             import('./clients/Music.js'),
             import('./clients/Web_Remix.js'),
             import('./clients/TV.js'),
+            import('./clients/TV_downgraded.js'),
             import('./clients/TVCast.js'),
             import('./clients/Web.js'),
             import('./clients/WebEmbedded.js')
@@ -259,6 +260,7 @@ export default class YouTubeSource {
             Music,
             WebRemix,
             TV,
+            TV_DOWN,
             TVCast,
             Web,
             WebEmbedded

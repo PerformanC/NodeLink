@@ -328,6 +328,7 @@ export default class YouTubeSource {
       { default: Music },
       { default: WebRemix },
       { default: TV },
+      { default: TV_DOWN },
       { default: TVCast },
       { default: Web },
       { default: WebEmbedded }
@@ -338,6 +339,7 @@ export default class YouTubeSource {
       import('./clients/Music.ts'),
       import('./clients/Web_Remix.ts'),
       import('./clients/TV.ts'),
+      import('./clients/TV_downgraded.ts'),
       import('./clients/TVCast.ts'),
       import('./clients/Web.ts'),
       import('./clients/WebEmbedded.ts')
@@ -350,6 +352,7 @@ export default class YouTubeSource {
       Music,
       WebRemix,
       TV,
+      TV_DOWN,
       TVCast,
       Web,
       WebEmbedded

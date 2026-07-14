@@ -308,6 +308,7 @@ export const config = {
                 search: ['Android'],
                 playback: [
                     'AndroidVR',
+                    'TV_DOWN',
                     'TV',
                     'TVCast',
                     'WebEmbedded',
@@ -317,6 +318,7 @@ export const config = {
                 ],
                 resolve: [
                     'AndroidVR',
+                    'TV_DOWN',
                     'TV',
                     'TVCast',
                     'WebEmbedded',

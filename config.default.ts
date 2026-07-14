@@ -322,6 +322,7 @@ export const config: NodelinkConfig = {
         search: ['Android'],
         playback: [
           'AndroidVR',
+          'TV_DOWN',
           'TV',
           'TVCast',
           'WebEmbedded',
@@ -331,6 +332,7 @@ export const config: NodelinkConfig = {
         ],
         resolve: [
           'AndroidVR',
+          'TV_DOWN',
           'TV',
           'TVCast',
           'WebEmbedded',
