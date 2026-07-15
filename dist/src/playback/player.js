@@ -1952,16 +1952,17 @@ export class Player {
             logger('debug', 'Player', `Updating voice state for guild ${this.guildId}`);
             if (!this.connection)
                 this._initConnection();
-            if (this.voice.channelId && this.connection) {
-                this.connection.channelId = this.voice.channelId;
-            }
-            this.connection?.voiceStateUpdate({ session_id: this.voice.sessionId });
+            this.connection?.voiceStateUpdate({
+                session_id: this.voice.sessionId,
+                channel_id: this.voice.channelId ?? undefined
+            });
             if (force && this.connection?.voiceServer) {
                 this.connection.voiceServer = null;
             }
             this.connection?.voiceServerUpdate({
                 token: this.voice.token,
-                endpoint: this.voice.endpoint
+                endpoint: this.voice.endpoint,
+                channel_id: this.voice.channelId ?? undefined
             });
             this.connection?.connect(async () => {
                 if (this.destroying)

@@ -189,7 +189,7 @@ declare module '@performanc/voice' {
     pause(reason?: string): void
     unpause(reason?: string): void
     destroy(): void
-    voiceStateUpdate(state: { session_id: string }): void
+    voiceStateUpdate(state: { session_id: string; channel_id?: string }): void
     voiceServerUpdate(update: {
       token: string
       endpoint: string
