@@ -98,6 +98,11 @@ interface PlayerPatchPayload {
   loudnessNormalizer?: boolean
 
   /**
+   * Auto-ducking toggle (lowers music when users speak).
+   */
+  ducking?: boolean
+
+  /**
    * Optional filter payload.
    */
   filters?: FiltersState
@@ -218,6 +223,11 @@ interface PlayerPatchBodyInput {
   loudnessNormalizer?: boolean
 
   /**
+   * Candidate auto-ducking toggle.
+   */
+  ducking?: boolean
+
+  /**
    * Candidate filters payload.
    */
   filters?: ApiRequest['body']
@@ -271,6 +281,16 @@ interface FadingConfigInput {
   seek?: FadingSectionInput
   pause?: FadingSectionInput
   resume?: FadingSectionInput
+
+  /**
+   * Candidate ducking configuration.
+   */
+  ducking?: {
+    enabled?: boolean
+    duration?: number
+    targetVolume?: number
+    curve?: string
+  }
 }
 
 /**
@@ -451,6 +471,18 @@ interface PlayersRoutePlayerManager {
    * @returns Promise resolving once the command is applied.
    */
   setLoudnessNormalizer: (
+    guildId: string,
+    enabled: boolean
+  ) => Promise<boolean | object>
+
+  /**
+   * Toggles auto-ducking.
+   *
+   * @param guildId - Target guild identifier.
+   * @param enabled - Whether auto-ducking should be enabled.
+   * @returns Promise resolving once the command is applied.
+   */
+  setDucking: (
     guildId: string,
     enabled: boolean
   ) => Promise<boolean | object>
@@ -819,6 +851,11 @@ function getPlayerPatchPayload(
     return null
   }
 
+  const ducking = payload.ducking
+  if (ducking !== undefined && typeof ducking !== 'boolean') {
+    return null
+  }
+
   const filtersValue = payload.filters
   if (
     filtersValue !== undefined &&
@@ -867,6 +904,7 @@ function getPlayerPatchPayload(
     volume,
     paused,
     loudnessNormalizer,
+    ducking,
     filters: filtersValue as FiltersState | undefined,
     fading,
     voice: voice ?? undefined
@@ -935,6 +973,22 @@ function sanitizeFadingConfig(raw: ApiRequest['body']): FadingConfig {
   updateSection('seek')
   updateSection('pause')
   updateSection('resume')
+
+  if (isObjectRecord(payload.ducking)) {
+    const duckingInput = payload.ducking as NonNullable<FadingConfigInput['ducking']>
+    safe.ducking = {
+      enabled: duckingInput.enabled === true,
+      duration:
+        typeof duckingInput.duration === 'number' && Number.isFinite(duckingInput.duration)
+          ? Math.max(0, duckingInput.duration)
+          : 500,
+      targetVolume:
+        typeof duckingInput.targetVolume === 'number' && Number.isFinite(duckingInput.targetVolume)
+          ? Math.max(0, Math.min(1, duckingInput.targetVolume))
+          : 0.3,
+      curve: typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
+    }
+  }
 
   return safe
 }
@@ -1230,6 +1284,10 @@ async function applyPlayerPatch(
       guildId,
       payload.loudnessNormalizer
     )
+  }
+
+  if (payload.ducking !== undefined) {
+    await session.players.setDucking(guildId, payload.ducking)
   }
 
   return await session.players.toJSON(guildId)

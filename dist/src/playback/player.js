@@ -3,6 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { SeekError } from '@ecliptia/seekable-stream';
 import discordVoice from '@performanc/voice';
 import { EndReasons, GatewayEvents } from '../constants.js';
+import { DuckingController } from './processing/DuckingController.js';
 import { logger } from '../utils.js';
 let createAudioResource = null;
 let createSeekeableAudioResource = null;
@@ -62,6 +63,7 @@ export class Player {
     audioMixer = null;
     fading;
     loudnessNormalizer;
+    duckingController = null;
     _fadeTimers = { trackEnd: null, pause: null, stop: null };
     _isResuming = false;
     _pendingTrackStartFade = false;
@@ -108,6 +110,11 @@ export class Player {
         this.fading = this.nodelink.options?.playback.audio?.fading;
         this.loudnessNormalizer =
             this.nodelink.options?.playback.audio?.loudnessNormalizer ?? false;
+        // Initialize ducking controller from config
+        const duckingCfg = this._resolveDuckingConfig();
+        if (duckingCfg.enabled) {
+            this.duckingController = new DuckingController(this.guildId, duckingCfg);
+        }
         this.sponsorBlock = {
             enabled: this.nodelink.options.playback.sponsorblock?.enabled ?? false,
             categories: this.nodelink.options.playback.sponsorblock?.categories ?? [
@@ -286,6 +293,10 @@ export class Player {
         this.connection.on('speakStart', this._connSpeakStartHandler);
         if (this.nodelink.voiceRelay?.attach) {
             this.nodelink.voiceRelay.attach(this.connection, this.guildId);
+        }
+        // Attach ducking controller to the voice connection
+        if (this.duckingController && this.connection) {
+            this.duckingController.attach(this.connection);
         }
     }
     /**
@@ -575,7 +586,6 @@ export class Player {
             this._currentResource = null;
         }
         if (!audioStream) {
-            this._cleanupSSRCStreams(conn);
             return;
         }
         try {
@@ -587,7 +597,6 @@ export class Player {
         if (audioStream.destroyed) {
             if (conn)
                 conn.audioStream = null;
-            this._cleanupSSRCStreams(conn);
             return;
         }
         try {
@@ -605,7 +614,6 @@ export class Player {
         finally {
             if (conn)
                 conn.audioStream = null;
-            this._cleanupSSRCStreams(conn);
         }
     }
     _cleanupSSRCStreams(conn) {
@@ -1098,6 +1106,12 @@ export class Player {
         logger('debug', 'Player', playLogMessage);
         this._currentResource = resource;
         this.connection.play(resource);
+        // Connect ducking controller to the new audio stream
+        if (this.duckingController && resource.fadeTo) {
+            this.duckingController.setStreamControl({
+                fadeTo: (volume, durationMs, curve) => resource.fadeTo(volume, durationMs, curve)
+            });
+        }
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
         this._lyricsBasePosition = position;
         this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
@@ -1502,6 +1516,12 @@ export class Player {
         logger('debug', 'Player', `Playing resource for guild ${this.guildId} after legacy seek`);
         this._currentResource = resource;
         this.connection.play(resource);
+        // Connect ducking controller to the new audio stream
+        if (this.duckingController && resource.fadeTo) {
+            this.duckingController.setStreamControl({
+                fadeTo: (volume, durationMs, curve) => resource.fadeTo(volume, durationMs, curve)
+            });
+        }
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
         this._lyricsBasePosition = position;
         this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
@@ -1702,6 +1722,60 @@ export class Player {
         this.loudnessNormalizer = !!enabled;
         if (this.connection?.audioStream) {
             this.connection.audioStream.setLoudnessNormalizer?.(this.loudnessNormalizer);
+        }
+        return true;
+    }
+    /**
+     * Resolves the ducking configuration from the fading config or global config.
+     *
+     * @returns Resolved ducking configuration.
+     */
+    _resolveDuckingConfig() {
+        const fadingDucking = this.fading?.ducking;
+        const configDucking = this.nodelink.options?.playback?.audio?.fading?.ducking;
+        const source = fadingDucking ?? configDucking;
+        return {
+            enabled: source?.enabled ?? false,
+            duration: source?.duration ?? 500,
+            targetVolume: source?.targetVolume ?? 0.15,
+            curve: source?.curve ?? 'linear'
+        };
+    }
+    /**
+     * Toggles auto-ducking (lowers music volume when users speak).
+     *
+     * @param enabled - Whether to enable auto-ducking.
+     * @returns True when updated.
+     */
+    setDucking(enabled) {
+        logger('debug', 'Player', `[Action: setDucking] Method invoked for guild ${this.guildId} to ${enabled}`);
+        if (enabled) {
+            const duckingCfg = this._resolveDuckingConfig();
+            duckingCfg.enabled = true;
+            if (!this.duckingController) {
+                this.duckingController = new DuckingController(this.guildId, duckingCfg);
+            }
+            else {
+                this.duckingController.updateConfig(duckingCfg);
+            }
+            // Attach to current connection if available
+            if (this.connection) {
+                this.duckingController.attach(this.connection);
+            }
+            // Connect to current audio stream if available
+            if (this.connection?.audioStream?.fadeTo) {
+                const stream = this.connection.audioStream;
+                this.duckingController.setStreamControl({
+                    fadeTo: (volume, durationMs, curve) => stream.fadeTo(volume, durationMs, curve)
+                });
+            }
+        }
+        else {
+            if (this.duckingController) {
+                this.duckingController.detach();
+                this.duckingController.destroy();
+                this.duckingController = null;
+            }
         }
         return true;
     }
@@ -1933,7 +2007,12 @@ export class Player {
                     this.connection.stop(EndReasons.CLEANUP);
                     this._cleanupCurrentAudioStream('destroy');
                 }
+                this._cleanupSSRCStreams(this.connection);
                 this.connection.destroy();
+                if (this.duckingController) {
+                    this.duckingController.destroy();
+                    this.duckingController = null;
+                }
                 this.connection = null;
             }
             catch (err) {
@@ -2469,8 +2548,9 @@ export class Player {
                 return false;
             this._pendingTrackStartFade = false;
             if (fadeType === 'volume' || fadeType === 'both') {
+                const targetVol = this.duckingController?.getTargetVolume(1) ?? 1;
                 if (stream.fadeTo)
-                    stream.fadeTo?.(1, section.duration, section.curve);
+                    stream.fadeTo?.(targetVol, section.duration, section.curve);
             }
             if (fadeType === 'tape' || fadeType === 'both') {
                 if (stream.tapeTo)
@@ -2505,9 +2585,10 @@ export class Player {
             if (!stream)
                 return false;
             if (fadeType === 'volume' || fadeType === 'both') {
+                const targetVol = this.duckingController?.getTargetVolume(1) ?? 1;
                 if (stream.setFadeVolume)
                     stream.setFadeVolume(0);
-                stream.fadeTo?.(1, section.duration, section.curve);
+                stream.fadeTo?.(targetVol, section.duration, section.curve);
             }
             if (fadeType === 'tape' || fadeType === 'both') {
                 stream.tapeTo?.(section.duration, 'start', section.curve);

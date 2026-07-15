@@ -38,6 +38,8 @@ import type {
   TrackInfoExtended
 } from '../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
+import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
+import { DuckingController } from './processing/DuckingController.ts'
 import { logger } from '../utils.ts'
 
 export type GatewayEventName =
@@ -111,6 +113,7 @@ export class Player {
   public audioMixer: AudioMixer | null = null
   public fading?: FadingConfig
   public loudnessNormalizer: boolean
+  public duckingController: DuckingController | null = null
   private _fadeTimers: FadeTimers = { trackEnd: null, pause: null, stop: null }
   private _isResuming = false
   private _pendingTrackStartFade = false
@@ -179,6 +182,12 @@ export class Player {
     this.fading = this.nodelink.options?.playback.audio?.fading
     this.loudnessNormalizer =
       this.nodelink.options?.playback.audio?.loudnessNormalizer ?? false
+
+    // Initialize ducking controller from config
+    const duckingCfg = this._resolveDuckingConfig()
+    if (duckingCfg.enabled) {
+      this.duckingController = new DuckingController(this.guildId, duckingCfg)
+    }
 
     this.sponsorBlock = {
       enabled: this.nodelink.options.playback.sponsorblock?.enabled ?? false,
@@ -443,6 +452,11 @@ export class Player {
 
     if (this.nodelink.voiceRelay?.attach) {
       this.nodelink.voiceRelay.attach(this.connection, this.guildId)
+    }
+
+    // Attach ducking controller to the voice connection
+    if (this.duckingController && this.connection) {
+      this.duckingController.attach(this.connection)
     }
   }
 
@@ -861,7 +875,6 @@ export class Player {
     }
 
     if (!audioStream) {
-      this._cleanupSSRCStreams(conn)
       return
     }
 
@@ -873,7 +886,6 @@ export class Player {
 
     if (audioStream.destroyed) {
       if (conn) conn.audioStream = null
-      this._cleanupSSRCStreams(conn)
       return
     }
 
@@ -897,7 +909,6 @@ export class Player {
       )
     } finally {
       if (conn) conn.audioStream = null
-      this._cleanupSSRCStreams(conn)
     }
   }
 
@@ -1634,6 +1645,14 @@ export class Player {
     this._currentResource = resource
     this.connection.play(resource as unknown)
 
+    // Connect ducking controller to the new audio stream
+    if (this.duckingController && resource.fadeTo) {
+      this.duckingController.setStreamControl({
+        fadeTo: (volume: number, durationMs: number, curve?: string) =>
+          resource.fadeTo!(volume, durationMs, curve)
+      })
+    }
+
     await this.waitEvent(
       'playerStateChange',
       (s: VoicePlayerState) => s.status === 'playing'
@@ -2313,6 +2332,14 @@ export class Player {
     )
     this._currentResource = resource
     this.connection.play(resource as unknown)
+
+    // Connect ducking controller to the new audio stream
+    if (this.duckingController && resource.fadeTo) {
+      this.duckingController.setStreamControl({
+        fadeTo: (volume: number, durationMs: number, curve?: string) =>
+          resource.fadeTo!(volume, durationMs, curve)
+      })
+    }
     await this.waitEvent(
       'playerStateChange',
       (s: VoicePlayerState) => s.status === 'playing'
@@ -2602,6 +2629,72 @@ export class Player {
         this.loudnessNormalizer
       )
     }
+    return true
+  }
+
+  /**
+   * Resolves the ducking configuration from the fading config or global config.
+   *
+   * @returns Resolved ducking configuration.
+   */
+  private _resolveDuckingConfig(): DuckingConfig {
+    const fadingDucking = this.fading?.ducking
+    const configDucking = this.nodelink.options?.playback?.audio?.fading?.ducking
+
+    const source = fadingDucking ?? configDucking
+
+    return {
+      enabled: source?.enabled ?? false,
+      duration: source?.duration ?? 500,
+      targetVolume: source?.targetVolume ?? 0.15,
+      curve: source?.curve ?? 'linear'
+    }
+  }
+
+  /**
+   * Toggles auto-ducking (lowers music volume when users speak).
+   *
+   * @param enabled - Whether to enable auto-ducking.
+   * @returns True when updated.
+   */
+  public setDucking(enabled: boolean): boolean {
+    logger(
+      'debug',
+      'Player',
+      `[Action: setDucking] Method invoked for guild ${this.guildId} to ${enabled}`
+    )
+
+    if (enabled) {
+      const duckingCfg = this._resolveDuckingConfig()
+      duckingCfg.enabled = true
+
+      if (!this.duckingController) {
+        this.duckingController = new DuckingController(this.guildId, duckingCfg)
+      } else {
+        this.duckingController.updateConfig(duckingCfg)
+      }
+
+      // Attach to current connection if available
+      if (this.connection) {
+        this.duckingController.attach(this.connection)
+      }
+
+      // Connect to current audio stream if available
+      if (this.connection?.audioStream?.fadeTo) {
+        const stream = this.connection.audioStream
+        this.duckingController.setStreamControl({
+          fadeTo: (volume: number, durationMs: number, curve?: string) =>
+            stream.fadeTo!(volume, durationMs, curve)
+        })
+      }
+    } else {
+      if (this.duckingController) {
+        this.duckingController.detach()
+        this.duckingController.destroy()
+        this.duckingController = null
+      }
+    }
+
     return true
   }
 
@@ -2909,7 +3002,14 @@ export class Player {
           this.connection.stop(EndReasons.CLEANUP)
           this._cleanupCurrentAudioStream('destroy')
         }
+        this._cleanupSSRCStreams(this.connection)
         this.connection.destroy()
+        
+        if (this.duckingController) {
+          this.duckingController.destroy()
+          this.duckingController = null
+        }
+        
         this.connection = null
       } catch (err) {
         const error = err as Error
@@ -3618,8 +3718,9 @@ export class Player {
       this._pendingTrackStartFade = false
 
       if (fadeType === 'volume' || fadeType === 'both') {
+        const targetVol = this.duckingController?.getTargetVolume(1) ?? 1
         if ((stream as AudioResource).fadeTo)
-          (stream as AudioResource).fadeTo?.(1, section.duration, section.curve)
+          (stream as AudioResource).fadeTo?.(targetVol, section.duration, section.curve)
       }
       if (fadeType === 'tape' || fadeType === 'both') {
         if ((stream as AudioResource).tapeTo)
@@ -3656,8 +3757,9 @@ export class Player {
       if (!stream) return false
 
       if (fadeType === 'volume' || fadeType === 'both') {
+        const targetVol = this.duckingController?.getTargetVolume(1) ?? 1
         if (stream.setFadeVolume) stream.setFadeVolume(0)
-        stream.fadeTo?.(1, section.duration, section.curve)
+        stream.fadeTo?.(targetVol, section.duration, section.curve)
       }
       if (fadeType === 'tape' || fadeType === 'both') {
         stream.tapeTo?.(section.duration, 'start', section.curve)

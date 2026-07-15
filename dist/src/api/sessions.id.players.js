@@ -206,6 +206,10 @@ function getPlayerPatchPayload(body) {
         typeof loudnessNormalizer !== 'boolean') {
         return null;
     }
+    const ducking = payload.ducking;
+    if (ducking !== undefined && typeof ducking !== 'boolean') {
+        return null;
+    }
     const filtersValue = payload.filters;
     if (filtersValue !== undefined &&
         (!filtersValue ||
@@ -243,6 +247,7 @@ function getPlayerPatchPayload(body) {
         volume,
         paused,
         loudnessNormalizer,
+        ducking,
         filters: filtersValue,
         fading,
         voice: voice ?? undefined
@@ -296,6 +301,19 @@ function sanitizeFadingConfig(raw) {
     updateSection('seek');
     updateSection('pause');
     updateSection('resume');
+    if (isObjectRecord(payload.ducking)) {
+        const duckingInput = payload.ducking;
+        safe.ducking = {
+            enabled: duckingInput.enabled === true,
+            duration: typeof duckingInput.duration === 'number' && Number.isFinite(duckingInput.duration)
+                ? Math.max(0, duckingInput.duration)
+                : 500,
+            targetVolume: typeof duckingInput.targetVolume === 'number' && Number.isFinite(duckingInput.targetVolume)
+                ? Math.max(0, Math.min(1, duckingInput.targetVolume))
+                : 0.3,
+            curve: typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
+        };
+    }
     return safe;
 }
 /**
@@ -499,6 +517,9 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
     }
     if (payload.loudnessNormalizer !== undefined) {
         await session.players.setLoudnessNormalizer(guildId, payload.loudnessNormalizer);
+    }
+    if (payload.ducking !== undefined) {
+        await session.players.setDucking(guildId, payload.ducking);
     }
     return await session.players.toJSON(guildId);
 }

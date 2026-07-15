@@ -38,6 +38,7 @@ export interface FadingConfig {
   seek?: FadingSection
   pause?: FadingSection
   resume?: FadingSection
+  ducking?: import('./ducking.types.ts').DuckingConfig
 }
 
 /**
