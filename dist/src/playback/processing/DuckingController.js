@@ -11,10 +11,11 @@ export class DuckingController {
     isDucked = false;
     destroyed = false;
     hookedStreams = new Set();
+    activeStreams = new Map();
     static HOLD_MS = 600;
     static RMS_THRESHOLD = 3500;
     _onSpeakStart = (_userId, ssrc) => {
-        if (this.destroyed || !this.config.enabled)
+        if (this.destroyed || !this.config.enabled || !this.streamControl)
             return;
         if (this.hookedStreams.has(ssrc))
             return;
@@ -25,22 +26,30 @@ export class DuckingController {
         let decoder = null;
         try {
             decoder = new OpusDecoder({ rate: 48000, channels: 2 });
-            stream.pipe(decoder);
         }
         catch (err) {
             logger('warn', 'Ducking', `Failed to create Opus decoder for RMS ducking: ${err.message}`);
-            stream.on('data', (chunk) => {
+            const onData = (chunk) => {
                 if (this.destroyed || !this.config.enabled)
                     return;
                 if (chunk.length < 40)
                     return;
                 this._registerSpeech(ssrc);
+            };
+            const onEnd = () => this._cleanupStream(ssrc);
+            this.activeStreams.set(ssrc, {
+                stream,
+                decoder: null,
+                onData,
+                onEnd
             });
-            stream.once('end', () => this.hookedStreams.delete(ssrc));
+            stream.on('data', onData);
+            stream.once('end', onEnd);
+            stream.once('close', onEnd);
             return;
         }
         let lastLogTime = 0;
-        decoder.on('data', (pcm) => {
+        const onData = (pcm) => {
             if (this.destroyed || !this.config.enabled)
                 return;
             let sumSquare = 0;
@@ -57,22 +66,13 @@ export class DuckingController {
             if (rms >= DuckingController.RMS_THRESHOLD) {
                 this._registerSpeech(ssrc, rms);
             }
-        });
-        stream.once('end', () => {
-            this.hookedStreams.delete(ssrc);
-            logger('debug', 'Ducking', `Speak stream ended for SSRC ${ssrc}. Cleaning up.`);
-            if (decoder) {
-                decoder.destroy();
-            }
-            const existing = this.activeSpeakers.get(ssrc);
-            if (existing) {
-                clearTimeout(existing);
-                this.activeSpeakers.delete(ssrc);
-                logger('debug', 'Ducking', `Cleared speaker ${ssrc} because stream ended.`);
-                if (this.activeSpeakers.size === 0)
-                    this._restore();
-            }
-        });
+        };
+        const onEnd = () => this._cleanupStream(ssrc);
+        this.activeStreams.set(ssrc, { stream, decoder, onData, onEnd });
+        stream.pipe(decoder);
+        decoder.on('data', onData);
+        stream.once('end', onEnd);
+        stream.once('close', onEnd);
     };
     connection = null;
     guildId;
@@ -90,6 +90,12 @@ export class DuckingController {
     }
     setStreamControl(control) {
         this.streamControl = control;
+        if (!control) {
+            for (const ssrc of this.activeStreams.keys())
+                this._cleanupStream(ssrc);
+            this._restore(0);
+            return;
+        }
         if (this.isDucked && this.streamControl) {
             try {
                 this.streamControl.fadeTo(this.config.targetVolume, this.config.duration, this.config.curve);
@@ -112,6 +118,8 @@ export class DuckingController {
             this.connection = null;
             logger('debug', 'Ducking', `Detached ducking listeners for guild ${this.guildId}`);
         }
+        for (const ssrc of this.activeStreams.keys())
+            this._cleanupStream(ssrc);
         this.hookedStreams.clear();
         this._restore(0);
     }
@@ -124,6 +132,30 @@ export class DuckingController {
     }
     currentTargetVolume = 1.0;
     lastFadeTime = 0;
+    _cleanupStream(ssrc) {
+        const entry = this.activeStreams.get(ssrc);
+        if (!entry)
+            return;
+        this.activeStreams.delete(ssrc);
+        this.hookedStreams.delete(ssrc);
+        entry.stream.off('end', entry.onEnd);
+        entry.stream.off('close', entry.onEnd);
+        if (entry.decoder) {
+            entry.decoder.off('data', entry.onData);
+            entry.stream.unpipe(entry.decoder);
+            entry.decoder.destroy();
+        }
+        else {
+            entry.stream.off('data', entry.onData);
+        }
+        const existing = this.activeSpeakers.get(ssrc);
+        if (existing) {
+            clearTimeout(existing);
+            this.activeSpeakers.delete(ssrc);
+            if (this.activeSpeakers.size === 0)
+                this._restore();
+        }
+    }
     _registerSpeech(ssrc, rms = 0) {
         const existing = this.activeSpeakers.get(ssrc);
         if (existing)
@@ -134,9 +166,10 @@ export class DuckingController {
             if (this.activeSpeakers.size === 0)
                 this._restore();
         }, DuckingController.HOLD_MS));
-        const intensity = Math.min(1.0, Math.max(0, (rms - DuckingController.RMS_THRESHOLD) / (15000 - DuckingController.RMS_THRESHOLD)));
+        const intensity = Math.min(1.0, Math.max(0, (rms - DuckingController.RMS_THRESHOLD) /
+            (15000 - DuckingController.RMS_THRESHOLD)));
         const minVol = 0.03;
-        let dynamicVol = this.config.targetVolume - (intensity * (this.config.targetVolume - minVol));
+        let dynamicVol = this.config.targetVolume - intensity * (this.config.targetVolume - minVol);
         dynamicVol = Number(Math.max(minVol, dynamicVol).toFixed(2));
         const now = Date.now();
         const wasDucked = this.isDucked;

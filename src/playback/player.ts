@@ -8,6 +8,7 @@ import discordVoice, {
   type VoicePlayerState
 } from '@performanc/voice'
 import { EndReasons, GatewayEvents } from '../constants.ts'
+import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
 import type {
   AudioMixer,
   AudioOptionsWithTransitions,
@@ -38,9 +39,8 @@ import type {
   TrackInfoExtended
 } from '../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
-import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
-import { DuckingController } from './processing/DuckingController.ts'
 import { logger } from '../utils.ts'
+import { DuckingController } from './processing/DuckingController.ts'
 
 export type GatewayEventName =
   (typeof GatewayEvents)[keyof typeof GatewayEvents]
@@ -367,6 +367,14 @@ export class Player {
     await this._audioMixerInitPromise
   }
 
+  private _destroyAudioMixer(): void {
+    if (this.audioMixer) {
+      this.audioMixer.destroy()
+      this.audioMixer = null
+    }
+    this._audioMixerInitPromise = null
+  }
+
   /**
    * Establishes the voice connection and attaches event listeners.
    */
@@ -629,6 +637,14 @@ export class Player {
         }
         this._currentResource = resource
 
+        if (this.duckingController && this.connection && resource.fadeTo) {
+          this.duckingController.attach(this.connection)
+          this.duckingController.setStreamControl({
+            fadeTo: (volume: number, durationMs: number, curve?: string) =>
+              resource.fadeTo?.(volume, durationMs, curve)
+          })
+        }
+
         return
       }
 
@@ -814,6 +830,7 @@ export class Player {
     this.currentLyrics = null
     this.lyricsLineIndex = -1
     this._fading('reset')
+    this._destroyAudioMixer()
     this._lyricsBasePosition = 0
     this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
     if (this._lyricsMarkerTimer) {
@@ -858,6 +875,11 @@ export class Player {
       | ExtendedAudioStream
       | undefined
       | null
+
+    if (this.duckingController) {
+      this.duckingController.setStreamControl(null)
+      this.duckingController.detach()
+    }
 
     if (this._currentResource) {
       try {
@@ -1316,8 +1338,7 @@ export class Player {
               'Player',
               `Player for guild ${this.guildId} is starving but the network stream has finished. Treating as natural trackEnd.`
             )
-            this._emitTrackEnd(EndReasons.FINISHED)
-            this._resetTrack()
+            this.connection.stop(EndReasons.FINISHED)
             return false
           }
 
@@ -1384,8 +1405,7 @@ export class Player {
               'Player',
               `Player for guild ${this.guildId} is near track end (${position}/${trackLength}ms). Treating as natural finish instead of stuck.`
             )
-            this._emitTrackEnd(EndReasons.FINISHED)
-            this._resetTrack()
+            this.connection.stop(EndReasons.FINISHED)
             return false
           }
 
@@ -1647,9 +1667,10 @@ export class Player {
 
     // Connect ducking controller to the new audio stream
     if (this.duckingController && resource.fadeTo) {
+      this.duckingController.attach(this.connection)
       this.duckingController.setStreamControl({
         fadeTo: (volume: number, durationMs: number, curve?: string) =>
-          resource.fadeTo!(volume, durationMs, curve)
+          resource.fadeTo?.(volume, durationMs, curve)
       })
     }
 
@@ -2335,9 +2356,10 @@ export class Player {
 
     // Connect ducking controller to the new audio stream
     if (this.duckingController && resource.fadeTo) {
+      this.duckingController.attach(this.connection)
       this.duckingController.setStreamControl({
         fadeTo: (volume: number, durationMs: number, curve?: string) =>
-          resource.fadeTo!(volume, durationMs, curve)
+          resource.fadeTo?.(volume, durationMs, curve)
       })
     }
     await this.waitEvent(
@@ -2639,7 +2661,8 @@ export class Player {
    */
   private _resolveDuckingConfig(): DuckingConfig {
     const fadingDucking = this.fading?.ducking
-    const configDucking = this.nodelink.options?.playback?.audio?.fading?.ducking
+    const configDucking =
+      this.nodelink.options?.playback?.audio?.fading?.ducking
 
     const source = fadingDucking ?? configDucking
 
@@ -2684,7 +2707,7 @@ export class Player {
         const stream = this.connection.audioStream
         this.duckingController.setStreamControl({
           fadeTo: (volume: number, durationMs: number, curve?: string) =>
-            stream.fadeTo!(volume, durationMs, curve)
+            stream.fadeTo?.(volume, durationMs, curve)
         })
       }
     } else {
@@ -3005,12 +3028,12 @@ export class Player {
         }
         this._cleanupSSRCStreams(this.connection)
         this.connection.destroy()
-        
+
         if (this.duckingController) {
           this.duckingController.destroy()
           this.duckingController = null
         }
-        
+
         this.connection = null
       } catch (err) {
         const error = err as Error
@@ -3032,11 +3055,7 @@ export class Player {
       guildId: this.guildId
     })
 
-    if (this.audioMixer) {
-      this.audioMixer.destroy()
-      this.audioMixer = null
-    }
-    this._audioMixerInitPromise = null
+    this._destroyAudioMixer()
 
     if (this._currentResource) {
       try {
@@ -3721,7 +3740,11 @@ export class Player {
       if (fadeType === 'volume' || fadeType === 'both') {
         const targetVol = this.duckingController?.getTargetVolume(1) ?? 1
         if ((stream as AudioResource).fadeTo)
-          (stream as AudioResource).fadeTo?.(targetVol, section.duration, section.curve)
+          (stream as AudioResource).fadeTo?.(
+            targetVol,
+            section.duration,
+            section.curve
+          )
       }
       if (fadeType === 'tape' || fadeType === 'both') {
         if ((stream as AudioResource).tapeTo)

@@ -1869,11 +1869,11 @@ export default class YouTubeSource {
         };
         const startStreaming = async () => {
             const MIN_TARGET_SECONDS = 2;
-            const MAX_TARGET_SECONDS = 30;
+            const MAX_TARGET_SECONDS = 12;
             const INITIAL_TARGET_SECONDS = 4;
             let targetSeconds = INITIAL_TARGET_SECONDS;
             const ABS_MIN_BYTES = 64 * 1024;
-            const ABS_MAX_BYTES = 2 * 1024 * 1024;
+            const ABS_MAX_BYTES = 512 * 1024;
             const trackBytesPerSecond = contentLength > 0 && decodedTrack.length > 0
                 ? contentLength / (decodedTrack.length / 1000)
                 : 16_000;
@@ -1924,8 +1924,7 @@ export default class YouTubeSource {
                         }
                         return;
                     }
-                    this.reportProxyStatus(proxyToUse, !result.error &&
-                        (result.statusCode === 200 || result.statusCode === 206), result.statusCode || 0, Date.now() - fetchStartTime);
+                    this.reportProxyStatus(proxyToUse, !result.error && result.statusCode === 206, result.statusCode || 0, Date.now() - fetchStartTime);
                     if (result.error ||
                         (result.statusCode !== 200 && result.statusCode !== 206)) {
                         if (result.statusCode === 403 || result.statusCode === 404) {
@@ -1942,6 +1941,30 @@ export default class YouTubeSource {
                         logger('warn', 'YouTube', `HTTP ${result.statusCode}, retrying in ${retryDelay}ms...`);
                         await sleep(retryDelay);
                         continue;
+                    }
+                    const contentRangeHeader = result.headers?.['content-range'];
+                    const contentRange = Array.isArray(contentRangeHeader)
+                        ? contentRangeHeader[0]
+                        : contentRangeHeader == null
+                            ? null
+                            : String(contentRangeHeader);
+                    const rangeMatch = result.statusCode === 206
+                        ? /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(contentRange ?? '')
+                        : null;
+                    const responseStart = rangeMatch ? Number(rangeMatch[1]) : -1;
+                    const responseEnd = rangeMatch ? Number(rangeMatch[2]) : -1;
+                    if (result.statusCode !== 206 ||
+                        responseStart !== start ||
+                        responseEnd < responseStart ||
+                        responseEnd > end) {
+                        const responseStream = result.stream;
+                        responseStream?.destroy?.();
+                        logger('warn', 'YouTube', `Invalid range response for ${rangeHeader}: HTTP ${result.statusCode}, Content-Range ${contentRange ?? 'missing'}. Refreshing URL...`);
+                        const refreshed = await refreshUrl('invalid range response');
+                        if (refreshed)
+                            continue;
+                        cleanup(new Error('Invalid HTTP range response'));
+                        return;
                     }
                     const responseStream = result.stream;
                     activeResponseStream = responseStream;
@@ -2044,7 +2067,7 @@ export default class YouTubeSource {
                         }
                         logger('warn', 'YouTube', `Connection reset at ${totalBytesReceived} bytes.`);
                         // Try same URL first (it's probably still valid) since it takes ~6 hours for an URL to expire
-                        const retryDelay = Math.min(1000 * 2 ** consecutiveResets, 4000);
+                        const retryDelay = Math.min(250 * 2 ** consecutiveResets, 1000);
                         consecutiveResets++;
                         logger('warn', 'YouTube', `Retrying same URL in ${retryDelay}ms (consecutive reset ${consecutiveResets})...`);
                         await sleep(retryDelay);

@@ -1,7 +1,12 @@
+import { Buffer } from 'node:buffer';
 import { createRequire } from 'node:module';
 import { Transform } from 'node:stream';
 import { bufferPool } from '../structs/BufferPool.js';
 const require = createRequire(import.meta.url);
+const OPUS_MAX_PACKET_SIZE = 4000;
+const OPUS_MAX_PACKET_DURATION_MS = 120;
+const PCM_SAMPLE_BYTES = 2;
+// ^^ @toddynnn/voice-opus related, the encodeInto() functions does not check for MAX_PACKET_SIZE, unlike the encode().
 const OPUS_CTL = {
     BITRATE: 4002,
     FEC: 4012,
@@ -69,14 +74,18 @@ export class Encoder extends Transform {
     frameSize;
     frameBytes;
     leftover;
+    leftoverStorage;
+    encodedScratch;
     constructor({ rate = 48000, channels = 2, frameSize = 960, application = 'audio' } = {}) {
         super({ readableObjectMode: true });
         const { instance, lib } = _createInstance(rate, channels, application);
         this.enc = instance;
         this.lib = lib;
         this.frameSize = frameSize;
-        this.frameBytes = frameSize * channels * 2;
+        this.frameBytes = frameSize * channels * PCM_SAMPLE_BYTES;
         this.leftover = null;
+        this.leftoverStorage = null;
+        this.encodedScratch = Buffer.allocUnsafe(OPUS_MAX_PACKET_SIZE);
     }
     _transform(chunk, _encoding, cb) {
         if (!chunk?.length) {
@@ -94,9 +103,11 @@ export class Encoder extends Transform {
             pooledBuf = bufferPool.acquire(totalLen);
             this.leftover.copy(pooledBuf, 0);
             chunk.copy(pooledBuf, this.leftover.length);
-            bufferPool.release(this.leftover);
+            if (this.leftoverStorage)
+                bufferPool.release(this.leftoverStorage);
             this.leftover = null;
-            buf = pooledBuf;
+            this.leftoverStorage = null;
+            buf = pooledBuf.subarray(0, totalLen);
         }
         else {
             buf = chunk;
@@ -107,13 +118,22 @@ export class Encoder extends Transform {
             const off = i * this.frameBytes;
             const frame = buf.subarray(off, off + this.frameBytes);
             try {
-                const encoded = this.lib.name === 'opusscript'
-                    ? this.enc.encode(frame, this.frameSize)
-                    : this.enc.encode(frame);
+                let encoded;
+                if (this.enc.encodeInto && this.encodedScratch) {
+                    const written = this.enc.encodeInto(frame, this.encodedScratch);
+                    encoded = Buffer.from(this.encodedScratch.subarray(0, written));
+                }
+                else {
+                    encoded =
+                        this.lib.name === 'opusscript'
+                            ? this.enc.encode(frame, this.frameSize)
+                            : this.enc.encode(frame);
+                }
                 this.push(encoded);
             }
             catch (e) {
                 this.leftover = null;
+                this.leftoverStorage = null;
                 if (pooledBuf)
                     bufferPool.release(pooledBuf);
                 cb(e instanceof Error ? e : new Error(String(e)));
@@ -122,8 +142,9 @@ export class Encoder extends Transform {
         }
         if (consumed < buf.length) {
             const remaining = buf.subarray(consumed);
-            this.leftover = bufferPool.acquire(remaining.length);
-            remaining.copy(this.leftover, 0, 0, remaining.length);
+            this.leftoverStorage = bufferPool.acquire(remaining.length);
+            remaining.copy(this.leftoverStorage, 0, 0, remaining.length);
+            this.leftover = this.leftoverStorage.subarray(0, remaining.length);
         }
         // Release the temporary concatenation buffer back to the pool
         if (pooledBuf)
@@ -132,8 +153,10 @@ export class Encoder extends Transform {
     }
     _flush(cb) {
         if (this.leftover) {
-            bufferPool.release(this.leftover);
+            if (this.leftoverStorage)
+                bufferPool.release(this.leftoverStorage);
             this.leftover = null;
+            this.leftoverStorage = null;
         }
         cb();
     }
@@ -142,9 +165,12 @@ export class Encoder extends Transform {
             this.enc.delete();
         }
         this.enc = null;
+        this.encodedScratch = null;
         if (this.leftover) {
-            bufferPool.release(this.leftover);
+            if (this.leftoverStorage)
+                bufferPool.release(this.leftoverStorage);
             this.leftover = null;
+            this.leftoverStorage = null;
         }
         cb(err);
     }
@@ -171,17 +197,30 @@ export class Encoder extends Transform {
 export class Decoder extends Transform {
     dec;
     lib;
+    pcmScratch;
     constructor({ rate = 48000, channels = 2 } = {}) {
         super({ readableObjectMode: false });
         const { instance, lib } = _createInstance(rate, channels, 'voip');
         this.dec = instance;
         this.lib = lib;
+        const maxSamplesPerChannel = Math.ceil((rate * OPUS_MAX_PACKET_DURATION_MS) / 1000);
+        this.pcmScratch = Buffer.allocUnsafe(maxSamplesPerChannel * channels * PCM_SAMPLE_BYTES);
     }
     _transform(chunk, _encoding, cb) {
         try {
             if (!this.dec)
                 throw new Error('Decoder not ready.');
-            this.push(this.dec.decode(chunk));
+            if (this.dec.decodeInto && this.pcmScratch) {
+                const written = this.dec.decodeInto(chunk, this.pcmScratch);
+                // Copy because stream consumers may retain the chunk after this call.
+                // pushing it to scratch would result: 
+                // the scratch subarray would allow the next frame to overwrite queued audio, causing corruption.
+                // and its also required by ownership boundary btw.
+                this.push(Buffer.from(this.pcmScratch.subarray(0, written)));
+            }
+            else {
+                this.push(this.dec.decode(chunk));
+            }
             cb();
         }
         catch (e) {
@@ -193,6 +232,7 @@ export class Decoder extends Transform {
             this.dec.delete();
         }
         this.dec = null;
+        this.pcmScratch = null;
         cb(err);
     }
 }

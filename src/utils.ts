@@ -1430,12 +1430,15 @@ async function _internalHttp1Request(
         finalStream = res.pipe(zlib.createInflate())
       }
 
+      let cleanupBody: (() => void) | undefined
       res.on('error', (err) => {
+        cleanupBody?.()
         cleanupReq()
         reject(new Error(`Response error for ${urlString}: ${err.message}`))
       })
       if (finalStream !== res) {
         finalStream.on('error', (err) => {
+          cleanupBody?.()
           cleanupReq()
           reject(
             new Error(`Decompression error for ${urlString}: ${err.message}`)
@@ -1455,7 +1458,7 @@ async function _internalHttp1Request(
 
       const chunks: Buffer[] = []
       let bufferedBytes = 0
-      finalStream.on('data', (chunk) => {
+      const onData = (chunk: Buffer) => {
         bufferedBytes += chunk.length
         if (bufferedBytes > maxResponseBodyBytes) {
           ;(
@@ -1470,11 +1473,11 @@ async function _internalHttp1Request(
           return
         }
         chunks.push(chunk)
-      })
-      finalStream.on('end', () => {
-        cleanupReq()
+      }
+      const onEnd = () => {
         try {
           const responseBuffer = Buffer.concat(chunks)
+          cleanupBody?.()
 
           if (options.responseType === 'buffer') {
             resolve({
@@ -1507,8 +1510,20 @@ async function _internalHttp1Request(
               `Error processing response body for ${urlString}: ${err instanceof Error ? err.message : String(err)}`
             )
           )
+        } finally {
+          cleanupBody?.()
+          cleanupReq()
         }
-      })
+      }
+
+      cleanupBody = () => {
+        finalStream.removeListener('data', onData)
+        finalStream.removeListener('end', onEnd)
+        chunks.length = 0
+        cleanupBody = undefined
+      }
+      finalStream.on('data', onData)
+      finalStream.once('end', onEnd)
     })
 
     const reqErrorHandler = (err: Error) => {

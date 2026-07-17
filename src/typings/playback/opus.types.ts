@@ -20,6 +20,14 @@ export interface OpusEncoderInstance {
   encode(buffer: Buffer, frameSize?: number): Buffer
 
   /**
+   * Encodes PCM into a caller-owned output buffer.
+   * @param buffer - PCM audio buffer to encode.
+   * @param output - Destination for the encoded Opus packet.
+   * @returns Number of bytes written to the destination.
+   */
+  encodeInto?(buffer: Buffer, output: Buffer): number
+
+  /**
    * Sets the encoding bitrate.
    * @param bitrate - Bitrate in bits per second.
    */
@@ -49,6 +57,14 @@ export interface OpusDecoderInstance {
    * @returns Decoded PCM audio buffer.
    */
   decode(buffer: Buffer): Buffer
+
+  /**
+   * Decodes an Opus packet into a caller-owned PCM buffer.
+   * @param buffer - Opus packet to decode.
+   * @param output - Destination for decoded PCM audio.
+   * @returns Number of bytes written to the destination.
+   */
+  decodeInto?(buffer: Buffer, output: Buffer): number
 
   /**
    * Releases resources associated with the decoder.

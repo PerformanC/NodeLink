@@ -3,8 +3,8 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { SeekError } from '@ecliptia/seekable-stream';
 import discordVoice from '@performanc/voice';
 import { EndReasons, GatewayEvents } from '../constants.js';
-import { DuckingController } from './processing/DuckingController.js';
 import { logger } from '../utils.js';
+import { DuckingController } from './processing/DuckingController.js';
 let createAudioResource = null;
 let createSeekeableAudioResource = null;
 const trackFinishMemoryTraceEnabled = process.env.NODELINK_TRACK_FINISH_MEMORY_TRACE?.toLowerCase() === 'true';
@@ -239,6 +239,13 @@ export class Player {
         }
         await this._audioMixerInitPromise;
     }
+    _destroyAudioMixer() {
+        if (this.audioMixer) {
+            this.audioMixer.destroy();
+            this.audioMixer = null;
+        }
+        this._audioMixerInitPromise = null;
+    }
     /**
      * Establishes the voice connection and attaches event listeners.
      */
@@ -418,6 +425,12 @@ export class Player {
                     catch { }
                 }
                 this._currentResource = resource;
+                if (this.duckingController && this.connection && resource.fadeTo) {
+                    this.duckingController.attach(this.connection);
+                    this.duckingController.setStreamControl({
+                        fadeTo: (volume, durationMs, curve) => resource.fadeTo?.(volume, durationMs, curve)
+                    });
+                }
                 return;
             }
             if ((this.isUpdatingTrack || this._isSeeking) &&
@@ -549,6 +562,7 @@ export class Player {
         this.currentLyrics = null;
         this.lyricsLineIndex = -1;
         this._fading('reset');
+        this._destroyAudioMixer();
         this._lyricsBasePosition = 0;
         this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
         if (this._lyricsMarkerTimer) {
@@ -576,6 +590,10 @@ export class Player {
         if (mls?._pendingKeyPackage)
             mls._pendingKeyPackage = null;
         const audioStream = conn?.audioStream;
+        if (this.duckingController) {
+            this.duckingController.setStreamControl(null);
+            this.duckingController.detach();
+        }
         if (this._currentResource) {
             try {
                 this._currentResource.destroy();
@@ -891,8 +909,7 @@ export class Player {
                     const pipelineStream = this._getAudioStream();
                     if (pipelineStream?.isPipelineFinished?.()) {
                         logger('debug', 'Player', `Player for guild ${this.guildId} is starving but the network stream has finished. Treating as natural trackEnd.`);
-                        this._emitTrackEnd(EndReasons.FINISHED);
-                        this._resetTrack();
+                        this.connection.stop(EndReasons.FINISHED);
                         return false;
                     }
                     if (this.streamInfo?.format === 'mp4') {
@@ -933,8 +950,7 @@ export class Player {
                     const endThreshold = playbackSpeed < 1.0 ? 5000 : 2000;
                     if (trackLength > 0 && position >= trackLength - endThreshold) {
                         logger('debug', 'Player', `Player for guild ${this.guildId} is near track end (${position}/${trackLength}ms). Treating as natural finish instead of stuck.`);
-                        this._emitTrackEnd(EndReasons.FINISHED);
-                        this._resetTrack();
+                        this.connection.stop(EndReasons.FINISHED);
                         return false;
                     }
                     if (this.stuckRecoveryCount >= Player.MAX_STUCK_RECOVERY_ATTEMPTS) {
@@ -1108,8 +1124,9 @@ export class Player {
         this.connection.play(resource);
         // Connect ducking controller to the new audio stream
         if (this.duckingController && resource.fadeTo) {
+            this.duckingController.attach(this.connection);
             this.duckingController.setStreamControl({
-                fadeTo: (volume, durationMs, curve) => resource.fadeTo(volume, durationMs, curve)
+                fadeTo: (volume, durationMs, curve) => resource.fadeTo?.(volume, durationMs, curve)
             });
         }
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
@@ -1518,8 +1535,9 @@ export class Player {
         this.connection.play(resource);
         // Connect ducking controller to the new audio stream
         if (this.duckingController && resource.fadeTo) {
+            this.duckingController.attach(this.connection);
             this.duckingController.setStreamControl({
-                fadeTo: (volume, durationMs, curve) => resource.fadeTo(volume, durationMs, curve)
+                fadeTo: (volume, durationMs, curve) => resource.fadeTo?.(volume, durationMs, curve)
             });
         }
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
@@ -1766,7 +1784,7 @@ export class Player {
             if (this.connection?.audioStream?.fadeTo) {
                 const stream = this.connection.audioStream;
                 this.duckingController.setStreamControl({
-                    fadeTo: (volume, durationMs, curve) => stream.fadeTo(volume, durationMs, curve)
+                    fadeTo: (volume, durationMs, curve) => stream.fadeTo?.(volume, durationMs, curve)
                 });
             }
         }
@@ -2031,11 +2049,7 @@ export class Player {
         this.emitEvent(GatewayEvents.PLAYER_DESTROYED, {
             guildId: this.guildId
         });
-        if (this.audioMixer) {
-            this.audioMixer.destroy();
-            this.audioMixer = null;
-        }
-        this._audioMixerInitPromise = null;
+        this._destroyAudioMixer();
         if (this._currentResource) {
             try {
                 this._currentResource.destroy();

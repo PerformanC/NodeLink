@@ -1,7 +1,11 @@
-import { Buffer } from 'node:buffer'
+import type { Buffer } from 'node:buffer'
+import type { Readable } from 'node:stream'
 import type { VoiceConnection } from '@performanc/voice'
-import type { DuckingConfig, DuckingStreamControl } from '../../typings/playback/ducking.types.ts'
 import { Decoder as OpusDecoder } from '../../playback/opus/Opus.ts'
+import type {
+  DuckingConfig,
+  DuckingStreamControl
+} from '../../typings/playback/ducking.types.ts'
 import { logger } from '../../utils.ts'
 
 /**
@@ -15,15 +19,26 @@ export class DuckingController {
   private isDucked = false
   private destroyed = false
   private hookedStreams = new Set<number>()
+  private activeStreams = new Map<
+    number,
+    {
+      stream: Readable
+      decoder: OpusDecoder | null
+      onData: (chunk: Buffer) => void
+      onEnd: () => void
+    }
+  >()
 
   private static readonly HOLD_MS = 600
   private static readonly RMS_THRESHOLD = 3500
 
   private readonly _onSpeakStart = (_userId: string, ssrc: number): void => {
-    if (this.destroyed || !this.config.enabled) return
+    if (this.destroyed || !this.config.enabled || !this.streamControl) return
     if (this.hookedStreams.has(ssrc)) return
 
-    const stream = this.connection?.getSpeakStream?.(ssrc)
+    const stream = this.connection?.getSpeakStream?.(ssrc) as
+      | Readable
+      | undefined
     if (!stream) return
 
     this.hookedStreams.add(ssrc)
@@ -31,25 +46,36 @@ export class DuckingController {
     let decoder: OpusDecoder | null = null
     try {
       decoder = new OpusDecoder({ rate: 48000, channels: 2 })
-      stream.pipe(decoder)
     } catch (err) {
-      logger('warn', 'Ducking', `Failed to create Opus decoder for RMS ducking: ${(err as Error).message}`)
-      stream.on('data', (chunk: Buffer) => {
+      logger(
+        'warn',
+        'Ducking',
+        `Failed to create Opus decoder for RMS ducking: ${(err as Error).message}`
+      )
+      const onData = (chunk: Buffer) => {
         if (this.destroyed || !this.config.enabled) return
         if (chunk.length < 40) return
-        
+
         this._registerSpeech(ssrc)
+      }
+      const onEnd = () => this._cleanupStream(ssrc)
+      this.activeStreams.set(ssrc, {
+        stream,
+        decoder: null,
+        onData,
+        onEnd
       })
-      
-      stream.once('end', () => this.hookedStreams.delete(ssrc))
+      stream.on('data', onData)
+      stream.once('end', onEnd)
+      stream.once('close', onEnd)
       return
     }
 
     let lastLogTime = 0
 
-    decoder.on('data', (pcm: Buffer) => {
+    const onData = (pcm: Buffer) => {
       if (this.destroyed || !this.config.enabled) return
-      
+
       let sumSquare = 0
       for (let i = 0; i < pcm.length; i += 2) {
         const sample = pcm.readInt16LE(i)
@@ -59,30 +85,24 @@ export class DuckingController {
 
       const now = Date.now()
       if (now - lastLogTime > 1000) {
-        logger('debug', 'Ducking', `[RMS Debug] SSRC ${ssrc} - Current RMS: ${Math.round(rms)} (Threshold: ${DuckingController.RMS_THRESHOLD})`)
+        logger(
+          'debug',
+          'Ducking',
+          `[RMS Debug] SSRC ${ssrc} - Current RMS: ${Math.round(rms)} (Threshold: ${DuckingController.RMS_THRESHOLD})`
+        )
         lastLogTime = now
       }
 
       if (rms >= DuckingController.RMS_THRESHOLD) {
         this._registerSpeech(ssrc, rms)
       }
-    })
-
-    stream.once('end', () => {
-      this.hookedStreams.delete(ssrc)
-      logger('debug', 'Ducking', `Speak stream ended for SSRC ${ssrc}. Cleaning up.`)
-      if (decoder) {
-        decoder.destroy()
-      }
-
-      const existing = this.activeSpeakers.get(ssrc)
-      if (existing) {
-        clearTimeout(existing)
-        this.activeSpeakers.delete(ssrc)
-        logger('debug', 'Ducking', `Cleared speaker ${ssrc} because stream ended.`)
-        if (this.activeSpeakers.size === 0) this._restore()
-      }
-    })
+    }
+    const onEnd = () => this._cleanupStream(ssrc)
+    this.activeStreams.set(ssrc, { stream, decoder, onData, onEnd })
+    stream.pipe(decoder)
+    decoder.on('data', onData)
+    stream.once('end', onEnd)
+    stream.once('close', onEnd)
   }
 
   private connection: VoiceConnection | null = null
@@ -104,11 +124,24 @@ export class DuckingController {
 
   public setStreamControl(control: DuckingStreamControl | null): void {
     this.streamControl = control
+    if (!control) {
+      for (const ssrc of this.activeStreams.keys()) this._cleanupStream(ssrc)
+      this._restore(0)
+      return
+    }
     if (this.isDucked && this.streamControl) {
       try {
-        this.streamControl.fadeTo(this.config.targetVolume, this.config.duration, this.config.curve)
+        this.streamControl.fadeTo(
+          this.config.targetVolume,
+          this.config.duration,
+          this.config.curve
+        )
       } catch (err) {
-        logger('error', 'Ducking', `Failed to reapply ducked volume for guild ${this.guildId}: ${(err as Error).message}`)
+        logger(
+          'error',
+          'Ducking',
+          `Failed to reapply ducked volume for guild ${this.guildId}: ${(err as Error).message}`
+        )
       }
     }
   }
@@ -117,15 +150,24 @@ export class DuckingController {
     if (this.connection) return
     this.connection = connection
     this.connection.on('speakStart', this._onSpeakStart)
-    logger('debug', 'Ducking', `Attached ducking listeners for guild ${this.guildId}`)
+    logger(
+      'debug',
+      'Ducking',
+      `Attached ducking listeners for guild ${this.guildId}`
+    )
   }
 
   public detach(): void {
     if (this.connection) {
       this.connection.removeListener('speakStart', this._onSpeakStart)
       this.connection = null
-      logger('debug', 'Ducking', `Detached ducking listeners for guild ${this.guildId}`)
+      logger(
+        'debug',
+        'Ducking',
+        `Detached ducking listeners for guild ${this.guildId}`
+      )
     }
+    for (const ssrc of this.activeStreams.keys()) this._cleanupStream(ssrc)
     this.hookedStreams.clear()
     this._restore(0)
   }
@@ -141,45 +183,92 @@ export class DuckingController {
   private currentTargetVolume = 1.0
   private lastFadeTime = 0
 
+  private _cleanupStream(ssrc: number): void {
+    const entry = this.activeStreams.get(ssrc)
+    if (!entry) return
+    this.activeStreams.delete(ssrc)
+    this.hookedStreams.delete(ssrc)
+    entry.stream.off('end', entry.onEnd)
+    entry.stream.off('close', entry.onEnd)
+    if (entry.decoder) {
+      entry.decoder.off('data', entry.onData)
+      entry.stream.unpipe(entry.decoder)
+      entry.decoder.destroy()
+    } else {
+      entry.stream.off('data', entry.onData)
+    }
+
+    const existing = this.activeSpeakers.get(ssrc)
+    if (existing) {
+      clearTimeout(existing)
+      this.activeSpeakers.delete(ssrc)
+      if (this.activeSpeakers.size === 0) this._restore()
+    }
+  }
+
   private _registerSpeech(ssrc: number, rms = 0): void {
     const existing = this.activeSpeakers.get(ssrc)
     if (existing) clearTimeout(existing)
 
-    this.activeSpeakers.set(ssrc, setTimeout(() => {
-      this.activeSpeakers.delete(ssrc)
-      logger('debug', 'Ducking', `Speaker ${ssrc} timeout expired. Active speakers: ${this.activeSpeakers.size}`)
-      if (this.activeSpeakers.size === 0) this._restore()
-    }, DuckingController.HOLD_MS))
+    this.activeSpeakers.set(
+      ssrc,
+      setTimeout(() => {
+        this.activeSpeakers.delete(ssrc)
+        logger(
+          'debug',
+          'Ducking',
+          `Speaker ${ssrc} timeout expired. Active speakers: ${this.activeSpeakers.size}`
+        )
+        if (this.activeSpeakers.size === 0) this._restore()
+      }, DuckingController.HOLD_MS)
+    )
 
-    const intensity = Math.min(1.0, Math.max(0, (rms - DuckingController.RMS_THRESHOLD) / (15000 - DuckingController.RMS_THRESHOLD)))
+    const intensity = Math.min(
+      1.0,
+      Math.max(
+        0,
+        (rms - DuckingController.RMS_THRESHOLD) /
+          (15000 - DuckingController.RMS_THRESHOLD)
+      )
+    )
     const minVol = 0.03
-    let dynamicVol = this.config.targetVolume - (intensity * (this.config.targetVolume - minVol))
+    let dynamicVol =
+      this.config.targetVolume - intensity * (this.config.targetVolume - minVol)
     dynamicVol = Number(Math.max(minVol, dynamicVol).toFixed(2))
 
     const now = Date.now()
     const wasDucked = this.isDucked
-    
+
     const isAttacking = dynamicVol < this.currentTargetVolume
-    
+
     const threshold = isAttacking ? 0.02 : 0.06
-    const isSignificantChange = Math.abs(this.currentTargetVolume - dynamicVol) >= threshold
+    const isSignificantChange =
+      Math.abs(this.currentTargetVolume - dynamicVol) >= threshold
 
     if (!wasDucked || (isSignificantChange && now - this.lastFadeTime > 100)) {
       this.isDucked = true
-      
-      let fadeDur = 50 
+
+      let fadeDur = 50
       if (!isAttacking && wasDucked) {
         fadeDur = 400
       }
-      
+
       this.currentTargetVolume = dynamicVol
       this.lastFadeTime = now
-      
+
       try {
         this.streamControl?.fadeTo(dynamicVol, fadeDur, this.config.curve)
-        logger('debug', 'Ducking', `Proportional Ducking -> Vol: ${dynamicVol} | Dur: ${fadeDur}ms | RMS: ${Math.round(rms)} | Guild: ${this.guildId}`)
+        logger(
+          'debug',
+          'Ducking',
+          `Proportional Ducking -> Vol: ${dynamicVol} | Dur: ${fadeDur}ms | RMS: ${Math.round(rms)} | Guild: ${this.guildId}`
+        )
       } catch (err) {
-        logger('error', 'Ducking', `Failed to dynamically duck volume for guild ${this.guildId}: ${(err as Error).message}`)
+        logger(
+          'error',
+          'Ducking',
+          `Failed to dynamically duck volume for guild ${this.guildId}: ${(err as Error).message}`
+        )
       }
     }
   }
@@ -187,14 +276,22 @@ export class DuckingController {
     if (!this.isDucked) return
     this.isDucked = false
     this.currentTargetVolume = 1.0
-    
+
     const duration = overrideDuration ?? Math.max(this.config.duration, 600)
-    
+
     try {
       this.streamControl?.fadeTo(1.0, duration, this.config.curve)
-      logger('debug', 'Ducking', `Volume restored to 1.0 over ${duration}ms for guild ${this.guildId}`)
+      logger(
+        'debug',
+        'Ducking',
+        `Volume restored to 1.0 over ${duration}ms for guild ${this.guildId}`
+      )
     } catch (err) {
-      logger('error', 'Ducking', `Failed to restore volume for guild ${this.guildId}: ${(err as Error).message}`)
+      logger(
+        'error',
+        'Ducking',
+        `Failed to restore volume for guild ${this.guildId}: ${(err as Error).message}`
+      )
     }
   }
 }

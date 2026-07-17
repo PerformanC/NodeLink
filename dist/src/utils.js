@@ -1198,12 +1198,15 @@ async function _internalHttp1Request(urlString, options = {}) {
             else if (encoding === 'deflate') {
                 finalStream = res.pipe(zlib.createInflate());
             }
+            let cleanupBody;
             res.on('error', (err) => {
+                cleanupBody?.();
                 cleanupReq();
                 reject(new Error(`Response error for ${urlString}: ${err.message}`));
             });
             if (finalStream !== res) {
                 finalStream.on('error', (err) => {
+                    cleanupBody?.();
                     cleanupReq();
                     reject(new Error(`Decompression error for ${urlString}: ${err.message}`));
                 });
@@ -1219,7 +1222,7 @@ async function _internalHttp1Request(urlString, options = {}) {
             }
             const chunks = [];
             let bufferedBytes = 0;
-            finalStream.on('data', (chunk) => {
+            const onData = (chunk) => {
                 bufferedBytes += chunk.length;
                 if (bufferedBytes > maxResponseBodyBytes) {
                     ;
@@ -1227,11 +1230,11 @@ async function _internalHttp1Request(urlString, options = {}) {
                     return;
                 }
                 chunks.push(chunk);
-            });
-            finalStream.on('end', () => {
-                cleanupReq();
+            };
+            const onEnd = () => {
                 try {
                     const responseBuffer = Buffer.concat(chunks);
+                    cleanupBody?.();
                     if (options.responseType === 'buffer') {
                         resolve({
                             statusCode,
@@ -1260,7 +1263,19 @@ async function _internalHttp1Request(urlString, options = {}) {
                 catch (err) {
                     reject(new Error(`Error processing response body for ${urlString}: ${err instanceof Error ? err.message : String(err)}`));
                 }
-            });
+                finally {
+                    cleanupBody?.();
+                    cleanupReq();
+                }
+            };
+            cleanupBody = () => {
+                finalStream.removeListener('data', onData);
+                finalStream.removeListener('end', onEnd);
+                chunks.length = 0;
+                cleanupBody = undefined;
+            };
+            finalStream.on('data', onData);
+            finalStream.once('end', onEnd);
         });
         const reqErrorHandler = (err) => {
             cleanupReq();
