@@ -1754,8 +1754,12 @@ async function checkDependencyUpdates(credentialManager) {
         }
         try {
             logger('info', 'Server', `Running automatic update for core packages...`);
-            const isPnpm = fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml'));
-            const cmd = isPnpm ? 'pnpm update' : 'npm update';
+            // pnpm and bun can be on the same path, so we check both
+            // (referring to myself, im lazy to delete the pnpm lock file)
+            const isBun = process.versions.bun &&
+                fs.existsSync(path.resolve(process.cwd(), 'bun.lock'));
+            const isPnpm = fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml')) && !isBun;
+            const cmd = isPnpm ? 'pnpm update' : isBun ? 'bun update' : 'npm update';
             execSync(cmd, { stdio: 'inherit' });
             logger('info', 'Server', 'Dependencies updated successfully. Restarting process to apply changes...');
             const { spawn } = await import('node:child_process');
