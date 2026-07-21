@@ -206,11 +206,17 @@ export default class InstagramSource {
     if (!value) return value as string
 
     return value
-      .replace(/&amp;/g, '&')
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
+        String.fromCodePoint(Number.parseInt(hex, 16))
+      )
+      .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+      .replace(/&/g, '&')
       .replace(/&#39;/g, "'")
-      .replace(/&quot;/g, '"')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
+      .replace(/"/g, '"')
+      .replace(/</g, '<')
+      .replace(/>/g, '>')
+      .replace(/'/g, "'")
+      .replace(/&nbsp;/g, ' ')
       .trim()
   }
 
