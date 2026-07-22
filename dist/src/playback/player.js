@@ -780,7 +780,9 @@ export class Player {
                 if (!Number.isFinite(positionMs) || positionMs < 0)
                     return;
                 this.position = positionMs;
-            }
+            },
+            // specific to sabr protocol for now
+            playbackPaused: () => this.isPaused
         };
         const resolvedUrlData = {
             ...urlData,
@@ -825,6 +827,17 @@ export class Player {
             streamForResource = fetchedStream.pipe(profilerTap);
             profilerTap._sourceStream =
                 fetchedStream;
+            const seekControl = fetchedStream;
+            const beginSeekHandoff = seekControl.beginSeekHandoff;
+            if (beginSeekHandoff) {
+                ;
+                profilerTap.beginSeekHandoff = () => beginSeekHandoff();
+            }
+            const cancelSeekHandoff = seekControl.cancelSeekHandoff;
+            if (cancelSeekHandoff) {
+                ;
+                profilerTap.cancelSeekHandoff = () => cancelSeekHandoff();
+            }
             const eternalboxHandler = (data) => {
                 this.emitEvent(GatewayEvents.ETERNALBOX_JUMP, {
                     track: this.holoTrack || this.track,
@@ -1322,7 +1335,7 @@ export class Player {
                     logger('debug', 'Player', 'Stream info URL became available during wait.');
                 }
             }
-            const source = this.nodelink.sources.getSource(sourceName);
+            const source = this.nodelink.sources.getSource(resolvedSourceName);
             const hasSourceLoader = source && typeof source.loadStream === 'function';
             const canNativeSeek = !!hasSourceLoader &&
                 (this.streamInfo?.protocol === 'sabr' ||
@@ -1379,12 +1392,17 @@ export class Player {
         this.position = position;
         this.track.endTime = endTime;
         let reuseUrlData = null;
+        let seekHandoff = null;
         if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
             const inputStream = this.connection.audioStream?.pipes?.[0];
-            const previousSession = inputStream?.getSessionState?.();
+            const previousSession = await inputStream?.beginSeekHandoff?.();
             if (previousSession) {
+                seekHandoff = inputStream?.cancelSeekHandoff
+                    ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
+                    : null;
                 logger('debug', 'Player', `Extracted SABR session state: rn=${previousSession.requestNumber}, hasCookie=${!!previousSession.nextRequestPolicy?.playbackCookie}`);
                 reuseUrlData = {
+                    newTrack: this.streamInfo.newTrack,
                     protocol: this.streamInfo.protocol,
                     url: this.streamInfo.url,
                     additionalData: {
@@ -1403,14 +1421,21 @@ export class Player {
         const urlData = reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo));
         this.streamInfo = { ...urlData, trackInfo: this.track.info };
         if (urlData.exception) {
+            seekHandoff?.cancelSeekHandoff();
             const err = new Error(urlData.exception.message);
             this._onError(err);
             return false;
         }
-        const result = await this._connectAndPlayStream(urlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek`);
-        if (!result)
-            return false;
-        return true;
+        try {
+            const result = await this._connectAndPlayStream(urlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek`);
+            if (!result)
+                seekHandoff?.cancelSeekHandoff();
+            return result;
+        }
+        catch (error) {
+            seekHandoff?.cancelSeekHandoff();
+            throw error;
+        }
     }
     /**
      * Seeks using seekable-stream helper for compatible sources.

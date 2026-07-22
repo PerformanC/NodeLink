@@ -1155,6 +1155,7 @@ export default class YouTubeSource {
             formats: additionalData.formats,
             startTime: additionalData.startTime ?? 0,
             positionCallback: additionalData.positionCallback,
+            playbackPaused: additionalData.playbackPaused,
             previousSession: additionalData.previousSession
         };
         const sabr = new SabrStream(sabrConfig);
@@ -1167,12 +1168,13 @@ export default class YouTubeSource {
             readyReject = reject;
         });
         let isRecovering = false;
-        let lastRecoverAt = 0;
+        sabr.once('mediaProgress', () => {
+            if (readyResolved)
+                return;
+            readyResolved = true;
+            readyResolve();
+        });
         sabr.on('data', (chunk) => {
-            if (!readyResolved) {
-                readyResolved = true;
-                readyResolve();
-            }
             if (!stream.write(chunk)) {
                 sabr.pause();
             }
@@ -1187,24 +1189,27 @@ export default class YouTubeSource {
             stream.end();
         });
         sabr.on('finishBuffering', () => stream.emit('finishBuffering'));
-        sabr.on('stall', async () => {
-            if (isRecovering || stream.destroyed)
+        sabr.on('stall', async (reason = 'starvation', recoveryGeneration) => {
+            if (isRecovering || stream.destroyed || sabr.destroyed)
                 return;
-            const now = Date.now();
-            if (now - lastRecoverAt < 2000)
-                return;
-            lastRecoverAt = now;
             isRecovering = true;
+            const generation = recoveryGeneration ?? sabr.getMediaProgressGeneration();
             try {
-                logger('warn', 'YouTube', `SABR stall detected for ${decodedTrack.title}. Refreshing session...`);
+                logger('warn', 'YouTube', `SABR ${reason} recovery requested for ${decodedTrack.title}. Refreshing session...`);
                 const newUrlData = await this.getTrackUrl(decodedTrack, null, true);
                 if (newUrlData?.protocol !== 'sabr') {
                     throw new Error('No SABR session available for recovery');
                 }
+                if (!sabr.canCommitRecovery(generation)) {
+                    logger('debug', 'YouTube', `Discarding stale SABR replacement for ${decodedTrack.title}; media advanced during recovery.`);
+                    sabr.cancelRecovery();
+                    return;
+                }
                 const ad = (newUrlData.additionalData || {});
                 sabr.clearBuffers();
                 sabr.updateSession({
-                    serverAbrStreamingUrl: (ad.serverAbrStreamingUrl || newUrlData.url),
+                    serverAbrStreamingUrl: (ad.serverAbrStreamingUrl ||
+                        newUrlData.url),
                     videoPlaybackUstreamerConfig: ad.videoPlaybackUstreamerConfig,
                     poToken: ad.poToken,
                     visitorData: ad.visitorData,
@@ -1216,8 +1221,15 @@ export default class YouTubeSource {
             }
             catch (err) {
                 logger('warn', 'YouTube', `SABR recovery failed: ${err.message}`);
-                if (!stream.destroyed)
+                if (!readyResolved) {
+                    readyResolved = true;
+                    readyReject(err);
+                    if (!stream.destroyed)
+                        stream.destroy();
+                }
+                else if (!stream.destroyed) {
                     stream.destroy(err);
+                }
             }
             finally {
                 isRecovering = false;
@@ -1228,12 +1240,8 @@ export default class YouTubeSource {
             if (!readyResolved) {
                 readyResolved = true;
                 readyReject(err);
-            }
-            if ((err.message.includes('sabr.malformed_config') ||
-                err.message.includes('sabr.media_serving_enforcement_id_error')) &&
-                !isRecovering) {
-                logger('info', 'YouTube', `Known recoverable error detected (${err.message}), triggering stall recovery...`);
-                sabr.emit('stall');
+                if (!stream.destroyed)
+                    stream.destroy();
                 return;
             }
             if (!stream.destroyed)
@@ -1260,10 +1268,14 @@ export default class YouTubeSource {
             this.activeStreams.delete(streamKey);
         });
         stream._sabrStream = sabr;
-        stream.getSessionState = () => {
+        stream.beginSeekHandoff = () => {
             if (isDestroying || stream.destroyed)
-                return null;
-            return sabr.getSessionState();
+                return Promise.resolve(null);
+            return sabr.beginSeekHandoff();
+        };
+        stream.cancelSeekHandoff = () => {
+            if (!isDestroying && !stream.destroyed)
+                sabr.cancelSeekHandoff();
         };
         const bestAudio = (additionalData.formats ?? [])
             .filter((f) => f.mimeType?.includes('audio'))

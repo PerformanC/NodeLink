@@ -446,8 +446,6 @@ export class SabrStream extends PassThrough {
     activeSabrContextTypes;
     /** Current request sequence number. */
     requestNumber;
-    /** Whether media headers have been processed. */
-    mediaHeadersProcessed;
     /** Flag indicating the stream has been aborted. */
     _aborted;
     /** Last sequence number per itag. */
@@ -474,14 +472,30 @@ export class SabrStream extends PassThrough {
     startTime;
     /** Position callback for reporting playback progress. */
     positionCallback;
+    /** Callback used to stop the SABR playhead while playback is paused. */
+    playbackPaused;
     /** User-Agent header for HTTP requests. */
     userAgent;
     /** Whether a recovery operation is pending. */
     recoveryPending;
+    /** Whether the current session is paused for transfer to a seek stream. */
+    seekHandoffPending;
+    /** Whether this stream started by continuing a transferred seek session. */
+    usingTransferredSession;
+    /** Currently active UMP request, awaited before exporting seek state. */
+    activeRequest;
     /** Flag to prevent duplicate PO token generation. */
     poTokenGenerated;
-    /** Flag to prevent repeated stall emissions. */
-    stallEmitted;
+    /** Monotonic counter advanced whenever a media segment completes. */
+    mediaProgressGeneration;
+    /** Status-2 observations made without intervening media progress. */
+    limitedPlaybackCount;
+    /** Media generation associated with the current status-2 streak. */
+    limitedPlaybackGeneration;
+    /** Recovery requested while the current UMP response is still being read. */
+    pendingRecoveryReason;
+    /** SABR error deferred until the complete UMP response has been processed. */
+    pendingResponseError;
     /** Total downloaded duration in milliseconds. */
     totalDownloadedMs;
     /** Virtual player time for ABR state tracking. */
@@ -576,7 +590,6 @@ export class SabrStream extends PassThrough {
         this.sabrContexts = new Map();
         this.activeSabrContextTypes = new Set();
         this.requestNumber = 0;
-        this.mediaHeadersProcessed = false;
         this._aborted = false;
         this.formatSequenceCounters = new Map();
         this.downloadedSegmentsByItag = new Map();
@@ -597,10 +610,18 @@ export class SabrStream extends PassThrough {
         this.formatIds = config.formats ?? [];
         this.startTime = config.startTime ?? 0;
         this.positionCallback = config.positionCallback;
+        this.playbackPaused = config.playbackPaused;
         this.userAgent = config.userAgent ?? USER_AGENT;
         this.recoveryPending = false;
+        this.seekHandoffPending = false;
+        this.usingTransferredSession = config.previousSession != null;
+        this.activeRequest = null;
         this.poTokenGenerated = false;
-        this.stallEmitted = false;
+        this.mediaProgressGeneration = 0;
+        this.limitedPlaybackCount = 0;
+        this.limitedPlaybackGeneration = 0;
+        this.pendingRecoveryReason = null;
+        this.pendingResponseError = null;
         this.totalDownloadedMs = 0;
         this.virtualPlayerTimeMs = 0;
         this.lastVirtualAdvanceAt = 0;
@@ -628,11 +649,20 @@ export class SabrStream extends PassThrough {
         else if (config.poToken instanceof Uint8Array) {
             this.poToken = config.poToken;
         }
+        this.poTokenGenerated = (this.poToken?.length ?? 0) > 0;
         if (config.previousSession) {
             const ps = config.previousSession;
             this.requestNumber = ps.requestNumber ?? 0;
             this.bandwidthEstimate = ps.bandwidthEstimate ?? 5_000_000;
             this.nextRequestPolicy = ps.nextRequestPolicy;
+            this.sabrContexts = new Map((ps.sabrContexts ?? []).map((context) => [
+                context.type,
+                {
+                    ...context,
+                    value: context.value.slice()
+                }
+            ]));
+            this.activeSabrContextTypes = new Set(ps.activeSabrContextTypes ?? []);
             logger('info', 'SABR', `Session state transferred: rn=${this.requestNumber}, bw=${(this.bandwidthEstimate / 1_000_000).toFixed(2)}Mbps, hasCookie=${!!this.nextRequestPolicy?.playbackCookie}`);
         }
         this.lastRequestAt = 0;
@@ -656,7 +686,45 @@ export class SabrStream extends PassThrough {
             requestNumber: this.requestNumber,
             bandwidthEstimate: this.bandwidthEstimate,
             nextRequestPolicy: this.nextRequestPolicy
+                ? {
+                    ...this.nextRequestPolicy,
+                    playbackCookie: this.nextRequestPolicy.playbackCookie?.slice()
+                }
+                : undefined,
+            sabrContexts: Array.from(this.sabrContexts.values(), (context) => ({
+                ...context,
+                value: context.value.slice()
+            })),
+            activeSabrContextTypes: Array.from(this.activeSabrContextTypes)
         };
+    }
+    /** Pauses new requests and exports continuity state for a seek replacement. */
+    async beginSeekHandoff() {
+        if (this._aborted ||
+            this.destroyed ||
+            this.recoveryPending ||
+            this.seekHandoffPending)
+            return null;
+        this.seekHandoffPending = true;
+        const request = this.activeRequest;
+        if (request) {
+            try {
+                await request;
+            }
+            catch {
+                this.seekHandoffPending = false;
+                return null;
+            }
+        }
+        if (this._aborted || this.destroyed || this.recoveryPending) {
+            this.seekHandoffPending = false;
+            return null;
+        }
+        return this.getSessionState();
+    }
+    /** Resumes the current session when a prepared seek stream could not commit. */
+    cancelSeekHandoff() {
+        this.seekHandoffPending = false;
     }
     /**
      * Writes a traffic log entry to the log file.
@@ -697,6 +765,56 @@ export class SabrStream extends PassThrough {
         }
         this.loop(audioFormat);
     }
+    /** Returns the current media-progress generation for recovery validation. */
+    getMediaProgressGeneration() {
+        return this.mediaProgressGeneration;
+    }
+    /** Returns whether a prepared replacement still matches the stalled state. */
+    canCommitRecovery(generation) {
+        return (this.recoveryPending &&
+            !this._aborted &&
+            !this.destroyed &&
+            this.mediaProgressGeneration === generation);
+    }
+    /** Resumes the existing session when recovery became stale while resolving. */
+    cancelRecovery() {
+        this.recoveryPending = false;
+    }
+    /** Emits one recovery request and records the media generation it protects. */
+    signalRecovery(reason) {
+        if (this.recoveryPending || this._aborted || this.destroyed)
+            return;
+        this.recoveryPending = true;
+        this.emit('stall', reason, this.mediaProgressGeneration);
+    }
+    /** Defers recovery until all parts in the current UMP response are handled. */
+    queueRecovery(reason) {
+        if (this.pendingRecoveryReason === 'reload')
+            return;
+        if (reason === 'reload' || !this.pendingRecoveryReason) {
+            this.pendingRecoveryReason = reason;
+        }
+    }
+    /** Records completed media and invalidates protection-only recovery evidence. */
+    recordMediaProgress() {
+        if (this.mediaProgressGeneration === 0) {
+            this.lastVirtualAdvanceAt = Date.now();
+        }
+        this.mediaProgressGeneration++;
+        this.emit('mediaProgress', this.mediaProgressGeneration);
+        this.limitedPlaybackCount = 0;
+        this.limitedPlaybackGeneration = this.mediaProgressGeneration;
+        if (this.pendingRecoveryReason === 'protection') {
+            this.pendingRecoveryReason = null;
+        }
+    }
+    /** Emits any recovery collected while parsing the response. */
+    flushPendingRecovery() {
+        const reason = this.pendingRecoveryReason;
+        this.pendingRecoveryReason = null;
+        if (reason)
+            this.signalRecovery(reason);
+    }
     /**
      * Main streaming loop that fetches and processes segments.
      * @param audioFormat - Audio format configuration.
@@ -704,10 +822,8 @@ export class SabrStream extends PassThrough {
     async loop(audioFormat) {
         const signal = this.abortController.signal;
         try {
-            if (this.lastVirtualAdvanceAt === 0)
-                this.lastVirtualAdvanceAt = Date.now();
             while (!this._aborted && !this.destroyed && !this.streamFinished) {
-                if (this.recoveryPending) {
+                if (this.recoveryPending || this.seekHandoffPending) {
                     await wait(500, signal);
                     continue;
                 }
@@ -732,33 +848,31 @@ export class SabrStream extends PassThrough {
                 }
                 const now = Date.now();
                 const prevPlayerTime = this.virtualPlayerTimeMs;
-                if (this.totalDownloadedMs > this.virtualPlayerTimeMs) {
-                    if (this.lastVirtualAdvanceAt > 0) {
-                        this.virtualPlayerTimeMs += now - this.lastVirtualAdvanceAt;
-                    }
-                    this.lastVirtualAdvanceAt = now;
+                const paused = this.playbackPaused?.() ?? false;
+                if (!paused &&
+                    this.mediaProgressGeneration > 0 &&
+                    this.lastVirtualAdvanceAt > 0 &&
+                    this.totalDownloadedMs > this.virtualPlayerTimeMs) {
+                    this.virtualPlayerTimeMs = Math.min(this.virtualPlayerTimeMs + (now - this.lastVirtualAdvanceAt), this.totalDownloadedMs);
                 }
-                else {
-                    if (this.totalDownloadedMs > 0) {
-                        if (this.lastVirtualAdvanceAt > 0) {
-                            const advance = now - this.lastVirtualAdvanceAt;
-                            this.virtualPlayerTimeMs = Math.min(this.virtualPlayerTimeMs + advance, this.totalDownloadedMs);
-                        }
-                        this.lastVirtualAdvanceAt = now;
-                    }
-                }
+                this.lastVirtualAdvanceAt = now;
                 if (Math.floor(this.virtualPlayerTimeMs / 1000) !==
                     Math.floor(prevPlayerTime / 1000)) {
                     logger('debug', 'SABR', `Tracking: downloaded=${Math.floor(this.totalDownloadedMs)}ms virtualPlayerTime=${Math.floor(prevPlayerTime)}ms -> ${Math.floor(this.virtualPlayerTimeMs)}ms`);
                 }
                 const baseTimeMs = this.startTime ?? 0;
                 const reportedPlayerTime = Math.floor(this.virtualPlayerTimeMs + baseTimeMs);
+                const requestCursorMs = Math.floor(this.totalDownloadedMs + baseTimeMs);
                 if (this.readableLength > MAX_BUFFER_BYTES) {
                     await wait(250, signal);
                     continue;
                 }
-                if (this.mediaHeadersProcessed && this.positionCallback) {
+                if (this.mediaProgressGeneration > 0 && this.positionCallback) {
                     this.positionCallback(reportedPlayerTime);
+                }
+                if (paused && this.mediaProgressGeneration > 0) {
+                    await wait(250, signal);
+                    continue;
                 }
                 if (this.lastRequestAt) {
                     const since = now - this.lastRequestAt;
@@ -766,42 +880,36 @@ export class SabrStream extends PassThrough {
                         await wait(MIN_REQUEST_INTERVAL_MS - since, signal);
                 }
                 this.lastRequestAt = Date.now();
+                const request = this.fetchAndProcessSegments({
+                    playerTimeMs: requestCursorMs,
+                    bandwidthEstimate: Math.max(Math.floor(this.bandwidthEstimate), 500_000),
+                    enabledTrackTypesBitfield: 1,
+                    audioTrackId: audioFormat.audioTrackId ?? '',
+                    playerState: 1n,
+                    visibility: 1,
+                    playbackRate: 1.0,
+                    stickyResolution: 1080,
+                    lastManualSelectedResolution: 1080,
+                    clientViewportIsFlexible: false
+                }, audioFormat);
+                this.activeRequest = request;
                 try {
-                    await this.fetchAndProcessSegments({
-                        playerTimeMs: Math.floor(this.totalDownloadedMs + baseTimeMs),
-                        bandwidthEstimate: Math.max(Math.floor(this.bandwidthEstimate), 500_000),
-                        enabledTrackTypesBitfield: 1,
-                        audioTrackId: audioFormat.audioTrackId ?? '',
-                        playerState: 1n,
-                        visibility: 1,
-                        playbackRate: 1.0,
-                        stickyResolution: 1080,
-                        lastManualSelectedResolution: 1080,
-                        clientViewportIsFlexible: false
-                    }, audioFormat);
+                    await request;
                 }
                 catch (e) {
                     if (this._aborted || this.destroyed)
                         break;
                     const message = e instanceof Error ? e.message : String(e);
-                    if (message.includes('sabr.malformed_config') ||
-                        message.includes('sabr.media_serving_enforcement_id_error')) {
-                        logger('warn', 'SABR', `Recoverable error detected: ${message}. Triggering recovery signal...`);
-                        if (message.includes('media_serving_enforcement_id_error')) {
-                            logger('warn', 'SABR', 'Enforcement ID error detected. Clearing SABR contexts to force fresh state.');
-                            this.sabrContexts.clear();
-                            this.activeSabrContextTypes.clear();
-                        }
-                        this.emit('stall');
-                        const currentRn = this.requestNumber;
-                        while (this.requestNumber === currentRn &&
-                            !this._aborted &&
-                            !this.destroyed) {
-                            await wait(500, signal);
-                        }
+                    if (message.startsWith('HTTP ')) {
+                        logger('warn', 'SABR', `HTTP failure detected: ${message}. Triggering session recovery...`);
+                        this.signalRecovery('http');
                         continue;
                     }
                     throw e;
+                }
+                finally {
+                    if (this.activeRequest === request)
+                        this.activeRequest = null;
                 }
                 if (!this.nextRequestPolicy?.backoffTimeMs &&
                     this.initializedFormatsMap.size === 0) {
@@ -861,7 +969,7 @@ export class SabrStream extends PassThrough {
         if (config.videoPlaybackUstreamerConfig) {
             this.videoPlaybackUstreamerConfig = config.videoPlaybackUstreamerConfig;
         }
-        if (config.poToken) {
+        if (config.poToken != null) {
             try {
                 this.poToken =
                     typeof config.poToken === 'string'
@@ -871,6 +979,7 @@ export class SabrStream extends PassThrough {
             catch (e) {
                 const message = e instanceof Error ? e.message : String(e);
                 logger('error', 'SABR', `Failed to decode PO token (session update): ${message}`);
+                this.poToken = null;
             }
         }
         if (config.visitorData) {
@@ -900,8 +1009,13 @@ export class SabrStream extends PassThrough {
         this.noMediaStreak = 0;
         this.pendingRangesHeaders.clear();
         this.recoveryPending = false;
-        this.poTokenGenerated = false;
-        this.stallEmitted = false;
+        this.poTokenGenerated =
+            config.poToken != null && (this.poToken?.length ?? 0) > 0;
+        this.pendingRecoveryReason = null;
+        this.pendingResponseError = null;
+        this.limitedPlaybackCount = 0;
+        this.limitedPlaybackGeneration = this.mediaProgressGeneration;
+        this.usingTransferredSession = false;
         logger('info', 'SABR', `Session updated. Continuing with RN=${this.requestNumber}, URL=${this.serverAbrStreamingUrl?.slice(0, 50)}...`);
     }
     /**
@@ -911,49 +1025,13 @@ export class SabrStream extends PassThrough {
      */
     clearBuffers() {
         this.initializedFormatsMap.clear();
-        this.downloadedSegmentsByItag.clear();
-        this.formatSequenceCounters.clear();
         this.partialSegmentQueue.clear();
-        this.mediaHeadersProcessed = false;
         this.pendingRangesHeaders.clear();
         this.cachedBufferedRanges = null;
         this.lastReportedRanges.clear();
         this.sabrContexts.clear();
         this.activeSabrContextTypes.clear();
         logger('info', 'SABR', `Buffers cleared for recovery. Preserving timeline position: ${this.cumulativeDownloadedMs}ms, totalDownloaded: ${this.totalDownloadedMs}ms`);
-    }
-    /**
-     * Seeks to a specific position in the stream.
-     *
-     * Clears segment buffers and resets tracking state while preserving
-     * session state (request number, bandwidth estimate, playback cookie).
-     *
-     * @param positionMs - Target position in milliseconds.
-     * @returns True if the seek was initiated successfully.
-     */
-    seekTo(positionMs) {
-        if (this._aborted || this.destroyed) {
-            logger('warn', 'SABR', 'Cannot seek: stream is destroyed or aborted');
-            return false;
-        }
-        logger('info', 'SABR', `Seeking to ${positionMs}ms (from startTime=${this.startTime}ms)`);
-        this.startTime = positionMs;
-        this.downloadedSegmentsByItag.clear();
-        this.formatSequenceCounters.clear();
-        this.partialSegmentQueue.clear();
-        this.initializedFormatsMap.clear();
-        this.totalDownloadedMs = 0;
-        this.virtualPlayerTimeMs = 0;
-        this.cumulativeDownloadedMs = positionMs;
-        this.lastVirtualAdvanceAt = Date.now();
-        this.pendingRangesHeaders.clear();
-        this.cachedBufferedRanges = null;
-        this.lastReportedRanges.clear();
-        this.mediaHeadersProcessed = false;
-        this.streamFinished = false;
-        this.noMediaStreak = 0;
-        logger('debug', 'SABR', `Seek to ${positionMs}ms complete. Session preserved (rn=${this.requestNumber})`);
-        return true;
     }
     /**
      * Decodes a UMP part using a protobuf decoder.
@@ -1042,7 +1120,7 @@ export class SabrStream extends PassThrough {
             error.type = err.type;
             if (this._aborted || this.destroyed)
                 return;
-            throw error;
+            this.pendingResponseError ??= error;
         }
     }
     /**
@@ -1069,21 +1147,32 @@ export class SabrStream extends PassThrough {
             !this.lastStreamProtectionLogAt ||
             now - this.lastStreamProtectionLogAt > 5000;
         this.lastStreamProtectionStatus = status.status;
+        // extra for me: mostly of this time this is cause by poToken,
+        // related to the DOM generation ^^
+        // but it can also be other reasons (PMD:undefined for example, which is also from DOM generation)
+        if (status.status === 2) {
+            if (this.limitedPlaybackGeneration !== this.mediaProgressGeneration) {
+                this.limitedPlaybackGeneration = this.mediaProgressGeneration;
+                this.limitedPlaybackCount = 0;
+            }
+            this.limitedPlaybackCount++;
+            if (shouldLog) {
+                this.lastStreamProtectionLogAt = now;
+                logger('warn', 'SABR', `Stream Protection Status: ${status.status} (Limited Playback), observation ${this.limitedPlaybackCount} without media progress.`);
+            }
+            if (this.limitedPlaybackCount >= 2) {
+                poTokenManager.reset();
+                this.queueRecovery('protection');
+            }
+            return;
+        }
+        this.limitedPlaybackCount = 0;
+        this.limitedPlaybackGeneration = this.mediaProgressGeneration;
         if (!shouldLog)
             return;
         this.lastStreamProtectionLogAt = now;
         if (status.status === 3) {
             logger('debug', 'SABR', `Stream Protection Status: ${status.status} (Attestation pending/required)`);
-            return;
-        }
-        if (status.status === 2) {
-            if (this.stallEmitted)
-                return;
-            this.stallEmitted = true;
-            logger('warn', 'SABR', `Stream Protection Status: ${status.status} (Limited Playback). Triggering token refresh...`);
-            poTokenManager.reset();
-            this.recoveryPending = true;
-            this.emit('stall');
             return;
         }
         logger('warn', 'SABR', `Stream Protection Status: ${status.status}`);
@@ -1108,6 +1197,8 @@ export class SabrStream extends PassThrough {
             }
             const bytes = dataToPush.getLength();
             s.loadedBytes = (s.loadedBytes ?? 0) + bytes;
+            if (s.discard)
+                return;
             for (const c of dataToPush.chunks)
                 this.push(c);
         }
@@ -1123,9 +1214,11 @@ export class SabrStream extends PassThrough {
             const d = part.data.split(1).remainingBuffer;
             const bytes = d.getLength();
             s.loadedBytes = (s.loadedBytes ?? 0) + bytes;
-            for (const c of d.chunks)
-                this.push(c);
-            if (bytes > 0) {
+            if (!s.discard) {
+                for (const c of d.chunks)
+                    this.push(c);
+            }
+            if (bytes > 0 && !s.discard) {
                 logger('debug', 'SABR', `Media data: id=${headerId} bytes=${bytes} total=${s.loadedBytes}/${s.mediaHeader?.contentLength ?? '?'}`);
             }
         }
@@ -1162,17 +1255,23 @@ export class SabrStream extends PassThrough {
             }
             const mediaHeader = h;
             const formatIdKey = key;
-            if (!this.pendingRangesHeaders.has(formatIdKey)) {
-                this.pendingRangesHeaders.set(formatIdKey, []);
+            const itag = h.itag ?? h.formatId?.itag;
+            const discard = itag !== undefined &&
+                this.downloadedSegmentsByItag.get(itag)?.has(segmentNumber) === true;
+            if (!discard) {
+                if (!this.pendingRangesHeaders.has(formatIdKey)) {
+                    this.pendingRangesHeaders.set(formatIdKey, []);
+                }
+                this.pendingRangesHeaders.get(formatIdKey)?.push(mediaHeader);
             }
-            this.pendingRangesHeaders.get(formatIdKey)?.push(mediaHeader);
-            logger('debug', 'SABR', `MediaHeader: id=${headerId} itag=${h.itag} seq=${segmentNumber} dur=${h.durationMs}ms`);
+            logger(discard ? 'trace' : 'debug', 'SABR', `${discard ? 'Duplicate media header' : 'MediaHeader'}: id=${headerId} itag=${h.itag} seq=${segmentNumber} dur=${h.durationMs}ms`);
             this.partialSegmentQueue.set(headerId, {
                 formatIdKey: key,
                 segmentNumber,
                 mediaHeader: h,
                 durationMs: h.durationMs,
-                loadedBytes: 0
+                loadedBytes: 0,
+                discard
             });
         }
         else {
@@ -1189,6 +1288,11 @@ export class SabrStream extends PassThrough {
         if (s) {
             logger('debug', 'SABR', `MediaEnd: id=${id} seq=${s.segmentNumber} totalBytes=${s.loadedBytes}`);
             const itag = s.mediaHeader?.itag ?? s.mediaHeader?.formatId?.itag;
+            if (s.discard) {
+                logger('debug', 'SABR', `Discarded duplicate segment ${s.segmentNumber} for itag ${itag ?? 'unknown'} (${s.loadedBytes} bytes)`);
+                this.partialSegmentQueue.delete(id);
+                return;
+            }
             let segmentDuration = 0;
             if (s.durationMs) {
                 segmentDuration = Number(s.durationMs);
@@ -1201,7 +1305,8 @@ export class SabrStream extends PassThrough {
             }
             if (segmentDuration > 0) {
                 this.totalDownloadedMs += segmentDuration;
-                this.mediaHeadersProcessed = true;
+                if ((s.loadedBytes ?? 0) > 0)
+                    this.recordMediaProgress();
                 logger('debug', 'SABR', `Segment received: itag=${itag} seq=${s.segmentNumber} dur=${segmentDuration}ms totalDownloaded=${Math.floor(this.totalDownloadedMs)}ms`);
             }
             if (itag) {
@@ -1341,7 +1446,7 @@ export class SabrStream extends PassThrough {
         if (reloadContext) {
             const reason = reloadContext.reason;
             logger('warn', 'SABR', `Reload requested by server. Reason: ${reason ?? 'unknown'}`);
-            this.emit('stall');
+            this.queueRecovery('reload');
         }
     }
     /**
@@ -1356,17 +1461,12 @@ export class SabrStream extends PassThrough {
         this.lastDetailedLogAt = now;
         const cookieLen = this.nextRequestPolicy?.playbackCookie?.length ?? 0;
         const initKeys = Array.from(this.initializedFormatsMap.keys()).slice(0, 5);
-        const segMap = audioFormat
-            ? this.downloadedSegmentsByItag.get(audioFormat.itag)
-            : undefined;
-        const segs = segMap ? Array.from(segMap.values()) : [];
-        const downloadedMs = segs.reduce((sum, s) => sum + parseInt(s.durationMs?.toString() ?? '0', 10), 0);
-        const aheadMs = abrState?.playerTimeMs !== undefined
-            ? downloadedMs - abrState.playerTimeMs
-            : undefined;
+        const playbackTimeMs = Math.floor(this.virtualPlayerTimeMs + (this.startTime ?? 0));
+        const bufferedAheadMs = Math.max(0, Math.floor(this.totalDownloadedMs - this.virtualPlayerTimeMs));
         const fmt = (f) => f ? `${f.itag}:${f.xtags ?? ''}` : 'none';
-        logger('debug', 'SABR', `State rn=${this.requestNumber} playerTimeMs=${abrState?.playerTimeMs} startTime=${this.startTime} readable=${this.readableLength}/${MAX_BUFFER_BYTES} initKeys=[${initKeys.join(',')}] downloadedMs=${downloadedMs} aheadMs=${aheadMs}`);
-        logger('debug', 'SABR', `Req formats audio=${fmt(audioFormat)} video=${fmt(videoFormat)} selected=[${(selectedFormatIds ?? []).map(String).join(',')}] preferredA=[${(preferredAudioFormatIds ?? []).map(String).join(',')}] bufferedRanges=${bufferedRanges?.length ?? 0} ctx=${contexts?.length ?? 0} unsentCtx=${unsent?.length ?? 0} backoff=${this.nextRequestPolicy?.backoffTimeMs ?? 0} cookieLen=${cookieLen}`);
+        const fmtId = (f) => `${f.itag ?? ''}:${f.xtags ?? ''}`;
+        logger('debug', 'SABR', `State rn=${this.requestNumber} requestCursorMs=${abrState?.playerTimeMs} playbackTimeMs=${playbackTimeMs} startTime=${this.startTime} readable=${this.readableLength}/${MAX_BUFFER_BYTES} initKeys=[${initKeys.join(',')}] downloadedMs=${Math.floor(this.totalDownloadedMs)} bufferedAheadMs=${bufferedAheadMs}`);
+        logger('debug', 'SABR', `Req formats audio=${fmt(audioFormat)} video=${fmt(videoFormat)} selected=[${(selectedFormatIds ?? []).map(fmtId).join(',')}] preferredA=[${(preferredAudioFormatIds ?? []).map(fmtId).join(',')}] bufferedRanges=${bufferedRanges?.length ?? 0} ctx=${contexts?.length ?? 0} unsentCtx=${unsent?.length ?? 0} backoff=${this.nextRequestPolicy?.backoffTimeMs ?? 0} cookieLen=${cookieLen}`);
         if (bufferedRanges?.length) {
             const br = bufferedRanges[0];
             if (br) {
@@ -1551,12 +1651,23 @@ export class SabrStream extends PassThrough {
             headers.Authorization = `Bearer ${this.config.accessToken}`;
         }
         const t0 = Date.now();
-        const res = await fetch(url.toString(), {
-            method: 'POST',
-            headers,
-            body: Buffer.from(requestBody),
-            signal: this.abortController.signal
-        });
+        let res;
+        try {
+            res = await fetch(url.toString(), {
+                method: 'POST',
+                headers,
+                body: Buffer.from(requestBody),
+                signal: this.abortController.signal
+            });
+        }
+        catch (error) {
+            if (this._aborted ||
+                this.destroyed ||
+                this.abortController.signal.aborted)
+                throw error;
+            const message = error instanceof Error ? error.message : String(error);
+            throw new Error(`HTTP request failed: ${message}`, { cause: error });
+        }
         if (!res.ok) {
             let errorText = '';
             try {
@@ -1608,7 +1719,8 @@ export class SabrStream extends PassThrough {
             sabrContextUpdate: false,
             streamProtectionStatus: false
         };
-        this.mediaHeadersProcessed = false;
+        this.pendingResponseError = null;
+        const responseStartGeneration = this.mediaProgressGeneration;
         let activePartial = null;
         try {
             while (!this._aborted && !this.destroyed) {
@@ -1804,8 +1916,8 @@ export class SabrStream extends PassThrough {
         };
         this.logTraffic(trafficRes);
         logger('debug', 'SABR', `Traffic <- rn=${rn} status=${res.status} bytes=${responseBytes} parts=${Object.keys(partCounts).length} hasMedia=${saw.media} backoff=${trafficRes.policy?.backoffTimeMs} cookieLen=${trafficRes.policy?.cookieLen}`);
-        if (saw.media) {
-            this.mediaHeadersProcessed = true;
+        const mediaAdvanced = this.mediaProgressGeneration > responseStartGeneration;
+        if (mediaAdvanced) {
             this.cachedBufferedRanges = null;
             this.noMediaStreak = 0;
         }
@@ -1814,9 +1926,21 @@ export class SabrStream extends PassThrough {
             this.cachedBufferedRanges = null;
             if (this.noMediaStreak >= 12) {
                 logger('warn', 'SABR', `Stall detected (noMediaStreak=${this.noMediaStreak}). Signaling for re-resolution.`);
-                this.emit('stall');
+                this.queueRecovery('starvation');
                 this.noMediaStreak = 0;
             }
         }
+        const responseError = this.pendingResponseError;
+        this.pendingResponseError = null;
+        const responseErrorType = responseError?.type;
+        if (responseError &&
+            this.usingTransferredSession &&
+            responseErrorType === 'sabr.media_serving_enforcement_id_error') {
+            logger('warn', 'SABR', 'Transferred session was rejected by media enforcement. Requesting a fresh session.');
+            this.queueRecovery('session');
+        }
+        this.flushPendingRecovery();
+        if (responseError && !this.recoveryPending)
+            throw responseError;
     }
 }

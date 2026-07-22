@@ -1038,8 +1038,10 @@ export interface StreamResult {
     responseStream?: Readable
     /** Underlying SABR stream instance (SABR protocol only). */
     _sabrStream?: unknown
-    /** Returns the current SABR session state for reconnection (SABR protocol only). */
-    getSessionState?: () => unknown
+    /** Pauses SABR requests and returns state for a seek replacement. */
+    beginSeekHandoff?: () => Promise<unknown>
+    /** Resumes SABR requests when a seek replacement fails. */
+    cancelSeekHandoff?: () => void
     /** Destroys the stream and releases all associated resources. */
     destroy: (err?: Error) => void
   }
@@ -1089,6 +1091,8 @@ export interface TrackUrlAdditionalData {
   startTime?: number
   /** Position callback used by SABR to report playback progress. */
   positionCallback?: unknown
+  /** Callback used by SABR to stop its playhead while playback is paused. */
+  playbackPaused?: unknown
   /** Previous SABR session state for session continuation. */
   previousSession?: unknown
   /** Unique key identifying this stream in the active streams map. */

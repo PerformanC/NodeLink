@@ -1143,7 +1143,9 @@ export class Player {
       positionCallback: (positionMs: number) => {
         if (!Number.isFinite(positionMs) || positionMs < 0) return
         this.position = positionMs
-      }
+      },
+      // specific to sabr protocol for now
+      playbackPaused: () => this.isPaused
     }
 
     const resolvedUrlData = {
@@ -1219,6 +1221,25 @@ export class Player {
       streamForResource = (fetchedStream as Readable).pipe(profilerTap)
       ;(profilerTap as unknown as Record<string, unknown>)._sourceStream =
         fetchedStream
+
+      const seekControl = fetchedStream as unknown as {
+        beginSeekHandoff?: () => Promise<unknown>
+        cancelSeekHandoff?: () => void
+      }
+      const beginSeekHandoff = seekControl.beginSeekHandoff
+      if (beginSeekHandoff) {
+        ;(
+          profilerTap as unknown as {
+            beginSeekHandoff?: () => Promise<unknown>
+          }
+        ).beginSeekHandoff = () => beginSeekHandoff()
+      }
+      const cancelSeekHandoff = seekControl.cancelSeekHandoff
+      if (cancelSeekHandoff) {
+        ;(
+          profilerTap as unknown as { cancelSeekHandoff?: () => void }
+        ).cancelSeekHandoff = () => cancelSeekHandoff()
+      }
 
       const eternalboxHandler = (data: unknown) => {
         this.emitEvent(GatewayEvents.ETERNALBOX_JUMP, {
@@ -2001,7 +2022,7 @@ export class Player {
         }
       }
 
-      const source = this.nodelink.sources.getSource(sourceName)
+      const source = this.nodelink.sources.getSource(resolvedSourceName)
       const hasSourceLoader = source && typeof source.loadStream === 'function'
       const canNativeSeek =
         !!hasSourceLoader &&
@@ -2079,16 +2100,23 @@ export class Player {
     this.position = position
     this.track.endTime = endTime
     let reuseUrlData: TrackUrlResult | null = null
+    let seekHandoff: { cancelSeekHandoff: () => void } | null = null
 
     if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
       const inputStream = (
         this.connection.audioStream as {
-          pipes?: Array<{ getSessionState?: () => unknown }>
+          pipes?: Array<{
+            beginSeekHandoff?: () => Promise<unknown>
+            cancelSeekHandoff?: () => void
+          }>
         }
       )?.pipes?.[0]
 
-      const previousSession = inputStream?.getSessionState?.()
+      const previousSession = await inputStream?.beginSeekHandoff?.()
       if (previousSession) {
+        seekHandoff = inputStream?.cancelSeekHandoff
+          ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
+          : null
         logger(
           'debug',
           'Player',
@@ -2102,6 +2130,7 @@ export class Player {
         )
 
         reuseUrlData = {
+          newTrack: this.streamInfo.newTrack,
           protocol: this.streamInfo.protocol,
           url: this.streamInfo.url,
           additionalData: {
@@ -2129,21 +2158,26 @@ export class Player {
     this.streamInfo = { ...urlData, trackInfo: this.track.info }
 
     if (urlData.exception) {
+      seekHandoff?.cancelSeekHandoff()
       const err = new Error(urlData.exception.message)
       this._onError(err)
       return false
     }
 
-    const result = await this._connectAndPlayStream(
-      urlData,
-      position,
-      'source-seek',
-      'seekPrepare',
-      `Playing resource for guild ${this.guildId} after source seek`
-    )
-    if (!result) return false
-
-    return true
+    try {
+      const result = await this._connectAndPlayStream(
+        urlData,
+        position,
+        'source-seek',
+        'seekPrepare',
+        `Playing resource for guild ${this.guildId} after source seek`
+      )
+      if (!result) seekHandoff?.cancelSeekHandoff()
+      return result
+    } catch (error) {
+      seekHandoff?.cancelSeekHandoff()
+      throw error
+    }
   }
 
   /**

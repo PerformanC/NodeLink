@@ -133,10 +133,13 @@ export interface SabrStreamConfig {
    */
   positionCallback?: (positionMs: number) => void
 
+  /** Returns whether playback is currently paused. */
+  playbackPaused?: () => boolean
+
   /**
    * Previous session state for session continuation across seek operations.
-   * Transfers request number, bandwidth estimate, and next request policy
-   * to avoid the session recreation penalty.
+   * Transfers request ordering, policy, bandwidth, and SABR contexts to avoid
+   * the session recreation penalty.
    */
   previousSession?: PreviousSessionState
 
@@ -212,6 +215,16 @@ export interface PreviousSessionState {
    * Contains backoff timing and playback cookie for session continuity.
    */
   nextRequestPolicy?: NextRequestPolicyMsg
+
+  /** SABR contexts required to continue the existing server session. */
+  sabrContexts?: Array<{
+    type: number
+    value: Uint8Array
+    sendByDefault?: boolean
+  }>
+
+  /** Context types currently enabled by the server sending policy. */
+  activeSabrContextTypes?: number[]
 }
 
 /**
@@ -348,6 +361,9 @@ export interface PartialSegmentQueueEntry {
 
   /** Number of bytes received so far for this segment. */
   loadedBytes: number
+
+  /** Whether this segment overlaps media already forwarded downstream. */
+  discard?: boolean
 }
 
 /**
