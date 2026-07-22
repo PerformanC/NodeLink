@@ -1,9 +1,6 @@
 import { PassThrough } from 'node:stream'
 import HLSHandler from '../../playback/hls/HLSHandler.ts'
-import type {
-  PreviousSessionState,
-  SabrStreamConfig
-} from '../../typings/sources/sabr.types.ts'
+import type { SabrStreamConfig } from '../../typings/sources/sabr.types.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -1770,38 +1767,17 @@ export default class YouTubeSource {
   ): Promise<StreamResult> {
     const sabrConfig: SabrStreamConfig = {
       videoId: decodedTrack.identifier,
-      accessToken: additionalData.accessToken as string | undefined,
-      visitorData: additionalData.visitorData as string | undefined,
-      serverAbrStreamingUrl: additionalData.serverAbrStreamingUrl as
-        | string
-        | undefined,
-      videoPlaybackUstreamerConfig:
-        additionalData.videoPlaybackUstreamerConfig as
-          | string
-          | Uint8Array
-          | undefined,
-      poToken: additionalData.poToken as string | Uint8Array | undefined,
-      clientInfo: additionalData.clientInfo as
-        | { clientName: number; clientVersion: string }
-        | undefined,
-      formats: additionalData.formats as
-        | Array<{
-            itag: number
-            mimeType?: string
-            bitrate?: number
-            audioTrackId?: string
-          }>
-        | undefined,
-      startTime: (additionalData.startTime as number | undefined) ?? 0,
-      positionCallback: additionalData.positionCallback as
-        | ((positionMs: number) => void)
-        | undefined,
-      playbackPaused: additionalData.playbackPaused as
-        | (() => boolean)
-        | undefined,
-      previousSession: additionalData.previousSession as
-        | PreviousSessionState
-        | undefined
+      accessToken: additionalData.accessToken,
+      visitorData: additionalData.visitorData,
+      serverAbrStreamingUrl: additionalData.serverAbrStreamingUrl,
+      videoPlaybackUstreamerConfig: additionalData.videoPlaybackUstreamerConfig,
+      poToken: additionalData.poToken,
+      clientInfo: additionalData.clientInfo,
+      formats: additionalData.formats,
+      startTime: additionalData.startTime ?? 0,
+      positionCallback: additionalData.positionCallback,
+      playbackPaused: additionalData.playbackPaused,
+      previousSession: additionalData.previousSession
     }
     const sabr = new SabrStream(sabrConfig)
 
@@ -1869,27 +1845,14 @@ export default class YouTubeSource {
           const ad = (newUrlData.additionalData || {}) as TrackUrlAdditionalData
           sabr.clearBuffers()
           sabr.updateSession({
-            serverAbrStreamingUrl: (ad.serverAbrStreamingUrl ||
-              newUrlData.url) as string | undefined,
-            videoPlaybackUstreamerConfig: ad.videoPlaybackUstreamerConfig as
-              | string
-              | Uint8Array
-              | undefined,
-            poToken: ad.poToken as string | Uint8Array | undefined,
-            visitorData: ad.visitorData as string | undefined,
-            clientInfo: ad.clientInfo as
-              | { clientName: number; clientVersion: string }
-              | undefined,
-            formats: ad.formats as
-              | Array<{
-                  itag: number
-                  mimeType?: string
-                  bitrate?: number
-                  audioTrackId?: string
-                }>
-              | undefined,
-            userAgent: ad.userAgent as string | undefined,
-            playbackCookie: ad.playbackCookie as string | Uint8Array | undefined
+            serverAbrStreamingUrl: ad.serverAbrStreamingUrl || newUrlData.url,
+            videoPlaybackUstreamerConfig: ad.videoPlaybackUstreamerConfig,
+            poToken: ad.poToken,
+            visitorData: ad.visitorData,
+            clientInfo: ad.clientInfo,
+            formats: ad.formats,
+            userAgent: ad.userAgent,
+            playbackCookie: ad.playbackCookie
           })
         } catch (err) {
           logger(

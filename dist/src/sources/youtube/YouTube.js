@@ -1208,8 +1208,7 @@ export default class YouTubeSource {
                 const ad = (newUrlData.additionalData || {});
                 sabr.clearBuffers();
                 sabr.updateSession({
-                    serverAbrStreamingUrl: (ad.serverAbrStreamingUrl ||
-                        newUrlData.url),
+                    serverAbrStreamingUrl: ad.serverAbrStreamingUrl || newUrlData.url,
                     videoPlaybackUstreamerConfig: ad.videoPlaybackUstreamerConfig,
                     poToken: ad.poToken,
                     visitorData: ad.visitorData,
