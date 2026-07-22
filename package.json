@@ -1,6 +1,6 @@
 {
   "name": "nodelink",
-  "version": "3.8.1-dev.20260717.1",
+  "version": "3.8.1-dev.20260722.1",
   "scripts": {
     "build": "tsc --incremental false",
     "start": "node -e \"const v=process.versions.node.split('.').map(Number); const t=(v[0]===22&&v[1]>=6)||v[0]>=23; require('child_process').spawnSync('node', ['--dns-result-order=ipv4first', ...(t?['--experimental-strip-types','src/index.ts']:['dist/src/index.js']), ...process.argv.slice(1)], {stdio:'inherit'})\" --",

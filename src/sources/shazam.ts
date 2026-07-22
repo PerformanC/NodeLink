@@ -21,6 +21,12 @@ const SHAZAM_PATTERN =
   /^https?:\/\/(?:www\.)?shazam\.com\/song\/\d+(?:\/[^/?#]+)?\/?(?:[?#].*)?$/
 const SHAZAM_SEARCH_BASE =
   'https://www.shazam.com/services/amapi/v1/catalog/US/search'
+const SHAZAM_VALIDATION_URL =
+  'https://www.shazam.com/services/partner/oauth/commerce/validate'
+const SHAZAM_COMMERCE_SEARCH_BASE =
+  'https://api.music.apple.com/v1/catalog/US/search' // amp- :)
+const SHAZAM_ANDROID_USER_AGENT =
+  'Dalvik/2.1.0 (Linux; U; Android 12; SM-G9980 Build/af013b0.2) Shazam/v16.51.1'
 
 /**
  * JSON-compatible scalar or nested value used for payload narrowing.
@@ -378,6 +384,64 @@ export default class ShazamSource {
             '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"'
         }
       })
+
+      if (statusCode === 403) {
+        const validationResponse = await http1makeRequest(
+          SHAZAM_VALIDATION_URL,
+          {
+            method: 'GET',
+            headers: {
+              Origin: 'https://www.shazam.com',
+              'User-Agent': SHAZAM_ANDROID_USER_AGENT
+            }
+          }
+        )
+        const validationHeader =
+          validationResponse.headers?.['x-shz-validation']
+        const validation = Array.isArray(validationHeader)
+          ? validationHeader[0]
+          : validationHeader
+
+        if (
+          validationResponse.error ||
+          validationResponse.statusCode !== 200 ||
+          typeof validation !== 'string' ||
+          !validation
+        ) {
+          return { loadType: 'empty', data: {} }
+        }
+
+        const pathParts = new URL(url).pathname.split('/').filter(Boolean)
+        const identifier = pathParts[1]
+        const slug = pathParts[2]
+        if (!identifier || !slug) {
+          return { loadType: 'empty', data: {} }
+        }
+
+        const searchUrl =
+          `${SHAZAM_COMMERCE_SEARCH_BASE}?limit=5&types=songs&term=` +
+          encodeURIComponent(decodeURIComponent(slug).replace(/[-_]+/g, ' '))
+        const searchResponse = await http1makeRequest(searchUrl, {
+          headers: {
+            Authorization: `Bearer ${validation}`,
+            Origin: 'https://www.shazam.com',
+            'User-Agent': SHAZAM_ANDROID_USER_AGENT
+          }
+        })
+
+        if (searchResponse.error || searchResponse.statusCode !== 200) {
+          return { loadType: 'empty', data: {} }
+        }
+
+        const song = this.extractSearchSongs(searchResponse.body).find(
+          (item) => item.id === identifier
+        )
+        const track = song ? this.buildTrack(song) : null
+        return track
+          ? { loadType: 'track', data: track }
+          : { loadType: 'empty', data: {} }
+      }
+
       if (error || statusCode !== 200) {
         return { loadType: 'empty', data: {} }
       }
