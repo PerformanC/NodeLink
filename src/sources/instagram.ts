@@ -720,7 +720,7 @@ export default class InstagramSource {
       'X-ASBD-ID': '129477',
       'Sec-Fetch-Site': 'same-origin',
       'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
       Origin: 'https://www.instagram.com',
       Referer: `https://www.instagram.com/reels/audio/${audioId}/`
     }
@@ -829,6 +829,18 @@ export default class InstagramSource {
     }
 
     if (!audioInfo) {
+      const items = payload?.items as
+        | {
+            media?: {
+              clips_metadata?: { music_info?: Record<string, unknown> }
+            }
+          }[]
+        | undefined
+      audioInfo = items?.[0]?.media?.clips_metadata?.music_info
+      infoSource = 'music_info'
+    }
+
+    if (!audioInfo) {
       return {
         data: null,
         exception: {
@@ -861,8 +873,11 @@ export default class InstagramSource {
         | Record<string, unknown>
         | undefined
 
-      audioUrl = (musicAsset?.progressive_download_url as string) || null
-
+      audioUrl =
+        (musicAsset?.fast_start_progressive_download_url as string) ||
+        (audioInfo.progressive_download_url as string) ||
+        null
+      // there is no difference between fast_start and progressive, but fast_start always appears first so.
       if (!audioUrl && musicConsumption?.dash_manifest) {
         const urlMatch = String(musicConsumption.dash_manifest).match(
           /<BaseURL>(.*?)<\/BaseURL>/
@@ -876,10 +891,17 @@ export default class InstagramSource {
         audioUrl = (audioInfo.progressive_download_url as string) || null
       }
 
-      artist = (musicAsset?.artist_name as string) || 'User Unknown'
+      artist =
+        (musicAsset?.display_artist as string) ||
+        (musicAsset?.artist_name as string) ||
+        'User Unknown'
       title = (musicAsset?.title as string) || 'Instagram Audio'
       duration = (musicAsset?.duration_in_ms as number) || 0
-      thumbnail = (musicAsset?.cover_artwork_thumbnail_uri as string) || ''
+      // cover_artwork_uri gives better quality i see.
+      thumbnail =
+        (musicAsset?.cover_artwork_uri as string) ||
+        (audioInfo.cover_artwork_thumbnail_uri as string) ||
+        ''
     }
 
     if (!audioUrl) {
@@ -1115,16 +1137,16 @@ export default class InstagramSource {
         await this._fetchFromGraphQL(contentId, pathSegment))
     } else if (type === 'audio') {
       ;({ data: trackData, exception: fetchError } =
-        await this._fetchAudioOgMetadata(contentId))
+        await this._fetchFromAudioAPI(contentId))
 
       if (fetchError) {
         logger(
           'debug',
           'Sources',
-          `Instagram audio OG metadata fallback triggered for ${contentId}: ${fetchError.message}`
+          `Instagram audio API fallback triggered for ${contentId}: ${fetchError.message}`
         )
         ;({ data: trackData, exception: fetchError } =
-          await this._fetchFromAudioAPI(contentId))
+          await this._fetchAudioOgMetadata(contentId))
       }
     } else {
       return {
@@ -1235,47 +1257,55 @@ export default class InstagramSource {
       ;({ data: trackData, exception: fetchError } =
         await this._fetchFromGraphQL(contentId, pathSegment))
     } else if (type === 'audio') {
-      let mirrorTrack: BestMatchTrackInfo = track
-      let preferredQuery: string | null = null
-
-      if (
-        !track.title ||
-        track.title === 'Instagram Audio' ||
-        track.author === 'User Unknown'
-      ) {
-        const ogMetadata = await this._fetchAudioOgMetadata(contentId)
-        if (!ogMetadata.exception && ogMetadata.data) {
-          mirrorTrack = {
-            title: ogMetadata.data.title || track.title,
-            author: ogMetadata.data.author || track.author,
-            length: track.length,
-            uri: track.uri
-          }
-          preferredQuery =
-            (
-              ogMetadata.data as InstagramRawTrackData & {
-                searchQuery?: string
-              }
-            ).searchQuery || null
-        }
-      }
-
-      const mirrorResult = await this._resolveAudioMirrorTrack(
-        mirrorTrack,
-        preferredQuery
-      )
-      if (!mirrorResult?.exception) {
-        return mirrorResult as TrackUrlResult
-      }
-
-      logger(
-        'warn',
-        'Sources',
-        `Instagram audio mirror failed for ${contentId}: ${mirrorResult.exception.message}. Falling back to direct stream lookup.`
-      )
-
       ;({ data: trackData, exception: fetchError } =
         await this._fetchFromAudioAPI(contentId))
+
+      if (!trackData) {
+        let mirrorTrack: BestMatchTrackInfo = track
+        let preferredQuery: string | null = null
+
+        if (
+          !track.title ||
+          track.title === 'Instagram Audio' ||
+          track.author === 'User Unknown'
+        ) {
+          const ogMetadata = await this._fetchAudioOgMetadata(contentId)
+          if (!ogMetadata.exception && ogMetadata.data) {
+            mirrorTrack = {
+              title: ogMetadata.data.title || track.title,
+              author: ogMetadata.data.author || track.author,
+              length: track.length,
+              uri: track.uri
+            }
+            preferredQuery =
+              (
+                ogMetadata.data as InstagramRawTrackData & {
+                  searchQuery?: string
+                }
+              ).searchQuery || null
+          }
+        }
+
+        const mirrorResult = await this._resolveAudioMirrorTrack(
+          mirrorTrack,
+          preferredQuery
+        )
+        if (!mirrorResult?.exception) {
+          return mirrorResult as TrackUrlResult
+        }
+
+        logger(
+          'warn',
+          'Sources',
+          `Instagram audio mirror failed for ${contentId}: ${mirrorResult.exception.message}.`
+        )
+        return {
+          exception: {
+            message: 'Audio API request failed',
+            severity: 'common'
+          }
+        }
+      }
     } else {
       return {
         exception: {
