@@ -494,7 +494,7 @@ export default class YandexMusicSource implements SourceInstance {
           streamOnly: true,
           headers,
           localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-          proxy: this.config.network.proxy
+          proxy: this.config.network?.proxy ?? this.config.proxy
         })
       }
 
@@ -1068,7 +1068,7 @@ export default class YandexMusicSource implements SourceInstance {
         'X-Yandex-Music-Client': CLIENT_HEADER
       },
       localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-      proxy: this.config.network.proxy
+      proxy: this.config.network?.proxy ?? this.config.proxy
     })
 
     if (res.statusCode !== 200) {

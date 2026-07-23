@@ -387,7 +387,7 @@ export default class YandexMusicSource {
                     streamOnly: true,
                     headers,
                     localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-                    proxy: this.config.network.proxy
+                    proxy: this.config.network?.proxy ?? this.config.proxy
                 });
             };
             let response = await requestStream(url);
@@ -813,7 +813,7 @@ export default class YandexMusicSource {
                 'X-Yandex-Music-Client': CLIENT_HEADER
             },
             localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy ?? this.config.proxy
         });
         if (res.statusCode !== 200) {
             throw new Error(`Yandex API returned HTTP ${res.statusCode} for ${path}`);

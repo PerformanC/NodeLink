@@ -215,7 +215,7 @@ export default class VKMusicSource implements SourceInstance {
       body: 'version=1&app_id=6287487',
       disableBodyCompression: true,
       localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-      proxy: this.config.network.proxy
+      proxy: this.config.network?.proxy ?? this.config.proxy
     })
 
     const body = res.body as {
@@ -443,7 +443,7 @@ export default class VKMusicSource implements SourceInstance {
     try {
       const res = await http1makeRequest(url, {
         headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-        proxy: this.config.network.proxy
+        proxy: this.config.network?.proxy ?? this.config.proxy
       })
 
       if (res.statusCode !== 200) throw new Error(`HTTP ${res.statusCode}`)
@@ -537,7 +537,7 @@ export default class VKMusicSource implements SourceInstance {
     try {
       const res = await http1makeRequest(url, {
         headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-        proxy: this.config.network.proxy
+        proxy: this.config.network?.proxy ?? this.config.proxy
       })
 
       if (res.statusCode !== 200) throw new Error(`HTTP ${res.statusCode}`)
@@ -792,7 +792,7 @@ export default class VKMusicSource implements SourceInstance {
           type: 'mpegts',
           localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
           startTime: (additionalData?.startTime as number) || 0,
-          proxy: this.config.network.proxy
+          proxy: this.config.network?.proxy ?? this.config.proxy
         }),
         type: 'mpegts'
       }
@@ -802,7 +802,7 @@ export default class VKMusicSource implements SourceInstance {
       method: 'GET',
       streamOnly: true,
       headers,
-      proxy: this.config.network.proxy
+      proxy: this.config.network?.proxy ?? this.config.proxy
     })
 
     if (res.error || !res.stream)
@@ -842,7 +842,7 @@ export default class VKMusicSource implements SourceInstance {
           'KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)'
       },
       localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-      proxy: this.config.network.proxy
+      proxy: this.config.network?.proxy ?? this.config.proxy
     })
 
     const body = res.body as VKApiResponse<T>

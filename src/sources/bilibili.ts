@@ -210,7 +210,7 @@ export default class BilibiliSource implements SourceInstance {
       {
         method: 'GET',
         headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-        proxy: this.config.network.proxy
+        proxy: this.config.network?.proxy
       }
     )
 
@@ -302,7 +302,7 @@ export default class BilibiliSource implements SourceInstance {
             Cookie: cookie,
             Referer: 'https://search.bilibili.com/'
           },
-          proxy: this.config.network.proxy
+          proxy: this.config.network?.proxy
         }
       )
       body = searchResponse.body as BilibiliApiResponse<unknown>
@@ -322,7 +322,7 @@ export default class BilibiliSource implements SourceInstance {
               Cookie: cookie,
               Referer: 'https://search.bilibili.com/'
             },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
         body = allSearchResponse.body as BilibiliApiResponse<unknown>
@@ -412,7 +412,7 @@ export default class BilibiliSource implements SourceInstance {
         headers: HEADERS,
         maxRedirects: 3,
         timeout: 5000,
-        proxy: this.config.network.proxy
+        proxy: this.config.network?.proxy
       })
 
       if (typeof res.body === 'string') {
@@ -592,7 +592,7 @@ export default class BilibiliSource implements SourceInstance {
         const res = await makeRequest(apiUrl, {
           method: 'GET',
           headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-          proxy: this.config.network.proxy
+          proxy: this.config.network?.proxy
         })
 
         const body = res.body as
@@ -635,7 +635,7 @@ export default class BilibiliSource implements SourceInstance {
         const res = await makeRequest(apiUrl, {
           method: 'GET',
           headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-          proxy: this.config.network.proxy
+          proxy: this.config.network?.proxy
         })
 
         const body = res.body as
@@ -710,7 +710,7 @@ export default class BilibiliSource implements SourceInstance {
             {
               method: 'GET',
               headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-              proxy: this.config.network.proxy
+              proxy: this.config.network?.proxy
             }
           )
 
@@ -751,7 +751,7 @@ export default class BilibiliSource implements SourceInstance {
           {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
 
@@ -790,7 +790,7 @@ export default class BilibiliSource implements SourceInstance {
           {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
 
@@ -826,7 +826,7 @@ export default class BilibiliSource implements SourceInstance {
           {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
 
@@ -889,7 +889,7 @@ export default class BilibiliSource implements SourceInstance {
           {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
 
@@ -984,7 +984,7 @@ export default class BilibiliSource implements SourceInstance {
           {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
         const body = res.body as
@@ -1009,7 +1009,7 @@ export default class BilibiliSource implements SourceInstance {
           {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
 
@@ -1104,7 +1104,7 @@ export default class BilibiliSource implements SourceInstance {
           {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }
         )
         const body = res.body as
@@ -1135,7 +1135,7 @@ export default class BilibiliSource implements SourceInstance {
             Referer: 'https://www.bilibili.com/',
             Cookie: this.buildCookieHeader()
           },
-          proxy: this.config.network.proxy
+          proxy: this.config.network?.proxy
         }
       )
 
@@ -1215,7 +1215,7 @@ export default class BilibiliSource implements SourceInstance {
             type: 'mpegts',
             localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
             startTime: (additionalData?.startTime as number) || 0,
-            proxy: this.config.network.proxy
+            proxy: this.config.network?.proxy
           }),
           type: 'mpegts'
         }
@@ -1225,7 +1225,7 @@ export default class BilibiliSource implements SourceInstance {
         method: 'GET',
         headers,
         streamOnly: true,
-        proxy: this.config.network.proxy
+        proxy: this.config.network?.proxy
       })
 
       if (res.error || !res.stream)
