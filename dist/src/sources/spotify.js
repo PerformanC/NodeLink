@@ -41,11 +41,11 @@ const QUERIES = {
     },
     getPlaylist: {
         name: 'fetchPlaylist',
-        hash: 'bb67e0af06e8d6f52b531f97468ee4acd44cd0f82b988e15c2ea47b1148efc77'
+        hash: 'e4b2953f160e58e38ac025d79b5a9b3aceee5c4c716598e9830bfceb69faff5f'
     },
     getArtist: {
         name: 'queryArtistOverview',
-        hash: '35648a112beb1794e39ab931365f6ae4a8d45e65396d641eeda94e4003d41497'
+        hash: 'ae0e2958a4ab645b35ca19ac04d0495ae12d9c5d7b7286217674801a9aab281a'
     },
     getRecommendations: {
         name: 'internalLinkRecommenderTrack',
@@ -53,7 +53,7 @@ const QUERIES = {
     },
     searchDesktop: {
         name: 'searchDesktop',
-        hash: 'fcad5a3e0d5af727fb76966f06971c19cfa2275e6ff7671196753e008611873c'
+        hash: 'db61238974d27839a136c9dc02bfdbe3fab7635f21cf85976ebff9a1ee281345'
     }
 };
 /**
@@ -173,12 +173,21 @@ export default class SpotifySource {
         const cm = this.nodelink.credentialManager;
         if (!cm)
             return false;
-        this.accessToken = cm.get('spotify_access_token');
-        this.anonymousToken = cm.get('spotify_anonymous_token');
-        this.mobileToken = cm.get('spotify_mobile_token');
+        const accessToken = cm.getEntry?.('spotify_access_token');
+        const anonymousToken = cm.getEntry?.('spotify_anonymous_token');
+        const mobileToken = cm.getEntry?.('spotify_mobile_token');
+        this.accessToken =
+            accessToken?.value ?? cm.get('spotify_access_token');
+        this.accessTokenExpiry = accessToken?.expiresAt ?? null;
+        this.anonymousToken =
+            anonymousToken?.value ?? cm.get('spotify_anonymous_token');
+        this.anonymousTokenExpiry = anonymousToken?.expiresAt ?? null;
+        this.mobileToken =
+            mobileToken?.value ?? cm.get('spotify_mobile_token');
+        this.mobileTokenExpiry = mobileToken?.expiresAt ?? null;
         const hasOfficial = !!(this.config.clientId && this.config.clientSecret);
         try {
-            if (hasOfficial && !this.accessToken)
+            if (hasOfficial)
                 await this._ensureToken('official');
             await this._ensureToken('anonymous');
             await this._ensureToken('mobile');
@@ -219,7 +228,9 @@ export default class SpotifySource {
             token = this.mobileToken;
             expiry = this.mobileTokenExpiry;
         }
-        if (token && (!expiry || now < expiry - TOKEN_REFRESH_MARGIN_MS)) {
+        if (token &&
+            typeof expiry === 'number' &&
+            now < expiry - TOKEN_REFRESH_MARGIN_MS) {
             return true;
         }
         const inflight = this.refreshPromises.get(type);

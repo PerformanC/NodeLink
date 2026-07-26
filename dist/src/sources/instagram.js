@@ -727,6 +727,73 @@ export default class InstagramSource {
         };
     }
     /**
+     * Fetches a video from Instagram's logged-out clips query.
+     *
+     * @param postId - Instagram shortcode for the video.
+     * @returns Video data when found, otherwise `null`.
+     */
+    async _fetchFromClipsQuery(postId) {
+        try {
+            const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+            let mediaId = 0n;
+            for (const character of postId) {
+                mediaId = mediaId * 64n + BigInt(alphabet.indexOf(character));
+            }
+            const variables = JSON.stringify({
+                data: {
+                    chaining_mode: 'same_author',
+                    clips_media_id: mediaId.toString()
+                },
+                __relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider: false,
+                __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
+            });
+            const query = new URLSearchParams({
+                doc_id: '27695069083459414',
+                variables
+            });
+            const response = await makeRequest(`https://www.instagram.com/graphql/query/?${query.toString()}`, { method: 'GET' });
+            if (response.error || response.statusCode !== 200)
+                return null;
+            const responseData = typeof response.body === 'string'
+                ? JSON.parse(response.body)
+                : response.body;
+            const edges = responseData.data
+                ?.xdt_api__v1__clips__clips_on_logged_out_connection_v2?.edges;
+            const media = edges
+                ?.map((edge) => edge.node.media)
+                .find((item) => item?.code === postId);
+            if (media?.media_type !== 2)
+                return null;
+            const videoVersions = media.video_versions;
+            const videoUrl = videoVersions?.find((version) => typeof version.url === 'string')?.url;
+            if (!videoUrl)
+                return null;
+            const user = media.user;
+            const caption = media.caption;
+            const imageVersions = media.image_versions2;
+            const imageCandidates = imageVersions?.candidates;
+            const manifest = media.video_dash_manifest;
+            const manifestDuration = manifest?.match(/mediaPresentationDuration="PT([\d.]+)S"/)?.[1];
+            return {
+                data: {
+                    videoUrl,
+                    author: user?.username || 'User Unknown',
+                    length: Math.round(Number(manifestDuration || 0) * 1000),
+                    thumbnail: imageCandidates?.find((candidate) => typeof candidate.url === 'string')?.url || '',
+                    title: caption?.text || 'Instagram Video',
+                    isStream: false,
+                    isSeekable: true
+                },
+                exception: null
+            };
+        }
+        catch (e) {
+            const message = e instanceof Error ? e.message : String(e);
+            logger('debug', 'Sources', `Instagram clips query failed for ${postId}: ${message}`);
+            return null;
+        }
+    }
+    /**
      * Fetches post/reel media information from the Instagram GraphQL API.
      *
      * Handles both single video posts and carousel posts with video children.
@@ -742,6 +809,8 @@ export default class InstagramSource {
                 exception: { message: 'Post ID not provided', severity: 'common' }
             };
         }
+        // this no longer works btw...
+        // only is working from clips, but there are ways to do it on /embed/ too.
         const headers = {
             Accept: '*/*',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -902,9 +971,9 @@ export default class InstagramSource {
         let trackData = null;
         let fetchError = null;
         if (type === 'post') {
-            ;
+            const clipsResult = await this._fetchFromClipsQuery(contentId);
             ({ data: trackData, exception: fetchError } =
-                await this._fetchFromGraphQL(contentId, pathSegment));
+                clipsResult ?? (await this._fetchFromGraphQL(contentId, pathSegment)));
         }
         else if (type === 'audio') {
             ;
@@ -1007,9 +1076,9 @@ export default class InstagramSource {
         let trackData = null;
         let fetchError = null;
         if (type === 'post') {
-            ;
+            const clipsResult = await this._fetchFromClipsQuery(contentId);
             ({ data: trackData, exception: fetchError } =
-                await this._fetchFromGraphQL(contentId, pathSegment));
+                clipsResult ?? (await this._fetchFromGraphQL(contentId, pathSegment)));
         }
         else if (type === 'audio') {
             ;

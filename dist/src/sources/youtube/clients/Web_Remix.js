@@ -28,11 +28,11 @@ export default class WebRemix extends BaseClient {
         return {
             client: {
                 clientName: 'WEB_REMIX',
-                clientVersion: '1.20260707.12.00',
-                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+                clientVersion: '1.20260721.00.00',
+                userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) YouTubeMusic/3.12.0 Chrome/148.0.7778.271 Electron/42.5.0 Safari/537.36',
                 hl: context.client.hl,
                 gl: context.client.gl,
-                originalUrl: 'https://music.youtube.com/'
+                applicationState: 'ACTIVE'
             },
             user: { lockedSafetyMode: false },
             request: { useSsl: true }
@@ -54,13 +54,13 @@ export default class WebRemix extends BaseClient {
      */
     async search(query, type, context) {
         const sourceName = 'ytmusic';
-        let params = 'EgWKAQIIAWoSEAMQBRAEEAkQChAVEBAQDhAR'; // Default (Tracks)
+        let params = 'EgWKAQIIAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D'; // Default (Tracks)
         if (type === 'playlist')
-            params = 'EgeKAQQoAEABahIQAxAFEAQQCRAKEBUQEBAOEBE%3D';
+            params = 'EgeKAQQoAEABahAQBBADEAkQBRAKEBAQFRAR';
         if (type === 'album')
-            params = 'EgWKAQIYAWoSEAMQBRAEEAkQChAVEBAQDhAR';
+            params = 'EgWKAQIYAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D';
         if (type === 'artist')
-            params = 'EgWKAQIgAWoSEAMQBRAEEAkQChAVEBAQDhAR';
+            params = 'EgWKAQIgAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D';
         const requestBody = {
             context: this.getClient(context),
             query: query,

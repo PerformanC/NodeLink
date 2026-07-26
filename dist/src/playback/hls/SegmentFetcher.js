@@ -104,13 +104,20 @@ export default class SegmentFetcher {
     async fetchMap(mapInfo, keyInfo = null) {
         if (!mapInfo?.uri)
             return null;
+        const headers = {
+            ...this.headers
+        };
+        if (mapInfo.byteRange) {
+            const end = mapInfo.byteRange.offset + mapInfo.byteRange.length - 1;
+            headers.Range = `bytes=${mapInfo.byteRange.offset}-${end}`;
+        }
         const { body, error, statusCode } = await http1makeRequest(mapInfo.uri, {
-            headers: this.headers,
+            headers,
             responseType: 'buffer',
             localAddress: this.localAddress ?? undefined,
             proxy: this.proxy ?? undefined
         });
-        if (error || statusCode !== 200) {
+        if (error || (statusCode !== 200 && statusCode !== 206)) {
             throw new Error(`Map fetch failed: ${statusCode}`);
         }
         const buffer = body;

@@ -1,7 +1,9 @@
 import { PassThrough, pipeline } from 'node:stream';
 import { encodeTrack, logger, makeRequest } from '../utils.js';
-const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3';
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36';
 const REDDIT_BASE = 'https://www.reddit.com';
+const LOID_CACHE_KEY = 'reddit_loid';
+const LOID_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000;
 const COMMENTS_REGEX = /\/comments\/([^/?]+)/;
 const VIDEO_REGEX = /\/video\/([^/?]+)/;
 const SHARE_REGEX = /\/r\/([^/]+)\/s\/([^/?]+)/;
@@ -33,6 +35,56 @@ async function resolveRedirectingUrl(url, headers) {
     }
     const finalUrl = new URL(location, url).toString();
     return COMMENTS_REGEX.exec(finalUrl)?.[1] ?? null;
+}
+async function getLoid(nodelink) {
+    // seems like a loid cookie can take up 2+ years to expire... idk why but it does...
+    const cachedLoid = nodelink.credentialManager?.get(LOID_CACHE_KEY) ?? null;
+    if (cachedLoid) {
+        return cachedLoid;
+    }
+    try {
+        const res = await makeRequest(`${REDDIT_BASE}/`, {
+            headers: { 'User-Agent': USER_AGENT }
+        });
+        if (res.error) {
+            return null;
+        }
+        const text = (await res.body);
+        const token = /name="token"\s+value="([^"]+)"/.exec(text)?.[1];
+        const secret = /await\([^)]*\)\("([0-9a-f]+)"\)/.exec(text)?.[1];
+        if (!token || !secret) {
+            return null;
+        }
+        const url = new URL(`${REDDIT_BASE}/`);
+        url.searchParams.set('solution', secret + secret);
+        url.searchParams.set('js_challenge', '1');
+        url.searchParams.set('token', token);
+        url.searchParams.set('jsc_orig_r', '');
+        const res2 = await makeRequest(url.toString(), {
+            headers: {
+                'User-Agent': USER_AGENT,
+                Referer: `${REDDIT_BASE}/`
+            }
+        });
+        const setCookie = res2.headers?.['set-cookie'];
+        const loid = /(?:^|,\s*)loid=([^;]+)/.exec(setCookie ?? '')?.[1];
+        if (!loid) {
+            return null;
+        }
+        const maxAge = /;\s*max-age=(\d+)/i.exec(setCookie ?? '')?.[1];
+        const expires = /;\s*expires=([^;]+)/i.exec(setCookie ?? '')?.[1];
+        const expiresAt = expires ? Date.parse(expires) : Number.NaN;
+        const ttlMs = maxAge
+            ? Number(maxAge) * 1000
+            : Number.isFinite(expiresAt) && expiresAt > Date.now()
+                ? expiresAt - Date.now()
+                : LOID_FALLBACK_TTL_MS;
+        nodelink.credentialManager?.set(LOID_CACHE_KEY, loid, ttlMs);
+        return loid;
+    }
+    catch {
+        return null;
+    }
 }
 /**
  * Reddit source implementation.
@@ -253,7 +305,11 @@ export default class RedditSource {
         if (!currentParams.id) {
             return { error: 'fetch.short_link' };
         }
-        const response = await makeRequest(`${REDDIT_BASE}/comments/${currentParams.id}.json`, { method: 'GET', headers });
+        const loid = await getLoid(this.nodelink);
+        const response = await makeRequest(`${REDDIT_BASE}/comments/${currentParams.id}.json`, {
+            method: 'GET',
+            headers: loid ? { ...headers, Cookie: `loid=${loid}` } : headers
+        });
         if (response.error ||
             response.statusCode !== 200 ||
             !Array.isArray(response.body)) {
@@ -278,7 +334,8 @@ export default class RedditSource {
         const author = typeof postData.author === 'string' && postData.author.length > 0
             ? `u/${postData.author}`
             : 'Reddit';
-        const thumbnail = postData.thumbnail || postData.preview?.images?.[0]?.source?.url || null;
+        const thumbnailUrl = postData.preview?.images?.[0]?.source?.url || postData.thumbnail;
+        const thumbnail = thumbnailUrl?.replaceAll('&amp;', '&') || null;
         const commonData = {
             resolvedId: currentParams.id,
             title: postData.title || 'Reddit Video',

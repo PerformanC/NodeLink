@@ -69,7 +69,14 @@ export function parse(content: string, baseUrl: string): HLSPlaylist {
     } else if (line.startsWith('#EXT-X-KEY:')) {
       currentKey = parseAttributes(line, baseUrl) as unknown as HLSSegmentKey
     } else if (line.startsWith('#EXT-X-MAP:')) {
-      currentMap = parseAttributes(line, baseUrl) as unknown as HLSSegmentMap
+      const attrs = parseAttributes(line, baseUrl)
+      currentMap = {
+        uri: typeof attrs.uri === 'string' ? attrs.uri : undefined,
+        byteRange:
+          typeof attrs.byterange === 'string'
+            ? parseByteRange(attrs.byterange, null)
+            : null
+      }
     } else if (line.startsWith('#EXTINF:')) {
       const parts = line.split(':')
       const part1 = parts[1]

@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream';
+import { PassThrough, pipeline } from 'node:stream';
 import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Kwai source implementation.
@@ -140,15 +140,17 @@ export default class KwaiSource {
                 throw new Error(`Kwai returned status ${response.statusCode}`);
             }
             const stream = new PassThrough();
-            response.stream.on('data', (chunk) => {
-                stream.write(chunk);
+            stream.once('close', () => {
+                ;
+                response.stream.destroy?.();
             });
-            response.stream.on('end', () => {
-                stream.emit('finishBuffering');
-            });
-            response.stream.on('error', (error) => {
-                logger('error', 'Kwai', `Upstream stream error: ${error.message}`);
-                stream.emit('error', error);
+            pipeline(response.stream, stream, (error) => {
+                if (error) {
+                    if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                        logger('error', 'Kwai', `Stream error: ${error.message}`);
+                    }
+                    return;
+                }
                 stream.emit('finishBuffering');
             });
             return { stream, type: 'mp4' };
@@ -191,7 +193,12 @@ export default class KwaiSource {
         if (!value) {
             return null;
         }
-        return value.replace(/\\u([\dA-Fa-f]{4})/g, (_match, code) => String.fromCharCode(Number.parseInt(code, 16)));
+        try {
+            return JSON.parse(`"${value}"`);
+        }
+        catch {
+            return value;
+        }
     }
     /**
      * Fetches and parses the Kwai page metadata used by this source.
@@ -206,7 +213,7 @@ export default class KwaiSource {
         const response = await makeRequest(url, {
             method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
                 Accept: '*/*'
             }
         });
@@ -217,27 +224,27 @@ export default class KwaiSource {
             throw new Error('Error fetching video info');
         }
         const body = response.body;
-        const mediaSection = body.match(/share_info:c,main_mv_urls:\s*\[(.*?)\]/)?.[1];
-        const author = body.match(/kwai_id\s*:\s*"([^"]+)"/)?.[1] ?? 'Unknown';
-        const durationText = body.match(/duration:\s*([\d]+)/)?.[1];
-        let thumbnailUrl = body.match(/poster="([^"]+)"/)?.[1] ?? null;
-        if (!thumbnailUrl) {
-            const thumbnailMatch = body.match(/cover_thumbnail_urls:\[\{cdn:p,url:\s*"([^"]+)"/);
-            thumbnailUrl = this.decodeUnicodeEscapes(thumbnailMatch?.[1] ?? null);
+        const photoIndex = body.indexOf(`photo_id_str:"${videoId}"`);
+        if (photoIndex === -1) {
+            throw new Error('Video data not found in response');
         }
-        if (!mediaSection) {
+        const entryStart = body.lastIndexOf(']={', photoIndex);
+        const entryEnd = body.indexOf('};', photoIndex);
+        const videoData = body.slice(entryStart + 3, entryEnd);
+        const videoUrl = this.decodeUnicodeEscapes(videoData.match(/main_mv_urls:\[\{[^}]*url:"((?:\\.|[^"])*)"/)?.[1] ??
+            null);
+        if (!videoUrl) {
             throw new Error('Video URL not found in response');
         }
-        const videoUrlMatch = mediaSection.match(/url:\s*"([^"]+)"/)?.[1];
-        const videoUrl = this.decodeUnicodeEscapes(videoUrlMatch ?? null);
-        if (!videoUrl) {
-            throw new Error('Could not extract video URL');
-        }
+        const author = this.decodeUnicodeEscapes(videoData.match(/user_name:"((?:\\.|[^"])*)"/)?.[1] ?? null) ?? 'Unknown';
+        const title = this.decodeUnicodeEscapes(videoData.match(/caption:"((?:\\.|[^"])*)"/)?.[1] ?? null) ?? (author === 'Unknown' ? 'Kwai Video' : `Kwai - ${author}`);
+        const durationText = videoData.match(/ext_params:\{[^}]*sound:(\d+)/)?.[1];
+        const thumbnail = this.decodeUnicodeEscapes(videoData.match(/cover_thumbnail_urls:\[\{[^}]*url:"((?:\\.|[^"])*)"/)?.[1] ?? null);
         return {
             author,
-            title: author === 'Unknown' ? 'Kwai Video' : `Kwai - ${author}`,
-            length: durationText ? Number.parseInt(durationText, 10) * 1000 : 0,
-            thumbnail: thumbnailUrl,
+            title,
+            length: durationText ? Number.parseInt(durationText, 10) : 0,
+            thumbnail,
             videoUrl
         };
     }

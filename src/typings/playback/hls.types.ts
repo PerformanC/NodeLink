@@ -38,6 +38,8 @@ export interface HLSSegmentKey {
 export interface HLSSegmentMap {
   /** URI of the initialization segment */
   uri?: string
+  /** Byte range when the initialization segment shares a media file */
+  byteRange?: HLSByteRange | null
 }
 
 /**
