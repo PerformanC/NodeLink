@@ -243,19 +243,22 @@ export default class Android extends BaseClient {
                 const playlistId = playlistIdMatch[1];
                 const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
                 const currentVideoId = videoIdMatch?.[1] ?? null;
+                const isRadio = playlistId.startsWith('RD');
                 logger('debug', 'YouTube-Android', `User-Agent for playlist request: ${this.getClient(context).client.userAgent}`);
-                const requestBody = {
-                    context: this.getClient(context),
-                    playlistId,
-                    contentCheckOk: true,
-                    racyCheckOk: true
-                };
-                if (playlistId.startsWith('RD') && currentVideoId) {
+                const requestBody = isRadio
+                    ? {
+                        context: this.getClient(context),
+                        playlistId,
+                        contentCheckOk: true,
+                        racyCheckOk: true
+                    }
+                    : { context: this.getClient(context), browseId: `VL${playlistId}` };
+                if (isRadio && currentVideoId) {
                     requestBody.videoId = currentVideoId;
                 }
                 const playlistProxy = this.getProxy();
                 const playlistStart = Date.now();
-                const { body: playlistResponseRaw, statusCode } = await makeRequest(`${apiEndpoint}/youtubei/v1/next`, {
+                const { body: playlistResponseRaw, statusCode } = await makeRequest(`${apiEndpoint}/youtubei/v1/${isRadio ? 'next' : 'browse'}`, {
                     headers: {
                         'User-Agent': this.getClient(context).client.userAgent,
                         ...(context.client.visitorData
@@ -283,6 +286,9 @@ export default class Android extends BaseClient {
                     };
                 }
                 const playlistResponse = playlistResponseRaw;
+                if (!isRadio) {
+                    return await this._handleBrowsePlaylistResponse(playlistId, playlistResponse, sourceName, context);
+                }
                 return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName);
             }
             default:

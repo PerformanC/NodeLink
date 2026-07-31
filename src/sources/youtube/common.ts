@@ -1242,6 +1242,7 @@ function getRendererFromItemData(
     { key: 'compactPlaylistRenderer', type: 'playlist' },
     { key: 'channelRenderer', type: 'channel' },
     { key: 'playlistPanelVideoRenderer', type: 'track' },
+    { key: 'playlistVideoRenderer', type: 'track' },
     { key: 'gridVideoRenderer', type: 'track' }
   ]
 
@@ -2517,6 +2518,57 @@ export abstract class BaseClient {
     const maxLength =
       (this.config.playback?.maxPlaylistLength as number | undefined) || 100
 
+    if (sourceName === 'ytmusic') {
+      playlistContent = playlistContent.filter((item) =>
+        getItemValue(item, ['playlistPanelVideoRenderer.videoId'])
+      )
+    }
+
+    let continuation = getItemValue<string>(playlistResponse, [
+      'contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs.0.tabRenderer.content.musicQueueRenderer.content.playlistPanelRenderer.continuations.0.nextContinuationData.continuation'
+    ])
+    const seenContinuations = new Set<string>()
+
+    while (
+      sourceName === 'ytmusic' &&
+      _context &&
+      continuation &&
+      !seenContinuations.has(continuation) &&
+      playlistContent.length < maxLength
+    ) {
+      seenContinuations.add(continuation)
+      const client = this.getClient(_context)
+      const { body, statusCode } = await makeRequest(
+        'https://music.youtube.com/youtubei/v1/next',
+        {
+          method: 'POST',
+          headers: {
+            'User-Agent': client.client.userAgent,
+            'X-Goog-Api-Format-Version': '2'
+          },
+          body: { context: client, continuation },
+          disableBodyCompression: true,
+          proxy: this.getProxy()
+        }
+      )
+      if (statusCode !== 200 || !body) break
+
+      const page = getItemValue<Record<string, unknown>>(body, [
+        'continuationContents.playlistPanelContinuation'
+      ])
+      const items = (page?.contents as unknown[] | undefined)?.filter((item) =>
+        getItemValue(item, ['playlistPanelVideoRenderer.videoId'])
+      )
+      if (!items?.length) break
+
+      playlistContent.push(
+        ...items.slice(0, maxLength - playlistContent.length)
+      )
+      continuation = getItemValue<string>(page, [
+        'continuations.0.nextContinuationData.continuation'
+      ])
+    }
+
     for (let i = 0; i < Math.min(playlistContent.length, maxLength); i++) {
       const item = playlistContent[i] as YouTubeRenderer
       try {
@@ -2649,9 +2701,14 @@ export abstract class BaseClient {
     const sectionContents = sectionList?.contents as
       | Record<string, unknown>[]
       | undefined
-    const shelf = sectionContents?.[0]?.musicPlaylistShelfRenderer as
-      | Record<string, unknown>
-      | undefined
+    const section = sectionContents?.[0]
+    const shelf =
+      (section?.musicPlaylistShelfRenderer as
+        | Record<string, unknown>
+        | undefined) ||
+      (section?.playlistVideoListRenderer as
+        | Record<string, unknown>
+        | undefined)
 
     const shelfContentsCheck = shelf?.contents as unknown[] | undefined
     if (!shelf || !shelfContentsCheck || shelfContentsCheck.length === 0) {
@@ -2663,10 +2720,54 @@ export abstract class BaseClient {
       return { loadType: 'empty', data: {} }
     }
 
-    const tracks: YouTubeTrackData[] = []
     const maxLength =
       (this.config.playback?.maxPlaylistLength as number | undefined) || 100
-    const shelfContents = shelf.contents as unknown[]
+    const shelfContents = shelfContentsCheck.filter(
+      (item) => !getItemValue(item, ['messageRenderer'])
+    )
+    let continuation = getItemValue<string>(shelf, [
+      'continuations.0.nextContinuationData.continuation'
+    ])
+    const seenContinuations = new Set<string>()
+
+    while (
+      this.name === 'ANDROID' &&
+      _context &&
+      continuation &&
+      !seenContinuations.has(continuation) &&
+      shelfContents.length < maxLength
+    ) {
+      seenContinuations.add(continuation)
+      const client = this.getClient(_context)
+      const { body, statusCode } = await makeRequest(
+        `${this.getApiEndpoint()}/youtubei/v1/browse`,
+        {
+          method: 'POST',
+          headers: {
+            'User-Agent': client.client.userAgent,
+            'X-YouTube-Client-Name': '3',
+            'X-YouTube-Client-Version': client.client.clientVersion ?? ''
+          },
+          body: { context: client, continuation },
+          disableBodyCompression: true,
+          proxy: this.getProxy()
+        }
+      )
+      if (statusCode !== 200 || !body) break
+
+      const page = getItemValue<Record<string, unknown>>(body, [
+        'continuationContents.playlistVideoListContinuation'
+      ])
+      const items = page?.contents as unknown[] | undefined
+      if (!items?.length) break
+
+      shelfContents.push(...items.slice(0, maxLength - shelfContents.length))
+      continuation = getItemValue<string>(page, [
+        'continuations.0.nextContinuationData.continuation'
+      ])
+    }
+
+    const tracks: YouTubeTrackData[] = []
 
     for (let i = 0; i < Math.min(shelfContents.length, maxLength); i++) {
       const item = shelfContents[i] as YouTubeRenderer
@@ -2708,12 +2809,17 @@ export abstract class BaseClient {
     const headerRoot = browseResponse.header as
       | Record<string, unknown>
       | undefined
+    const pageHeader = headerRoot?.pageHeaderRenderer as
+      | Record<string, unknown>
+      | undefined
     const musicDetail = headerRoot?.musicDetailHeaderRenderer as
       | Record<string, unknown>
       | undefined
     const musicTitle = musicDetail?.title as YouTubeText | undefined
 
-    if (musicTitle?.runs?.[0]?.text) {
+    if (typeof pageHeader?.pageTitle === 'string') {
+      playlistTitle = pageHeader.pageTitle
+    } else if (musicTitle?.runs?.[0]?.text) {
       playlistTitle = musicTitle.runs[0].text
     } else {
       const editableHeaderRoot =

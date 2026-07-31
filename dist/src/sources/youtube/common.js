@@ -905,6 +905,7 @@ function getRendererFromItemData(itemData, itemType) {
         { key: 'compactPlaylistRenderer', type: 'playlist' },
         { key: 'channelRenderer', type: 'channel' },
         { key: 'playlistPanelVideoRenderer', type: 'track' },
+        { key: 'playlistVideoRenderer', type: 'track' },
         { key: 'gridVideoRenderer', type: 'track' }
     ];
     for (const r of rendererTypes) {
@@ -1774,6 +1775,43 @@ export class BaseClient {
         const tracks = [];
         let selectedTrack = 0;
         const maxLength = this.config.playback?.maxPlaylistLength || 100;
+        if (sourceName === 'ytmusic') {
+            playlistContent = playlistContent.filter((item) => getItemValue(item, ['playlistPanelVideoRenderer.videoId']));
+        }
+        let continuation = getItemValue(playlistResponse, [
+            'contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs.0.tabRenderer.content.musicQueueRenderer.content.playlistPanelRenderer.continuations.0.nextContinuationData.continuation'
+        ]);
+        const seenContinuations = new Set();
+        while (sourceName === 'ytmusic' &&
+            _context &&
+            continuation &&
+            !seenContinuations.has(continuation) &&
+            playlistContent.length < maxLength) {
+            seenContinuations.add(continuation);
+            const client = this.getClient(_context);
+            const { body, statusCode } = await makeRequest('https://music.youtube.com/youtubei/v1/next', {
+                method: 'POST',
+                headers: {
+                    'User-Agent': client.client.userAgent,
+                    'X-Goog-Api-Format-Version': '2'
+                },
+                body: { context: client, continuation },
+                disableBodyCompression: true,
+                proxy: this.getProxy()
+            });
+            if (statusCode !== 200 || !body)
+                break;
+            const page = getItemValue(body, [
+                'continuationContents.playlistPanelContinuation'
+            ]);
+            const items = page?.contents?.filter((item) => getItemValue(item, ['playlistPanelVideoRenderer.videoId']));
+            if (!items?.length)
+                break;
+            playlistContent.push(...items.slice(0, maxLength - playlistContent.length));
+            continuation = getItemValue(page, [
+                'continuations.0.nextContinuationData.continuation'
+            ]);
+        }
         for (let i = 0; i < Math.min(playlistContent.length, maxLength); i++) {
             const item = playlistContent[i];
             try {
@@ -1849,15 +1887,52 @@ export class BaseClient {
         const tabContent = tabRenderer?.content;
         const sectionList = tabContent?.sectionListRenderer;
         const sectionContents = sectionList?.contents;
-        const shelf = sectionContents?.[0]?.musicPlaylistShelfRenderer;
+        const section = sectionContents?.[0];
+        const shelf = section?.musicPlaylistShelfRenderer ||
+            section?.playlistVideoListRenderer;
         const shelfContentsCheck = shelf?.contents;
         if (!shelf || !shelfContentsCheck || shelfContentsCheck.length === 0) {
             logger('info', `youtube-${this.name}`, `Browse playlist ${playlistId} is empty or inaccessible.`);
             return { loadType: 'empty', data: {} };
         }
-        const tracks = [];
         const maxLength = this.config.playback?.maxPlaylistLength || 100;
-        const shelfContents = shelf.contents;
+        const shelfContents = shelfContentsCheck.filter((item) => !getItemValue(item, ['messageRenderer']));
+        let continuation = getItemValue(shelf, [
+            'continuations.0.nextContinuationData.continuation'
+        ]);
+        const seenContinuations = new Set();
+        while (this.name === 'ANDROID' &&
+            _context &&
+            continuation &&
+            !seenContinuations.has(continuation) &&
+            shelfContents.length < maxLength) {
+            seenContinuations.add(continuation);
+            const client = this.getClient(_context);
+            const { body, statusCode } = await makeRequest(`${this.getApiEndpoint()}/youtubei/v1/browse`, {
+                method: 'POST',
+                headers: {
+                    'User-Agent': client.client.userAgent,
+                    'X-YouTube-Client-Name': '3',
+                    'X-YouTube-Client-Version': client.client.clientVersion ?? ''
+                },
+                body: { context: client, continuation },
+                disableBodyCompression: true,
+                proxy: this.getProxy()
+            });
+            if (statusCode !== 200 || !body)
+                break;
+            const page = getItemValue(body, [
+                'continuationContents.playlistVideoListContinuation'
+            ]);
+            const items = page?.contents;
+            if (!items?.length)
+                break;
+            shelfContents.push(...items.slice(0, maxLength - shelfContents.length));
+            continuation = getItemValue(page, [
+                'continuations.0.nextContinuationData.continuation'
+            ]);
+        }
+        const tracks = [];
         for (let i = 0; i < Math.min(shelfContents.length, maxLength); i++) {
             const item = shelfContents[i];
             try {
@@ -1880,9 +1955,13 @@ export class BaseClient {
         }
         let playlistTitle = 'Unknown Playlist';
         const headerRoot = browseResponse.header;
+        const pageHeader = headerRoot?.pageHeaderRenderer;
         const musicDetail = headerRoot?.musicDetailHeaderRenderer;
         const musicTitle = musicDetail?.title;
-        if (musicTitle?.runs?.[0]?.text) {
+        if (typeof pageHeader?.pageTitle === 'string') {
+            playlistTitle = pageHeader.pageTitle;
+        }
+        else if (musicTitle?.runs?.[0]?.text) {
             playlistTitle = musicTitle.runs[0].text;
         }
         else {
