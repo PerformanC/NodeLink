@@ -736,6 +736,7 @@ export const config: NodelinkConfig = {
 
   lyrics: {
     fallbackSource: 'genius',
+    preferredSources: [],
     youtube: {
       enabled: true
     },

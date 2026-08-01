@@ -673,6 +673,7 @@ export const config = {
     },
     lyrics: {
         fallbackSource: 'genius',
+        preferredSources: [],
         youtube: {
             enabled: true
         },

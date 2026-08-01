@@ -135,8 +135,13 @@ export default class LyricsManager {
                 }
             }
         }
-        for (const [name, source] of this.lyricsSources) {
-            if (name === sourceName)
+        const sources = new Set([
+            ...this.nodelink.options.lyrics.preferredSources,
+            ...this.lyricsSources.keys()
+        ]);
+        for (const name of sources) {
+            const source = this.lyricsSources.get(name);
+            if (!source || name === sourceName)
                 continue;
             logger('debug', 'Lyrics', `Trying lyrics source ${name} for ${trackInfo?.title || 'Unknown Title'}.`);
             const lyrics = await source.getLyrics(trackInfo, language);

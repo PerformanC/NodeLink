@@ -311,8 +311,13 @@ export default class LyricsManager {
       }
     }
 
-    for (const [name, source] of this.lyricsSources) {
-      if (name === sourceName) continue
+    const sources = new Set([
+      ...this.nodelink.options.lyrics.preferredSources,
+      ...this.lyricsSources.keys()
+    ])
+    for (const name of sources) {
+      const source = this.lyricsSources.get(name)
+      if (!source || name === sourceName) continue
 
       logger(
         'debug',
