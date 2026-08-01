@@ -89,7 +89,19 @@ export default class NewgroundsSource {
             }
             const audio = await this._fetchAudioPage(this._buildListenUrl(track.identifier));
             if (!audio) {
-                throw new Error('Newgrounds audio is unavailable');
+                const directory = Math.floor(Number(track.identifier) / 1000) * 1000;
+                const title = track.title
+                    .trim()
+                    .replace(/[^\p{L}\p{N}\s-]/gu, '')
+                    .replace(/\s+/g, '-');
+                const version = track.artworkUrl?.match(/[?&]f(\d+)/)?.[1];
+                if (!title)
+                    throw new Error('Newgrounds audio is unavailable');
+                return {
+                    url: `https://audio-download.ngfiles.com/${directory}/${track.identifier}_${title}.mp3${version ? `?f${version}` : ''}`,
+                    protocol: 'https',
+                    format: 'mp3'
+                };
             }
             return {
                 url: audio.streamUrl,
@@ -170,6 +182,32 @@ export default class NewgroundsSource {
                 'User-Agent': NEWGROUNDS_USER_AGENT
             }
         });
+        if (response.statusCode === 403) {
+            const identifier = url.match(NEWGROUNDS_AUDIO_PATTERN)?.[1];
+            if (!identifier)
+                return null;
+            const previewResponse = await makeRequest(`https://cardyb.bsky.app/v1/extract?url=${encodeURIComponent(url)}`, {
+                method: 'GET',
+                headers: { 'User-Agent': NEWGROUNDS_USER_AGENT }
+            });
+            const preview = previewResponse.body;
+            const title = preview.title?.trim();
+            if (previewResponse.statusCode !== 200 || preview.error || !title) {
+                return null;
+            }
+            const directory = Math.floor(Number(identifier) / 1000) * 1000;
+            const filename = title
+                .replace(/[^\p{L}\p{N}\s-]/gu, '')
+                .replace(/\s+/g, '-');
+            return {
+                identifier,
+                streamUrl: `https://audio-download.ngfiles.com/${directory}/${identifier}_${filename}.mp3`,
+                version: Number(preview.image?.match(/f(\d+)/)?.[1] || 0),
+                duration: 0,
+                title,
+                author: 'Unknown Artist'
+            };
+        }
         if (response.statusCode === 404)
             return null;
         if (response.error || response.statusCode !== 200) {
