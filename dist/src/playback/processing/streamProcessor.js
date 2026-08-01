@@ -69,6 +69,37 @@ const SAMPLE_RATES = Object.freeze([
     96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025,
     8000, 7350
 ]);
+const _parseAacSampleRate = (data) => {
+    let bitOffset = 0;
+    const readBits = (count) => {
+        if (bitOffset + count > data.byteLength * 8)
+            return null;
+        let value = 0;
+        for (let i = 0; i < count; i++) {
+            const byte = data[bitOffset >> 3];
+            if (byte === undefined)
+                return null;
+            value = (value << 1) | ((byte >> (7 - (bitOffset & 7))) & 1);
+            bitOffset++;
+        }
+        return value;
+    };
+    const objectType = readBits(5);
+    if (objectType === null)
+        return null;
+    if (objectType === 31 && readBits(6) === null)
+        return null;
+    const samplingIndex = readBits(4);
+    if (samplingIndex === null)
+        return null;
+    if (samplingIndex === 15) {
+        const explicitSampleRate = readBits(24);
+        return explicitSampleRate && explicitSampleRate > 0
+            ? explicitSampleRate
+            : null;
+    }
+    return SAMPLE_RATES[samplingIndex] ?? null;
+};
 const EMPTY_BUFFER = Buffer.alloc(0);
 const _getResamplerConverterType = (quality, libSampleRate) => {
     const types = libSampleRate.ConverterType;
@@ -1337,6 +1368,7 @@ class MP4ToAACStream extends Transform {
             return;
         this._prefetchDone = true;
         const prefetch = this._opts.prefetch ?? [];
+        this._opts.prefetch = undefined;
         for (const chunk of prefetch) {
             const ab = chunk.data;
             ab.fileStart = chunk.fileStart;
@@ -1376,6 +1408,7 @@ class MP4ToAACStream extends Transform {
             }
             else {
                 this.audioConfig = this._getAudioConfig(audioTrack);
+                this.headerChunks = [];
                 this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
                     nbSamples: 50
                 });
@@ -1418,16 +1451,21 @@ class MP4ToAACStream extends Transform {
     }
     _getAudioConfig(track) {
         let profile = 2;
-        let adtsSampleRate = track.audio.sample_rate;
+        const file = this.mp4boxFile;
+        const entry = file?.getTrackById?.(track.id)?.mdia?.minf?.stbl?.stsd
+            ?.entries?.[0];
+        const decoderConfig = entry?.esds?.esd?.descs?.find((descriptor) => descriptor.tag === 4);
+        const decoderSpecificInfo = decoderConfig?.descs?.find((descriptor) => descriptor.tag === 5)?.data;
+        const adtsSampleRate = (decoderSpecificInfo && _parseAacSampleRate(decoderSpecificInfo)) ||
+            track.audio.sample_rate;
         if (track.codec) {
             const codecParts = (String(track.codec) || '').split('.');
             if (codecParts.length >= 3) {
                 const objectType = Number.parseInt(codecParts[2] || '0', 10);
                 if (objectType === 5 || objectType === 29) {
-                    // HE-AAC/HE-AACv2 stores the output rate on the track, but ADTS must
-                    // advertise the core AAC-LC rate (typically half of the output rate).
+                    // ADTS carries the AAC-LC core profile. FAAD detects the SBR/PS
+                    // extension from the payload and exposes the higher output rate.
                     profile = 2;
-                    adtsSampleRate = Math.max(SAMPLE_RATES[SAMPLE_RATES.length - 1] ?? 7350, Math.floor(track.audio.sample_rate / 2));
                 }
                 else {
                     profile = objectType;
@@ -1455,7 +1493,8 @@ class MP4ToAACStream extends Transform {
             callback();
             return;
         }
-        this.headerChunks.push(chunk);
+        if (!this.audioConfig)
+            this.headerChunks.push(chunk);
         try {
             await this._initMp4Box();
             if (!this.mp4boxFile) {
