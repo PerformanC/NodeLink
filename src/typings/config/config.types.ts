@@ -833,6 +833,9 @@ export interface SourcesRegistry {
   /** Bandcamp resolution. */
   bandcamp: FeatureToggle
 
+  /** Newgrounds Audio Portal resolution. */
+  newgrounds: FeatureToggle
+
   /** SoundCloud resolution. */
   soundcloud: FeatureToggle & {
     /** Optional SoundCloud API Client ID. */

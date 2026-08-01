@@ -587,6 +587,9 @@ export const config = {
         bandcamp: {
             enabled: true
         },
+        newgrounds: {
+            enabled: true
+        },
         soundcloud: {
             enabled: true,
             clientId: ''

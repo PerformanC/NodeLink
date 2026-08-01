@@ -627,6 +627,10 @@ export const config: NodelinkConfig = {
       enabled: true
     },
 
+    newgrounds: {
+      enabled: true
+    },
+
     soundcloud: {
       enabled: true,
       clientId: ''
