@@ -30,6 +30,7 @@ import Spatial from '../filters/spatial.ts'
 import Timescale from '../filters/timescale.ts'
 import Tremolo from '../filters/tremolo.ts'
 import Vibrato from '../filters/vibrato.ts'
+import Tesseract from '../filters/tesseract.ts'
 
 const FILTER_CLASSES: Record<string, FilterClass> = {
   tremolo: Tremolo,
@@ -49,7 +50,8 @@ const FILTER_CLASSES: Record<string, FilterClass> = {
   spatial: Spatial,
   reverb: Reverb,
   flanger: Flanger,
-  phonograph: Phonograph
+  phonograph: Phonograph,
+  tesseract: Tesseract
 }
 const CANONICAL_KEY_MAP: Record<string, string> = {}
 for (const key in FILTER_CLASSES) {
@@ -283,11 +285,16 @@ export class FiltersManager extends Transform implements IFiltersManager {
   private _normalizeFilters(
     filters: FiltersState | FilterSettings
   ): FilterSettings {
-    if (!filters || typeof filters !== 'object') return {}
-    if ('filters' in filters) {
-      return (filters as FiltersState).filters ?? {}
+    let normalized: FilterSettings = {}
+    if (filters && typeof filters === 'object') {
+      if ('filters' in filters) {
+        normalized = (filters as FiltersState).filters ?? {}
+      } else {
+        normalized = filters as FilterSettings
+      }
     }
-    return filters as FilterSettings
+    
+    return normalized
   }
 
   override _destroy(

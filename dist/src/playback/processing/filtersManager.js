@@ -17,6 +17,7 @@ import Spatial from '../filters/spatial.js';
 import Timescale from '../filters/timescale.js';
 import Tremolo from '../filters/tremolo.js';
 import Vibrato from '../filters/vibrato.js';
+import Tesseract from '../filters/tesseract.js';
 const FILTER_CLASSES = {
     tremolo: Tremolo,
     vibrato: Vibrato,
@@ -35,7 +36,8 @@ const FILTER_CLASSES = {
     spatial: Spatial,
     reverb: Reverb,
     flanger: Flanger,
-    phonograph: Phonograph
+    phonograph: Phonograph,
+    tesseract: Tesseract
 };
 const CANONICAL_KEY_MAP = {};
 for (const key in FILTER_CLASSES) {
@@ -234,12 +236,16 @@ export class FiltersManager extends Transform {
      * @param filters - Filter payload in any supported shape.
      */
     _normalizeFilters(filters) {
-        if (!filters || typeof filters !== 'object')
-            return {};
-        if ('filters' in filters) {
-            return filters.filters ?? {};
+        let normalized = {};
+        if (filters && typeof filters === 'object') {
+            if ('filters' in filters) {
+                normalized = filters.filters ?? {};
+            }
+            else {
+                normalized = filters;
+            }
         }
-        return filters;
+        return normalized;
     }
     _destroy(_err, cb) {
         for (const name in this.filterInstances) {
