@@ -1276,7 +1276,7 @@ export interface NodelinkConfig {
   lyrics: {
     fallbackSource: string
     /** Ordered lyrics providers tried after the track's native provider. */
-    preferredSources: string[]
+    preferredSources?: string[]
     [source: string]: unknown
   }
 
