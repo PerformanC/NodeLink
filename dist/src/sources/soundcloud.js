@@ -20,6 +20,10 @@ export default class SoundCloudSource {
         this.clientId = nodelink.options?.sources?.soundcloud?.clientId ?? null;
     }
     async setup() {
+        if (this.clientId) {
+            logger('info', 'Sources', `Loaded SoundCloud (clientId: ${this.clientId}) from config`);
+            return true;
+        }
         const cachedId = this.nodelink.credentialManager.get('soundcloud_client_id');
         if (cachedId) {
             this.clientId = cachedId;

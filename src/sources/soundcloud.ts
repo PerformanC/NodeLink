@@ -66,6 +66,15 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   }
 
   async setup(): Promise<boolean> {
+    if (this.clientId) {
+      logger(
+        'info',
+        'Sources',
+        `Loaded SoundCloud (clientId: ${this.clientId}) from config`
+      )
+      return true
+    }
+    
     const cachedId = this.nodelink.credentialManager.get<string>(
       'soundcloud_client_id'
     )
