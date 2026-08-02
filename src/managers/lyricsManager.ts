@@ -312,11 +312,7 @@ export default class LyricsManager {
     }
 
     const sources = new Set([
-<<<<<<< HEAD
-      ...(this.nodelink.options.lyrics?.preferredSources || []),
-=======
-      ...(this.nodelink.options.lyrics.preferredSources ?? []),
->>>>>>> 7fee2e95ba4e6f056a47ca8abe5c46e75a6d9cda
+      ...(this.nodelink.options.lyrics?.preferredSources ?? []),
       ...this.lyricsSources.keys()
     ])
     for (const name of sources) {
