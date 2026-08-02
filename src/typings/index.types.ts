@@ -899,6 +899,11 @@ export interface Session {
   players: PlayerManagerInstance
 
   /**
+   * Group manager for multi-guild player synchronization
+   */
+  groups: import('../managers/groupManager.ts').default
+
+  /**
    * Event queue for reconnection
    */
   eventQueue: string[]

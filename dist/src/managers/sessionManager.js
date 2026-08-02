@@ -1,4 +1,5 @@
 import { generateRandomLetters, logger } from '../utils.js';
+import GroupManager from './groupManager.js';
 /**
  * Manages active and resumable WebSocket sessions for NodeLink.
  * Handles the full lifecycle of a session, including creation, pausing for resumption,
@@ -57,6 +58,7 @@ export default class SessionManager {
             userId: request.headers['user-id'],
             socket,
             players,
+            groups: new GroupManager(),
             resuming: false,
             timeout: 60,
             isPaused: false,
@@ -170,6 +172,7 @@ export default class SessionManager {
             }
             players.players.clear();
         }
+        session.groups.destroy();
         session.socket?.destroy?.();
     }
     /**

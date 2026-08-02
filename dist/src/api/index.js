@@ -81,9 +81,9 @@ async function loadRoutes() {
                 else if (routeName.includes('.')) {
                     const parts = routeName.split('.');
                     const basePattern = parts
-                        .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9]+)' : part))
+                        .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9_-]+)' : part))
                         .join('/');
-                    pathname = new RegExp(`^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9]+)?/?$`);
+                    pathname = new RegExp(`^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9_-]+)?/?$`);
                 }
                 else {
                     pathname = `/${PATH_VERSION}/${routeName}`;
