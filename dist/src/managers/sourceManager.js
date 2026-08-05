@@ -6,6 +6,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
     }
     return path;
 };
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,8 @@ import { getBestMatch, logger } from '../utils.js';
  * @public
  */
 export default class SourcesManager {
+    /** Source instances active in the current track URL resolution chain. */
+    resolvingSources = new AsyncLocalStorage();
     /** The parent NodeLink instance context. */
     nodelink;
     /** Map of primary source instances keyed by their unique identifier. */
@@ -225,7 +228,12 @@ export default class SourcesManager {
         const defaultSources = Array.isArray(configuredDefaultSource)
             ? configuredDefaultSource
             : [configuredDefaultSource];
+        const activeSources = this.resolvingSources.getStore();
         for (const source of defaultSources) {
+            const instance = activeSources &&
+                (this.searchAliasMap.get(source) ?? this.sourceMap.get(source));
+            if (instance && activeSources.has(instance))
+                continue;
             try {
                 const result = await this.search(source, query);
                 if (result.loadType === 'search' &&
@@ -330,37 +338,51 @@ export default class SourcesManager {
      * @public
      */
     async getTrackUrl(track, itag, isRecovering, isUpscaling) {
-        // ISRC Upscale: If track has ISRC and is from YouTube, try high-quality sources first.
-        if (track.isrc &&
-            !isUpscaling &&
-            !isRecovering &&
-            (track.sourceName === 'youtube' || track.sourceName === 'ytmusic')) {
-            const hqSources = ['tidal', 'qobuz', 'applemusic', 'deezer'];
-            for (const source of hqSources) {
-                if (!this.sources.has(source))
-                    continue;
-                try {
-                    const searchResult = await this.search(source, track.isrc);
-                    if (searchResult.loadType === 'search' &&
-                        Array.isArray(searchResult.data) &&
-                        searchResult.data.length > 0) {
-                        const match = getBestMatch(searchResult.data, track);
-                        if (match) {
-                            logger('info', 'Sources', `ISRC Upscale: found match for ${track.isrc} on ${source}. Using high-quality source.`);
-                            return await this.getTrackUrl(match.info, undefined, false, true);
-                        }
-                    }
-                }
-                catch (e) {
-                    logger('debug', 'Sources', `ISRC Upscale attempt failed for ${source}: ${e.message}`);
-                }
-            }
-        }
         const instance = this.sourceMap.get(track.sourceName);
         if (!instance?.getTrackUrl) {
             throw new Error(`Source ${track.sourceName} not found or does not support getTrackUrl`);
         }
-        return (await instance.getTrackUrl(track, itag, isRecovering));
+        const sourceGetTrackUrl = instance.getTrackUrl;
+        const activeSources = this.resolvingSources.getStore();
+        if (activeSources?.has(instance)) {
+            return {
+                exception: {
+                    message: `Circular track URL resolution detected for source ${track.sourceName}.`,
+                    severity: 'fault'
+                }
+            };
+        }
+        const nextActiveSources = new Set(activeSources).add(instance);
+        return this.resolvingSources.run(nextActiveSources, async () => {
+            // ISRC Upscale: If track has ISRC and is from YouTube, try high-quality sources first.
+            if (track.isrc &&
+                !isUpscaling &&
+                !isRecovering &&
+                (track.sourceName === 'youtube' || track.sourceName === 'ytmusic')) {
+                const hqSources = ['tidal', 'qobuz', 'applemusic', 'deezer'];
+                for (const source of hqSources) {
+                    const hqSource = this.sources.get(source);
+                    if (!hqSource || nextActiveSources.has(hqSource))
+                        continue;
+                    try {
+                        const searchResult = await this.search(source, track.isrc);
+                        if (searchResult.loadType === 'search' &&
+                            Array.isArray(searchResult.data) &&
+                            searchResult.data.length > 0) {
+                            const match = getBestMatch(searchResult.data, track);
+                            if (match) {
+                                logger('info', 'Sources', `ISRC Upscale: found match for ${track.isrc} on ${source}. Using high-quality source.`);
+                                return await this.getTrackUrl(match.info, undefined, false, true);
+                            }
+                        }
+                    }
+                    catch (e) {
+                        logger('debug', 'Sources', `ISRC Upscale attempt failed for ${source}: ${e.message}`);
+                    }
+                }
+            }
+            return (await sourceGetTrackUrl.call(instance, track, itag, isRecovering));
+        });
     }
     /**
      * Retrieves an audio stream for a resolved track URL.
