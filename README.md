@@ -61,7 +61,7 @@ cd NodeLink
 npm install
 
 # Copy the default configuration file
-cp config.default.js config.js
+cp config.default.ts config.ts
 
 # Start the server
 npm run start
@@ -175,9 +175,10 @@ Internally, NodeLink combines native and WebAssembly modules for precise audio p
 - [`@ecliptia/faad2-wasm`](https://www.npmjs.com/package/@ecliptia/faad2-wasm) 💙
 - [`@ecliptia/seekable-stream`](https://github.com/1Lucas1apk/seekable-stream) 💙
 - [`@toddynnn/symphonia-decoder`](https://www.npmjs.com/package/@toddynnn/symphonia-decoder)
+- [`@toddynnn/voice-opus`](https://www.npmjs.com/package/@toddynnn/voice-opus)
 - [`mp4box`](https://www.npmjs.com/package/mp4box)
-- [`myzod`](https://www.npmjs.com/package/myzod)
-- [`toddy-mediaplex`](https://www.npmjs.com/package/toddy-mediaplex)
+- [`fastest-validator`](https://www.npmjs.com/package/fastest-validator)
+- [`proxy-agent`](https://www.npmjs.com/package/proxy-agent)
 
 **Optional Dependencies:**
 
