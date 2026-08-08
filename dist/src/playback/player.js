@@ -415,6 +415,7 @@ export class Player {
                 this._lyricsBasePosition = 0;
                 this._lyricsBasePackets =
                     this.connection?.statistics?.packetsExpected ?? 0;
+                this._fading('trackEndSchedule', { startPosition: 0 });
                 const oldStream = this.connection?.play(resource);
                 if (oldStream)
                     oldStream.destroy();
