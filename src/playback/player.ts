@@ -628,6 +628,8 @@ export class Player {
         this._lyricsBasePackets =
           this.connection?.statistics?.packetsExpected ?? 0
 
+        this._fading('trackEndSchedule', { startPosition: 0 })
+
         const oldStream = this.connection?.play(resource as unknown)
         if (oldStream) oldStream.destroy()
         if (this._currentResource && this._currentResource !== resource) {
