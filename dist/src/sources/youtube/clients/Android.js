@@ -63,11 +63,11 @@ export default class Android extends BaseClient {
      */
     async search(query, type, context, proxy, reportProxyStatus = () => { }) {
         const sourceName = 'youtube';
-        let params = 'EgIQAQ%3D%3D'; // Default to track (video)
+        let params = 'oAIBEgIQAQ%3D%3D'; // Default to track (video)
         if (type === 'playlist' || type === 'album')
-            params = 'EgIQAw%3D%3D';
+            params = 'oAIBEgIQAw%3D%3D';
         if (type === 'artist' || type === 'channel')
-            params = 'EgIQAg%3D%3D';
+            params = 'oAIBEgIQAg%3D%3D';
         const requestBody = {
             context: this.getClient(context),
             query: query,

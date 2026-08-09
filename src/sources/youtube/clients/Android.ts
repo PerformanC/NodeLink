@@ -102,9 +102,9 @@ export default class Android extends BaseClient {
   ): Promise<SourceResult> {
     const sourceName = 'youtube'
 
-    let params = 'EgIQAQ%3D%3D' // Default to track (video)
-    if (type === 'playlist' || type === 'album') params = 'EgIQAw%3D%3D'
-    if (type === 'artist' || type === 'channel') params = 'EgIQAg%3D%3D'
+    let params = 'oAIBEgIQAQ%3D%3D' // Default to track (video)
+    if (type === 'playlist' || type === 'album') params = 'oAIBEgIQAw%3D%3D'
+    if (type === 'artist' || type === 'channel') params = 'oAIBEgIQAg%3D%3D'
 
     const requestBody = {
       context: this.getClient(context),
