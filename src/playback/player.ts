@@ -1663,20 +1663,65 @@ export class Player {
       return false
     }
 
-    const fetched = await this._fetchResource(
-      this.track.info,
-      urlData,
-      position
-    )
-    if ('exception' in fetched) {
-      const err = new Error(fetched.exception.message)
-      this._onError(err)
-      return false
+    const resolvedSourceName =
+      (urlData.newTrack as { info?: { sourceName?: string } } | undefined)?.info
+        ?.sourceName ?? this.track.info.sourceName
+    const unsupportedSeekSources = ['local', 'deezer']
+    const seekEligible =
+      position > 0 &&
+      !!urlData.url &&
+      !unsupportedSeekSources.includes(resolvedSourceName) &&
+      urlData.protocol !== 'sabr' &&
+      urlData.protocol !== 'hls' &&
+      urlData.protocol !== 'dash'
+    const seekUrl = seekEligible ? urlData.url : undefined
+    if (seekUrl) await getStreamProcessor()
+
+    let resource: AudioResource | undefined
+    if (seekUrl && createSeekeableAudioResource) {
+      logger(
+        'debug',
+        'Player',
+        `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`
+      )
+      const seekResult = await createSeekeableAudioResource(
+        this.guildId,
+        seekUrl,
+        position,
+        this.track?.endTime,
+        this.nodelink,
+        this.filters,
+        this,
+        this.volumePercent / 100,
+        this.audioMixer
+      )
+      if ('exception' in seekResult) {
+        logger(
+          'error',
+          'Player',
+          `Seekeable resource creation failed for guild ${this.guildId}: ${seekResult.exception.message}. Falling back to old method.`
+        )
+      } else {
+        resource = seekResult
+      }
+    }
+
+    if (!resource) {
+      const fetched = await this._fetchResource(
+        this.track.info,
+        urlData,
+        position
+      )
+      if ('exception' in fetched) {
+        const err = new Error(fetched.exception.message)
+        this._onError(err)
+        return false
+      }
+      resource = fetched.stream
     }
 
     this._cleanupCurrentAudioStream(cleanupReason)
 
-    const resource = fetched.stream
     if (this.volumePercent !== 100) {
       resource.setVolume(this.volumePercent / 100)
     }
