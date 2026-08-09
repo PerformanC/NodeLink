@@ -305,10 +305,12 @@ function sanitizeFadingConfig(raw) {
         const duckingInput = payload.ducking;
         safe.ducking = {
             enabled: duckingInput.enabled === true,
-            duration: typeof duckingInput.duration === 'number' && Number.isFinite(duckingInput.duration)
+            duration: typeof duckingInput.duration === 'number' &&
+                Number.isFinite(duckingInput.duration)
                 ? Math.max(0, duckingInput.duration)
                 : 500,
-            targetVolume: typeof duckingInput.targetVolume === 'number' && Number.isFinite(duckingInput.targetVolume)
+            targetVolume: typeof duckingInput.targetVolume === 'number' &&
+                Number.isFinite(duckingInput.targetVolume)
                 ? Math.max(0, Math.min(1, duckingInput.targetVolume))
                 : 0.3,
             curve: typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
@@ -567,7 +569,6 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
     }
     try {
         if (req.method === 'GET') {
-            await session.players.create(pathParams.guildId);
             sendResponse(req, res, await session.players.toJSON(pathParams.guildId), 200);
             return;
         }

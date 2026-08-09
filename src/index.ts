@@ -1824,6 +1824,7 @@ class NodelinkServer extends EventEmitter {
         for (const player of session.players.players.values()) {
           if (player?.track && !player.isPaused && player.connection) {
             if (
+              player.connStatus === 'connected' &&
               player._lastStreamDataTime > 0 &&
               Date.now() - player._lastStreamDataTime >= zombieThreshold
             ) {

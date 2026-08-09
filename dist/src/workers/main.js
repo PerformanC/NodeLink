@@ -1209,7 +1209,8 @@ function startTimers(hibernating = false) {
             return;
         for (const player of players.values()) {
             if (player?.track && !player.isPaused && player.connection) {
-                if (player._lastStreamDataTime &&
+                if (player.connStatus === 'connected' &&
+                    player._lastStreamDataTime &&
                     player._lastStreamDataTime > 0 &&
                     Date.now() - player._lastStreamDataTime >= zombieThreshold) {
                     logger('warn', 'Player', `Player for guild ${player.guildId} detected as zombie (no stream data).`);

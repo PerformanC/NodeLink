@@ -1668,6 +1668,7 @@ function startTimers(hibernating = false): void {
     for (const player of players.values()) {
       if (player?.track && !player.isPaused && player.connection) {
         if (
+          player.connStatus === 'connected' &&
           player._lastStreamDataTime &&
           player._lastStreamDataTime > 0 &&
           Date.now() - player._lastStreamDataTime >= zombieThreshold

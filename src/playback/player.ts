@@ -475,6 +475,18 @@ export class Player {
     if (this.destroying) return
     const previousStatus = this.connStatus
     this.connStatus = state.status
+    const crossedConnectedBoundary =
+      previousStatus !== state.status &&
+      (previousStatus === 'connected' || state.status === 'connected')
+
+    if (crossedConnectedBoundary) {
+      this._stuckTime = 0
+      this._positionAtRecoveryStart = this._realPosition()
+      if (state.status === 'connected') {
+        this._lastStreamDataTime = Date.now()
+      }
+    }
+
     if (state.status === 'connected') {
       logger(
         'info',
@@ -536,6 +548,7 @@ export class Player {
       )
     }
     this._sendUpdate()
+    if (crossedConnectedBoundary) this._stuckTime = 0
   }
 
   /**
@@ -1341,16 +1354,13 @@ export class Player {
       !this._isStopping &&
       this.track &&
       !this._isResuming &&
-      !this.isPaused
+      !this.isPaused &&
+      this.connStatus === 'connected'
     ) {
       if (this._lastPosition === position) {
         this._stuckTime +=
           this.nodelink.options.playback.playerUpdateInterval ?? 0
-        if (
-          this._stuckTime >= threshold &&
-          !this._isRecovering &&
-          this.connStatus === 'connected'
-        ) {
+        if (this._stuckTime >= threshold && !this._isRecovering) {
           const stuckTime = this._stuckTime
           this._stuckTime = 0
 

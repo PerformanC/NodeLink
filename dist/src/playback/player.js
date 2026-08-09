@@ -314,6 +314,15 @@ export class Player {
             return;
         const previousStatus = this.connStatus;
         this.connStatus = state.status;
+        const crossedConnectedBoundary = previousStatus !== state.status &&
+            (previousStatus === 'connected' || state.status === 'connected');
+        if (crossedConnectedBoundary) {
+            this._stuckTime = 0;
+            this._positionAtRecoveryStart = this._realPosition();
+            if (state.status === 'connected') {
+                this._lastStreamDataTime = Date.now();
+            }
+        }
         if (state.status === 'connected') {
             logger('info', 'Player', `Voice connection established for guild ${this.guildId} in session ${this.session.id}`);
             this.emitEvent(GatewayEvents.PLAYER_CONNECTED, {
@@ -358,6 +367,8 @@ export class Player {
             logger('warn', 'Player', `Voice connection destroyed for guild ${this.guildId}`);
         }
         this._sendUpdate();
+        if (crossedConnectedBoundary)
+            this._stuckTime = 0;
     }
     /**
      * Handles player state changes emitted by the voice connection.
@@ -911,13 +922,12 @@ export class Player {
             !this._isStopping &&
             this.track &&
             !this._isResuming &&
-            !this.isPaused) {
+            !this.isPaused &&
+            this.connStatus === 'connected') {
             if (this._lastPosition === position) {
                 this._stuckTime +=
                     this.nodelink.options.playback.playerUpdateInterval ?? 0;
-                if (this._stuckTime >= threshold &&
-                    !this._isRecovering &&
-                    this.connStatus === 'connected') {
+                if (this._stuckTime >= threshold && !this._isRecovering) {
                     const stuckTime = this._stuckTime;
                     this._stuckTime = 0;
                     const pipelineStream = this._getAudioStream();
@@ -1120,14 +1130,39 @@ export class Player {
             this._onError(new Error(errorMessage));
             return false;
         }
-        const fetched = await this._fetchResource(this.track.info, urlData, position);
-        if ('exception' in fetched) {
-            const err = new Error(fetched.exception.message);
-            this._onError(err);
-            return false;
+        const resolvedSourceName = urlData.newTrack?.info
+            ?.sourceName ?? this.track.info.sourceName;
+        const unsupportedSeekSources = ['local', 'deezer'];
+        const seekEligible = position > 0 &&
+            !!urlData.url &&
+            !unsupportedSeekSources.includes(resolvedSourceName) &&
+            urlData.protocol !== 'sabr' &&
+            urlData.protocol !== 'hls' &&
+            urlData.protocol !== 'dash';
+        const seekUrl = seekEligible ? urlData.url : undefined;
+        if (seekUrl)
+            await getStreamProcessor();
+        let resource;
+        if (seekUrl && createSeekeableAudioResource) {
+            logger('debug', 'Player', `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`);
+            const seekResult = await createSeekeableAudioResource(this.guildId, seekUrl, position, this.track?.endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer);
+            if ('exception' in seekResult) {
+                logger('error', 'Player', `Seekeable resource creation failed for guild ${this.guildId}: ${seekResult.exception.message}. Falling back to old method.`);
+            }
+            else {
+                resource = seekResult;
+            }
+        }
+        if (!resource) {
+            const fetched = await this._fetchResource(this.track.info, urlData, position);
+            if ('exception' in fetched) {
+                const err = new Error(fetched.exception.message);
+                this._onError(err);
+                return false;
+            }
+            resource = fetched.stream;
         }
         this._cleanupCurrentAudioStream(cleanupReason);
-        const resource = fetched.stream;
         if (this.volumePercent !== 100) {
             resource.setVolume(this.volumePercent / 100);
         }

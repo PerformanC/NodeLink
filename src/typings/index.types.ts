@@ -545,6 +545,11 @@ export interface Player {
   connection: VoiceConnection | null
 
   /**
+   * Current Discord voice connection status
+   */
+  connStatus: 'connecting' | 'connected' | 'disconnected' | 'destroyed'
+
+  /**
    * Last time stream data was received
    * @internal
    */

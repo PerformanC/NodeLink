@@ -1203,7 +1203,8 @@ class NodelinkServer extends EventEmitter {
                     continue;
                 for (const player of session.players.players.values()) {
                     if (player?.track && !player.isPaused && player.connection) {
-                        if (player._lastStreamDataTime > 0 &&
+                        if (player.connStatus === 'connected' &&
+                            player._lastStreamDataTime > 0 &&
                             Date.now() - player._lastStreamDataTime >= zombieThreshold) {
                             logger('warn', 'Player', `Player for guild ${player.guildId} detected as zombie (no stream data).`);
                             player.emitEvent(GatewayEvents.TRACK_STUCK, {
