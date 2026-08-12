@@ -1943,7 +1943,14 @@ export class Player {
         }
 
         this._lastStreamDataTime = 0
-        this.track = { encoded, info, endTime, userData, audioTrackId }
+        this.track = {
+          encoded,
+          info,
+          pluginInfo: {},
+          endTime,
+          userData: userData ?? {},
+          audioTrackId
+        }
         this._fading('reset')
 
         if (!this.voice.endpoint || !this.voice.token) {

@@ -295,6 +295,18 @@ export default class SourcesManager implements SourceManagerLike {
         throw new Error(`Method ${method} not found on source ${sourceName}`)
       }
       const result = await fn.apply(instance, args)
+      if (result.loadType === 'search') {
+        for (const track of result.data) track.userData ??= {}
+      } else if (result.loadType === 'track' || result.loadType === 'episode') {
+        result.data.userData ??= {}
+      } else if (
+        result.loadType !== 'empty' &&
+        result.loadType !== 'error' &&
+        'tracks' in result.data
+      ) {
+        for (const track of result.data.tracks) track.userData ??= {}
+      }
+
       if (result.loadType === 'error') {
         this.nodelink.statsManager?.incrementSourceFailure?.(sourceName)
       } else {

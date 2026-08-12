@@ -420,6 +420,8 @@ export interface TrackData {
   info: TrackInfo
   /** Source-specific metadata. */
   pluginInfo: Record<string, unknown>
+  /** User-defined data, defaulted to an empty object in public responses. */
+  userData?: unknown
 }
 
 /**

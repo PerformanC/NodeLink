@@ -57,10 +57,10 @@ function getQueryParams(parsedUrl) {
     if (noReplaceRaw === null) {
         return {};
     }
-    if (noReplaceRaw === 'true') {
+    if (noReplaceRaw.toLowerCase() === 'true') {
         return { noReplace: true };
     }
-    if (noReplaceRaw === 'false') {
+    if (noReplaceRaw.toLowerCase() === 'false') {
         return { noReplace: false };
     }
     return null;

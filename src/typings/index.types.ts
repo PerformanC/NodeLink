@@ -1277,6 +1277,9 @@ export interface ConnectionManagerContext {
       socket: {
         send: (data: string | Buffer) => boolean
       } | null
+      players: {
+        players: Map<string, { guildId: string }>
+      }
     }>
   }
 }

@@ -1286,7 +1286,14 @@ export class Player {
                     this._cleanupCurrentAudioStream('track-replaced');
                 }
                 this._lastStreamDataTime = 0;
-                this.track = { encoded, info, endTime, userData, audioTrackId };
+                this.track = {
+                    encoded,
+                    info,
+                    pluginInfo: {},
+                    endTime,
+                    userData: userData ?? {},
+                    audioTrackId
+                };
                 this._fading('reset');
                 if (!this.voice.endpoint || !this.voice.token) {
                     logger('debug', 'Player', `No voice state for guild ${this.guildId}, track is enqueued and will play when voice state is provided.`);

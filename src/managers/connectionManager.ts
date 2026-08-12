@@ -247,15 +247,17 @@ export default class ConnectionManager {
     const payload = {
       op: 'event',
       type: GatewayEvents.CONNECTION_STATUS,
+      guildId: '',
       status: this.status,
       metrics: this.metrics
     }
 
-    const payloadStr = JSON.stringify(payload)
-
     if (this.nodelink.sessions?.values) {
       for (const session of this.nodelink.sessions.values()) {
-        session.socket?.send(payloadStr)
+        const player = session.players.players.values().next().value
+        if (!player) continue
+        payload.guildId = player.guildId
+        session.socket?.send(JSON.stringify(payload))
       }
     }
   }
