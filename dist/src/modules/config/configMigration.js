@@ -37,7 +37,22 @@ export function migrateConfig(oldConfig) {
         metrics: 'metrics',
         enableHoloTracks: 'experimental.enableHoloTracks',
         commandTimeout: 'cluster.timeouts.heavyMs',
-        fastCommandTimeout: 'cluster.timeouts.fastMs'
+        fastCommandTimeout: 'cluster.timeouts.fastMs',
+        localPath: 'sources.local.basePath',
+        spotifyClientId: 'sources.spotify.clientId',
+        spotifyClientSecret: 'sources.spotify.clientSecret',
+        spotifyMarket: 'sources.spotify.market',
+        spotifyPlaylistLimit: 'sources.spotify.playlistLoadLimit',
+        spotifyAlbumLimit: 'sources.spotify.albumLoadLimit',
+        youtubeAllowItag: 'sources.youtube.allowItag',
+        youtubeTargetItag: 'sources.youtube.targetItag',
+        youtubeGetOAuthToken: 'sources.youtube.getOAuthToken',
+        youtubeHl: 'sources.youtube.hl',
+        youtubeGl: 'sources.youtube.gl',
+        soundcloudClientId: 'sources.soundcloud.clientId',
+        applemusicMarket: 'sources.applemusic.market',
+        deezerMasterDecryptionKey: 'sources.deezer.masterDecryptionKey',
+        tidalToken: 'sources.tidal.token'
     };
     for (const [oldKey, newPath] of Object.entries(migrationMap)) {
         if (Object.hasOwn(oldConfig, oldKey)) {
