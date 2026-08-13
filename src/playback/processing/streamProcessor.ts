@@ -732,7 +732,7 @@ class BaseAudioResource {
       _cleanupListeners?: () => void
     }
 
-    if (typeof firstPipe?._cleanupListeners === 'function') {
+    if (firstPipe?._cleanupListeners) {
       try {
         firstPipe._cleanupListeners()
       } catch {}

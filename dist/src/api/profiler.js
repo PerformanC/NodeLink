@@ -262,9 +262,7 @@ function getMasterActiveResources() {
     const now = Date.now();
     if (_cachedResources && now - _cachedResourcesAt < INTROSPECTION_TTL_MS)
         return _cachedResources;
-    const list = typeof process.getActiveResourcesInfo === 'function'
-        ? process.getActiveResourcesInfo()
-        : [];
+    const list = process.getActiveResourcesInfo?.() ?? [];
     const counters = {};
     for (const item of list)
         counters[item] = (counters[item] || 0) + 1;
@@ -338,14 +336,8 @@ function getMasterRuntimeContext(nodelink) {
             ? traceStore.events
             : traceStore.events.slice(-200)
         : [];
-    const statsSnapshot = nodelink?.statsManager &&
-        typeof nodelink.statsManager.getSnapshot === 'function'
-        ? nodelink.statsManager.getSnapshot()
-        : null;
-    const workerMetrics = nodelink?.workerManager &&
-        typeof nodelink.workerManager.getWorkerMetrics === 'function'
-        ? nodelink.workerManager.getWorkerMetrics()
-        : null;
+    const statsSnapshot = nodelink?.statsManager?.getSnapshot?.() ?? null;
+    const workerMetrics = nodelink?.workerManager?.getWorkerMetrics?.() ?? null;
     const sourceManager = nodelink?.sourceWorkerManager;
     const workerManager = nodelink?.workerManager;
     const connectionManager = nodelink?.connectionManager;

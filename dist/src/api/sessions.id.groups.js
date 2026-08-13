@@ -4,8 +4,7 @@ function isObjectRecord(value) {
 }
 function getGroupsRouteRuntime(nodelink) {
     const runtime = nodelink;
-    if (!runtime.sessions ||
-        typeof runtime.sessions.get !== 'function') {
+    if (!runtime.sessions || typeof runtime.sessions.get !== 'function') {
         return null;
     }
     return runtime;
@@ -17,9 +16,7 @@ function getPathParams(parsedUrl) {
     if (!sessionId) {
         return null;
     }
-    return groupId && groupId !== ''
-        ? { sessionId, groupId }
-        : { sessionId };
+    return groupId && groupId !== '' ? { sessionId, groupId } : { sessionId };
 }
 function normalizeTrackInfo(decodedTrack) {
     return {
@@ -112,10 +109,12 @@ function sanitizeFadingConfig(raw) {
         const duckingInput = payload.ducking;
         safe.ducking = {
             enabled: duckingInput.enabled === true,
-            duration: typeof duckingInput.duration === 'number' && Number.isFinite(duckingInput.duration)
+            duration: typeof duckingInput.duration === 'number' &&
+                Number.isFinite(duckingInput.duration)
                 ? Math.max(0, duckingInput.duration)
                 : 500,
-            targetVolume: typeof duckingInput.targetVolume === 'number' && Number.isFinite(duckingInput.targetVolume)
+            targetVolume: typeof duckingInput.targetVolume === 'number' &&
+                Number.isFinite(duckingInput.targetVolume)
                 ? Math.max(0, Math.min(1, duckingInput.targetVolume))
                 : 0.3,
             curve: typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
@@ -249,7 +248,7 @@ async function applyGroupPatch(runtime, session, groupId, payload) {
         }
     }
     const guildIds = groups.getGuildIds(groupId);
-    let trackToPlay = undefined;
+    let trackToPlay;
     if (payload.track !== undefined) {
         trackToPlay = await resolvePlayPayload(runtime, payload.track);
     }
@@ -296,7 +295,7 @@ async function applyGroupPatch(runtime, session, groupId, payload) {
             }
             const state = await session.players.toJSON(guildId);
             playerStates.push(state);
-            await new Promise(resolve => setTimeout(resolve, 35));
+            await new Promise((resolve) => setTimeout(resolve, 35));
         }
         catch (err) {
             const message = err instanceof Error ? err.message : String(err);

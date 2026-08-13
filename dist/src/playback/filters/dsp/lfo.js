@@ -19,10 +19,7 @@ export default class LFO {
     constructor(waveformName = 'SINE', frequency = 0, depth = 0) {
         this.phase = 0;
         const wf = Waveforms[waveformName] ?? Waveforms['SINE'];
-        this.waveform =
-            typeof wf === 'function'
-                ? wf
-                : Waveforms['SINE'];
+        this.waveform = wf ?? Waveforms['SINE'];
         this._frequency = frequency;
         this._depth = depth;
     }
@@ -44,10 +41,7 @@ export default class LFO {
      */
     setWaveform(waveformName) {
         const wf = Waveforms[waveformName] ?? Waveforms['SINE'];
-        this.waveform =
-            typeof wf === 'function'
-                ? wf
-                : Waveforms['SINE'];
+        this.waveform = wf ?? Waveforms['SINE'];
     }
     /**
      * Updates the modulation parameters.

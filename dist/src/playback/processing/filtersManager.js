@@ -14,10 +14,10 @@ import Phonograph from '../filters/phonograph.js';
 import Reverb from '../filters/reverb.js';
 import Rotation from '../filters/rotation.js';
 import Spatial from '../filters/spatial.js';
+import Tesseract from '../filters/tesseract.js';
 import Timescale from '../filters/timescale.js';
 import Tremolo from '../filters/tremolo.js';
 import Vibrato from '../filters/vibrato.js';
-import Tesseract from '../filters/tesseract.js';
 const FILTER_CLASSES = {
     tremolo: Tremolo,
     vibrato: Vibrato,
@@ -115,7 +115,7 @@ export class FiltersManager extends Transform {
                 this.filterInstances[name] = new FILTER_CLASSES[name]();
             }
             const instance = this.filterInstances[name];
-            if (instance && typeof instance.update === 'function') {
+            if (instance?.update) {
                 instance.update(normalizedSettings);
             }
         }
@@ -127,8 +127,7 @@ export class FiltersManager extends Transform {
             if (updatedKeys.has(name)) {
                 this.activeFilters.push(instance);
             }
-            else if (typeof instance.isActive === 'function' &&
-                instance.isActive()) {
+            else if (instance.isActive?.()) {
                 this.activeFilters.push(instance);
             }
         }
@@ -145,7 +144,7 @@ export class FiltersManager extends Transform {
             return chunk;
         let processed = chunk;
         for (const filter of this.activeFilters) {
-            if (typeof filter.isActive === 'function' && !filter.isActive())
+            if (filter.isActive?.() === false)
                 continue;
             processed = filter.process(processed);
         }
@@ -158,7 +157,7 @@ export class FiltersManager extends Transform {
         const flushedChunks = [];
         let totalLength = 0;
         for (const filter of this.activeFilters) {
-            if (typeof filter.flush === 'function') {
+            if (filter.flush) {
                 const flushed = filter.flush();
                 if (flushed && flushed.length > 0) {
                     flushedChunks.push(flushed);
@@ -207,7 +206,7 @@ export class FiltersManager extends Transform {
     resetState() {
         for (const name in this.filterInstances) {
             const instance = this.filterInstances[name];
-            if (instance && typeof instance.flush === 'function') {
+            if (instance?.flush) {
                 instance.flush();
             }
             if (name in FILTER_CLASSES) {

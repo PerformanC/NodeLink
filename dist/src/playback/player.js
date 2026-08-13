@@ -725,7 +725,7 @@ export class Player {
         try {
             const source = this.nodelink.sources.getSource(track.info.sourceName);
             const resolveHoloTrack = source?.resolveHoloTrack;
-            if (typeof resolveHoloTrack === 'function') {
+            if (resolveHoloTrack) {
                 const holoTrack = await resolveHoloTrack.call(source, track, {
                     fetchChannelInfo: this.nodelink.options.search.fetchChannelInfo,
                     resolveExternalLinks: this.nodelink.options.search.resolveExternalLinks
@@ -824,7 +824,7 @@ export class Player {
             lastChunkAt: null
         };
         let streamForResource = fetchedStream;
-        if (typeof fetchedStream.on === 'function') {
+        if (fetchedStream.on) {
             const eventStream = fetchedStream;
             const profilerTap = new PassThrough();
             const profilerHandler = (chunk) => {
@@ -1379,7 +1379,7 @@ export class Player {
                 }
             }
             const source = this.nodelink.sources.getSource(resolvedSourceName);
-            const hasSourceLoader = source && typeof source.loadStream === 'function';
+            const hasSourceLoader = source?.loadStream;
             const canNativeSeek = !!hasSourceLoader &&
                 (this.streamInfo?.protocol === 'sabr' ||
                     (sourceName === 'deezer' && resolvedSourceName === 'deezer'));

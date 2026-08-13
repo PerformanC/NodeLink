@@ -96,8 +96,7 @@ export default class WebRemix extends BaseClient {
     const sourceName = 'ytmusic'
 
     let params = 'EgWKAQIIAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D' // Default (Tracks)
-    if (type === 'playlist')
-      params = 'EgeKAQQoAEABahAQBBADEAkQBRAKEBAQFRAR'
+    if (type === 'playlist') params = 'EgeKAQQoAEABahAQBBADEAkQBRAKEBAQFRAR'
     if (type === 'album') params = 'EgWKAQIYAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D'
     if (type === 'artist') params = 'EgWKAQIgAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D'
 

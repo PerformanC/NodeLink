@@ -101,9 +101,9 @@ export class FlowController extends Transform {
         return this.scratch.checkEffectCompleted();
     }
     setLoudnessNormalizer(enabled) {
-        if ('setAGCEnabled' in this.volume &&
-            typeof this.volume.setAGCEnabled === 'function') {
-            this.volume.setAGCEnabled(enabled);
+        if ('setAGCEnabled' in this.volume) {
+            ;
+            this.volume.setAGCEnabled?.(enabled);
         }
     }
     /**

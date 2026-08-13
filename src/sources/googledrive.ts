@@ -672,7 +672,7 @@ export default class GoogleDriveSource implements SourceInstance {
     const wait = async (ms: number): Promise<void> => {
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(resolve, ms)
-        if (typeof timeout.unref === 'function') timeout.unref()
+        timeout.unref?.()
       })
     }
 

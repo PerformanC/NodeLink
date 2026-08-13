@@ -363,9 +363,7 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
     cb: (error?: Error | null) => void
   ): void {
     this.lookaheadBuffer = null
-    if (this.agc && typeof this.agc.destroy === 'function') {
-      this.agc.destroy()
-    }
+    this.agc?.destroy?.()
     this.agc = null
     cb(null)
   }

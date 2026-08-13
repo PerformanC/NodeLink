@@ -20,9 +20,7 @@ import * as utils from '../utils.js';
 import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from './headQueue.js';
 const __filename = fileURLToPath(import.meta.url);
 const getActiveResourcesBreakdown = () => {
-    const list = typeof process.getActiveResourcesInfo === 'function'
-        ? process.getActiveResourcesInfo()
-        : [];
+    const list = process.getActiveResourcesInfo?.() ?? [];
     const counters = {};
     for (const item of list) {
         counters[item] = (counters[item] || 0) + 1;

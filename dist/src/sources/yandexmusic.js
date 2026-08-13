@@ -416,8 +416,7 @@ export default class YandexMusicSource {
             const wait = async (ms) => {
                 await new Promise((resolve) => {
                     const timeout = setTimeout(resolve, ms);
-                    if (typeof timeout.unref === 'function')
-                        timeout.unref();
+                    timeout.unref?.();
                 });
             };
             const finishStream = () => {
@@ -918,16 +917,13 @@ export default class YandexMusicSource {
             const linksByPlatform = data.linksByPlatform;
             if (!linksByPlatform)
                 return null;
-            const platforms = typeof songlinkSource.getPlatformOrder === 'function'
-                ? songlinkSource.getPlatformOrder(linksByPlatform)
-                : Object.keys(linksByPlatform);
+            const platforms = songlinkSource.getPlatformOrder?.(linksByPlatform) ??
+                Object.keys(linksByPlatform);
             for (const platform of platforms) {
                 const platformLink = linksByPlatform[platform]?.url;
                 if (!platformLink)
                     continue;
-                const sourceName = typeof songlinkSource.getPlatformSourceName === 'function'
-                    ? songlinkSource.getPlatformSourceName(platform)
-                    : null;
+                const sourceName = songlinkSource.getPlatformSourceName?.(platform) ?? null;
                 if (!sourceName || !this._isSourceAvailable(sourceName))
                     continue;
                 const source = sm.getSource(sourceName);
@@ -1020,16 +1016,12 @@ export default class YandexMusicSource {
         if (!sm)
             return;
         const songlinkSource = sm.getSource('songlink');
-        const platforms = typeof songlinkSource?.getPlatformOrder === 'function'
-            ? songlinkSource.getPlatformOrder(links)
-            : Object.keys(links);
+        const platforms = songlinkSource?.getPlatformOrder?.(links) ?? Object.keys(links);
         for (const p of platforms) {
             const url = links[p]?.url;
             if (!url)
                 continue;
-            const sourceName = typeof songlinkSource?.getPlatformSourceName === 'function'
-                ? songlinkSource.getPlatformSourceName(p)
-                : null;
+            const sourceName = songlinkSource?.getPlatformSourceName?.(p) ?? null;
             if (!sourceName || !this._isSourceAvailable(sourceName))
                 continue;
             const source = sm.getSource(sourceName);

@@ -107,7 +107,7 @@ type ExecuteAllResultEntry =
 const hasSocketSend = (
   res: ServerResponse | DelegatedResponse
 ): res is DelegatedResponse & { send: (chunk: Buffer) => void } =>
-  typeof (res as DelegatedResponse).send === 'function'
+  !!(res as DelegatedResponse).send
 
 type InternalResponse = {
   headersSent: boolean

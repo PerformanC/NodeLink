@@ -82,7 +82,7 @@ const getProxyAgent = async (): Promise<ProxyAgentConstructor | null> => {
       (mod as { default?: unknown }).default
 
     ProxyAgent =
-      typeof candidate === 'function'
+      candidate instanceof Function
         ? (candidate as ProxyAgentConstructor)
         : null
   } catch {
@@ -636,7 +636,7 @@ function getGitInfo(): GitInfo {
     let branch = 'unknown'
     const headMatch = refsLine.match(/HEAD -> ([^,]+)/)
     if (headMatch) {
-      branch = headMatch[1]!.trim()
+      branch = headMatch[1]?.trim() ?? 'unknown'
     } else {
       try {
         branch = execSync('git rev-parse --abbrev-ref HEAD', {
@@ -2240,7 +2240,9 @@ async function checkForUpdates(): Promise<void> {
     const util = await import('node:util')
     const execAsync = util.promisify(exec)
 
-    await execAsync('git fetch', { stdio: 'ignore' } as any)
+    await execAsync('git fetch', {
+      stdio: 'ignore'
+    } as import('node:child_process').ExecOptions)
 
     const { stdout: local } = await execAsync('git rev-parse HEAD', {
       encoding: 'utf8'

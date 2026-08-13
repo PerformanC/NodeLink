@@ -137,11 +137,10 @@ export class FlowController extends Transform {
   }
 
   public setLoudnessNormalizer(enabled: boolean): void {
-    if (
-      'setAGCEnabled' in this.volume &&
-      typeof this.volume.setAGCEnabled === 'function'
-    ) {
-      this.volume.setAGCEnabled(enabled)
+    if ('setAGCEnabled' in this.volume) {
+      ;(
+        this.volume as unknown as { setAGCEnabled?: (enabled: boolean) => void }
+      ).setAGCEnabled?.(enabled)
     }
   }
 

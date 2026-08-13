@@ -1,5 +1,3 @@
-import type { VoiceConnection } from '@performanc/voice'
-
 /**
  * Configuration options for the DuckingController.
  */
@@ -21,4 +19,3 @@ export interface DuckingStreamControl {
   /** Fades the audio stream to a target volume over a duration. */
   fadeTo: (volume: number, durationMs: number, curve?: string) => void
 }
-

@@ -729,13 +729,13 @@ class NodelinkServer extends EventEmitter {
       for (const session of this.sessions.activeSessions.values()) {
         if (session.socket && !session.isPaused) {
           try {
-            if (typeof session.socket.sendFrame === 'function') {
+            if (session.socket.sendFrame) {
               session.socket.sendFrame(Buffer.alloc(0), {
                 len: 0,
                 fin: true,
                 opcode: 0x09
               })
-            } else if (typeof session.socket.ping === 'function') {
+            } else if (session.socket.ping) {
               session.socket.ping()
             }
           } catch (_e) {
@@ -1310,7 +1310,7 @@ class NodelinkServer extends EventEmitter {
             return
           }
           const liveChatFn = yt.handleLiveChat
-          if (typeof liveChatFn === 'function') {
+          if (liveChatFn) {
             liveChatFn.call(yt, socket, videoId)
           } else {
             socket.close(1008, 'YouTube live chat not supported')

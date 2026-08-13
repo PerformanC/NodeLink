@@ -46,7 +46,7 @@ const _getLib = (): OpusLibrary => {
     try {
       const mod = require(l.name) as Record<string, unknown>
       const Encoder = l.pick(mod) as OpusLibrary['Encoder']
-      if (typeof Encoder === 'function') {
+      if (Encoder) {
         ACTIVE_LIB = { name: l.name, Encoder }
         return ACTIVE_LIB
       }
@@ -96,7 +96,7 @@ const _applyCtl = (
   }
 
   const fn = enc.applyEncoderCTL || enc.applyEncoderCtl || enc.encoderCTL
-  if (typeof fn === 'function') fn.call(enc, id, val)
+  fn?.call(enc, id, val)
 }
 
 export class Encoder extends Transform {
@@ -278,7 +278,7 @@ export class Decoder extends Transform {
       if (this.dec.decodeInto && this.pcmScratch) {
         const written = this.dec.decodeInto(chunk, this.pcmScratch)
         // Copy because stream consumers may retain the chunk after this call.
-        // pushing it to scratch would result: 
+        // pushing it to scratch would result:
         // the scratch subarray would allow the next frame to overwrite queued audio, causing corruption.
         // and its also required by ownership boundary btw.
         this.push(Buffer.from(this.pcmScratch.subarray(0, written)))

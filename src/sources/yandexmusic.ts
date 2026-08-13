@@ -531,7 +531,7 @@ export default class YandexMusicSource implements SourceInstance {
       const wait = async (ms: number): Promise<void> => {
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(resolve, ms)
-          if (typeof timeout.unref === 'function') timeout.unref()
+          timeout.unref?.()
         })
       }
 
@@ -1207,18 +1207,15 @@ export default class YandexMusicSource implements SourceInstance {
       if (!linksByPlatform) return null
 
       const platforms =
-        typeof songlinkSource.getPlatformOrder === 'function'
-          ? songlinkSource.getPlatformOrder(linksByPlatform)
-          : Object.keys(linksByPlatform)
+        songlinkSource.getPlatformOrder?.(linksByPlatform) ??
+        Object.keys(linksByPlatform)
 
       for (const platform of platforms) {
         const platformLink = linksByPlatform[platform]?.url
         if (!platformLink) continue
 
         const sourceName =
-          typeof songlinkSource.getPlatformSourceName === 'function'
-            ? songlinkSource.getPlatformSourceName(platform)
-            : null
+          songlinkSource.getPlatformSourceName?.(platform) ?? null
 
         if (!sourceName || !this._isSourceAvailable(sourceName)) continue
 
@@ -1344,18 +1341,13 @@ export default class YandexMusicSource implements SourceInstance {
         })
       | undefined
     const platforms =
-      typeof songlinkSource?.getPlatformOrder === 'function'
-        ? songlinkSource.getPlatformOrder(links)
-        : Object.keys(links)
+      songlinkSource?.getPlatformOrder?.(links) ?? Object.keys(links)
 
     for (const p of platforms) {
       const url = links[p]?.url
       if (!url) continue
 
-      const sourceName =
-        typeof songlinkSource?.getPlatformSourceName === 'function'
-          ? songlinkSource.getPlatformSourceName(p)
-          : null
+      const sourceName = songlinkSource?.getPlatformSourceName?.(p) ?? null
 
       if (!sourceName || !this._isSourceAvailable(sourceName)) continue
       const source = sm.getSource(sourceName)

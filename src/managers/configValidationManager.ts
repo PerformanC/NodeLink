@@ -232,7 +232,74 @@ export default class ConfigValidationManager {
           enableHoloTracks: { type: 'boolean', default: false }
         }
       },
-      sources: { type: 'object' },
+      sources: {
+        type: 'object',
+        props: {
+          youtube: { type: 'object', optional: true },
+          spotify: { type: 'object', optional: true },
+          applemusic: { type: 'object', optional: true },
+          vkmusic: { type: 'object', optional: true },
+          deezer: { type: 'object', optional: true },
+          tidal: { type: 'object', optional: true },
+          jiosaavn: { type: 'object', optional: true },
+          gaana: { type: 'object', optional: true },
+          yandexmusic: { type: 'object', optional: true },
+          eternalbox: { type: 'object', optional: true },
+          songlink: { type: 'object', optional: true },
+          http: { type: 'object', optional: true },
+          flowery: { type: 'object', optional: true },
+          lazypytts: { type: 'object', optional: true },
+          pipertts: { type: 'object', optional: true },
+          audius: { type: 'object', optional: true },
+          qobuz: { type: 'object', optional: true },
+          monochrome: { type: 'object', optional: true },
+          pandora: { type: 'object', optional: true },
+          amazonmusic: { type: 'object', optional: true },
+          bluesky: { type: 'object', optional: true },
+          anghami: { type: 'object', optional: true },
+          rss: { type: 'object', optional: true },
+          mixcloud: { type: 'object', optional: true },
+          audiomack: { type: 'object', optional: true },
+          bandcamp: { type: 'object', optional: true },
+          newgrounds: { type: 'object', optional: true },
+          soundcloud: {
+            type: 'object',
+            optional: true,
+            props: {
+              enabled: { type: 'boolean', default: false },
+              clientId: { type: 'string', optional: true }
+            }
+          },
+          local: {
+            type: 'object',
+            optional: true,
+            props: {
+              enabled: { type: 'boolean', default: false },
+              basePath: { type: 'string', optional: true }
+            }
+          },
+          vimeo: { type: 'object', optional: true },
+          iheartradio: { type: 'object', optional: true },
+          telegram: { type: 'object', optional: true },
+          shazam: { type: 'object', optional: true },
+          bilibili: { type: 'object', optional: true },
+          genius: { type: 'object', optional: true },
+          pinterest: { type: 'object', optional: true },
+          'google-tts': { type: 'object', optional: true },
+          instagram: { type: 'object', optional: true },
+          kwai: { type: 'object', optional: true },
+          twitch: { type: 'object', optional: true },
+          nicovideo: { type: 'object', optional: true },
+          reddit: { type: 'object', optional: true },
+          tumblr: { type: 'object', optional: true },
+          twitter: { type: 'object', optional: true },
+          lastfm: { type: 'object', optional: true },
+          netease: { type: 'object', optional: true },
+          letrasmus: { type: 'object', optional: true },
+          googledrive: { type: 'object', optional: true },
+          tiktok: { type: 'object', optional: true }
+        }
+      },
       lyrics: { type: 'object' },
       meanings: { type: 'object' },
       metrics: { type: 'object' },

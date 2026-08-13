@@ -27,10 +27,10 @@ import Phonograph from '../filters/phonograph.ts'
 import Reverb from '../filters/reverb.ts'
 import Rotation from '../filters/rotation.ts'
 import Spatial from '../filters/spatial.ts'
+import Tesseract from '../filters/tesseract.ts'
 import Timescale from '../filters/timescale.ts'
 import Tremolo from '../filters/tremolo.ts'
 import Vibrato from '../filters/vibrato.ts'
-import Tesseract from '../filters/tesseract.ts'
 
 const FILTER_CLASSES: Record<string, FilterClass> = {
   tremolo: Tremolo,
@@ -149,7 +149,7 @@ export class FiltersManager extends Transform implements IFiltersManager {
       }
 
       const instance = this.filterInstances[name]
-      if (instance && typeof instance.update === 'function') {
+      if (instance?.update) {
         instance.update(normalizedSettings as FilterSettings)
       }
     }
@@ -161,10 +161,7 @@ export class FiltersManager extends Transform implements IFiltersManager {
 
       if (updatedKeys.has(name)) {
         this.activeFilters.push(instance)
-      } else if (
-        typeof instance.isActive === 'function' &&
-        instance.isActive()
-      ) {
+      } else if (instance.isActive?.()) {
         this.activeFilters.push(instance)
       }
     }
@@ -182,7 +179,7 @@ export class FiltersManager extends Transform implements IFiltersManager {
 
     let processed = chunk
     for (const filter of this.activeFilters) {
-      if (typeof filter.isActive === 'function' && !filter.isActive()) continue
+      if (filter.isActive?.() === false) continue
       processed = filter.process(processed)
     }
     return processed
@@ -196,7 +193,7 @@ export class FiltersManager extends Transform implements IFiltersManager {
     let totalLength = 0
 
     for (const filter of this.activeFilters) {
-      if (typeof filter.flush === 'function') {
+      if (filter.flush) {
         const flushed = filter.flush()
         if (flushed && flushed.length > 0) {
           flushedChunks.push(flushed)
@@ -247,7 +244,7 @@ export class FiltersManager extends Transform implements IFiltersManager {
   resetState(): void {
     for (const name in this.filterInstances) {
       const instance = this.filterInstances[name]
-      if (instance && typeof instance.flush === 'function') {
+      if (instance?.flush) {
         instance.flush()
       }
 
@@ -293,7 +290,7 @@ export class FiltersManager extends Transform implements IFiltersManager {
         normalized = filters as FilterSettings
       }
     }
-    
+
     return normalized
   }
 

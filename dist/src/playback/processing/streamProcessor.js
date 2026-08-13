@@ -472,7 +472,7 @@ class BaseAudioResource {
             return;
         this._destroyed = true;
         const firstPipe = this.pipes[0];
-        if (typeof firstPipe?._cleanupListeners === 'function') {
+        if (firstPipe?._cleanupListeners) {
             try {
                 firstPipe._cleanupListeners();
             }

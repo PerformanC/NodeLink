@@ -74,7 +74,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       )
       return true
     }
-    
+
     const cachedId = this.nodelink.credentialManager.get<string>(
       'soundcloud_client_id'
     )

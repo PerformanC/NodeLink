@@ -47,10 +47,7 @@ function isYouTubeSourceProxyRuntime(
   }
   const maybeProxyRuntime = value as SourceInstance & YouTubeSourceProxyRuntime
 
-  return (
-    typeof maybeProxyRuntime.getProxy === 'function' ||
-    typeof maybeProxyRuntime.reportProxyStatus === 'function'
-  )
+  return !!maybeProxyRuntime.getProxy || !!maybeProxyRuntime.reportProxyStatus
 }
 
 /**

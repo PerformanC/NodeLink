@@ -1,3 +1,4 @@
+import type GroupManager from '../managers/groupManager.ts'
 import type {
   ApiNodelinkServer,
   ApiRequest,
@@ -6,6 +7,7 @@ import type {
   ApiSendResponse
 } from '../typings/api/api.types.ts'
 import type { Session } from '../typings/index.types.ts'
+import type { GroupStateJSON } from '../typings/playback/group.types.ts'
 import type {
   FadingConfig,
   FiltersState,
@@ -15,14 +17,8 @@ import type {
   PlayPayload,
   TrackInfoExtended
 } from '../typings/playback/player.types.ts'
-import type { GroupStateJSON } from '../typings/playback/group.types.ts'
 import type { EncodedTrackPayload } from '../typings/utils.types.ts'
-import type GroupManager from '../managers/groupManager.ts'
 import { decodeTrack, logger, sendErrorResponse } from '../utils.ts'
-
-
-
-
 
 /**
  * Track payload accepted by the group update route.
@@ -89,10 +85,6 @@ interface GroupPatchResponse extends GroupStateJSON {
   players?: PlayerStateJSON[]
 }
 
-
-
-
-
 interface SessionPlayerEntry {
   guildId: string
 }
@@ -128,10 +120,7 @@ interface GroupsRoutePlayerManager {
     guildId: string,
     enabled: boolean
   ) => Promise<boolean | object>
-  setDucking: (
-    guildId: string,
-    enabled: boolean
-  ) => Promise<boolean | object>
+  setDucking: (guildId: string, enabled: boolean) => Promise<boolean | object>
   toJSON: (guildId: string) => Promise<PlayerStateJSON>
 }
 
@@ -160,10 +149,6 @@ interface GroupsRoutePathParams {
   groupId?: string
 }
 
-
-
-
-
 interface FadingSectionInput {
   duration?: number
   curve?: string
@@ -186,10 +171,6 @@ interface FadingConfigInput {
   }
 }
 
-
-
-
-
 function isObjectRecord(
   value: ApiRequest['body']
 ): value is Record<
@@ -204,10 +185,7 @@ function getGroupsRouteRuntime(
 ): GroupsRouteRuntime | null {
   const runtime = nodelink as ApiNodelinkServer & Partial<GroupsRouteRuntime>
 
-  if (
-    !runtime.sessions ||
-    typeof runtime.sessions.get !== 'function'
-  ) {
+  if (!runtime.sessions || typeof runtime.sessions.get !== 'function') {
     return null
   }
 
@@ -223,9 +201,7 @@ function getPathParams(parsedUrl: URL): GroupsRoutePathParams | null {
     return null
   }
 
-  return groupId && groupId !== ''
-    ? { sessionId, groupId }
-    : { sessionId }
+  return groupId && groupId !== '' ? { sessionId, groupId } : { sessionId }
 }
 
 function normalizeTrackInfo(
@@ -350,27 +326,28 @@ function sanitizeFadingConfig(raw: ApiRequest['body']): FadingConfig {
   updateSection('resume')
 
   if (isObjectRecord(payload.ducking)) {
-    const duckingInput = payload.ducking as NonNullable<FadingConfigInput['ducking']>
+    const duckingInput = payload.ducking as NonNullable<
+      FadingConfigInput['ducking']
+    >
     safe.ducking = {
       enabled: duckingInput.enabled === true,
       duration:
-        typeof duckingInput.duration === 'number' && Number.isFinite(duckingInput.duration)
+        typeof duckingInput.duration === 'number' &&
+        Number.isFinite(duckingInput.duration)
           ? Math.max(0, duckingInput.duration)
           : 500,
       targetVolume:
-        typeof duckingInput.targetVolume === 'number' && Number.isFinite(duckingInput.targetVolume)
+        typeof duckingInput.targetVolume === 'number' &&
+        Number.isFinite(duckingInput.targetVolume)
           ? Math.max(0, Math.min(1, duckingInput.targetVolume))
           : 0.3,
-      curve: typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
+      curve:
+        typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
     }
   }
 
   return safe
 }
-
-
-
-
 
 function getGroupCreatePayload(
   body: ApiRequest['body']
@@ -403,7 +380,6 @@ function getGroupPatchPayload(
   const payload = body as Record<string, unknown>
   const result: GroupPatchPayload = {}
 
-
   if (payload.players !== undefined) {
     if (!isObjectRecord(payload.players)) return null
     const p = payload.players as Record<string, unknown>
@@ -428,12 +404,10 @@ function getGroupPatchPayload(
     result.players = players
   }
 
-
   if (payload.track !== undefined) {
     if (payload.track !== null && !isObjectRecord(payload.track)) return null
     result.track = payload.track as PlayerTrackUpdateInput
   }
-
 
   if (payload.position !== undefined) {
     if (
@@ -444,7 +418,6 @@ function getGroupPatchPayload(
       return null
     result.position = payload.position
   }
-
 
   if (payload.endTime !== undefined) {
     if (
@@ -457,7 +430,6 @@ function getGroupPatchPayload(
     result.endTime = payload.endTime as number | null
   }
 
-
   if (payload.volume !== undefined) {
     if (
       typeof payload.volume !== 'number' ||
@@ -469,12 +441,10 @@ function getGroupPatchPayload(
     result.volume = payload.volume
   }
 
-
   if (payload.paused !== undefined) {
     if (typeof payload.paused !== 'boolean') return null
     result.paused = payload.paused
   }
-
 
   if (payload.filters !== undefined) {
     if (
@@ -486,7 +456,6 @@ function getGroupPatchPayload(
     result.filters = payload.filters as FiltersState
   }
 
-
   if (payload.fading !== undefined) {
     if (
       !payload.fading ||
@@ -497,12 +466,10 @@ function getGroupPatchPayload(
     result.fading = payload.fading
   }
 
-
   if (payload.loudnessNormalizer !== undefined) {
     if (typeof payload.loudnessNormalizer !== 'boolean') return null
     result.loudnessNormalizer = payload.loudnessNormalizer
   }
-
 
   if (payload.ducking !== undefined) {
     if (typeof payload.ducking !== 'boolean') return null
@@ -511,10 +478,6 @@ function getGroupPatchPayload(
 
   return result
 }
-
-
-
-
 
 async function applyGroupPatch(
   runtime: GroupsRouteRuntime,
@@ -541,7 +504,7 @@ async function applyGroupPatch(
 
   const guildIds = groups.getGuildIds(groupId)
 
-  let trackToPlay: PlayPayload | null | undefined = undefined
+  let trackToPlay: PlayPayload | null | undefined
   if (payload.track !== undefined) {
     trackToPlay = await resolvePlayPayload(runtime, payload.track)
   }
@@ -609,8 +572,8 @@ async function applyGroupPatch(
 
       const state = await session.players.toJSON(guildId)
       playerStates.push(state)
-      
-      await new Promise(resolve => setTimeout(resolve, 35))
+
+      await new Promise((resolve) => setTimeout(resolve, 35))
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logger(
@@ -622,7 +585,9 @@ async function applyGroupPatch(
     }
   }
 
-  const groupJson = groups.toJSON(groupId)!
+  const groupJson = groups.toJSON(groupId) as NonNullable<
+    ReturnType<typeof groups.toJSON>
+  >
 
   return {
     ...groupJson,
@@ -630,10 +595,6 @@ async function applyGroupPatch(
     ...(errors.length > 0 ? { errors } : {})
   }
 }
-
-
-
-
 
 /**
  * Handles requests for the groups route.
@@ -693,7 +654,6 @@ async function handler(
   }
 
   try {
-
     if (!pathParams.groupId) {
       if (req.method === 'GET') {
         sendResponse(req, res, session.groups.list(), 200)
@@ -729,7 +689,6 @@ async function handler(
       )
       return
     }
-
 
     if (req.method === 'GET') {
       const group = session.groups.toJSON(pathParams.groupId)

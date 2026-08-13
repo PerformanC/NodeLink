@@ -211,10 +211,7 @@ const PARALLEL_COMMANDS = new Set([
 ])
 
 const getActiveResourcesBreakdown = (): Record<string, number> => {
-  const list =
-    typeof process.getActiveResourcesInfo === 'function'
-      ? process.getActiveResourcesInfo()
-      : []
+  const list = process.getActiveResourcesInfo?.() ?? []
   const counters: Record<string, number> = {}
   for (const item of list) {
     counters[item] = (counters[item] || 0) + 1
@@ -226,7 +223,7 @@ const getActiveHandlesBreakdown = (): Record<string, number> => {
   const getter = process as unknown as {
     _getActiveHandles?: () => Array<{ constructor?: { name?: string } }>
   }
-  if (typeof getter._getActiveHandles !== 'function') return {}
+  if (!getter._getActiveHandles) return {}
   const handles = getter._getActiveHandles()
   const counters: Record<string, number> = {}
   for (const handle of handles) {
@@ -563,9 +560,7 @@ const handleProfilerCommand = async (
             ? track.info.length
             : 0
       const positionMsRaw =
-        typeof internal._realPosition === 'function'
-          ? internal._realPosition()
-          : internal.position || 0
+        internal._realPosition?.() ?? (internal.position || 0)
       const durationMs = Math.max(0, Number(durationMsRaw) || 0)
       const positionMs = Math.max(0, Number(positionMsRaw) || 0)
       const clampedPosition =
@@ -835,10 +830,7 @@ const handleProfilerCommand = async (
           guildQueues: guildQueues.size,
           activeStreams: activeStreams.size
         },
-        bufferPool:
-          typeof bufferPool.getStats === 'function'
-            ? bufferPool.getStats()
-            : null,
+        bufferPool: bufferPool.getStats?.() ?? null,
         demuxers: {
           webmOpus: getWebmOpusProfilerStats()
         }
@@ -2237,7 +2229,7 @@ async function processQueue(queueKey: string): Promise<void> {
 
         const target = player as Record<string, unknown> | undefined
         const callable = target?.[command]
-        if (player && typeof callable === 'function') {
+        if (player && callable instanceof Function) {
           result = await (callable as (...fnArgs: unknown[]) => unknown).apply(
             player,
             args ?? []
@@ -2245,7 +2237,7 @@ async function processQueue(queueKey: string): Promise<void> {
         } else if (
           command === 'forceUpdate' &&
           player &&
-          typeof (player as WorkerPlayer)._sendUpdate === 'function'
+          (player as WorkerPlayer)._sendUpdate
         ) {
           ;(player as WorkerPlayer)._sendUpdate()
           result = { updated: true }

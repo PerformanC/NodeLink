@@ -303,7 +303,7 @@ export default class AmazonMusicSource implements SourceInstance {
       'x-amzn-page-url': pageUrl,
       'x-amzn-feature-flags': 'hd-supported,uhd-supported',
       'x-amnz-age-band': 'ADULT',
-      'x-amzn-has-profile-id': 'true',
+      'x-amzn-has-profile-id': 'true'
     }
   }
 

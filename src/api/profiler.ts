@@ -1237,10 +1237,7 @@ function getMasterActiveResources(): Record<string, number> {
   const now = Date.now()
   if (_cachedResources && now - _cachedResourcesAt < INTROSPECTION_TTL_MS)
     return _cachedResources
-  const list =
-    typeof process.getActiveResourcesInfo === 'function'
-      ? process.getActiveResourcesInfo()
-      : []
+  const list = process.getActiveResourcesInfo?.() ?? []
   const counters: Record<string, number> = {}
   for (const item of list) counters[item] = (counters[item] || 0) + 1
   _cachedResources = counters
@@ -1319,16 +1316,8 @@ function getMasterRuntimeContext(
       ? traceStore.events
       : traceStore.events.slice(-200)
     : []
-  const statsSnapshot =
-    nodelink?.statsManager &&
-    typeof nodelink.statsManager.getSnapshot === 'function'
-      ? nodelink.statsManager.getSnapshot()
-      : null
-  const workerMetrics =
-    nodelink?.workerManager &&
-    typeof nodelink.workerManager.getWorkerMetrics === 'function'
-      ? nodelink.workerManager.getWorkerMetrics()
-      : null
+  const statsSnapshot = nodelink?.statsManager?.getSnapshot?.() ?? null
+  const workerMetrics = nodelink?.workerManager?.getWorkerMetrics?.() ?? null
   const sourceManager = nodelink?.sourceWorkerManager
   const workerManager = nodelink?.workerManager
   const connectionManager = nodelink?.connectionManager

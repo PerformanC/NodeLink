@@ -1046,7 +1046,7 @@ export default class InstagramSource {
         exception: { message: 'Post ID not provided', severity: 'common' }
       }
     }
-    
+
     // this no longer works btw...
     // only is working from clips, but there are ways to do it on /embed/ too.
     const headers: Record<string, string> = {

@@ -229,9 +229,7 @@ export default class HttpSource {
                     headers: requestHeaders
                 });
                 const previewStream = getData?.stream;
-                if (previewStream && typeof previewStream.destroy === 'function') {
-                    previewStream.destroy();
-                }
+                previewStream?.destroy?.();
                 data = getData;
             }
             if (data.error) {
@@ -443,8 +441,7 @@ export default class HttpSource {
             const wait = async (ms) => {
                 await new Promise((resolve) => {
                     const timeout = setTimeout(resolve, ms);
-                    if (typeof timeout.unref === 'function')
-                        timeout.unref();
+                    timeout.unref?.();
                 });
             };
             const finishStream = () => {

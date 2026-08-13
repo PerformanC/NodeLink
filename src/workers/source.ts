@@ -51,10 +51,7 @@ import {
 const __filename = fileURLToPath(import.meta.url)
 
 const getActiveResourcesBreakdown = (): Record<string, number> => {
-  const list =
-    typeof process.getActiveResourcesInfo === 'function'
-      ? process.getActiveResourcesInfo()
-      : []
+  const list = process.getActiveResourcesInfo?.() ?? []
   const counters: Record<string, number> = {}
   for (const item of list) {
     counters[item] = (counters[item] || 0) + 1

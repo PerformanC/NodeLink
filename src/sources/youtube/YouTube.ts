@@ -1547,8 +1547,8 @@ export default class YouTubeSource {
         !blockedFallbackSources.has(name) &&
         sourcesConfig[name]?.enabled &&
         source &&
-        typeof source.search === 'function' &&
-        typeof source.getTrackUrl === 'function'
+        !!source.search &&
+        !!source.getTrackUrl
       )
     })
 

@@ -1073,7 +1073,7 @@ export class Player {
           ) => Promise<PlayerTrack | null>
         } | null
       )?.resolveHoloTrack
-      if (typeof resolveHoloTrack === 'function') {
+      if (resolveHoloTrack) {
         const holoTrack = await resolveHoloTrack.call(source, track, {
           fetchChannelInfo: this.nodelink.options.search.fetchChannelInfo,
           resolveExternalLinks:
@@ -1221,7 +1221,7 @@ export class Player {
     }
     let streamForResource: Readable = fetchedStream as Readable
 
-    if (typeof (fetchedStream as { on?: unknown }).on === 'function') {
+    if ((fetchedStream as { on?: unknown }).on) {
       const eventStream = fetchedStream as unknown as VoiceAudioStream
       const profilerTap = new PassThrough()
       const profilerHandler = (chunk: Buffer | Uint8Array | string) => {
@@ -2087,7 +2087,7 @@ export class Player {
       }
 
       const source = this.nodelink.sources.getSource(resolvedSourceName)
-      const hasSourceLoader = source && typeof source.loadStream === 'function'
+      const hasSourceLoader = source?.loadStream
       const canNativeSeek =
         !!hasSourceLoader &&
         (this.streamInfo?.protocol === 'sabr' ||

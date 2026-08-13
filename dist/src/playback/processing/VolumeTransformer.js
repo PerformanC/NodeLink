@@ -269,9 +269,7 @@ export class VolumeTransformer extends Transform {
     }
     _destroy(_err, cb) {
         this.lookaheadBuffer = null;
-        if (this.agc && typeof this.agc.destroy === 'function') {
-            this.agc.destroy();
-        }
+        this.agc?.destroy?.();
         this.agc = null;
         cb(null);
     }

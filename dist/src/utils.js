@@ -40,7 +40,7 @@ const getProxyAgent = async () => {
             mod.default?.ProxyAgent ||
             mod.default;
         ProxyAgent =
-            typeof candidate === 'function'
+            candidate instanceof Function
                 ? candidate
                 : null;
     }
@@ -510,7 +510,7 @@ function getGitInfo() {
         let branch = 'unknown';
         const headMatch = refsLine.match(/HEAD -> ([^,]+)/);
         if (headMatch) {
-            branch = headMatch[1].trim();
+            branch = headMatch[1]?.trim() ?? 'unknown';
         }
         else {
             try {
@@ -1808,7 +1808,9 @@ async function checkForUpdates() {
         const { exec } = await import('node:child_process');
         const util = await import('node:util');
         const execAsync = util.promisify(exec);
-        await execAsync('git fetch', { stdio: 'ignore' });
+        await execAsync('git fetch', {
+            stdio: 'ignore'
+        });
         const { stdout: local } = await execAsync('git rev-parse HEAD', {
             encoding: 'utf8'
         });

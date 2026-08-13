@@ -533,8 +533,7 @@ export default class GoogleDriveSource {
         const wait = async (ms) => {
             await new Promise((resolve) => {
                 const timeout = setTimeout(resolve, ms);
-                if (typeof timeout.unref === 'function')
-                    timeout.unref();
+                timeout.unref?.();
             });
         };
         const onData = (chunk) => {

@@ -536,8 +536,7 @@ export default class EternalboxSource {
         if (!spotify || typeof spotify._apiRequest !== 'function')
             return null;
         try {
-            if (typeof spotify.setup === 'function')
-                await spotify.setup();
+            await spotify.setup?.();
             if (!spotify.accessToken)
                 return null;
             return await spotify._apiRequest(`/tracks/${id}`);

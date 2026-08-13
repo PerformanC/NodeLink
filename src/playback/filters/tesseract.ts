@@ -14,7 +14,7 @@ export default class Tesseract extends AnimatableFilter {
   private rotationHz = 0
   private alpha = 0
 
-  private delaySamples = Math.floor(SAMPLE_RATE * 0.015) 
+  private delaySamples = Math.floor(SAMPLE_RATE * 0.015)
   private delayBufferL = new Int16Array(this.delaySamples)
   private delayBufferR = new Int16Array(this.delaySamples)
   private delayIndex = 0

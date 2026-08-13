@@ -122,9 +122,7 @@ const PARALLEL_COMMANDS = new Set([
     'profilerCommand'
 ]);
 const getActiveResourcesBreakdown = () => {
-    const list = typeof process.getActiveResourcesInfo === 'function'
-        ? process.getActiveResourcesInfo()
-        : [];
+    const list = process.getActiveResourcesInfo?.() ?? [];
     const counters = {};
     for (const item of list) {
         counters[item] = (counters[item] || 0) + 1;
@@ -133,7 +131,7 @@ const getActiveResourcesBreakdown = () => {
 };
 const getActiveHandlesBreakdown = () => {
     const getter = process;
-    if (typeof getter._getActiveHandles !== 'function')
+    if (!getter._getActiveHandles)
         return {};
     const handles = getter._getActiveHandles();
     const counters = {};
@@ -330,9 +328,7 @@ const handleProfilerCommand = async (payload) => {
                     Number.isFinite(track.info.length)
                     ? track.info.length
                     : 0;
-            const positionMsRaw = typeof internal._realPosition === 'function'
-                ? internal._realPosition()
-                : internal.position || 0;
+            const positionMsRaw = internal._realPosition?.() ?? (internal.position || 0);
             const durationMs = Math.max(0, Number(durationMsRaw) || 0);
             const positionMs = Math.max(0, Number(positionMsRaw) || 0);
             const clampedPosition = durationMs > 0 ? Math.min(positionMs, durationMs) : positionMs;
@@ -511,9 +507,7 @@ const handleProfilerCommand = async (payload) => {
                     guildQueues: guildQueues.size,
                     activeStreams: activeStreams.size
                 },
-                bufferPool: typeof bufferPool.getStats === 'function'
-                    ? bufferPool.getStats()
-                    : null,
+                bufferPool: bufferPool.getStats?.() ?? null,
                 demuxers: {
                     webmOpus: getWebmOpusProfilerStats()
                 }
@@ -1628,12 +1622,12 @@ async function processQueue(queueKey) {
                 const player = players.get(playerKey);
                 const target = player;
                 const callable = target?.[command];
-                if (player && typeof callable === 'function') {
+                if (player && callable instanceof Function) {
                     result = await callable.apply(player, args ?? []);
                 }
                 else if (command === 'forceUpdate' &&
                     player &&
-                    typeof player._sendUpdate === 'function') {
+                    player._sendUpdate) {
                     ;
                     player._sendUpdate();
                     result = { updated: true };
