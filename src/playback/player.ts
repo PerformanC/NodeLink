@@ -1777,6 +1777,14 @@ export class Player {
       this._isRecovering
     )
     if (!this.track) return false
+    
+    if (urlData.newTrack?.info && urlData.newTrack.info.identifier !== trackInfo.identifier) {
+      this.track.pluginInfo = {
+        ...(this.track.pluginInfo || {}),
+        mirroredTrack: urlData.newTrack.info
+      }
+    }
+
     this.streamInfo = { ...urlData, trackInfo: this.track.info }
     logger('debug', 'Player', `Got track URL for guild ${this.guildId}`, {
       urlData

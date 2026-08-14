@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
-import { getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
 import CipherManager from './CipherManager.js';
 import { checkURLType, YOUTUBE_CONSTANTS } from './common.js';
 import YouTubeLiveChat from './LiveChat.js';
@@ -519,6 +519,29 @@ export default class YouTubeSource {
      * @returns Promise resolving to a source result with track/playlist data or an exception.
      */
     async resolve(url, type) {
+        const result = await this._resolveWorker(url, type);
+        if (this.config.mirrorOfficialAlbums &&
+            url.includes('list=OLAK') &&
+            result.loadType === 'playlist') {
+            const tracks = result.data
+                ?.tracks;
+            if (tracks) {
+                for (const track of tracks) {
+                    if (track.info && !track.info.uri.includes('olak=true')) {
+                        const separator = track.info.uri.includes('?') ? '&' : '?';
+                        track.info.uri += `${separator}olak=true`;
+                        track.encoded = encodeTrack({ ...track.info, details: [] });
+                    }
+                }
+            }
+        }
+        return result;
+    }
+    /**
+     * Internal worker for URL resolution.
+     * @internal
+     */
+    async _resolveWorker(url, type) {
         const liveMatch = url.match(/^https?:\/\/(?:www\.)?youtube\.com\/live\/([\w-]+)/);
         if (liveMatch) {
             const videoId = liveMatch[1];
@@ -745,6 +768,40 @@ export default class YouTubeSource {
      * @returns Promise resolving to track URL data with stream info or an exception.
      */
     async getTrackUrl(decodedTrack, itag, forceRefresh = false) {
+        if (decodedTrack.uri?.includes('olak=true')) {
+            logger('debug', 'YouTube', `Resolving mirrored audio track for official album: ${decodedTrack.identifier}`);
+            let searchTitle = decodedTrack.title;
+            let searchAuthor = decodedTrack.author;
+            if (searchTitle.includes(' - ')) {
+                const parts = searchTitle.split(' - ');
+                if (parts[0] && parts.length > 1) {
+                    searchAuthor = parts[0].trim();
+                    searchTitle = parts.slice(1).join(' - ').trim();
+                }
+            }
+            const query = `${searchAuthor} ${searchTitle}`;
+            const searchTrack = { ...decodedTrack, title: searchTitle, author: searchAuthor };
+            try {
+                const res = await this.search(query, 'ytmsearch');
+                if (res.loadType === 'search' && res.data.length) {
+                    const best = getBestMatch(res.data, searchTrack);
+                    if (best) {
+                        const urlData = await this.getTrackUrl(best.info, itag, forceRefresh);
+                        return {
+                            newTrack: { info: best.info },
+                            url: urlData.url,
+                            protocol: urlData.protocol,
+                            format: typeof urlData.format === 'string' ? urlData.format : undefined,
+                            additionalData: urlData.additionalData,
+                            exception: urlData.exception
+                        };
+                    }
+                }
+            }
+            catch (e) {
+                logger('warn', 'YouTube', `Failed to mirror OLAK track ${decodedTrack.identifier}: ${e.message}`);
+            }
+        }
         if (!forceRefresh) {
             const cached = this.nodelink.trackCacheManager?.get('youtube', decodedTrack.identifier);
             if (cached) {

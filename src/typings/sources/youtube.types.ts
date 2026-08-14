@@ -937,6 +937,8 @@ export interface YouTubeSourceConfig {
   resolveExternalLinks?: boolean
   /** When `true`, fetches channel information (avatar, subscriber count) during Holo resolution. */
   fetchChannelInfo?: boolean
+  /** When `true`, official albums (OLAK) are resolved via an internal audio-only mirror search to ensure gapless playback. */
+  mirrorOfficialAlbums?: boolean
   /** Allow additional unknown configuration keys for forward compatibility. */
   [key: string]: unknown
 }

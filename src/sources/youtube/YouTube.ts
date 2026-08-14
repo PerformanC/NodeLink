@@ -4,6 +4,7 @@ import type { SabrStreamConfig } from '../../typings/sources/sabr.types.ts'
 import type {
   SourceResult,
   TrackInfo,
+  TrackUrlResult,
   WorkerNodeLink
 } from '../../typings/sources/source.types.ts'
 import type {
@@ -20,9 +21,11 @@ import type {
 import type { YouTubeLiveChatSocket } from '../../typings/sources/youtubeClient.types.ts'
 import type {
   HttpProxyConfig,
-  HttpRequestResult
+  HttpRequestResult,
+  TrackEncodeInput
 } from '../../typings/utils.types.ts'
 import {
+  encodeTrack,
   getBestMatch,
   http1makeRequest,
   logger,
@@ -736,6 +739,34 @@ export default class YouTubeSource {
    * @returns Promise resolving to a source result with track/playlist data or an exception.
    */
   async resolve(url: string, type?: string): Promise<SourceResult> {
+    const result = await this._resolveWorker(url, type)
+
+    if (
+      this.config.mirrorOfficialAlbums &&
+      url.includes('list=OLAK') &&
+      result.loadType === 'playlist'
+    ) {
+      const tracks = (result.data as { tracks?: Array<{ info: TrackInfo; encoded: string }> })
+        ?.tracks
+      if (tracks) {
+        for (const track of tracks) {
+          if (track.info && !track.info.uri.includes('olak=true')) {
+            const separator = track.info.uri.includes('?') ? '&' : '?'
+            track.info.uri += `${separator}olak=true`
+            track.encoded = encodeTrack({ ...track.info, details: [] } as TrackEncodeInput)
+          }
+        }
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Internal worker for URL resolution.
+   * @internal
+   */
+  private async _resolveWorker(url: string, type?: string): Promise<SourceResult> {
     const liveMatch = url.match(
       /^https?:\/\/(?:www\.)?youtube\.com\/live\/([\w-]+)/
     )
@@ -744,6 +775,7 @@ export default class YouTubeSource {
       url = `https://www.youtube.com/watch?v=${videoId}`
       logger('debug', 'YouTube', `Normalized live URL to: ${url}`)
     }
+
     const isMusicUrl = url.includes('music.youtube.com')
     const sourceType = isMusicUrl ? 'ytmusic' : 'youtube'
 
@@ -1114,6 +1146,42 @@ export default class YouTubeSource {
     itag?: number | null,
     forceRefresh = false
   ): Promise<TrackUrlData> {
+    if (decodedTrack.uri?.includes('olak=true')) {
+      logger('debug', 'YouTube', `Resolving mirrored audio track for official album: ${decodedTrack.identifier}`)
+      
+      let searchTitle = decodedTrack.title
+      let searchAuthor = decodedTrack.author
+      if (searchTitle.includes(' - ')) {
+        const parts = searchTitle.split(' - ')
+        if (parts[0] && parts.length > 1) {
+          searchAuthor = parts[0].trim()
+          searchTitle = parts.slice(1).join(' - ').trim()
+        }
+      }
+
+      const query = `${searchAuthor} ${searchTitle}`
+      const searchTrack = { ...decodedTrack, title: searchTitle, author: searchAuthor }
+      
+      try {
+        const res = await this.search(query, 'ytmsearch')
+        if (res.loadType === 'search' && res.data.length) {
+          const best = getBestMatch(res.data, searchTrack)
+          if (best) {
+            const urlData = await this.getTrackUrl(best.info as TrackInfo, itag, forceRefresh)
+            return {
+              newTrack: { info: best.info as TrackInfo },
+              url: urlData.url,
+              protocol: urlData.protocol,
+              format: typeof urlData.format === 'string' ? urlData.format : undefined,
+              additionalData: urlData.additionalData,
+              exception: urlData.exception as TrackUrlData['exception']
+            }
+          }
+        }
+      } catch (e) {
+        logger('warn', 'YouTube', `Failed to mirror OLAK track ${decodedTrack.identifier}: ${(e as Error).message}`)
+      }
+    }
     if (!forceRefresh) {
       const cached = this.nodelink.trackCacheManager?.get<TrackUrlData>(
         'youtube',

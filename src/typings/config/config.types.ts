@@ -162,6 +162,9 @@ export interface YouTubeSourceConfig {
    * Allow additional unknown configuration keys.
    */
   [key: string]: unknown
+
+  /** When true, official albums (OLAK) are resolved via an internal audio-only mirror search to ensure gapless playback. */
+  mirrorOfficialAlbums?: boolean
 }
 
 /**
