@@ -288,6 +288,7 @@ export const config = {
             hl: 'en',
             gl: 'US',
             proxies: [],
+            mirrorOfficialAlbums: false,
             fallbackSources: [
                 'soundcloud',
                 'deezer',

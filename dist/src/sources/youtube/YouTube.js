@@ -326,54 +326,79 @@ export default class YouTubeSource {
         let visitorFound = false;
         let playerScriptUrl = null;
         try {
-            const { body: data, error, statusCode } = await makeRequest('https://www.youtube.com/embed', {
-                method: 'GET',
-                headers: {
-                    Cookie: 'YSC=LUAfwHpna4E; VISITOR_INFO1_LIVE=Zuih2uZbq3I;'
-                }
-            });
-            if (!error && statusCode === 200) {
-                const bodyStr = data;
-                const visitorMatch = bodyStr?.match(/"VISITOR_DATA":"([^"]+)"/);
-                if (visitorMatch?.[1]) {
-                    this.ytContext.client.visitorData = visitorMatch[1];
-                    visitorFound = true;
-                    logger('debug', 'YouTube', 'visitorData refreshed from embed.');
-                }
-                if (!cachedPlayerScript) {
-                    const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/);
-                    if (playerScriptMatch?.[1]) {
-                        playerScriptUrl = playerScriptMatch[1].replace(/\/[a-z]{2}_[A-Z]{2}\//, '/en_US/');
-                        this.nodelink.credentialManager?.set('yt_player_script_url', playerScriptUrl, 12 * 60 * 60 * 1000);
-                        logger('debug', 'YouTube', `Player script URL: ${playerScriptUrl}`);
+            const { body, error, statusCode } = await makeRequest('https://youtubei.googleapis.com/youtubei/v1/visitor_id?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w', {
+                method: 'POST',
+                body: {
+                    context: {
+                        client: {
+                            clientName: 'ANDROID',
+                            clientVersion: '20.01.35'
+                        }
                     }
-                }
-            }
-            else {
-                logger('warn', 'YouTube', `Embed request failed: ${error?.message || `Status ${statusCode}`}`);
-            }
-            if (!visitorFound) {
-                const { body: guideData, error: guideError, statusCode: guideStatusCode } = await makeRequest('https://www.youtube.com/youtubei/v1/guide', {
-                    method: 'POST',
-                    body: { context: this.ytContext },
-                    disableBodyCompression: true
-                });
-                const guideBody = guideData;
-                if (!guideError &&
-                    guideStatusCode === 200 &&
-                    guideBody?.responseContext?.visitorData) {
-                    this.ytContext.client.visitorData =
-                        guideBody.responseContext.visitorData;
-                    visitorFound = true;
-                    logger('debug', 'YouTube', 'visitorData refreshed via guide.');
-                }
-                else {
-                    logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.');
-                }
+                },
+                disableBodyCompression: true
+            });
+            const data = body;
+            if (!error && statusCode === 200 && data?.responseContext?.visitorData) {
+                this.ytContext.client.visitorData = data.responseContext.visitorData;
+                visitorFound = true;
+                logger('debug', 'YouTube', `visitorData obtained from visitor_id endpoint (len=${data.responseContext.visitorData.length})`);
             }
         }
         catch (e) {
-            logger('error', 'YouTube', `Error fetching visitor data: ${e.message}`);
+            logger('debug', 'YouTube', `visitor_id endpoint failed: ${e.message}`);
+        }
+        if (!visitorFound) {
+            try {
+                const { body: data, error, statusCode } = await makeRequest('https://www.youtube.com/embed', {
+                    method: 'GET',
+                    headers: {
+                        Cookie: 'YSC=LUAfwHpna4E; VISITOR_INFO1_LIVE=Zuih2uZbq3I;'
+                    }
+                });
+                if (!error && statusCode === 200) {
+                    const bodyStr = data;
+                    const visitorMatch = bodyStr?.match(/"VISITOR_DATA":"([^"]+)"/);
+                    if (visitorMatch?.[1]) {
+                        this.ytContext.client.visitorData = visitorMatch[1];
+                        visitorFound = true;
+                        logger('debug', 'YouTube', 'visitorData refreshed from embed.');
+                    }
+                    if (!cachedPlayerScript) {
+                        const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/);
+                        if (playerScriptMatch?.[1]) {
+                            playerScriptUrl = playerScriptMatch[1].replace(/\/[a-z]{2}_[A-Z]{2}\//, '/en_US/');
+                            this.nodelink.credentialManager?.set('yt_player_script_url', playerScriptUrl, 12 * 60 * 60 * 1000);
+                            logger('debug', 'YouTube', `Player script URL: ${playerScriptUrl}`);
+                        }
+                    }
+                }
+                else {
+                    logger('warn', 'YouTube', `Embed request failed: ${error?.message || `Status ${statusCode}`}`);
+                }
+                if (!visitorFound) {
+                    const { body: guideData, error: guideError, statusCode: guideStatusCode } = await makeRequest('https://www.youtube.com/youtubei/v1/guide', {
+                        method: 'POST',
+                        body: { context: this.ytContext },
+                        disableBodyCompression: true
+                    });
+                    const guideBody = guideData;
+                    if (!guideError &&
+                        guideStatusCode === 200 &&
+                        guideBody?.responseContext?.visitorData) {
+                        this.ytContext.client.visitorData =
+                            guideBody.responseContext.visitorData;
+                        visitorFound = true;
+                        logger('debug', 'YouTube', 'visitorData refreshed via guide.');
+                    }
+                    else {
+                        logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.');
+                    }
+                }
+            }
+            catch (e) {
+                logger('error', 'YouTube', `Error fetching visitor data: ${e.message}`);
+            }
         }
         if (playerScriptUrl)
             this.cipherManager.setPlayerScriptUrl(playerScriptUrl);
