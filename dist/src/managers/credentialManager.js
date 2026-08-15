@@ -33,7 +33,8 @@ export default class CredentialManager extends BaseCacheManager {
             filePath: DEFAULT_CREDENTIALS_PATH,
             saveDelayMs: DEFAULT_SAVE_DELAY_MS,
             cleanupIntervalMs: DEFAULT_CLEANUP_INTERVAL_MS,
-            version: CREDENTIALS_VERSION
+            version: CREDENTIALS_VERSION,
+            diskCacheEnabled: nodelink.options.cache?.diskEnabled ?? true
         });
         this.nodelink = nodelink;
     }

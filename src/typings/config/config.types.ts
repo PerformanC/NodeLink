@@ -1313,6 +1313,11 @@ export interface NodelinkConfig {
     path?: string
   }>
 
+  /** Configuration for disk caching. */
+  cache?: {
+    diskEnabled?: boolean
+  }
+
   /** Passthrough addon settings. */
   pluginConfig: Record<string, Record<string, unknown>>
 }

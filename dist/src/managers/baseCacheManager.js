@@ -26,6 +26,7 @@ export default class BaseCacheManager {
     cleanupIntervalMs;
     maxEntries;
     version;
+    diskCacheEnabled;
     cache;
     saveTimeout;
     cleanupInterval;
@@ -43,6 +44,7 @@ export default class BaseCacheManager {
         this.cleanupIntervalMs = options.cleanupIntervalMs ?? 60000;
         this.maxEntries = options.maxEntries ?? 0;
         this.version = options.version ?? 1;
+        this.diskCacheEnabled = options.diskCacheEnabled ?? true;
         this.key = this._deriveFastKey(this.passwordHashKey);
         this.legacyKey = null;
         this.cache = new Map();
@@ -60,6 +62,8 @@ export default class BaseCacheManager {
         this.cleanupInterval.unref?.();
     }
     async load() {
+        if (!this.diskCacheEnabled)
+            return;
         try {
             const data = await fs.readFile(this.filePath);
             if (data.length < 32)
@@ -292,6 +296,8 @@ export default class BaseCacheManager {
         }
     }
     async _writeToDisk(payload) {
+        if (!this.diskCacheEnabled)
+            return;
         const plainText = JSON.stringify(payload);
         const iv = crypto.randomBytes(16);
         const cipher = crypto.createCipheriv('aes-256-gcm', this.key, iv);

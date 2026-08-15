@@ -47,7 +47,8 @@ export default class TrackCacheManager extends BaseCacheManager<unknown> {
       filePath: DEFAULT_CACHE_FILE,
       saveDelayMs: DEFAULT_SAVE_DELAY_MS,
       cleanupIntervalMs: cacheOptions.cleanupIntervalMs,
-      maxEntries: cacheOptions.maxEntries
+      maxEntries: cacheOptions.maxEntries,
+      diskCacheEnabled: nodelink.options.cache?.diskEnabled ?? true
     })
 
     this.nodelink = nodelink

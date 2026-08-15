@@ -792,6 +792,10 @@ export const config: NodelinkConfig = {
     autoCleanup: true
   },
 
+  cache: {
+    diskEnabled: true
+  },
+
   plugins: [],
   pluginConfig: {}
 }

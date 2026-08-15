@@ -288,6 +288,7 @@ export const config = {
             hl: 'en',
             gl: 'US',
             proxies: [],
+            mirrorOfficialAlbums: false,
             fallbackSources: [
                 'soundcloud',
                 'deezer',
@@ -723,6 +724,9 @@ export const config = {
         defaultVolume: 0.8,
         maxLayersMix: 5,
         autoCleanup: true
+    },
+    cache: {
+        diskEnabled: true
     },
     plugins: [],
     pluginConfig: {}

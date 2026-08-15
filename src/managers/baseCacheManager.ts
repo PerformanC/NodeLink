@@ -24,6 +24,7 @@ export interface BaseCacheOptions {
   cleanupIntervalMs?: number
   maxEntries?: number
   version?: number
+  diskCacheEnabled?: boolean
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -56,6 +57,7 @@ export default abstract class BaseCacheManager<T = unknown> {
   protected readonly cleanupIntervalMs: number
   protected readonly maxEntries: number
   protected readonly version: number
+  protected readonly diskCacheEnabled: boolean
 
   protected cache: Map<string, BaseCacheEntry<T>>
   private saveTimeout: NodeJS.Timeout | null
@@ -76,6 +78,7 @@ export default abstract class BaseCacheManager<T = unknown> {
     this.cleanupIntervalMs = options.cleanupIntervalMs ?? 60000
     this.maxEntries = options.maxEntries ?? 0
     this.version = options.version ?? 1
+    this.diskCacheEnabled = options.diskCacheEnabled ?? true
 
     this.key = this._deriveFastKey(this.passwordHashKey)
     this.legacyKey = null
@@ -96,6 +99,8 @@ export default abstract class BaseCacheManager<T = unknown> {
   }
 
   async load(): Promise<void> {
+    if (!this.diskCacheEnabled) return
+
     try {
       const data = await fs.readFile(this.filePath)
       if (data.length < 32) return
@@ -381,6 +386,8 @@ export default abstract class BaseCacheManager<T = unknown> {
   }
 
   private async _writeToDisk(payload: BaseCachePayload<T>): Promise<void> {
+    if (!this.diskCacheEnabled) return
+
     const plainText = JSON.stringify(payload)
     const iv = crypto.randomBytes(16)
     const cipher = crypto.createCipheriv('aes-256-gcm', this.key, iv)
