@@ -30,6 +30,8 @@ const TRACK_PATTERN =
   /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s?]+(\?.*)?$/
 const SEARCH_URL_PATTERN =
   /^https?:\/\/(?:www\.)?soundcloud\.com\/search(?:\/(sounds|people|albums|sets))?(?:\?|$)/
+const SHORT_URL_PATTERN =
+  /^https?:\/\/(?:www\.)?on\.soundcloud\.com\/[A-Za-z0-9]+\/?(?:\?.*)?$/
 const BATCH_SIZE = 50
 const DEFAULT_PRIORITY = 85
 
@@ -60,7 +62,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     this.nodelink = nodelink
     this.baseUrl = BASE_URL
     this.searchTerms = ['scsearch']
-    this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN]
+    this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN, SHORT_URL_PATTERN]
     this.priority = DEFAULT_PRIORITY
     this.clientId = nodelink.options?.sources?.soundcloud?.clientId ?? null
   }
@@ -502,9 +504,49 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     return results
   }
 
+  async _expandShortUrl(shortUrl: string): Promise<string | null> {
+    const res = await http1makeRequest(shortUrl, {
+      method: 'HEAD'
+    })
+
+    if (res.finalUrl && res.finalUrl !== shortUrl) {
+      return res.finalUrl.split('?')[0] ?? null
+    }
+
+    if (
+      (res.statusCode === 301 ||
+        res.statusCode === 302 ||
+        res.statusCode === 307) &&
+      typeof res.headers?.location === 'string'
+    ) {
+      const location = res.headers.location
+      const absolute = location.startsWith('http')
+        ? location
+        : new URL(location, shortUrl).toString()
+      return absolute.split('?')[0] ?? null
+    }
+
+    return null
+  }
+
   async resolve(url: string): Promise<SourceResult> {
     if (!this._isValidString(url)) {
       return this._buildError('Invalid URL')
+    }
+
+    if (SHORT_URL_PATTERN.test(url)) {
+      try {
+        const expanded = await this._expandShortUrl(url)
+        if (!expanded) {
+          return this._buildError('Failed to expand short URL')
+        }
+        url = expanded
+      } catch (err: unknown) {
+        this._logError('Short URL expansion failed', err)
+        return this._buildError(
+          err instanceof Error ? err.message : 'Unknown error'
+        )
+      }
     }
 
     const searchMatch = url.match(SEARCH_URL_PATTERN)
