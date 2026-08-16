@@ -207,7 +207,44 @@ export default class ConfigValidationManager {
                             resamplingQuality: { type: 'string', optional: true },
                             loudnessNormalizer: { type: 'boolean', optional: true },
                             fading: { type: 'object', optional: true },
-                            crossfade: { type: 'object', optional: true }
+                            crossfade: {
+                                type: 'object',
+                                optional: true,
+                                props: {
+                                    enabled: { type: 'boolean', default: false },
+                                    duration: {
+                                        type: 'number',
+                                        integer: true,
+                                        min: 0,
+                                        max: 30000,
+                                        optional: true
+                                    },
+                                    curve: {
+                                        type: 'string',
+                                        enum: ['linear', 'sine', 'sinusoidal'],
+                                        optional: true
+                                    },
+                                    mode: {
+                                        type: 'string',
+                                        enum: ['preload', 'stream'],
+                                        optional: true
+                                    },
+                                    minBufferMs: {
+                                        type: 'number',
+                                        integer: true,
+                                        min: 20,
+                                        max: 30000,
+                                        optional: true
+                                    },
+                                    bufferMs: {
+                                        type: 'number',
+                                        integer: true,
+                                        min: 0,
+                                        max: 30000,
+                                        optional: true
+                                    }
+                                }
+                            }
                         }
                     },
                     voiceReceive: { type: 'object', optional: true },

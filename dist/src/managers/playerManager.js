@@ -392,6 +392,21 @@ export default class PlayerManager {
         return player.setFading(fadingConfig);
     }
     /**
+     * Updates crossfade configuration.
+     */
+    async setCrossfade(guildId, crossfadeConfig) {
+        const interception = await this._runInterceptors('setCrossfade', guildId, crossfadeConfig);
+        if (interception?.handled)
+            return interception.result;
+        if (this.isCluster) {
+            return this.runClusterPlayerCommand(guildId, 'setCrossfade', [
+                crossfadeConfig
+            ]);
+        }
+        const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
+        return player.setCrossfade(crossfadeConfig);
+    }
+    /**
      * Enables or disables loudness normalization.
      */
     async setLoudnessNormalizer(guildId, enabled) {

@@ -1,6 +1,7 @@
 import type { Player as PlaybackPlayer } from '../playback/player.ts'
 import type { Session } from '../typings/index.types.ts'
 import type {
+  CrossfadeConfig,
   FadingConfig,
   FiltersState,
   NodeLink as PlaybackNodeLink,
@@ -53,6 +54,7 @@ type PlayerInterceptorAction =
   | 'volume'
   | 'setFilters'
   | 'setFading'
+  | 'setCrossfade'
   | 'updateVoice'
 
 /**
@@ -739,6 +741,31 @@ export default class PlayerManager {
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
     return player.setFading(fadingConfig)
+  }
+
+  /**
+   * Updates crossfade configuration.
+   */
+  async setCrossfade(
+    guildId: string,
+    crossfadeConfig?: CrossfadeConfig
+  ): Promise<boolean | PlayerCommandResponse> {
+    const interception = await this._runInterceptors(
+      'setCrossfade',
+      guildId,
+      crossfadeConfig
+    )
+    if (interception?.handled)
+      return interception.result as PlayerCommandResponse
+
+    if (this.isCluster) {
+      return this.runClusterPlayerCommand(guildId, 'setCrossfade', [
+        crossfadeConfig
+      ])
+    }
+
+    const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
+    return player.setCrossfade(crossfadeConfig)
   }
 
   /**

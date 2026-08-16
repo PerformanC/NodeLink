@@ -222,6 +222,11 @@ function getPlayerPatchPayload(body) {
         (!fading || typeof fading !== 'object' || Array.isArray(fading))) {
         return null;
     }
+    const crossfade = payload.crossfade;
+    if (crossfade !== undefined &&
+        (!crossfade || typeof crossfade !== 'object' || Array.isArray(crossfade))) {
+        return null;
+    }
     const voice = payload.voice === undefined ? undefined : getVoicePayload(payload.voice);
     if (payload.voice !== undefined && !voice) {
         return null;
@@ -250,6 +255,7 @@ function getPlayerPatchPayload(body) {
         ducking,
         filters: filtersValue,
         fading,
+        crossfade,
         voice: voice ?? undefined
     };
 }
@@ -317,6 +323,36 @@ function sanitizeFadingConfig(raw) {
         };
     }
     return safe;
+}
+/**
+ * Sanitizes crossfade settings and bounds their per-player resource usage.
+ * @param raw - Raw crossfade payload.
+ * @returns Safe crossfade configuration.
+ */
+function sanitizeCrossfadeConfig(raw) {
+    if (!isObjectRecord(raw))
+        return { enabled: false };
+    const duration = Number(raw.duration);
+    const minBufferMs = Number(raw.minBufferMs);
+    const bufferMs = Number(raw.bufferMs);
+    const curve = raw.curve;
+    const mode = raw.mode;
+    return {
+        enabled: raw.enabled === true,
+        duration: Number.isFinite(duration)
+            ? Math.max(0, Math.min(30000, Math.round(duration)))
+            : 5000,
+        curve: curve === 'linear' || curve === 'sine' || curve === 'sinusoidal'
+            ? curve
+            : 'sinusoidal',
+        mode: mode === 'stream' ? 'stream' : 'preload',
+        minBufferMs: Number.isFinite(minBufferMs)
+            ? Math.max(20, Math.min(30000, Math.round(minBufferMs)))
+            : 250,
+        bufferMs: Number.isFinite(bufferMs)
+            ? Math.max(0, Math.min(30000, Math.round(bufferMs)))
+            : 0
+    };
 }
 /**
  * Normalizes decoded track info into the stricter `TrackInfoExtended` shape
@@ -516,6 +552,9 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
     }
     if (payload.fading !== undefined) {
         await session.players.setFading(guildId, sanitizeFadingConfig(payload.fading));
+    }
+    if (payload.crossfade !== undefined) {
+        await session.players.setCrossfade(guildId, sanitizeCrossfadeConfig(payload.crossfade));
     }
     if (payload.loudnessNormalizer !== undefined) {
         await session.players.setLoudnessNormalizer(guildId, payload.loudnessNormalizer);

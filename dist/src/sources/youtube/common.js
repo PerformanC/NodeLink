@@ -2033,7 +2033,9 @@ export class BaseClient {
                 bitrate: f.bitrate,
                 audioQuality: f.audioQuality,
                 url: f.url,
-                signatureCipher: f.signatureCipher,
+                signatureCipher: (f.signatureCipher ||
+                    f.cipher ||
+                    f.signature_cipher),
                 audioTrack: f.audioTrack
             };
         });

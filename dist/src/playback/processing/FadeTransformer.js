@@ -1,3 +1,6 @@
+// Copyright (C) 2026 NodeLink.
+// This file is part of NodeLink and is protected under the GNU General Public License v3 (GPLv3).
+// All parts of this project are protected by this license. See LICENSE for details.
 import { Transform } from 'node:stream';
 const DEFAULT_CURVE = 'linear';
 const SUPPORTED_CURVES = new Set([

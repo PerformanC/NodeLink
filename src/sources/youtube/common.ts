@@ -2924,7 +2924,9 @@ export abstract class BaseClient {
         bitrate: f.bitrate as number | undefined,
         audioQuality: f.audioQuality as string | undefined,
         url: f.url as string | undefined,
-        signatureCipher: f.signatureCipher as string | undefined,
+        signatureCipher: (f.signatureCipher ||
+          f.cipher ||
+          f.signature_cipher) as string | undefined,
         audioTrack: f.audioTrack as Record<string, unknown> | undefined
       }
     })

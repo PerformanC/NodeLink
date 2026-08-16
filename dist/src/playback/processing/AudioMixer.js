@@ -1,3 +1,6 @@
+// Copyright (C) 2026 NodeLink.
+// This file is part of NodeLink and is protected under the GNU General Public License v3 (GPLv3).
+// All parts of this project are protected by this license. See LICENSE for details.
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { RingBuffer } from '../structs/RingBuffer.js';

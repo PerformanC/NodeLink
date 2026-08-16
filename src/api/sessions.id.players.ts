@@ -7,6 +7,7 @@ import type {
 } from '../typings/api/api.types.ts'
 import type { Session } from '../typings/index.types.ts'
 import type {
+  CrossfadeConfig,
   FadingConfig,
   FiltersState,
   PlayerStateJSON,
@@ -111,6 +112,9 @@ interface PlayerPatchPayload {
    * Optional fading configuration payload.
    */
   fading?: ApiRequest['body']
+
+  /** Optional crossfade configuration payload. */
+  crossfade?: ApiRequest['body']
 
   /**
    * Voice state update payload.
@@ -236,6 +240,9 @@ interface PlayerPatchBodyInput {
    * Candidate fading payload.
    */
   fading?: ApiRequest['body']
+
+  /** Candidate crossfade configuration. */
+  crossfade?: ApiRequest['body']
 
   /**
    * Candidate voice payload.
@@ -461,6 +468,12 @@ interface PlayersRoutePlayerManager {
   setFading: (
     guildId: string,
     fadingConfig?: FadingConfig
+  ) => Promise<boolean | object>
+
+  /** Applies per-player crossfade settings. */
+  setCrossfade: (
+    guildId: string,
+    crossfadeConfig?: CrossfadeConfig
   ) => Promise<boolean | object>
 
   /**
@@ -871,6 +884,14 @@ function getPlayerPatchPayload(
     return null
   }
 
+  const crossfade = payload.crossfade
+  if (
+    crossfade !== undefined &&
+    (!crossfade || typeof crossfade !== 'object' || Array.isArray(crossfade))
+  ) {
+    return null
+  }
+
   const voice =
     payload.voice === undefined ? undefined : getVoicePayload(payload.voice)
   if (payload.voice !== undefined && !voice) {
@@ -904,6 +925,7 @@ function getPlayerPatchPayload(
     ducking,
     filters: filtersValue as FiltersState | undefined,
     fading,
+    crossfade,
     voice: voice ?? undefined
   }
 }
@@ -993,6 +1015,39 @@ function sanitizeFadingConfig(raw: ApiRequest['body']): FadingConfig {
   }
 
   return safe
+}
+
+/**
+ * Sanitizes crossfade settings and bounds their per-player resource usage.
+ * @param raw - Raw crossfade payload.
+ * @returns Safe crossfade configuration.
+ */
+function sanitizeCrossfadeConfig(raw: ApiRequest['body']): CrossfadeConfig {
+  if (!isObjectRecord(raw)) return { enabled: false }
+
+  const duration = Number(raw.duration)
+  const minBufferMs = Number(raw.minBufferMs)
+  const bufferMs = Number(raw.bufferMs)
+  const curve = raw.curve
+  const mode = raw.mode
+
+  return {
+    enabled: raw.enabled === true,
+    duration: Number.isFinite(duration)
+      ? Math.max(0, Math.min(30000, Math.round(duration)))
+      : 5000,
+    curve:
+      curve === 'linear' || curve === 'sine' || curve === 'sinusoidal'
+        ? curve
+        : 'sinusoidal',
+    mode: mode === 'stream' ? 'stream' : 'preload',
+    minBufferMs: Number.isFinite(minBufferMs)
+      ? Math.max(20, Math.min(30000, Math.round(minBufferMs)))
+      : 250,
+    bufferMs: Number.isFinite(bufferMs)
+      ? Math.max(0, Math.min(30000, Math.round(bufferMs)))
+      : 0
+  }
 }
 
 /**
@@ -1278,6 +1333,13 @@ async function applyPlayerPatch(
     await session.players.setFading(
       guildId,
       sanitizeFadingConfig(payload.fading)
+    )
+  }
+
+  if (payload.crossfade !== undefined) {
+    await session.players.setCrossfade(
+      guildId,
+      sanitizeCrossfadeConfig(payload.crossfade)
     )
   }
 

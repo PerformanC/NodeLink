@@ -448,7 +448,8 @@ export type CreateAudioResourceFn = (
   volume?: number,
   audioMixer?: AudioMixer | null,
   returnPCM?: boolean,
-  enableAGC?: boolean
+  enableAGC?: boolean,
+  enableCrossfade?: boolean
 ) => Promise<AudioResource>
 
 /**

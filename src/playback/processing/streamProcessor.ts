@@ -60,6 +60,10 @@ import { ScratchTransformer } from './ScratchTransformer.ts'
 import { FlowController } from './FlowController.ts'
 import { FiltersManager } from './filtersManager.ts'
 import { VolumeTransformer } from './VolumeTransformer.ts'
+import {
+  CrossfadeController,
+  type CrossfadePrepareOptions
+} from './CrossfadeController.ts'
 import { SilenceDetector } from './SilenceDetector.ts'
 
 type LibSampleRateModule = typeof import('@alexanderolsen/libsamplerate-js')
@@ -825,8 +829,65 @@ class BaseAudioResource {
 
   setLoudnessNormalizer(_enabled: boolean): void {}
 
+  prepareCrossfade(
+    stream: Readable,
+    options: CrossfadePrepareOptions,
+    onComplete: (consumedMs: number) => void
+  ): boolean {
+    const controller = this.pipes?.find(
+      (pipe) => pipe instanceof CrossfadeController
+    ) as CrossfadeController | undefined
+    return controller?.prepareNextStream(stream, options, onComplete) ?? false
+  }
+
+  startCrossfade(
+    durationMs?: number,
+    curve?: string,
+    availableMs?: number
+  ): boolean {
+    const controller = this.pipes?.find(
+      (pipe) => pipe instanceof CrossfadeController
+    ) as CrossfadeController | undefined
+    return controller?.startCrossfade(durationMs, curve, availableMs) ?? false
+  }
+
+  clearCrossfade(): void {
+    const controller = this.pipes?.find(
+      (pipe) => pipe instanceof CrossfadeController
+    ) as CrossfadeController | undefined
+    controller?.clearNext()
+  }
+
+  setCrossfadePaused(paused: boolean): void {
+    const controller = this.pipes?.find(
+      (pipe) => pipe instanceof CrossfadeController
+    ) as CrossfadeController | undefined
+    controller?.setPaused(paused)
+  }
+
+  getCrossfadeState(): {
+    active: boolean
+    bufferedMs: number
+    isBridging: boolean
+  } {
+    const controller = this.pipes?.find(
+      (pipe) => pipe instanceof CrossfadeController
+    ) as CrossfadeController | undefined
+    return (
+      controller?.getState() ?? {
+        active: false,
+        bufferedMs: 0,
+        isBridging: false
+      }
+    )
+  }
+
   isPipelineFinished(): boolean {
     if (this._destroyed || !this.pipes) return true
+    const crossfadeController = this.pipes.find(
+      (pipe) => pipe instanceof CrossfadeController
+    ) as CrossfadeController | undefined
+    if (crossfadeController?.getState().isBridging) return false
     for (const pipe of this.pipes) {
       if (
         (pipe as unknown as { isFinished?: boolean }).isFinished ||
@@ -2651,7 +2712,8 @@ class StreamAudioResource extends BaseAudioResource {
     volume = 1.0,
     audioMixer: AudioMixer | null = null,
     returnPCM = false,
-    enableAGC = true
+    enableAGC = true,
+    enableCrossfade = false
   ) {
     super(guildId)
 
@@ -2680,7 +2742,8 @@ class StreamAudioResource extends BaseAudioResource {
         initialFilters,
         volume,
         audioMixer,
-        enableAGC
+        enableAGC,
+        enableCrossfade
       )
     }
 
@@ -2862,7 +2925,8 @@ class StreamAudioResource extends BaseAudioResource {
     initialFilters: FiltersState,
     volume: number,
     audioMixer: AudioMixer | null = null,
-    enableAGC = true
+    enableAGC = true,
+    enableCrossfade = false
   ): void {
     const frameCounter = new PCMFrameCounter(
       AUDIO_CONFIG.sampleRate,
@@ -2915,13 +2979,22 @@ class StreamAudioResource extends BaseAudioResource {
 
     opusEncoder.setDTX(false)
 
-    const streams: Transform[] = [
-      pcmStream,
-      frameCounter,
-      silenceDetector,
-      filters,
-      flowController
-    ]
+    const streams: Transform[] = [pcmStream]
+    if (enableCrossfade) {
+      const crossfadeController = new CrossfadeController()
+      crossfadeController.on('bridgeStart', () => {
+        this.canStop = false
+      })
+      crossfadeController.on('bridgeEnd', () => {
+        if (this._destroyed) return
+        this.canStop = true
+        this._finishBufferingEmitted = true
+        this.stream?.emit('finishBuffering')
+      })
+      streams.push(crossfadeController)
+      this.pipes?.push(crossfadeController)
+    }
+    streams.push(frameCounter, silenceDetector, filters, flowController)
     this.pipes?.push(frameCounter, silenceDetector, filters, flowController)
 
     if (nodelink.extensions?.audioInterceptors) {
@@ -3068,6 +3141,7 @@ class StreamAudioResource extends BaseAudioResource {
 
   _setupEventHandlers(inputStream: Readable): void {
     const forwardFinishBuffering = (): void => {
+      if (this.getCrossfadeState().isBridging) return
       if (!this._destroyed) {
         this._finishBufferingEmitted = true
         this.stream?.emit('finishBuffering')
@@ -3133,7 +3207,8 @@ export const createAudioResource = (
   volume: number = 1.0,
   audioMixer: AudioMixer | null = null,
   returnPCM: boolean = false,
-  enableAGC: boolean = true
+  enableAGC: boolean = true,
+  enableCrossfade: boolean = false
 ): StreamAudioResource =>
   new StreamAudioResource(
     guildId,
@@ -3144,7 +3219,8 @@ export const createAudioResource = (
     volume,
     audioMixer,
     returnPCM,
-    enableAGC
+    enableAGC,
+    enableCrossfade
   )
 
 export const createSeekeableAudioResource = async (
@@ -3158,7 +3234,8 @@ export const createSeekeableAudioResource = async (
   volume: number = 1.0,
   audioMixer: AudioMixer | null = null,
   returnPCM: boolean = false,
-  enableAGC: boolean = true
+  enableAGC: boolean = true,
+  enableCrossfade: boolean = false
 ): Promise<StreamAudioResource | ErrorResponse> => {
   try {
     const hinted = String(player.streamInfo?.format ?? '').toLowerCase()
@@ -3214,7 +3291,8 @@ export const createSeekeableAudioResource = async (
         volume,
         audioMixer,
         returnPCM,
-        returnPCM ? true : (player.loudnessNormalizer ?? enableAGC)
+        returnPCM ? true : (player.loudnessNormalizer ?? enableAGC),
+        enableCrossfade
       )
     }
 
@@ -3249,7 +3327,8 @@ export const createSeekeableAudioResource = async (
       volume,
       audioMixer,
       returnPCM,
-      returnPCM ? true : (player.loudnessNormalizer ?? enableAGC)
+      returnPCM ? true : (player.loudnessNormalizer ?? enableAGC),
+      enableCrossfade
     )
   } catch (err) {
     const cause = err instanceof SeekError ? err.code : 'UNKNOWN'
