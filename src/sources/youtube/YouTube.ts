@@ -430,6 +430,9 @@ export default class YouTubeSource {
    * @returns Promise that resolves when the fetch attempt completes.
    */
   private async _fetchVisitorData(): Promise<void> {
+    // this should prevent the visitorData getting initialized twice.
+    if (process.env.WORKER_TYPE === 'source') return
+    
     const cachedPlayerScript = this.nodelink.credentialManager?.get<string>(
       'yt_player_script_url'
     )
