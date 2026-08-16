@@ -322,6 +322,7 @@ export const config: NodelinkConfig = {
       clients: {
         search: ['Android'],
         playback: [
+          'VisionOs',
           'AndroidVR',
           'TV_DOWN',
           'TV',
@@ -332,6 +333,7 @@ export const config: NodelinkConfig = {
           'IOS'
         ],
         resolve: [
+          'VisionOs',
           'AndroidVR',
           'TV_DOWN',
           'TV',

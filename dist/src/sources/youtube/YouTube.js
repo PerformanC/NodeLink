@@ -241,7 +241,7 @@ export default class YouTubeSource {
     async setup() {
         logger('info', 'YouTube', 'Setting up YouTube source...');
         this.oauth = new OAuth(this.nodelink);
-        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TV_DOWN }, { default: TVCast }, { default: Web }, { default: WebEmbedded }] = await Promise.all([
+        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TV_DOWN }, { default: TVCast }, { default: Web }, { default: WebEmbedded }, { default: VisionOs }] = await Promise.all([
             import('./clients/Android.js'),
             import('./clients/AndroidVR.js'),
             import('./clients/IOS.js'),
@@ -251,7 +251,8 @@ export default class YouTubeSource {
             import('./clients/TV_downgraded.js'),
             import('./clients/TVCast.js'),
             import('./clients/Web.js'),
-            import('./clients/WebEmbedded.js')
+            import('./clients/WebEmbedded.js'),
+            import('./clients/visionOs.js')
         ]);
         const clientClasses = {
             Android,
@@ -263,7 +264,8 @@ export default class YouTubeSource {
             TV_DOWN,
             TVCast,
             Web,
-            WebEmbedded
+            WebEmbedded,
+            VisionOs
         };
         for (const clientName of Object.keys(clientClasses)) {
             const ClientCtor = clientClasses[clientName];

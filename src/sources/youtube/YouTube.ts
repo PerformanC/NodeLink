@@ -331,7 +331,8 @@ export default class YouTubeSource {
       { default: TV_DOWN },
       { default: TVCast },
       { default: Web },
-      { default: WebEmbedded }
+      { default: WebEmbedded },
+      { default: VisionOs }
     ] = await Promise.all([
       import('./clients/Android.ts'),
       import('./clients/AndroidVR.ts'),
@@ -342,7 +343,8 @@ export default class YouTubeSource {
       import('./clients/TV_downgraded.ts'),
       import('./clients/TVCast.ts'),
       import('./clients/Web.ts'),
-      import('./clients/WebEmbedded.ts')
+      import('./clients/WebEmbedded.ts'),
+      import('./clients/visionOs.ts')
     ])
 
     const clientClasses: ClientClassMap = {
@@ -355,7 +357,8 @@ export default class YouTubeSource {
       TV_DOWN,
       TVCast,
       Web,
-      WebEmbedded
+      WebEmbedded,
+      VisionOs
     }
 
     for (const clientName of Object.keys(clientClasses)) {

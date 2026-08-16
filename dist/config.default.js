@@ -308,6 +308,7 @@ export const config = {
             clients: {
                 search: ['Android'],
                 playback: [
+                    'VisionOs',
                     'AndroidVR',
                     'TV_DOWN',
                     'TV',
@@ -318,6 +319,7 @@ export const config = {
                     'IOS'
                 ],
                 resolve: [
+                    'VisionOs',
                     'AndroidVR',
                     'TV_DOWN',
                     'TV',
