@@ -532,21 +532,29 @@ function extractThumbnail(
   renderer: YouTubeRenderer | undefined,
   videoId: string | null
 ): string | null {
-  const thumbnails =
-    renderer?.thumbnail?.thumbnails ||
-    renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+  let resultUrl: string | null = null
 
-  if (Array.isArray(thumbnails) && thumbnails.length > 0) {
-    const lastThumb = thumbnails[thumbnails.length - 1]
+  const musicThumbnails = renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+  const regularThumbnails = renderer?.thumbnail?.thumbnails
+
+  if (Array.isArray(musicThumbnails) && musicThumbnails.length > 0) {
+    const firstThumb = musicThumbnails[0]
+    if (firstThumb?.url) {
+      resultUrl = firstThumb.url.replace(/=.*/, '=w1000-h1000')
+    }
+  } else if (Array.isArray(regularThumbnails) && regularThumbnails.length > 0) {
+    const lastThumb = regularThumbnails[regularThumbnails.length - 1]
     const url = lastThumb?.url
-    return url?.split('?')[0] || null
+    if (url && url.includes('maxresdefault')) {
+      resultUrl = url
+    }
   }
 
-  if (videoId) {
-    return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+  if (!resultUrl && videoId) {
+    resultUrl = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
   }
 
-  return null
+  return resultUrl
 }
 
 /**
@@ -1586,6 +1594,9 @@ export async function buildTrack(
 
     if (oEmbedData?.thumbnail_url && !artworkUrl) {
       artworkUrl = oEmbedData.thumbnail_url
+      if (artworkUrl.includes('hqdefault.jpg')) {
+        artworkUrl = artworkUrl.replace('hqdefault.jpg', 'mqdefault.jpg')
+      }
     }
 
     const lengthText =
@@ -2924,9 +2935,7 @@ export abstract class BaseClient {
         bitrate: f.bitrate as number | undefined,
         audioQuality: f.audioQuality as string | undefined,
         url: f.url as string | undefined,
-        signatureCipher: (f.signatureCipher ||
-          f.cipher ||
-          f.signature_cipher) as string | undefined,
+        signatureCipher: f.signatureCipher as string | undefined,
         audioTrack: f.audioTrack as Record<string, unknown> | undefined
       }
     })
