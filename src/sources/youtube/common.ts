@@ -545,7 +545,7 @@ function extractThumbnail(
   } else if (Array.isArray(regularThumbnails) && regularThumbnails.length > 0) {
     const lastThumb = regularThumbnails[regularThumbnails.length - 1]
     const url = lastThumb?.url
-    if (url && url.includes('maxresdefault')) {
+    if (url?.includes('maxresdefault')) {
       resultUrl = url
     }
   }
