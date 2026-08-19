@@ -1278,18 +1278,6 @@ async function applyPlayerPatch(
   const shouldClearNextTrack =
     payload.nextTrack === null || payload.nextTrack?.encoded === null
 
-  if (shouldClearNextTrack) {
-    await session.players.clearNextTrack(guildId)
-  } else if (payload.nextTrack) {
-    const trackToPreload = await resolvePreloadPayload(
-      runtime,
-      payload.nextTrack
-    )
-    if (trackToPreload) {
-      await session.players.preload(guildId, trackToPreload)
-    }
-  }
-
   if (stopPlayer) {
     await session.players.stop(guildId)
   }
@@ -1302,6 +1290,18 @@ async function applyPlayerPatch(
       startTime: payload.position,
       endTime: payload.endTime ?? undefined
     })
+  }
+
+  if (shouldClearNextTrack) {
+    await session.players.clearNextTrack(guildId)
+  } else if (payload.nextTrack) {
+    const trackToPreload = await resolvePreloadPayload(
+      runtime,
+      payload.nextTrack
+    )
+    if (trackToPreload) {
+      await session.players.preload(guildId, trackToPreload)
+    }
   }
 
   if (payload.volume !== undefined) {

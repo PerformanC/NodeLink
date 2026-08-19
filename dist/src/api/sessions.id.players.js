@@ -513,15 +513,6 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
     const trackToPlay = await resolvePlayPayload(runtime, payload.track);
     const stopPlayer = trackToPlay === null;
     const shouldClearNextTrack = payload.nextTrack === null || payload.nextTrack?.encoded === null;
-    if (shouldClearNextTrack) {
-        await session.players.clearNextTrack(guildId);
-    }
-    else if (payload.nextTrack) {
-        const trackToPreload = await resolvePreloadPayload(runtime, payload.nextTrack);
-        if (trackToPreload) {
-            await session.players.preload(guildId, trackToPreload);
-        }
-    }
     if (stopPlayer) {
         await session.players.stop(guildId);
     }
@@ -533,6 +524,15 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
             startTime: payload.position,
             endTime: payload.endTime ?? undefined
         });
+    }
+    if (shouldClearNextTrack) {
+        await session.players.clearNextTrack(guildId);
+    }
+    else if (payload.nextTrack) {
+        const trackToPreload = await resolvePreloadPayload(runtime, payload.nextTrack);
+        if (trackToPreload) {
+            await session.players.preload(guildId, trackToPreload);
+        }
     }
     if (payload.volume !== undefined) {
         await session.players.volume(guildId, payload.volume);

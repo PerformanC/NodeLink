@@ -41,6 +41,7 @@ import type {
 } from '../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'
+import { AutoMixRegistry } from './processing/AutoMixRegistry.ts'
 import { DuckingController } from './processing/DuckingController.ts'
 
 export type GatewayEventName =
@@ -1848,6 +1849,40 @@ export class Player {
 
     this._fading('trackEndSchedule', { startPosition: startTime || 0 })
     this._stuckTime = 0
+
+    if (this.nextTrack && this.nextResourceIsCrossfade) {
+      this._scheduleCrossfadePreparation(startTime || 0)
+    }
+
+    const crossfadeConfig = this._getCrossfadeConfig()
+    const trackDurationMs =
+      this.track.endTime && this.track.endTime > 0
+        ? this.track.endTime
+        : this.track.info.length || 0
+    if (
+      crossfadeConfig &&
+      !this.track.info.isStream &&
+      trackDurationMs > 30000
+    ) {
+      const currentTrack = this.track
+      const currentUrlData = urlData
+      AutoMixRegistry.getInstance()
+        .requestOutroAnalysis({
+          track: currentTrack,
+          urlData: currentUrlData,
+          priority: 'CURRENT_OUTRO',
+          triggerSource: `player:${this.guildId}:trackStart`,
+          fetchResource: (info, uData, windowStartMs, returnPcm) =>
+            this._fetchResource(info, uData, windowStartMs, returnPcm)
+        })
+        .catch((err) => {
+          logger(
+            'debug',
+            'Player',
+            `[AutoMix] Background outro analysis failed for ${currentTrack.info.identifier}: ${(err as Error).message}`
+          )
+        })
+    }
     if (
       this.track.info.sourceName === 'youtube' ||
       this.track.info.sourceName === 'ytmusic'
@@ -1963,20 +1998,22 @@ export class Player {
           track: info
         })
 
+        const isAlreadyPlaying =
+          (!!this.track?.info.identifier &&
+            this.track.info.identifier === info.identifier) ||
+          (!!this.track?.encoded && this.track.encoded === encoded)
+
+        if (this.track && this.connection?.audioStream && isAlreadyPlaying) {
+          logger(
+            'info',
+            'Player',
+            `play() for guild ${this.guildId} adopted (already playing/transitioning ${info.identifier})`
+          )
+          this.isUpdatingTrack = false
+          return resolve(true)
+        }
+
         if (noReplace && this.track && this.connection?.audioStream) {
-          const isAlreadyPlaying =
-            this.track?.info.identifier === info.identifier
-
-          if (isAlreadyPlaying) {
-            logger(
-              'info',
-              'Player',
-              `play() for guild ${this.guildId} adopted (already playing/transitioning ${info.identifier})`
-            )
-            this.isUpdatingTrack = false
-            return resolve(true)
-          }
-
           logger(
             'debug',
             'Player',
@@ -2187,6 +2224,24 @@ export class Player {
         if (this.nextResourceIsCrossfade) {
           this._crossfadePreparationSafetyMs = SEEK_CROSSFADE_SAFETY_MS
           this._rescheduleCrossfade(this.position)
+
+          const remainingMs =
+            (this.track?.endTime || this.track?.info.length || 0) -
+            this.position
+          if (remainingMs <= 40000 && this.track && this.streamInfo) {
+            const currentTrack = this.track
+            const currentStreamInfo = this.streamInfo
+            AutoMixRegistry.getInstance()
+              .requestOutroAnalysis({
+                track: currentTrack,
+                urlData: currentStreamInfo,
+                priority: 'IMMINENT_TRANSITION',
+                triggerSource: `player:${this.guildId}:seekImminent`,
+                fetchResource: (info, uData, windowStartMs, returnPcm) =>
+                  this._fetchResource(info, uData, windowStartMs, returnPcm)
+              })
+              .catch(() => {})
+          }
         }
       }
       return result
