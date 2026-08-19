@@ -252,8 +252,8 @@ abstract class WebmBaseDemuxer extends Transform {
         const skipped = this.ringBuffer.length
         if (skipped > 0) webmOpusProfiler.skippedBytes += skipped
         this.skipUntil = res._skipUntil
-        this.ringBuffer.skip(this.ringBuffer.length)
-        this.processed += BigInt(this.ringBuffer.length)
+        this.ringBuffer.skip(skipped)
+        this.processed += BigInt(skipped)
         break
       }
 

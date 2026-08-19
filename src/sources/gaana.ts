@@ -27,7 +27,6 @@ const USER_AGENT =
 const API_URL = 'https://gaana.com/apiv2'
 const STREAM_URL_API = 'https://gaana.com/api/stream-url'
 const CRYPTO_KEY = Buffer.from('gy1t#b@jl(b$wtme', 'utf8')
-const CRYPTO_IV = Buffer.from('xC4dmVJAq14BfntX', 'utf8')
 const HLS_BASE_URL = 'https://vodhlsgaana-ebw.akamaized.net/'
 
 /**
@@ -826,9 +825,13 @@ export default class GaanaSource {
       const offset = Number.parseInt(encryptedData[0] || '', 10)
       if (Number.isNaN(offset)) return ''
 
+      const iv = Buffer.from(
+        encryptedData.substring(offset, offset + 16),
+        'utf8'
+      )
       const ciphertextB64 = encryptedData.substring(offset + 16)
       const ciphertext = Buffer.from(`${ciphertextB64}==`, 'base64')
-      const decipher = createDecipheriv('aes-128-cbc', CRYPTO_KEY, CRYPTO_IV)
+      const decipher = createDecipheriv('aes-128-cbc', CRYPTO_KEY, iv)
       decipher.setAutoPadding(false)
 
       let decrypted = decipher.update(ciphertext)
