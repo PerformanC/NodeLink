@@ -1632,10 +1632,6 @@ class AACDecoderStream extends Transform {
         const frameInfo = this._findADTSFrame()
         if (!frameInfo) break
 
-        if (frameInfo.start > 0) {
-          this.ringBuffer.skip(frameInfo.start)
-        }
-
         const adtsFrame = frameInfo.frame
 
         if (!this.isConfigured) {

@@ -89,7 +89,9 @@ interface ReverbTailState {
   allpassLeft: Float32Array
   allpassRight: Float32Array
   posComb1: number
+  posComb1Right: number
   posComb2: number
+  posComb2Right: number
   posAllpass: number
 }
 
@@ -102,7 +104,9 @@ function createReverbTailState(): ReverbTailState {
     allpassLeft: new Float32Array(556),
     allpassRight: new Float32Array(556),
     posComb1: 0,
+    posComb1Right: 0,
     posComb2: 0,
+    posComb2Right: 0,
     posAllpass: 0
   }
 }
@@ -1007,17 +1011,17 @@ export class CrossfadeController extends Transform {
 
         const c1L = rev.comb1Left[rev.posComb1] ?? 0
         rev.comb1Left[rev.posComb1] = inputLeft + c1L * feedback
-        const c1R = rev.comb1Right[rev.posComb1 % rev.comb1Right.length] ?? 0
-        rev.comb1Right[rev.posComb1 % rev.comb1Right.length] =
-          inputRight + c1R * feedback
+        const c1R = rev.comb1Right[rev.posComb1Right] ?? 0
+        rev.comb1Right[rev.posComb1Right] = inputRight + c1R * feedback
         rev.posComb1 = (rev.posComb1 + 1) % rev.comb1Left.length
+        rev.posComb1Right = (rev.posComb1Right + 1) % rev.comb1Right.length
 
         const c2L = rev.comb2Left[rev.posComb2] ?? 0
         rev.comb2Left[rev.posComb2] = inputLeft + c2L * feedback
-        const c2R = rev.comb2Right[rev.posComb2 % rev.comb2Right.length] ?? 0
-        rev.comb2Right[rev.posComb2 % rev.comb2Right.length] =
-          inputRight + c2R * feedback
+        const c2R = rev.comb2Right[rev.posComb2Right] ?? 0
+        rev.comb2Right[rev.posComb2Right] = inputRight + c2R * feedback
         rev.posComb2 = (rev.posComb2 + 1) % rev.comb2Left.length
+        rev.posComb2Right = (rev.posComb2Right + 1) % rev.comb2Right.length
 
         const combMixL = (c1L + c2L) * 0.5
         const combMixR = (c1R + c2R) * 0.5
