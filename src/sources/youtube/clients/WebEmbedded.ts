@@ -68,6 +68,15 @@ export default class WebEmbedded extends BaseClient {
   }
 
   /**
+   * Returns player parameters for WEB_EMBEDDED_PLAYER playback.
+   *
+   * @returns Base64-encoded player parameters string
+   */
+  override getPlayerParams(): string | null {
+    return '2AMB'
+  }
+
+  /**
    * WEB_EMBEDDED_PLAYER client requires a player script for signature deciphering.
    *
    * @returns Always true for the embedded player client

@@ -59,6 +59,15 @@ export default class WebParentTools extends BaseClient {
   }
 
   /**
+   * Returns player parameters for WEB_PARENT_TOOLS playback.
+   *
+   * @returns Base64-encoded player parameters string
+   */
+  override getPlayerParams(): string | null {
+    return '2AMB'
+  }
+
+  /**
    * Whether this client requires a player script for signature deciphering.
    * @returns true, as WEB_PARENT_TOOLS needs the player script
    */

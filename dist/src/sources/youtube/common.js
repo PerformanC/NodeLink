@@ -390,17 +390,26 @@ function extractAuthor(renderer, fullApiResponse, _videoId, _makeRequestFn = nul
  * @internal
  */
 function extractThumbnail(renderer, videoId) {
-    const thumbnails = renderer?.thumbnail?.thumbnails ||
-        renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails;
-    if (Array.isArray(thumbnails) && thumbnails.length > 0) {
-        const lastThumb = thumbnails[thumbnails.length - 1];
+    let resultUrl = null;
+    const musicThumbnails = renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails;
+    const regularThumbnails = renderer?.thumbnail?.thumbnails;
+    if (Array.isArray(musicThumbnails) && musicThumbnails.length > 0) {
+        const firstThumb = musicThumbnails[0];
+        if (firstThumb?.url) {
+            resultUrl = firstThumb.url.replace(/=.*/, '=w1000-h1000');
+        }
+    }
+    else if (Array.isArray(regularThumbnails) && regularThumbnails.length > 0) {
+        const lastThumb = regularThumbnails[regularThumbnails.length - 1];
         const url = lastThumb?.url;
-        return url?.split('?')[0] || null;
+        if (url?.includes('maxresdefault')) {
+            resultUrl = url;
+        }
     }
-    if (videoId) {
-        return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+    if (!resultUrl && videoId) {
+        resultUrl = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
     }
-    return null;
+    return resultUrl;
 }
 /**
  * Fetches detailed channel information from YouTube.
@@ -1135,6 +1144,9 @@ export async function buildTrack(itemData, itemType, sourceNameOverride = null, 
         author = safeString(oEmbedData?.author ?? extractedAuthor, FALLBACK_AUTHOR);
         if (oEmbedData?.thumbnail_url && !artworkUrl) {
             artworkUrl = oEmbedData.thumbnail_url;
+            if (artworkUrl.includes('hqdefault.jpg')) {
+                artworkUrl = artworkUrl.replace('hqdefault.jpg', 'mqdefault.jpg');
+            }
         }
         const lengthText = getItemValue(renderer, ['lengthText.simpleText']) ||
             getRunsText(renderer?.lengthText?.runs);
@@ -2033,9 +2045,7 @@ export class BaseClient {
                 bitrate: f.bitrate,
                 audioQuality: f.audioQuality,
                 url: f.url,
-                signatureCipher: (f.signatureCipher ||
-                    f.cipher ||
-                    f.signature_cipher),
+                signatureCipher: f.signatureCipher,
                 audioTrack: f.audioTrack
             };
         });

@@ -54,6 +54,14 @@ export default class VisionOs extends BaseClient {
         };
     }
     /**
+     * Returns player parameters for VISIONOS playback.
+     *
+     * @returns Base64-encoded player parameters string
+     */
+    getPlayerParams() {
+        return '2AMB';
+    }
+    /**
      * VISIONOS client does not require a player script.
      *
      * @returns Always false for the VISIONOS client
