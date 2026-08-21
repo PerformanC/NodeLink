@@ -407,7 +407,12 @@ function handler(
  */
 const routePlannerRoute: ApiRouteModule = {
   handler,
-  methods: ['GET', 'POST']
+  methods: ['GET', 'POST'],
+  paths: [
+    '/v4/routeplanner/status',
+    '/v4/routeplanner/free/address',
+    '/v4/routeplanner/free/all'
+  ]
 }
 
 export default routePlannerRoute
