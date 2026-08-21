@@ -64,6 +64,7 @@ import {
   enqueueHeadQueue,
   getHeadQueueLength
 } from './headQueue.ts'
+import { createStreamFinalizer } from './streamFinalizer.ts'
 
 type WorkerPlayerClass = typeof import('../playback/player.ts').Player
 type CreatePCMStreamFn =
@@ -1890,7 +1891,9 @@ function cleanupActiveStream(
   entry?: ActiveStreamEntry
 ): void {
   const current = entry || activeStreams.get(streamId)
-  if (!current) return
+  if (!current || current.cleaned) return
+
+  current.cleaned = true
 
   if (current.pcmStream && !current.pcmStream.destroyed) {
     current.pcmStream.destroy()
@@ -1953,27 +1956,31 @@ async function startLoadStream(
     payload?.filters || {}
   ) as unknown as PCMStream
 
-  const entry: ActiveStreamEntry = { pcmStream, fetched, cancelled: false }
+  const entry: ActiveStreamEntry = {
+    pcmStream,
+    fetched,
+    cancelled: false,
+    cleaned: false
+  }
   activeStreams.set(streamId, entry)
   streamLifecycle.created++
 
-  const finish = (err?: unknown) => {
-    if (entry.cancelled) {
+  const finish = createStreamFinalizer(entry, {
+    onCancelled: () => {
       streamLifecycle.cancelled++
-      cleanupActiveStream(streamId, entry)
-      return
-    }
-
-    if (err) {
+    },
+    onError: (error) => {
       streamLifecycle.errored++
-      sendStreamError(streamId, getErrorMessage(err))
-    } else {
+      sendStreamError(streamId, getErrorMessage(error))
+    },
+    onEnd: () => {
       streamLifecycle.ended++
       sendStreamEnd(streamId)
+    },
+    onCleanup: () => {
+      cleanupActiveStream(streamId, entry)
     }
-
-    cleanupActiveStream(streamId, entry)
-  }
+  })
 
   pcmStream.on('data', (chunk) => {
     if (!entry.cancelled) sendStreamChunk(streamId, chunk)
@@ -1988,6 +1995,7 @@ function cancelStream(streamId: string): boolean {
   const entry = activeStreams.get(streamId)
   if (!entry) return false
   entry.cancelled = true
+  streamLifecycle.cancelled++
   cleanupActiveStream(streamId, entry)
   return true
 }
