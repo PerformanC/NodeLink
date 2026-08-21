@@ -241,11 +241,11 @@ The goal is to make audio accessible, transparent, and fun to build.
 
 ## Star History
 
-<a href="https://www.star-history.com/#PerformanC/NodeLink&type=date&legend=top-left">
+<a href="https://www.star-history.com/?type=date&legend=top-left&repos=PerformanC%2FNodeLink">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=PerformanC/NodeLink&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=PerformanC/NodeLink&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=PerformanC/NodeLink&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=PerformanC/NodeLink&type=date&theme=dark&legend=top-left&sealed_token=XCnlJLyDMBYhi2jvz_T_9ZG1JGfFOuLiQXVI2eYOAS-bnQo7aWEzdUoLIymUZfQ1aGvTWSpIdnARPvaUHJBHMC-7HJtJT5DbPVBJcGBl8p2lD3ckEEL84g" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=PerformanC/NodeLink&type=date&legend=top-left&sealed_token=XCnlJLyDMBYhi2jvz_T_9ZG1JGfFOuLiQXVI2eYOAS-bnQo7aWEzdUoLIymUZfQ1aGvTWSpIdnARPvaUHJBHMC-7HJtJT5DbPVBJcGBl8p2lD3ckEEL84g" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=PerformanC/NodeLink&type=date&legend=top-left&sealed_token=XCnlJLyDMBYhi2jvz_T_9ZG1JGfFOuLiQXVI2eYOAS-bnQo7aWEzdUoLIymUZfQ1aGvTWSpIdnARPvaUHJBHMC-7HJtJT5DbPVBJcGBl8p2lD3ckEEL84g" />
  </picture>
 </a>
 
