@@ -19,6 +19,8 @@ import { getBestMatch, logger } from '../utils.js';
 export default class SourcesManager {
     /** Source instances active in the current track URL resolution chain. */
     resolvingSources = new AsyncLocalStorage();
+    /** Reverse lookup of registered source instances to their primary key. */
+    instanceKeys = new WeakMap();
     /** The parent NodeLink instance context. */
     nodelink;
     /** Map of primary source instances keyed by their unique identifier. */
@@ -71,6 +73,7 @@ export default class SourcesManager {
             if (instance.setup && (await instance.setup())) {
                 this.sources.set(sourceKey, instance);
                 this.sourceMap.set(sourceKey, instance);
+                this.instanceKeys.set(instance, sourceKey);
                 if (Array.isArray(instance.additionalsSourceName)) {
                     for (const addName of instance.additionalsSourceName) {
                         this.sourceMap.set(addName, instance);
@@ -225,7 +228,8 @@ export default class SourcesManager {
                 searchQuery = parts.slice(1).join(':');
             }
         }
-        const name = instance.constructor.name.replace('Source', '').toLowerCase();
+        const name = this.instanceKeys.get(instance) ??
+            instance.constructor.name.replace('Source', '').toLowerCase();
         logger('debug', 'Sources', `Searching on ${name} (${searchType}) for: "${searchQuery}"`);
         this.nodelink.pluginManager?.callHook('onSearch', searchQuery, sourceName, searchType);
         return this._instrumentedSourceCall(name, 'search', searchQuery, sourceName, searchType);

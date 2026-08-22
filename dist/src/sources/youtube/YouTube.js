@@ -275,7 +275,7 @@ export default class YouTubeSource {
         }
         logger('debug', 'YouTube', `Initialized clients: ${Object.keys(this.clients).join(', ')}`);
         await this._fetchVisitorData();
-        await this.cipherManager.getCachedPlayerScript();
+        await this._loadPlayerScriptWithRetry();
         if (this.visitorDataInterval)
             clearInterval(this.visitorDataInterval);
         this.visitorDataInterval = setInterval(() => this._fetchVisitorData(), VISITOR_DATA_INTERVAL);
@@ -286,6 +286,30 @@ export default class YouTubeSource {
         this.failingClientsInterval.unref?.();
         logger('info', 'YouTube', 'YouTube source setup complete.');
         return true;
+    }
+    /**
+     * Loads the player script with retries, tolerating transient rate limits
+     * (HTTP 429) during startup bursts. Failure never blocks source
+     * initialization; the script is re-fetched lazily on the next cipher
+     * operation.
+     * @internal
+     */
+    async _loadPlayerScriptWithRetry() {
+        const maxAttempts = 3;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                await this.cipherManager.getCachedPlayerScript();
+                return;
+            }
+            catch (e) {
+                logger('warn', 'YouTube', `Player script load failed (attempt ${attempt}/${maxAttempts}): ${e.message}`);
+                if (attempt === maxAttempts) {
+                    logger('warn', 'YouTube', 'Continuing without a cached player script; it will be fetched lazily.');
+                    return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+            }
+        }
     }
     /**
      * Tears down the YouTube source by aborting active streams, clearing
@@ -331,27 +355,24 @@ export default class YouTubeSource {
         let visitorFound = false;
         let playerScriptUrl = null;
         try {
-            const { body, error, statusCode } = await makeRequest('https://youtubei.googleapis.com/youtubei/v1/visitor_id?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w', {
-                method: 'POST',
-                body: {
-                    context: {
-                        client: {
-                            clientName: 'ANDROID',
-                            clientVersion: '20.01.35'
-                        }
-                    }
-                },
+            const { body, error, statusCode } = await http1makeRequest('https://music.youtube.com/sw.js_data', {
+                method: 'GET',
+                responseType: 'buffer',
                 disableBodyCompression: true
             });
-            const data = body;
-            if (!error && statusCode === 200 && data?.responseContext?.visitorData) {
-                this.ytContext.client.visitorData = data.responseContext.visitorData;
-                visitorFound = true;
-                logger('debug', 'YouTube', `visitorData obtained from visitor_id endpoint (len=${data.responseContext.visitorData.length})`);
+            if (!error && statusCode === 200) {
+                const text = body.toString('utf-8');
+                const json = text.slice(text.indexOf('\n') + 1);
+                const visitorData = this._extractVisitorData(JSON.parse(json));
+                if (visitorData) {
+                    this.ytContext.client.visitorData = visitorData;
+                    visitorFound = true;
+                    logger('debug', 'YouTube', `visitorData obtained from sw.js_data endpoint (len=${visitorData.length})`);
+                }
             }
         }
         catch (e) {
-            logger('debug', 'YouTube', `visitor_id endpoint failed: ${e.message}`);
+            logger('debug', 'YouTube', `sw.js_data endpoint failed: ${e.message}`);
         }
         if (!visitorFound) {
             try {
@@ -407,6 +428,27 @@ export default class YouTubeSource {
         }
         if (playerScriptUrl)
             this.cipherManager.setPlayerScriptUrl(playerScriptUrl);
+    }
+    /**
+     * Recursively searches the parsed `sw.js_data` payload for the visitor data
+     * token. The token is a protobuf-encoded base64 string embedded somewhere in
+     * the nested response arrays, so its exact position cannot be relied upon.
+     * @param node - Current payload node (array or string) being inspected.
+     * @returns The visitor data token, or `null` when not found.
+     * @internal
+     */
+    _extractVisitorData(node) {
+        if (typeof node === 'string') {
+            return /^Cg[A-Za-z0-9+/=_%-]{100,}$/.test(node) ? node : null;
+        }
+        if (Array.isArray(node)) {
+            for (const child of node) {
+                const found = this._extractVisitorData(child);
+                if (found)
+                    return found;
+            }
+        }
+        return null;
     }
     /**
      * Searches YouTube for tracks, playlists, or recommendations.

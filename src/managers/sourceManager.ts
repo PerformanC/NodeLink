@@ -85,6 +85,8 @@ export default class SourcesManager implements SourceManagerLike {
   private readonly resolvingSources = new AsyncLocalStorage<
     ReadonlySet<SourceInstance>
   >()
+  /** Reverse lookup of registered source instances to their primary key. */
+  private readonly instanceKeys = new WeakMap<SourceInstance, string>()
   /** The parent NodeLink instance context. */
   public nodelink: SourcesManagerContext
   /** Map of primary source instances keyed by their unique identifier. */
@@ -151,6 +153,7 @@ export default class SourcesManager implements SourceManagerLike {
       if (instance.setup && (await instance.setup())) {
         this.sources.set(sourceKey, instance)
         this.sourceMap.set(sourceKey, instance)
+        this.instanceKeys.set(instance, sourceKey)
 
         if (Array.isArray(instance.additionalsSourceName)) {
           for (const addName of instance.additionalsSourceName) {
@@ -355,7 +358,9 @@ export default class SourcesManager implements SourceManagerLike {
       }
     }
 
-    const name = instance.constructor.name.replace('Source', '').toLowerCase()
+    const name =
+      this.instanceKeys.get(instance) ??
+      instance.constructor.name.replace('Source', '').toLowerCase()
     logger(
       'debug',
       'Sources',
