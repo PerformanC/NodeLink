@@ -373,7 +373,7 @@ export default class YouTubeSource {
     )
 
     await this._fetchVisitorData()
-    await this.cipherManager.getCachedPlayerScript()
+    await this._loadPlayerScriptWithRetry()
 
     if (this.visitorDataInterval) clearInterval(this.visitorDataInterval)
     this.visitorDataInterval = setInterval(
@@ -391,6 +391,38 @@ export default class YouTubeSource {
 
     logger('info', 'YouTube', 'YouTube source setup complete.')
     return true
+  }
+
+  /**
+   * Loads the player script with retries, tolerating transient rate limits
+   * (HTTP 429) during startup bursts. Failure never blocks source
+   * initialization; the script is re-fetched lazily on the next cipher
+   * operation.
+   * @internal
+   */
+  private async _loadPlayerScriptWithRetry(): Promise<void> {
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.cipherManager.getCachedPlayerScript()
+        return
+      } catch (e) {
+        logger(
+          'warn',
+          'YouTube',
+          `Player script load failed (attempt ${attempt}/${maxAttempts}): ${(e as Error).message}`
+        )
+        if (attempt === maxAttempts) {
+          logger(
+            'warn',
+            'YouTube',
+            'Continuing without a cached player script; it will be fetched lazily.'
+          )
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt))
+      }
+    }
   }
 
   /**
@@ -463,7 +495,7 @@ export default class YouTubeSource {
           logger(
             'debug',
             'YouTube',
-            `visitorData obtained from sw.js_data endpoint (len=${visitorData.length}), ${visitorData}`
+            `visitorData obtained from sw.js_data endpoint (len=${visitorData.length})`
           )
         }
       }
