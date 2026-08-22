@@ -1571,7 +1571,48 @@ export class Player {
         logger('debug', 'Player', `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`);
         this.position = position;
         try {
-            const url = this.streamInfo?.url;
+            let url = this.streamInfo?.url;
+            // Refresh YouTube URL before seek: mid-stream rotation updates
+            // _streamChunkedHttp's currentUrl but player.streamInfo stays stale.
+            // Re-resolving ensures seekable-stream fetches from the healthy client
+            // (example: VisionOs after AndroidVR 403s) at the exact position.
+            // Also needs to be the resolvedSourceName because it can be a mirror (spotify -> yt example.)
+            const resolvedSourceName = this.streamInfo
+                ?.newTrack?.info?.sourceName ||
+                this.track?.info?.sourceName;
+            const isYouTubeStream = !!url &&
+                resolvedSourceName &&
+                ['youtube', 'ytmusic'].includes(resolvedSourceName);
+            if (isYouTubeStream) {
+                try {
+                    const youtubeTrackInfo = this.streamInfo
+                        ?.newTrack?.info
+                        ? {
+                            ...this.streamInfo.newTrack.info,
+                            audioTrackId: this.track?.audioTrackId
+                        }
+                        : {
+                            ...this.track?.info,
+                            audioTrackId: this.track?.audioTrackId
+                        };
+                    const fresh = await this.nodelink.sources.getTrackUrl(youtubeTrackInfo, undefined, true);
+                    if (!fresh.exception && fresh.url && this.track) {
+                        const oldUrl = url;
+                        this.streamInfo = {
+                            ...fresh,
+                            trackInfo: this.track.info
+                        };
+                        url = fresh.url;
+                        logger('debug', 'Player', `Refreshed YouTube URL for seek to ${position}ms for guild ${this.guildId} (old c=${oldUrl.match(/[?&]c=([^&]+)/)?.[1] || '?'}, new c=${fresh.url.match(/[?&]c=([^&]+)/)?.[1] || '?'})`);
+                    }
+                    else if (fresh.exception) {
+                        logger('debug', 'Player', `YouTube URL refresh for seek returned exception: ${fresh.exception.message}`);
+                    }
+                }
+                catch (e) {
+                    logger('debug', 'Player', `YouTube URL refresh for seek threw: ${e.message}`);
+                }
+            }
             if (!url)
                 return false;
             const resourceResult = await seekResourceFactory(this.guildId, url, position, endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer, this._getCrossfadeConfig() !== null);

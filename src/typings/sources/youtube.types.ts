@@ -1106,6 +1106,8 @@ export interface TrackUrlAdditionalData {
   userAgent?: string
   /** Playback cookie used for authenticated SABR sessions. */
   playbackCookie?: string | Uint8Array
+  /** YouTube client name that resolved this URL (e.g. 'AndroidVR', 'Web'). */
+  client?: string
   /** Allow additional properties for future extensibility. */
   [key: string]: unknown
 }

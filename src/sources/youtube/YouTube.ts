@@ -4,7 +4,6 @@ import type { SabrStreamConfig } from '../../typings/sources/sabr.types.ts'
 import type {
   SourceResult,
   TrackInfo,
-  TrackUrlResult,
   WorkerNodeLink
 } from '../../typings/sources/source.types.ts'
 import type {
@@ -1375,6 +1374,13 @@ export default class YouTubeSource {
               : 'm4a'
           }
 
+          if (urlData.additionalData) {
+            ;(urlData.additionalData as TrackUrlAdditionalData).client =
+              clientName
+          } else {
+            urlData.additionalData = { client: clientName }
+          }
+
           return urlData
         }
 
@@ -1427,7 +1433,8 @@ export default class YouTubeSource {
                 contentLength,
                 proxy: proxyToUse,
                 itag: urlData.itag,
-                formats: urlData.formats
+                formats: urlData.formats,
+                client: clientName
               }
             }
             this.nodelink.trackCacheManager?.set(
@@ -1489,7 +1496,11 @@ export default class YouTubeSource {
               const result: TrackUrlData = {
                 url: urlData.hlsUrl,
                 protocol: 'hls',
-                format: 'mpegts'
+                format: 'mpegts',
+                additionalData: {
+                  client: clientName,
+                  proxy: proxyToUse
+                }
               }
               this.nodelink.trackCacheManager?.set(
                 'youtube',
@@ -1540,7 +1551,11 @@ export default class YouTubeSource {
             const result: TrackUrlData = {
               url: urlData.hlsUrl,
               protocol: 'hls',
-              format: 'mpegts'
+              format: 'mpegts',
+              additionalData: {
+                client: clientName,
+                proxy: proxyToUse
+              }
             }
             this.nodelink.trackCacheManager?.set(
               'youtube',
@@ -2730,6 +2745,10 @@ export default class YouTubeSource {
     let isBackpressured = false
     let totalBytesReceived = 0
     let currentItag = additionalData?.itag
+    let currentClient =
+      (additionalData?.client as string | undefined) || undefined
+    let consecutiveClientFailures = 0
+    let parkedForRecovery = false
     let availableFormats = additionalData?.formats || []
     const failedItags = new Set<number>()
     let refreshAttempts = 0
@@ -2874,14 +2893,56 @@ export default class YouTubeSource {
           itagToTry = currentItag
         }
 
-        const newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true)
+        if (consecutiveClientFailures >= 2 && currentClient) {
+          if (!this.failingClientsByTrack.has(decodedTrack.identifier)) {
+            this.failingClientsByTrack.set(decodedTrack.identifier, new Set())
+          }
+          this.failingClientsByTrack
+            .get(decodedTrack.identifier)
+            ?.add(currentClient)
+          logger(
+            'warn',
+            'YouTube',
+            `Client ${currentClient} failed repeatedly mid-stream for "${decodedTrack.title}". Rotating to next client in playback list...`
+          )
+          this.nodelink.trackCacheManager?.delete?.(
+            'youtube',
+            decodedTrack.identifier
+          )
+          consecutiveClientFailures = 0
+        }
+
+        let newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true)
+        if ((newUrlData.exception || !newUrlData.url) && itagToTry !== null) {
+          newUrlData = await this.getTrackUrl(decodedTrack, null, true)
+        }
         if (isDestroyed || cancelSignal.aborted) return null
         if (newUrlData.exception || !newUrlData.url) return null
 
-        currentUrl = newUrlData.url
         const newAd = newUrlData.additionalData as
           | TrackUrlAdditionalData
           | undefined
+        const newClient = (newAd?.client as string | undefined) || undefined
+        if (newClient) {
+          currentClient = newClient
+        }
+
+        if (
+          totalBytesReceived > 0 &&
+          newUrlData.itag &&
+          currentItag &&
+          newUrlData.itag !== currentItag
+        ) {
+          logger(
+            'warn',
+            'YouTube',
+            `Client rotation changed format (${currentItag} -> ${newUrlData.itag}) at ${totalBytesReceived} bytes for "${decodedTrack.title}". Parking stream so the player can seek-recover at the exact position on the next client...`
+          )
+          parkedForRecovery = true
+          return null
+        }
+
+        currentUrl = newUrlData.url
         currentProxy =
           (newAd?.proxy as unknown as HttpProxyConfig | undefined) ||
           currentProxy
@@ -2896,7 +2957,7 @@ export default class YouTubeSource {
         logger(
           'debug',
           'YouTube',
-          `URL refreshed for "${decodedTrack.title}" (itag ${currentItag})`
+          `URL refreshed for "${decodedTrack.title}" (itag ${currentItag}, client: ${currentClient || 'unknown'})`
         )
         return currentUrl
       } catch (err) {
@@ -2928,12 +2989,14 @@ export default class YouTubeSource {
       while (
         !isDestroyed &&
         !cancelSignal.aborted &&
+        !parkedForRecovery &&
         totalBytesReceived < totalContentLength
       ) {
         const urlAge = Date.now() - urlFetchTime
         if (urlAge > URL_MAX_AGE_MS) {
           const refreshed = await refreshUrl('URL age > 4.5h')
           if (!refreshed) {
+            if (parkedForRecovery) return
             cleanup(new Error('Failed to refresh expired URL'))
             return
           }
@@ -3020,21 +3083,24 @@ export default class YouTubeSource {
               if (currentItag) failedItags.add(currentItag)
               const refreshed = await refreshUrl('HTTP 416')
               if (refreshed) continue
+              if (parkedForRecovery) return
               cleanup(new Error('HTTP 416: max URL refresh reached'))
               return
             }
 
             if (result.statusCode === 403 || result.statusCode === 404) {
+              consecutiveClientFailures++
               logger(
                 'warn',
                 'YouTube',
-                `HTTP ${result.statusCode} for "${decodedTrack.title}" -- refreshing...`
+                `HTTP ${result.statusCode} for "${decodedTrack.title}" (client: ${currentClient || 'unknown'}, failure #${consecutiveClientFailures}) -- refreshing...`
               )
               if (totalBytesReceived === 0 && currentItag) {
                 failedItags.add(currentItag)
               }
               const refreshed = await refreshUrl(`HTTP ${result.statusCode}`)
               if (refreshed) continue
+              if (parkedForRecovery) return
               cleanup(
                 new Error(`HTTP ${result.statusCode}: max URL refresh reached`)
               )
@@ -3084,6 +3150,7 @@ export default class YouTubeSource {
             )
             const refreshed = await refreshUrl('invalid range response')
             if (refreshed) continue
+            if (parkedForRecovery) return
             cleanup(new Error('Invalid HTTP range response'))
             return
           }
@@ -3110,6 +3177,7 @@ export default class YouTubeSource {
                 responseStream.destroy()
                 return
               }
+              consecutiveClientFailures = 0
               if (dataStartTime === 0) dataStartTime = Date.now()
               bytesThisChunk += chunk.length
               totalBytesReceived += chunk.length
@@ -3166,7 +3234,7 @@ export default class YouTubeSource {
           logger(
             'debug',
             'YouTube',
-            `Chunk #${chunkCount} complete: ${bytesThisChunk} bytes in ${Date.now() - fetchStartTime}ms (${totalBytesReceived}/${contentLength} total, target=${targetSeconds}s)`
+            `Chunk #${chunkCount} complete: ${bytesThisChunk} bytes in ${Date.now() - fetchStartTime}ms (${totalBytesReceived}/${totalContentLength} total, target=${targetSeconds}s)`
           ) */
           // i was using this for debugging, so i will keep this commented incase i need it later.
 
@@ -3231,6 +3299,7 @@ export default class YouTubeSource {
                 'multiple ECONNRESET on same URL'
               )
               if (refreshed) continue
+              if (parkedForRecovery) return
               cleanup(new Error('ECONNRESET: max URL refresh reached'))
               return
             } else {
@@ -3242,11 +3311,13 @@ export default class YouTubeSource {
             error.message?.includes('403') ||
             error.message?.includes('404')
           ) {
+            consecutiveClientFailures++
             if (totalBytesReceived === 0 && currentItag) {
               failedItags.add(currentItag)
             }
             const refreshed = await refreshUrl('mid-stream 403/404')
             if (refreshed) continue
+            if (parkedForRecovery) return
             cleanup(new Error('mid-stream 403/404: max URL refresh reached'))
             return
           }
