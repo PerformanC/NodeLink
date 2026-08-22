@@ -444,42 +444,34 @@ export default class YouTubeSource {
     let playerScriptUrl: string | null = null
 
     try {
-      const { body, error, statusCode } = await makeRequest(
-        'https://youtubei.googleapis.com/youtubei/v1/visitor_id?key=AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
+      const { body, error, statusCode } = await http1makeRequest(
+        'https://music.youtube.com/sw.js_data',
         {
-          method: 'POST',
-          body: {
-            context: {
-              client: {
-                clientName: 'ANDROID',
-                clientVersion: '20.01.35'
-              }
-            }
-          },
+          method: 'GET',
+          responseType: 'buffer',
           disableBodyCompression: true
         }
       )
+      if (!error && statusCode === 200) {
+        const text = (body as Buffer).toString('utf-8')
+        const json = text.slice(text.indexOf('\n') + 1)
+        const visitorData = this._extractVisitorData(JSON.parse(json))
 
-      const data = body as {
-        responseContext?: {
-          visitorData?: string
+        if (visitorData) {
+          this.ytContext.client.visitorData = visitorData
+          visitorFound = true
+          logger(
+            'debug',
+            'YouTube',
+            `visitorData obtained from sw.js_data endpoint (len=${visitorData.length}), ${visitorData}`
+          )
         }
-      }
-
-      if (!error && statusCode === 200 && data?.responseContext?.visitorData) {
-        this.ytContext.client.visitorData = data.responseContext.visitorData
-        visitorFound = true
-        logger(
-          'debug',
-          'YouTube',
-          `visitorData obtained from visitor_id endpoint (len=${data.responseContext.visitorData.length})`
-        )
       }
     } catch (e) {
       logger(
         'debug',
         'YouTube',
-        `visitor_id endpoint failed: ${(e as Error).message}`
+        `sw.js_data endpoint failed: ${(e as Error).message}`
       )
     }
     if (!visitorFound) {
@@ -573,6 +565,28 @@ export default class YouTubeSource {
 
     if (playerScriptUrl) this.cipherManager.setPlayerScriptUrl(playerScriptUrl)
   }
+
+  /**
+   * Recursively searches the parsed `sw.js_data` payload for the visitor data
+   * token. The token is a protobuf-encoded base64 string embedded somewhere in
+   * the nested response arrays, so its exact position cannot be relied upon.
+   * @param node - Current payload node (array or string) being inspected.
+   * @returns The visitor data token, or `null` when not found.
+   * @internal
+   */
+  private _extractVisitorData(node: unknown): string | null {
+    if (typeof node === 'string') {
+      return /^Cg[A-Za-z0-9+/=_%-]{100,}$/.test(node) ? node : null
+    }
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const found = this._extractVisitorData(child)
+        if (found) return found
+      }
+    }
+    return null
+  }
+
   /**
    * Searches YouTube for tracks, playlists, or recommendations.
    *
