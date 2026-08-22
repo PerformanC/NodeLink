@@ -432,7 +432,7 @@ export default class YouTubeSource {
   private async _fetchVisitorData(): Promise<void> {
     // this should prevent the visitorData getting initialized twice.
     if (process.env.WORKER_TYPE === 'source') return
-    
+
     const cachedPlayerScript = this.nodelink.credentialManager?.get<string>(
       'yt_player_script_url'
     )
@@ -801,14 +801,18 @@ export default class YouTubeSource {
       url.includes('list=OLAK') &&
       result.loadType === 'playlist'
     ) {
-      const tracks = (result.data as { tracks?: Array<{ info: TrackInfo; encoded: string }> })
-        ?.tracks
+      const tracks = (
+        result.data as { tracks?: Array<{ info: TrackInfo; encoded: string }> }
+      )?.tracks
       if (tracks) {
         for (const track of tracks) {
           if (track.info && !track.info.uri.includes('olak=true')) {
             const separator = track.info.uri.includes('?') ? '&' : '?'
             track.info.uri += `${separator}olak=true`
-            track.encoded = encodeTrack({ ...track.info, details: [] } as TrackEncodeInput)
+            track.encoded = encodeTrack({
+              ...track.info,
+              details: []
+            } as TrackEncodeInput)
           }
         }
       }
@@ -821,7 +825,10 @@ export default class YouTubeSource {
    * Internal worker for URL resolution.
    * @internal
    */
-  private async _resolveWorker(url: string, type?: string): Promise<SourceResult> {
+  private async _resolveWorker(
+    url: string,
+    type?: string
+  ): Promise<SourceResult> {
     const liveMatch = url.match(
       /^https?:\/\/(?:www\.)?youtube\.com\/live\/([\w-]+)/
     )
@@ -1202,8 +1209,12 @@ export default class YouTubeSource {
     forceRefresh = false
   ): Promise<TrackUrlData> {
     if (decodedTrack.uri?.includes('olak=true')) {
-      logger('debug', 'YouTube', `Resolving mirrored audio track for official album: ${decodedTrack.identifier}`)
-      
+      logger(
+        'debug',
+        'YouTube',
+        `Resolving mirrored audio track for official album: ${decodedTrack.identifier}`
+      )
+
       let searchTitle = decodedTrack.title
       let searchAuthor = decodedTrack.author
       if (searchTitle.includes(' - ')) {
@@ -1215,26 +1226,39 @@ export default class YouTubeSource {
       }
 
       const query = `${searchAuthor} ${searchTitle}`
-      const searchTrack = { ...decodedTrack, title: searchTitle, author: searchAuthor }
-      
+      const searchTrack = {
+        ...decodedTrack,
+        title: searchTitle,
+        author: searchAuthor
+      }
+
       try {
         const res = await this.search(query, 'ytmsearch')
         if (res.loadType === 'search' && res.data.length) {
           const best = getBestMatch(res.data, searchTrack)
           if (best) {
-            const urlData = await this.getTrackUrl(best.info as TrackInfo, itag, forceRefresh)
+            const urlData = await this.getTrackUrl(
+              best.info as TrackInfo,
+              itag,
+              forceRefresh
+            )
             return {
               newTrack: { info: best.info as TrackInfo },
               url: urlData.url,
               protocol: urlData.protocol,
-              format: typeof urlData.format === 'string' ? urlData.format : undefined,
+              format:
+                typeof urlData.format === 'string' ? urlData.format : undefined,
               additionalData: urlData.additionalData,
               exception: urlData.exception as TrackUrlData['exception']
             }
           }
         }
       } catch (e) {
-        logger('warn', 'YouTube', `Failed to mirror OLAK track ${decodedTrack.identifier}: ${(e as Error).message}`)
+        logger(
+          'warn',
+          'YouTube',
+          `Failed to mirror OLAK track ${decodedTrack.identifier}: ${(e as Error).message}`
+        )
       }
     }
     if (!forceRefresh) {
@@ -2796,6 +2820,8 @@ export default class YouTubeSource {
 
     stream.on('drain', onDrain)
 
+    let totalContentLength = contentLength
+
     const refreshUrl = async (reason: string): Promise<string | null> => {
       if (isDestroyed || cancelSignal.aborted) return null
       if (++refreshAttempts > MAX_URL_REFRESH) {
@@ -2816,6 +2842,7 @@ export default class YouTubeSource {
       try {
         let itagToTry: number | null = null
         if (
+          totalBytesReceived === 0 &&
           currentItag &&
           failedItags.has(currentItag) &&
           availableFormats.length > 0
@@ -2843,6 +2870,8 @@ export default class YouTubeSource {
               `Switching to itag ${itagToTry} for "${decodedTrack.title}"`
             )
           }
+        } else if (totalBytesReceived > 0 && currentItag) {
+          itagToTry = currentItag
         }
 
         const newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true)
@@ -2858,6 +2887,9 @@ export default class YouTubeSource {
           currentProxy
         currentItag = newUrlData.itag || currentItag
         if (newUrlData.formats) availableFormats = newUrlData.formats
+        if (totalBytesReceived === 0 && newAd?.contentLength) {
+          totalContentLength = newAd.contentLength
+        }
         urlFetchTime = Date.now()
         consecutiveResets = 0
 
@@ -2896,7 +2928,7 @@ export default class YouTubeSource {
       while (
         !isDestroyed &&
         !cancelSignal.aborted &&
-        totalBytesReceived < contentLength
+        totalBytesReceived < totalContentLength
       ) {
         const urlAge = Date.now() - urlFetchTime
         if (urlAge > URL_MAX_AGE_MS) {
@@ -2918,7 +2950,10 @@ export default class YouTubeSource {
         )
 
         const start = totalBytesReceived
-        const end = Math.min(start + dynamicChunkSize - 1, contentLength - 1)
+        const end = Math.min(
+          start + dynamicChunkSize - 1,
+          totalContentLength - 1
+        )
         const rangeHeader = `bytes=${start}-${end}`
 
         try {
@@ -2964,13 +2999,40 @@ export default class YouTubeSource {
             result.error ||
             (result.statusCode !== 200 && result.statusCode !== 206)
           ) {
+            if (result.statusCode === 416) {
+              if (totalBytesReceived > 0) {
+                logger(
+                  'debug',
+                  'YouTube',
+                  `HTTP 416 Range Not Satisfiable at ${totalBytesReceived}/${totalContentLength} bytes -- stream completed`
+                )
+                if (!stream.writableEnded) {
+                  stream.emit('finishBuffering')
+                  stream.end()
+                }
+                return
+              }
+              logger(
+                'warn',
+                'YouTube',
+                `HTTP 416 at byte 0 for "${decodedTrack.title}" -- refreshing...`
+              )
+              if (currentItag) failedItags.add(currentItag)
+              const refreshed = await refreshUrl('HTTP 416')
+              if (refreshed) continue
+              cleanup(new Error('HTTP 416: max URL refresh reached'))
+              return
+            }
+
             if (result.statusCode === 403 || result.statusCode === 404) {
               logger(
                 'warn',
                 'YouTube',
                 `HTTP ${result.statusCode} for "${decodedTrack.title}" -- refreshing...`
               )
-              if (currentItag) failedItags.add(currentItag)
+              if (totalBytesReceived === 0 && currentItag) {
+                failedItags.add(currentItag)
+              }
               const refreshed = await refreshUrl(`HTTP ${result.statusCode}`)
               if (refreshed) continue
               cleanup(
@@ -3108,7 +3170,7 @@ export default class YouTubeSource {
           ) */
           // i was using this for debugging, so i will keep this commented incase i need it later.
 
-          if (totalBytesReceived >= contentLength) {
+          if (totalBytesReceived >= totalContentLength) {
             if (!stream.writableEnded) {
               stream.emit('finishBuffering')
               stream.end()
@@ -3180,7 +3242,9 @@ export default class YouTubeSource {
             error.message?.includes('403') ||
             error.message?.includes('404')
           ) {
-            if (currentItag) failedItags.add(currentItag)
+            if (totalBytesReceived === 0 && currentItag) {
+              failedItags.add(currentItag)
+            }
             const refreshed = await refreshUrl('mid-stream 403/404')
             if (refreshed) continue
             cleanup(new Error('mid-stream 403/404: max URL refresh reached'))
