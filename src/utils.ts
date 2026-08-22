@@ -1366,7 +1366,24 @@ async function _internalHttp1Request(
   }
 
   return new Promise((resolve, reject) => {
-    const req = lib.request(reqOptions, (res) => {
+    let req: http.ClientRequest
+
+    const reqErrorHandler = (err: Error) => {
+      cleanupReq()
+      reject(err)
+    }
+    const reqTimeoutHandler = () => {
+      req.destroy(
+        new Error(`Request timed out after ${timeout}ms for ${urlString}`)
+      )
+    }
+
+    const cleanupReq = () => {
+      req.removeListener('error', reqErrorHandler)
+      req.removeListener('timeout', reqTimeoutHandler)
+    }
+
+    req = lib.request(reqOptions, (res) => {
       const { statusCode, headers: respHeaders } = res
       const responseStatus = statusCode ?? 0
       const locationHeader = respHeaders.location
@@ -1412,6 +1429,34 @@ async function _internalHttp1Request(
           headers: nextHeaders
         }
         resolve(http1makeRequest(nextUrl, nextOptions))
+        return
+      }
+
+      const isNoBodyResponse =
+        method === 'HEAD' ||
+        responseStatus === 204 ||
+        responseStatus === 304 ||
+        (responseStatus >= 100 && responseStatus < 200)
+
+      if (isNoBodyResponse) {
+        if (streamOnly) {
+          resolve({
+            statusCode,
+            headers: respHeaders,
+            stream: res,
+            finalUrl: urlString
+          })
+          return
+        }
+
+        res.resume()
+        cleanupReq()
+        resolve({
+          statusCode,
+          headers: respHeaders,
+          body: options.responseType === 'buffer' ? Buffer.alloc(0) : '',
+          finalUrl: urlString
+        })
         return
       }
 
@@ -1525,21 +1570,6 @@ async function _internalHttp1Request(
       finalStream.on('data', onData)
       finalStream.once('end', onEnd)
     })
-
-    const reqErrorHandler = (err: Error) => {
-      cleanupReq()
-      reject(err)
-    }
-    const reqTimeoutHandler = () => {
-      req.destroy(
-        new Error(`Request timed out after ${timeout}ms for ${urlString}`)
-      )
-    }
-
-    const cleanupReq = () => {
-      req.removeListener('error', reqErrorHandler)
-      req.removeListener('timeout', reqTimeoutHandler)
-    }
 
     req.on('error', reqErrorHandler)
     req.on('timeout', reqTimeoutHandler)
@@ -1873,6 +1903,27 @@ async function makeRequest(
           )
         }
 
+        const isNoBodyResponse =
+          method === 'HEAD' ||
+          statusCode === 204 ||
+          statusCode === 304 ||
+          (statusCode !== undefined && statusCode >= 100 && statusCode < 200)
+
+        if (isNoBodyResponse) {
+          if (streamOnly) {
+            req.on('end', closeSessionGracefully)
+            req.on('error', closeSessionGracefully)
+            req.on('close', closeSessionGracefully)
+            return resolve({ statusCode, headers, stream: req })
+          }
+          closeSessionGracefully()
+          return resolve({
+            statusCode,
+            headers,
+            body: options.responseType === 'buffer' ? Buffer.alloc(0) : ''
+          })
+        }
+
         let responseStream: NodeJS.ReadableStream = req
         const encodingHeader = headers['content-encoding']
         const encoding = Array.isArray(encodingHeader)
@@ -1886,11 +1937,6 @@ async function makeRequest(
           responseStream = req.pipe(zlib.createGunzip())
         else if (encoding === 'deflate')
           responseStream = req.pipe(zlib.createInflate())
-
-        if (method === 'HEAD') {
-          closeSessionGracefully()
-          return resolve({ statusCode, headers })
-        }
 
         if (streamOnly) {
           responseStream.on('end', closeSessionGracefully)
@@ -2195,7 +2241,9 @@ async function checkDependencyUpdates(
         fs.existsSync(path.resolve(process.cwd(), 'bun.lock'))
       const isPnpm =
         fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml')) && !isBun
-      const pkgTargets = updates.map((u) => `"${u.name}@^${u.latest}"`).join(' ')
+      const pkgTargets = updates
+        .map((u) => `"${u.name}@^${u.latest}"`)
+        .join(' ')
       const cmd = isPnpm
         ? `pnpm add ${pkgTargets}`
         : isBun

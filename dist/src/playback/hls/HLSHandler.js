@@ -287,6 +287,14 @@ export default class HLSHandler extends PassThrough {
                 logger('error', 'HLSHandler', `Segment fetch error: ${err.message}`);
             });
         }
+        if (!this.isLive &&
+            this.segmentQueue.length === 0 &&
+            !this.isFetching &&
+            !this.stop &&
+            !this.destroyed) {
+            this.end();
+            return;
+        }
         if (this.isLive && !playlistContent.includes('#EXT-X-ENDLIST')) {
             this._scheduleNextTick(parsed.targetDuration);
         }

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { PassThrough, type Readable } from 'node:stream'
+import vm from 'node:vm'
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import type { BilibiliSourceConfig } from '../typings/config/config.types.ts'
 import type {
@@ -72,7 +73,10 @@ export default class BilibiliSource implements SourceInstance {
     /https?:\/\/(?:www\.)?bilibili\.com\/audio\/(au|am)(\d+)/,
     /https?:\/\/live\.bilibili\.com\/(\d+)/,
     /https?:\/\/space\.bilibili\.com\/(\d+)/,
-    /^https?:\/\/b23\.tv\/.+/i
+    /^https?:\/\/b23\.tv\/.+/i,
+    /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?video\/(\d+|BV[a-zA-Z0-9]+|av\d+)/,
+    /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?play\/(\d+)(?:\/(\d+))?/,
+    /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?space\/(\d+)/
   ]
 
   /**
@@ -565,6 +569,45 @@ export default class BilibiliSource implements SourceInstance {
   }
 
   /**
+   * Extracts initial state from a Bilibili TV webpage.
+   * @param url - Webpage URL.
+   * @returns Parsed state object or null.
+   * @internal
+   */
+  private async _fetchBilibiliTvState(
+    url: string
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const res = await http1makeRequest(url, {
+        method: 'GET',
+        headers: {
+          ...HEADERS,
+          'Accept-Language': 'en-US,en;q=0.9',
+          Referer: 'https://www.bilibili.tv/'
+        },
+        proxy: this.config.network?.proxy
+      })
+
+      const html = String(res.body || '')
+      const stateMatch = html.match(
+        /<script>\s*window\.__initialState\s*=\s*([\s\S]*?)<\/script>/i
+      )
+      if (stateMatch?.[1]) {
+        const context = { window: {} }
+        vm.createContext(context)
+        vm.runInContext(`window.__initialState = ${stateMatch[1]}`, context)
+        return (
+          (context.window as { __initialState?: Record<string, unknown> })
+            .__initialState ?? null
+        )
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Resolves a Bilibili URL into a track or collection.
    * Supports Videos, Bangumis, Audios, Live rooms, and Space search.
    * @param url - The absolute Bilibili URL.
@@ -574,6 +617,206 @@ export default class BilibiliSource implements SourceInstance {
   public async resolve(url: string): Promise<SourceResult> {
     if (url.includes('b23.tv')) {
       url = await this.resolveShortUrl(url)
+    }
+
+    const patTvVideo = this.patterns[6]
+    const tvVideoMatch = patTvVideo ? url.match(patTvVideo) : null
+    if (tvVideoMatch) {
+      try {
+        const state = (await this._fetchBilibiliTvState(url)) as {
+          ugc?: {
+            archive?: {
+              aid: string
+              title: string
+              cover?: string
+              duration?: number
+              uploader?: { name?: string }
+            }
+          }
+        } | null
+
+        const archive = state?.ugc?.archive
+        if (!archive) {
+          return { loadType: 'empty', data: {} }
+        }
+
+        const trackInfo: TrackInfo = {
+          identifier: `tv:${archive.aid}`,
+          isSeekable: true,
+          author: archive.uploader?.name || 'Unknown',
+          length: (archive.duration || 0) * 1000,
+          isStream: false,
+          position: 0,
+          title: archive.title || 'Unknown',
+          uri: `https://www.bilibili.tv/en/video/${archive.aid}`,
+          artworkUrl: archive.cover || '',
+          isrc: null,
+          sourceName: 'bilibili'
+        }
+
+        return {
+          loadType: 'track',
+          data: {
+            encoded: encodeTrack({ ...trackInfo, details: [] }),
+            info: trackInfo,
+            pluginInfo: {
+              aid: archive.aid,
+              isBilibiliTv: true
+            }
+          }
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        return { loadType: 'error', exception: { message, severity: 'fault' } }
+      }
+    }
+
+    const patTvPlay = this.patterns[7]
+    const tvPlayMatch = patTvPlay ? url.match(patTvPlay) : null
+    if (tvPlayMatch) {
+      try {
+        const state = (await this._fetchBilibiliTvState(url)) as {
+          ogv?: {
+            season?: { title?: string; season_id?: string; cover?: string }
+            sectionsList?: Array<{
+              episodes?: Array<{
+                episode_id: string
+                title_display?: string
+                short_title_display?: string
+                cover?: string
+              }>
+            }>
+          }
+        } | null
+
+        const season = state?.ogv?.season
+        const episodes = state?.ogv?.sectionsList?.[0]?.episodes || []
+        if (!episodes.length) {
+          return { loadType: 'empty', data: {} }
+        }
+
+        const seasonId = season?.season_id || tvPlayMatch[1] || ''
+        const seasonTitle = season?.title || 'Bilibili Season'
+
+        const tracks: TrackData[] = episodes.map((ep) => {
+          const epTitle =
+            ep.title_display || ep.short_title_display || 'Episode'
+          const fullTitle = `${seasonTitle} - ${epTitle}`
+          const trackInfo: TrackInfo = {
+            identifier: `tv:ep:${ep.episode_id}`,
+            isSeekable: true,
+            author: seasonTitle,
+            length: 0,
+            isStream: false,
+            position: 0,
+            title: fullTitle,
+            uri: `https://www.bilibili.tv/en/play/${seasonId}/${ep.episode_id}`,
+            artworkUrl: ep.cover || season?.cover || '',
+            isrc: null,
+            sourceName: 'bilibili'
+          }
+
+          return {
+            encoded: encodeTrack({ ...trackInfo, details: [] }),
+            info: trackInfo,
+            pluginInfo: {
+              ep_id: ep.episode_id,
+              isBilibiliTv: true,
+              type: 'ogv'
+            }
+          }
+        })
+
+        return {
+          loadType: 'playlist',
+          data: {
+            info: { name: seasonTitle, selectedTrack: 0 },
+            tracks,
+            pluginInfo: {}
+          }
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        return { loadType: 'error', exception: { message, severity: 'fault' } }
+      }
+    }
+
+    const patTvSpace = this.patterns[8]
+    const tvSpaceMatch = patTvSpace ? url.match(patTvSpace) : null
+    if (tvSpaceMatch) {
+      try {
+        const state = (await this._fetchBilibiliTvState(url)) as {
+          space?: {
+            spaceVideo?: {
+              videoList?: Array<{
+                aid: string
+                title: string
+                cover?: string
+                duration?: string
+                author?: { nickname?: string }
+              }>
+            }
+          }
+        } | null
+
+        const videoList = state?.space?.spaceVideo?.videoList || []
+        if (!videoList.length) {
+          return { loadType: 'empty', data: {} }
+        }
+
+        const firstAuthor = videoList[0]?.author?.nickname || 'Unknown'
+        const tracks: TrackData[] = videoList.map((item) => {
+          const durationParts = String(item.duration || '0:0')
+            .split(':')
+            .map(Number)
+          let durationMs = 0
+          if (durationParts.length === 2) {
+            durationMs =
+              ((durationParts[0] || 0) * 60 + (durationParts[1] || 0)) * 1000
+          } else if (durationParts.length === 3) {
+            durationMs =
+              ((durationParts[0] || 0) * 3600 +
+                (durationParts[1] || 0) * 60 +
+                (durationParts[2] || 0)) *
+              1000
+          }
+
+          const trackInfo: TrackInfo = {
+            identifier: `tv:${item.aid}`,
+            isSeekable: true,
+            author: item.author?.nickname || firstAuthor,
+            length: durationMs,
+            isStream: false,
+            position: 0,
+            title: item.title || 'Unknown',
+            uri: `https://www.bilibili.tv/en/video/${item.aid}`,
+            artworkUrl: item.cover || '',
+            isrc: null,
+            sourceName: 'bilibili'
+          }
+
+          return {
+            encoded: encodeTrack({ ...trackInfo, details: [] }),
+            info: trackInfo,
+            pluginInfo: {
+              aid: item.aid,
+              isBilibiliTv: true
+            }
+          }
+        })
+
+        return {
+          loadType: 'playlist',
+          data: {
+            info: { name: `Uploads by ${firstAuthor}`, selectedTrack: 0 },
+            tracks,
+            pluginInfo: {}
+          }
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        return { loadType: 'error', exception: { message, severity: 'fault' } }
+      }
     }
 
     const pat0 = this.patterns[0]
@@ -972,6 +1215,102 @@ export default class BilibiliSource implements SourceInstance {
     try {
       const pluginInfo = (track as unknown as Record<string, unknown>)
         .pluginInfo as Record<string, unknown> | undefined | undefined
+      if (pluginInfo?.isBilibiliTv || track.identifier.startsWith('tv:')) {
+        const isEp =
+          pluginInfo?.type === 'ogv' || track.identifier.startsWith('tv:ep:')
+        const epId =
+          pluginInfo?.ep_id ||
+          (isEp ? track.identifier.replace('tv:ep:', '') : null)
+        const aid = pluginInfo?.aid || track.identifier.replace('tv:', '')
+
+        const playUrlEndpoint = epId
+          ? `https://api.bilibili.tv/intl/gateway/web/playurl?ep_id=${epId}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`
+          : `https://api.bilibili.tv/intl/gateway/web/playurl?aid=${aid}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`
+
+        let res = await http1makeRequest(playUrlEndpoint, {
+          method: 'GET',
+          headers: {
+            ...HEADERS,
+            Referer: 'https://www.bilibili.tv/'
+          },
+          proxy: this.config.network?.proxy
+        })
+
+        const body = res.body as {
+          code: number
+          message?: string
+          data?: {
+            playurl?: {
+              audio_resource?: Array<{ url: string; backup_url?: string[] }>
+              video?: Array<{
+                video_resource?: Array<{ url: string; backup_url?: string[] }>
+              }>
+            }
+          }
+        }
+
+        let audioUrl =
+          body?.data?.playurl?.audio_resource?.[0]?.url ||
+          body?.data?.playurl?.audio_resource?.[0]?.backup_url?.[0] ||
+          body?.data?.playurl?.video?.[0]?.video_resource?.[0]?.url
+
+        if (!audioUrl) {
+          const mEndpoint = epId
+            ? `https://api.bilibili.tv/intl/gateway/m/playurl?ep_id=${epId}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`
+            : `https://api.bilibili.tv/intl/gateway/m/playurl?aid=${aid}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`
+
+          res = await http1makeRequest(mEndpoint, {
+            method: 'GET',
+            headers: {
+              ...HEADERS,
+              Referer: 'https://www.bilibili.tv/'
+            },
+            proxy: this.config.network?.proxy
+          })
+
+          const mBody = res.body as {
+            code: number
+            message?: string
+            data?: {
+              result?: {
+                video_info?: {
+                  stream_list?: Array<{
+                    durl_video?: {
+                      segment?: Array<{ url: string; backup_url?: string[] }>
+                    }
+                  }>
+                }
+              }
+            }
+          }
+
+          audioUrl =
+            mBody?.data?.result?.video_info?.stream_list?.[0]?.durl_video
+              ?.segment?.[0]?.url
+        }
+
+        if (!audioUrl) {
+          throw new Error(
+            `Failed to get Bilibili TV stream: ${body?.message || 'No stream available'}`
+          )
+        }
+
+        return {
+          url: audioUrl,
+          protocol: 'https',
+          format:
+            audioUrl.includes('.m4s') || audioUrl.includes('.m4a')
+              ? 'm4a'
+              : 'mp4',
+          additionalData: {
+            headers: {
+              ...HEADERS,
+              Referer: 'https://www.bilibili.tv/'
+            }
+          }
+        }
+      }
+
       const isAudio =
         pluginInfo?.type === 'audio' || track.identifier.startsWith('au')
       const isLive =

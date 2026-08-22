@@ -66,7 +66,7 @@ export class DASHHandler extends Transform {
                 return;
             }
             logger('debug', 'DASHHandler', `Selected: id=${selected.id}, codecs=${selected.codecs}, bandwidth=${selected.bandwidth}`);
-            const initRes = await makeRequest(selected.initUrl, {
+            const initRes = await makeRequest(this._resolveUrl(selected.initUrl), {
                 headers: this.options.headers,
                 method: 'GET',
                 localAddress: this.options.localAddress,
@@ -227,8 +227,19 @@ export class DASHHandler extends Transform {
         let segNum = selected.startNumber;
         for (const segGroup of selected.segments) {
             for (let r = 0; r <= segGroup.repeat; r++) {
-                yield selected.mediaTemplate.replace('$Number$', String(segNum++));
+                yield this._resolveUrl(selected.mediaTemplate.replace('$Number$', String(segNum++)));
             }
+        }
+    }
+    /**
+     * Resolves a potentially relative URL against the MPD location.
+     */
+    _resolveUrl(url) {
+        try {
+            return new URL(url, this.mpdUrl).href;
+        }
+        catch {
+            return url;
         }
     }
     _countSegments(selected) {
