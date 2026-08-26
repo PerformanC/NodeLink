@@ -75,7 +75,8 @@ export default class Chorus extends AnimatableFilter {
     super.applyAnimatedUpdate(
       {
         chorus: {
-          alpha: targetAlpha
+          alpha: targetAlpha,
+          transition: c.transition
         }
       },
       'chorus',

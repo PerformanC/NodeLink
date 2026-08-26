@@ -34,7 +34,8 @@ export default class Lowpass extends AnimatableFilter {
     super.applyAnimatedUpdate(
       {
         lowpass: {
-          logSmoothing: targetLogSmoothing
+          logSmoothing: targetLogSmoothing,
+          transition: rawConfig.transition
         }
       },
       'lowpass',
