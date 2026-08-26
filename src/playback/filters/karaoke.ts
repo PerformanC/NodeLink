@@ -159,7 +159,8 @@ export default class Karaoke extends AnimatableFilter {
     super.applyAnimatedUpdate(
       {
         karaoke: {
-          alpha: targetAlpha
+          alpha: targetAlpha,
+          transition: k.transition
         }
       },
       'karaoke',

@@ -49,7 +49,8 @@ export default class Spatial extends AnimatableFilter {
     super.applyAnimatedUpdate(
       {
         spatial: {
-          alpha: targetAlpha
+          alpha: targetAlpha,
+          transition: s.transition
         }
       },
       'spatial',
