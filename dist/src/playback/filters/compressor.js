@@ -34,7 +34,8 @@ export default class Compressor extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : 1.0;
         super.applyAnimatedUpdate({
             compressor: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: comp.transition
             }
         }, 'compressor', { alpha: 0.0 });
     }

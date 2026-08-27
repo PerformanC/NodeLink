@@ -31,7 +31,8 @@ export default class Rotation extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : this.rotationHz > 0.001 ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             rotation: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: r.transition
             }
         }, 'rotation', { alpha: 0.0 });
     }

@@ -44,7 +44,8 @@ export default class Distortion extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : isActive ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             distortion: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: dist.transition
             }
         }, 'distortion', { alpha: 0.0 });
     }

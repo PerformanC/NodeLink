@@ -29,6 +29,7 @@ import { bufferPool } from '../playback/structs/BufferPool.js';
 import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from '../utils.js';
 import { createVoiceRelay } from '../voice/voiceRelay.js';
 import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from './headQueue.js';
+import { createStreamFinalizer } from './streamFinalizer.js';
 let playerClassPromise = null;
 let createPCMStreamPromise = null;
 const getPlayerClass = async () => {
@@ -1370,8 +1371,9 @@ process.on('unhandledRejection', (reason, promise) => {
  */
 function cleanupActiveStream(streamId, entry) {
     const current = entry || activeStreams.get(streamId);
-    if (!current)
+    if (!current || current.cleaned)
         return;
+    current.cleaned = true;
     if (current.pcmStream && !current.pcmStream.destroyed) {
         current.pcmStream.destroy();
     }
@@ -1407,25 +1409,30 @@ async function startLoadStream(streamId, payload) {
     }
     const createPCMStream = await getCreatePCMStream();
     const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {});
-    const entry = { pcmStream, fetched, cancelled: false };
+    const entry = {
+        pcmStream,
+        fetched,
+        cancelled: false,
+        cleaned: false
+    };
     activeStreams.set(streamId, entry);
     streamLifecycle.created++;
-    const finish = (err) => {
-        if (entry.cancelled) {
+    const finish = createStreamFinalizer(entry, {
+        onCancelled: () => {
             streamLifecycle.cancelled++;
-            cleanupActiveStream(streamId, entry);
-            return;
-        }
-        if (err) {
+        },
+        onError: (error) => {
             streamLifecycle.errored++;
-            sendStreamError(streamId, getErrorMessage(err));
-        }
-        else {
+            sendStreamError(streamId, getErrorMessage(error));
+        },
+        onEnd: () => {
             streamLifecycle.ended++;
             sendStreamEnd(streamId);
+        },
+        onCleanup: () => {
+            cleanupActiveStream(streamId, entry);
         }
-        cleanupActiveStream(streamId, entry);
-    };
+    });
     pcmStream.on('data', (chunk) => {
         if (!entry.cancelled)
             sendStreamChunk(streamId, chunk);
@@ -1439,6 +1446,7 @@ function cancelStream(streamId) {
     if (!entry)
         return false;
     entry.cancelled = true;
+    streamLifecycle.cancelled++;
     cleanupActiveStream(streamId, entry);
     return true;
 }

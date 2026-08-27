@@ -29,6 +29,34 @@ const PO_CONFIG = {
 const textEncoder = new TextEncoder()
 
 /**
+ * Parses the loose JSON inside `window.ytAtN(...)` (`\xNN`, trailing commas, single quotes).
+ * @internal
+ */
+function parseLooseJSON(looseJson: string): Record<string, unknown> {
+  const sanitized = looseJson.replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) =>
+    String.fromCharCode(Number.parseInt(hex, 16))
+  )
+  let jsonStr = sanitized.replace(/,\s*([\]}])/g, '$1')
+  jsonStr = jsonStr.replace(/'((?:[^'\\]|\\[\s\S])*)'/g, (_, inner: string) =>
+    JSON.stringify(inner.replace(/\\'/g, "'"))
+  )
+  jsonStr = jsonStr.replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":')
+  const parsed = JSON.parse(jsonStr) as Record<string, unknown>
+  for (const k in parsed) {
+    const v = parsed[k]
+    if (
+      typeof v === 'string' &&
+      (v.trim().startsWith('{') || v.trim().startsWith('['))
+    ) {
+      try {
+        parsed[k] = JSON.parse(v as string) as unknown
+      } catch {}
+    }
+  }
+  return parsed
+}
+
+/**
  * Helper class for handling promises that are resolved or rejected externally.
  * @internal
  */
@@ -367,10 +395,27 @@ export class PoTokenManager {
       this._dom = null
     }
 
+    const g2 = globalThis as unknown as Record<string, unknown>
+    try {
+      if ((g2.yt as Record<string, unknown> | undefined)?.config_) {
+        Reflect.deleteProperty(g2, 'yt')
+      }
+    } catch {}
+    const win2 = g2.window as Record<string, unknown> | undefined
+    try {
+      if ((win2?.yt as Record<string, unknown> | undefined)?.config_) {
+        Reflect.deleteProperty(win2 as Record<string, unknown>, 'yt')
+      }
+    } catch {
+      try {
+        if (win2) (win2 as Record<string, unknown>).yt = undefined as unknown
+      } catch {}
+    }
+
     const p = this._prevGlobals
     if (!p) return
 
-    const g = globalThis as unknown as Record<string, unknown>
+    const g = g2
     for (const k of ['window', 'document', 'location', 'origin'] as const) {
       if (p[k] === undefined) delete g[k]
       else g[k] = p[k]
@@ -391,7 +436,6 @@ export class PoTokenManager {
         headers: { 'user-agent': PO_CONFIG.userAgent }
       })
       const html = await response.text()
-
       const marker = '"VISITOR_DATA":"'
       const start = html.indexOf(marker)
       if (start !== -1) {
@@ -399,12 +443,91 @@ export class PoTokenManager {
         const end = html.indexOf('"', from)
         if (end !== -1) return html.slice(from, end)
       }
-
       throw new Error('Could not find visitorData in HTML')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       logger('error', 'PoToken', `Failed to fetch visitorData: ${message}`)
       return ''
+    }
+  }
+
+  private async getChallengeFromHomepage(): Promise<
+    AttestationChallenge | undefined
+  > {
+    try {
+      const res = await fetch('https://www.youtube.com', {
+        headers: {
+          accept: '*/*',
+          'accept-language': 'en-US,en;q=0.7',
+          'user-agent': PO_CONFIG.userAgent
+        }
+      })
+      if (!res.ok) return undefined
+      const html = await res.text()
+      const ytcfgMatch = html.match(/ytcfg\.set\(({.+?})\);/s)
+      if (ytcfgMatch?.[1]) {
+        try {
+          const ytcfg = JSON.parse(ytcfgMatch[1]) as Record<string, unknown>
+          const ytObj = { config_: ytcfg }
+          ;(globalThis as unknown as Record<string, unknown>).yt = ytObj
+          const win = (globalThis as unknown as Record<string, unknown>)
+            .window as Record<string, unknown> | undefined
+          if (win) win.yt = ytObj
+          if (
+            ytcfg.VISITOR_DATA &&
+            typeof ytcfg.VISITOR_DATA === 'string' &&
+            !this.visitorData
+          ) {
+            this.visitorData = ytcfg.VISITOR_DATA
+          }
+        } catch {}
+      } else {
+        logger('warn', 'PoToken', 'homepage-challenge: no ytcfg found')
+      }
+      const attMatch = html.match(/window\.ytAtN\(\s*({[\s\S]*?})\s*\)/)
+      if (!attMatch?.[1]) {
+        logger('warn', 'PoToken', 'homepage-challenge: no ytAtN in page')
+        return undefined
+      }
+      const attData = parseLooseJSON(attMatch[1]) as Record<string, unknown>
+      const r = (attData.R ?? attData.r) as Record<string, unknown> | undefined
+      const bgChallenge = r?.bgChallenge as
+        | {
+            program?: string
+            globalName?: string
+            interpreterUrl?: {
+              privateDoNotAccessOrElseTrustedResourceUrlWrappedValue?: string
+            }
+          }
+        | undefined
+      if (!bgChallenge?.program || !bgChallenge?.interpreterUrl) {
+        logger(
+          'warn',
+          'PoToken',
+          'homepage-challenge: ytAtN payload missing bgChallenge'
+        )
+        return undefined
+      }
+      logger('debug', 'PoToken', 'Using challenge from homepage (patched)')
+      return {
+        bg_challenge: {
+          program: bgChallenge.program,
+          global_name: bgChallenge.globalName as string,
+          interpreter_url: {
+            private_do_not_access_or_else_trusted_resource_url_wrapped_value:
+              bgChallenge.interpreterUrl
+                .privateDoNotAccessOrElseTrustedResourceUrlWrappedValue as string
+          }
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      logger(
+        'warn',
+        'PoToken',
+        `homepage-challenge: failed (${msg}), falling back`
+      )
+      return undefined
     }
   }
 
@@ -500,13 +623,11 @@ export class PoTokenManager {
 
     if (existingVisitorData) {
       this.visitorData = existingVisitorData
-    } else {
-      this.visitorData = await this.fetchVisitorData()
     }
     logger(
       'debug',
       'PoToken',
-      `VisitorData: ${this.visitorData?.slice(0, 20)}...`
+      `VisitorData: ${this.visitorData?.slice(0, 20) ?? '(none, will extract from homepage)'}...`
     )
 
     await this._initializeWithDom()
@@ -534,9 +655,23 @@ export class PoTokenManager {
     this._applyDomGlobals(this._dom)
 
     logger('debug', 'PoToken', 'Fetching attestation challenge...')
-    const challengeResponse = await this.getAttestationChallenge(
-      this.visitorData || ''
-    )
+    // Homepage pair is preferred: bound to ytcfg EVENT_ID, never worse than /att/get.
+    let challengeResponse: AttestationChallenge | undefined =
+      await this.getChallengeFromHomepage()
+    if (!challengeResponse) {
+      if (!this.visitorData) {
+        const vd = await this.fetchVisitorData()
+        if (vd) this.visitorData = vd
+      }
+      logger(
+        'debug',
+        'PoToken',
+        'Using challenge from /att/get (legacy fallback)'
+      )
+      challengeResponse = await this.getAttestationChallenge(
+        this.visitorData || ''
+      )
+    }
     if (!challengeResponse.bg_challenge)
       throw new Error('Could not get challenge')
 

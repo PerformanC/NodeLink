@@ -92,7 +92,12 @@ async function loadRoutes() {
                     handler: module.handler,
                     methods: module.methods ?? defaultMethods
                 };
-                if (pathname instanceof RegExp) {
+                if (module.paths && module.paths.length > 0) {
+                    for (const explicitPath of module.paths) {
+                        staticRoutes.set(explicitPath, routeData);
+                    }
+                }
+                else if (pathname instanceof RegExp) {
                     dynamicRoutes.push([pathname, routeData]);
                 }
                 else {

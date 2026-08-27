@@ -39,7 +39,8 @@ export default class Spatial extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : isActive ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             spatial: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: s.transition
             }
         }, 'spatial', { alpha: 0.0 });
     }

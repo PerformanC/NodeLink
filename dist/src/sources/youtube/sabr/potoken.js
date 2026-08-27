@@ -24,6 +24,28 @@ const PO_CONFIG = {
  */
 const textEncoder = new TextEncoder();
 /**
+ * Parses the loose JSON inside `window.ytAtN(...)` (`\xNN`, trailing commas, single quotes).
+ * @internal
+ */
+function parseLooseJSON(looseJson) {
+    const sanitized = looseJson.replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+    let jsonStr = sanitized.replace(/,\s*([\]}])/g, '$1');
+    jsonStr = jsonStr.replace(/'((?:[^'\\]|\\[\s\S])*)'/g, (_, inner) => JSON.stringify(inner.replace(/\\'/g, "'")));
+    jsonStr = jsonStr.replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":');
+    const parsed = JSON.parse(jsonStr);
+    for (const k in parsed) {
+        const v = parsed[k];
+        if (typeof v === 'string' &&
+            (v.trim().startsWith('{') || v.trim().startsWith('['))) {
+            try {
+                parsed[k] = JSON.parse(v);
+            }
+            catch { }
+        }
+    }
+    return parsed;
+}
+/**
  * Helper class for handling promises that are resolved or rejected externally.
  * @internal
  */
@@ -220,10 +242,30 @@ export class PoTokenManager {
             this._dom.window.close();
             this._dom = null;
         }
+        const g2 = globalThis;
+        try {
+            if (g2.yt?.config_) {
+                Reflect.deleteProperty(g2, 'yt');
+            }
+        }
+        catch { }
+        const win2 = g2.window;
+        try {
+            if (win2?.yt?.config_) {
+                Reflect.deleteProperty(win2, 'yt');
+            }
+        }
+        catch {
+            try {
+                if (win2)
+                    win2.yt = undefined;
+            }
+            catch { }
+        }
         const p = this._prevGlobals;
         if (!p)
             return;
-        const g = globalThis;
+        const g = g2;
         for (const k of ['window', 'document', 'location', 'origin']) {
             if (p[k] === undefined)
                 delete g[k];
@@ -259,6 +301,69 @@ export class PoTokenManager {
             const message = error instanceof Error ? error.message : String(error);
             logger('error', 'PoToken', `Failed to fetch visitorData: ${message}`);
             return '';
+        }
+    }
+    async getChallengeFromHomepage() {
+        try {
+            const res = await fetch('https://www.youtube.com', {
+                headers: {
+                    accept: '*/*',
+                    'accept-language': 'en-US,en;q=0.7',
+                    'user-agent': PO_CONFIG.userAgent
+                }
+            });
+            if (!res.ok)
+                return undefined;
+            const html = await res.text();
+            const ytcfgMatch = html.match(/ytcfg\.set\(({.+?})\);/s);
+            if (ytcfgMatch?.[1]) {
+                try {
+                    const ytcfg = JSON.parse(ytcfgMatch[1]);
+                    const ytObj = { config_: ytcfg };
+                    globalThis.yt = ytObj;
+                    const win = globalThis
+                        .window;
+                    if (win)
+                        win.yt = ytObj;
+                    if (ytcfg.VISITOR_DATA &&
+                        typeof ytcfg.VISITOR_DATA === 'string' &&
+                        !this.visitorData) {
+                        this.visitorData = ytcfg.VISITOR_DATA;
+                    }
+                }
+                catch { }
+            }
+            else {
+                logger('warn', 'PoToken', 'homepage-challenge: no ytcfg found');
+            }
+            const attMatch = html.match(/window\.ytAtN\(\s*({[\s\S]*?})\s*\)/);
+            if (!attMatch?.[1]) {
+                logger('warn', 'PoToken', 'homepage-challenge: no ytAtN in page');
+                return undefined;
+            }
+            const attData = parseLooseJSON(attMatch[1]);
+            const r = (attData.R ?? attData.r);
+            const bgChallenge = r?.bgChallenge;
+            if (!bgChallenge?.program || !bgChallenge?.interpreterUrl) {
+                logger('warn', 'PoToken', 'homepage-challenge: ytAtN payload missing bgChallenge');
+                return undefined;
+            }
+            logger('debug', 'PoToken', 'Using challenge from homepage (patched)');
+            return {
+                bg_challenge: {
+                    program: bgChallenge.program,
+                    global_name: bgChallenge.globalName,
+                    interpreter_url: {
+                        private_do_not_access_or_else_trusted_resource_url_wrapped_value: bgChallenge.interpreterUrl
+                            .privateDoNotAccessOrElseTrustedResourceUrlWrappedValue
+                    }
+                }
+            };
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            logger('warn', 'PoToken', `homepage-challenge: failed (${msg}), falling back`);
+            return undefined;
         }
     }
     /**
@@ -327,10 +432,7 @@ export class PoTokenManager {
         if (existingVisitorData) {
             this.visitorData = existingVisitorData;
         }
-        else {
-            this.visitorData = await this.fetchVisitorData();
-        }
-        logger('debug', 'PoToken', `VisitorData: ${this.visitorData?.slice(0, 20)}...`);
+        logger('debug', 'PoToken', `VisitorData: ${this.visitorData?.slice(0, 20) ?? '(none, will extract from homepage)'}...`);
         await this._initializeWithDom();
         logger('debug', 'PoToken', 'BotGuard initialization with NativeDOM complete');
     }
@@ -348,7 +450,17 @@ export class PoTokenManager {
         });
         this._applyDomGlobals(this._dom);
         logger('debug', 'PoToken', 'Fetching attestation challenge...');
-        const challengeResponse = await this.getAttestationChallenge(this.visitorData || '');
+        // Homepage pair is preferred: bound to ytcfg EVENT_ID, never worse than /att/get.
+        let challengeResponse = await this.getChallengeFromHomepage();
+        if (!challengeResponse) {
+            if (!this.visitorData) {
+                const vd = await this.fetchVisitorData();
+                if (vd)
+                    this.visitorData = vd;
+            }
+            logger('debug', 'PoToken', 'Using challenge from /att/get (legacy fallback)');
+            challengeResponse = await this.getAttestationChallenge(this.visitorData || '');
+        }
         if (!challengeResponse.bg_challenge)
             throw new Error('Could not get challenge');
         const interpreterUrl = challengeResponse.bg_challenge.interpreter_url

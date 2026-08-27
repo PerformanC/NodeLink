@@ -25,7 +25,8 @@ export default class Highpass extends AnimatableFilter {
             : 0.0;
         super.applyAnimatedUpdate({
             highpass: {
-                targetAlpha: targetAlpha
+                targetAlpha: targetAlpha,
+                transition: rawConfig.transition
             }
         }, 'highpass', { targetAlpha: 0.0 });
     }
