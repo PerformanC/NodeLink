@@ -1577,16 +1577,14 @@ export class Player {
             // Re-resolving ensures seekable-stream fetches from the healthy client
             // (example: VisionOs after AndroidVR 403s) at the exact position.
             // Also needs to be the resolvedSourceName because it can be a mirror (spotify -> yt example.)
-            const resolvedSourceName = this.streamInfo
-                ?.newTrack?.info?.sourceName ||
+            const resolvedSourceName = this.streamInfo?.newTrack?.info?.sourceName ||
                 this.track?.info?.sourceName;
             const isYouTubeStream = !!url &&
                 resolvedSourceName &&
                 ['youtube', 'ytmusic'].includes(resolvedSourceName);
             if (isYouTubeStream) {
                 try {
-                    const youtubeTrackInfo = this.streamInfo
-                        ?.newTrack?.info
+                    const youtubeTrackInfo = this.streamInfo?.newTrack?.info
                         ? {
                             ...this.streamInfo.newTrack.info,
                             audioTrackId: this.track?.audioTrackId
@@ -2294,6 +2292,11 @@ export class Player {
             guildId: this.guildId
         });
         this._destroyAudioMixer();
+        try {
+            const yt = this.nodelink.sources.sources.get('youtube');
+            yt?.abortGuildStreams(this.guildId);
+        }
+        catch { }
         if (this._currentResource) {
             try {
                 this._currentResource.destroy();

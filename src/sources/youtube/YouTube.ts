@@ -212,6 +212,15 @@ export default class YouTubeSource {
 
   /** Map of active download streams keyed by a unique symbol or string, used for cancellation. */
   private activeStreams: Map<string | symbol, CancelSignal>
+  /** SABR streams tracked for guild-aware abort when a player is destroyed. */
+  private activeSabrStreams: Map<
+    string | symbol,
+    {
+      guildId?: string
+      sabr: { destroy: (err?: Error) => void }
+      stream: PassThrough
+    }
+  > = new Map()
 
   /** Set of fallback-mirror lookup keys currently in flight, used to prevent infinite recursion loops. */
   private mirrorFallbackInFlight: Set<string>
@@ -436,6 +445,15 @@ export default class YouTubeSource {
       cancelSignal.aborted = true
     }
     this.activeStreams.clear()
+    for (const [, entry] of this.activeSabrStreams.entries()) {
+      try {
+        entry.stream.destroy()
+      } catch {}
+      try {
+        entry.sabr.destroy()
+      } catch {}
+    }
+    this.activeSabrStreams.clear()
 
     if (this.visitorDataInterval) {
       clearInterval(this.visitorDataInterval)
@@ -450,6 +468,29 @@ export default class YouTubeSource {
     if (this.oauth) (this.oauth as { cleanup?: () => void }).cleanup?.()
     ;(this.cipherManager as { cleanup?: () => void })?.cleanup?.()
     this.failingClientsByTrack.clear()
+  }
+
+  /**
+   * Aborts all SABR streams for a guild (called on player destroy to stop
+   * background analysis windows that would otherwise keep stalling on 403s).
+   * @internal
+   */
+  public abortGuildStreams(guildId: string): void {
+    for (const [key, entry] of this.activeSabrStreams.entries()) {
+      if (entry.guildId !== guildId) continue
+      try {
+        entry.stream.destroy()
+      } catch {}
+      try {
+        entry.sabr.destroy()
+      } catch {}
+      this.activeSabrStreams.delete(key)
+      const cancel = this.activeStreams.get(key)
+      if (cancel) {
+        cancel.aborted = true
+        this.activeStreams.delete(key)
+      }
+    }
   }
   /**
    * Fetches visitor data and player script URL from YouTube embed pages.
@@ -1990,6 +2031,14 @@ export default class YouTubeSource {
     const sabr = new SabrStream(sabrConfig)
 
     const stream = new PassThrough()
+    const guildIdForStream = (
+      additionalData as unknown as Record<string, unknown>
+    ).guildId as string | undefined
+    this.activeSabrStreams.set(streamKey, {
+      guildId: guildIdForStream,
+      sabr: sabr as unknown as { destroy: (err?: Error) => void },
+      stream
+    })
     let readyResolved = false
     let readyResolve: () => void
     let readyReject: (err: Error) => void
@@ -2024,7 +2073,13 @@ export default class YouTubeSource {
     sabr.on(
       'stall',
       async (reason: string = 'starvation', recoveryGeneration?: number) => {
-        if (isRecovering || stream.destroyed || sabr.destroyed) return
+        if (
+          isRecovering ||
+          stream.destroyed ||
+          sabr.destroyed ||
+          _cancelSignal.aborted
+        )
+          return
 
         isRecovering = true
         const generation =
@@ -2097,9 +2152,11 @@ export default class YouTubeSource {
     stream.destroy = ((err?: Error) => {
       if (isDestroying) return stream
       isDestroying = true
+      _cancelSignal.aborted = true
       stream.removeListener('drain', onSabrDrain)
       sabr.destroy(err)
       this.activeStreams.delete(streamKey)
+      this.activeSabrStreams.delete(streamKey)
       originalDestroy(err)
       return stream
     }) as typeof stream.destroy
@@ -2107,9 +2164,11 @@ export default class YouTubeSource {
     stream.once('close', () => {
       if (isDestroying) return
       isDestroying = true
+      _cancelSignal.aborted = true
       stream.removeListener('drain', onSabrDrain)
       sabr.destroy()
       this.activeStreams.delete(streamKey)
+      this.activeSabrStreams.delete(streamKey)
     })
 
     ;(stream as unknown as Record<string, unknown>)._sabrStream = sabr

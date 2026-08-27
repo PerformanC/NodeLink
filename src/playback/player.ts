@@ -2384,8 +2384,11 @@ export class Player {
       // (example: VisionOs after AndroidVR 403s) at the exact position.
       // Also needs to be the resolvedSourceName because it can be a mirror (spotify -> yt example.)
       const resolvedSourceName =
-        ((this.streamInfo as unknown as { newTrack?: { info?: { sourceName?: string } } })
-          ?.newTrack?.info?.sourceName as string | undefined) ||
+        ((
+          this.streamInfo as unknown as {
+            newTrack?: { info?: { sourceName?: string } }
+          }
+        )?.newTrack?.info?.sourceName as string | undefined) ||
         this.track?.info?.sourceName
       const isYouTubeStream =
         !!url &&
@@ -2393,12 +2396,15 @@ export class Player {
         ['youtube', 'ytmusic'].includes(resolvedSourceName)
       if (isYouTubeStream) {
         try {
-          const youtubeTrackInfo = (
-            (this.streamInfo as unknown as { newTrack?: { info?: unknown } })
-              ?.newTrack?.info as import('../typings/playback/player.types.ts').TrackInfoExtended | undefined
-          )
+          const youtubeTrackInfo = ((
+            this.streamInfo as unknown as { newTrack?: { info?: unknown } }
+          )?.newTrack?.info as
+            | import('../typings/playback/player.types.ts').TrackInfoExtended
+            | undefined)
             ? ({
-                ...((this.streamInfo as unknown as { newTrack: { info: unknown } }).newTrack.info as object),
+                ...((
+                  this.streamInfo as unknown as { newTrack: { info: unknown } }
+                ).newTrack.info as object),
                 audioTrackId: this.track?.audioTrackId
               } as import('../typings/playback/player.types.ts').TrackInfoExtended)
             : ({
@@ -3386,6 +3392,14 @@ export class Player {
     })
 
     this._destroyAudioMixer()
+    try {
+      const yt = (
+        this.nodelink.sources as unknown as {
+          sources: Map<string, { abortGuildStreams: (g: string) => void }>
+        }
+      ).sources.get('youtube')
+      yt?.abortGuildStreams(this.guildId)
+    } catch {}
 
     if (this._currentResource) {
       try {

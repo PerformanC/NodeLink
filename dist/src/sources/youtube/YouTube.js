@@ -151,6 +151,8 @@ export default class YouTubeSource {
     liveChat;
     /** Map of active download streams keyed by a unique symbol or string, used for cancellation. */
     activeStreams;
+    /** SABR streams tracked for guild-aware abort when a player is destroyed. */
+    activeSabrStreams = new Map();
     /** Set of fallback-mirror lookup keys currently in flight, used to prevent infinite recursion loops. */
     mirrorFallbackInFlight;
     /** Map of track identifiers to a set of client names that failed to provide a playable URL. */
@@ -321,6 +323,17 @@ export default class YouTubeSource {
             cancelSignal.aborted = true;
         }
         this.activeStreams.clear();
+        for (const [, entry] of this.activeSabrStreams.entries()) {
+            try {
+                entry.stream.destroy();
+            }
+            catch { }
+            try {
+                entry.sabr.destroy();
+            }
+            catch { }
+        }
+        this.activeSabrStreams.clear();
         if (this.visitorDataInterval) {
             clearInterval(this.visitorDataInterval);
             this.visitorDataInterval = null;
@@ -333,6 +346,31 @@ export default class YouTubeSource {
             this.oauth.cleanup?.();
         this.cipherManager?.cleanup?.();
         this.failingClientsByTrack.clear();
+    }
+    /**
+     * Aborts all SABR streams for a guild (called on player destroy to stop
+     * background analysis windows that would otherwise keep stalling on 403s).
+     * @internal
+     */
+    abortGuildStreams(guildId) {
+        for (const [key, entry] of this.activeSabrStreams.entries()) {
+            if (entry.guildId !== guildId)
+                continue;
+            try {
+                entry.stream.destroy();
+            }
+            catch { }
+            try {
+                entry.sabr.destroy();
+            }
+            catch { }
+            this.activeSabrStreams.delete(key);
+            const cancel = this.activeStreams.get(key);
+            if (cancel) {
+                cancel.aborted = true;
+                this.activeStreams.delete(key);
+            }
+        }
     }
     /**
      * Fetches visitor data and player script URL from YouTube embed pages.
@@ -1312,6 +1350,12 @@ export default class YouTubeSource {
         };
         const sabr = new SabrStream(sabrConfig);
         const stream = new PassThrough();
+        const guildIdForStream = additionalData.guildId;
+        this.activeSabrStreams.set(streamKey, {
+            guildId: guildIdForStream,
+            sabr: sabr,
+            stream
+        });
         let readyResolved = false;
         let readyResolve;
         let readyReject;
@@ -1342,7 +1386,10 @@ export default class YouTubeSource {
         });
         sabr.on('finishBuffering', () => stream.emit('finishBuffering'));
         sabr.on('stall', async (reason = 'starvation', recoveryGeneration) => {
-            if (isRecovering || stream.destroyed || sabr.destroyed)
+            if (isRecovering ||
+                stream.destroyed ||
+                sabr.destroyed ||
+                _cancelSignal.aborted)
                 return;
             isRecovering = true;
             const generation = recoveryGeneration ?? sabr.getMediaProgressGeneration();
@@ -1404,9 +1451,11 @@ export default class YouTubeSource {
             if (isDestroying)
                 return stream;
             isDestroying = true;
+            _cancelSignal.aborted = true;
             stream.removeListener('drain', onSabrDrain);
             sabr.destroy(err);
             this.activeStreams.delete(streamKey);
+            this.activeSabrStreams.delete(streamKey);
             originalDestroy(err);
             return stream;
         });
@@ -1414,9 +1463,11 @@ export default class YouTubeSource {
             if (isDestroying)
                 return;
             isDestroying = true;
+            _cancelSignal.aborted = true;
             stream.removeListener('drain', onSabrDrain);
             sabr.destroy();
             this.activeStreams.delete(streamKey);
+            this.activeSabrStreams.delete(streamKey);
         });
         stream._sabrStream = sabr;
         stream.beginSeekHandoff = () => {
