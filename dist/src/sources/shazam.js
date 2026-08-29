@@ -3,7 +3,7 @@ const SHAZAM_PATTERN = /^https?:\/\/(?:www\.)?shazam\.com\/song\/\d+(?:\/[^/?#]+
 const SHAZAM_SEARCH_BASE = 'https://www.shazam.com/services/amapi/v1/catalog/US/search';
 const SHAZAM_VALIDATION_URL = 'https://www.shazam.com/services/partner/oauth/commerce/validate';
 const SHAZAM_COMMERCE_SEARCH_BASE = 'https://api.music.apple.com/v1/catalog/US/search'; // amp- :)
-const SHAZAM_ANDROID_USER_AGENT = 'Dalvik/2.1.0 (Linux; U; Android 12; SM-G9980 Build/af013b0.2) Shazam/v16.51.1';
+const SHAZAM_ANDROID_USER_AGENT = 'Dalvik/2.1.0 (Linux; U; Android 15; SM-S9210 Build/af013b0.3) Shazam/v16.56.0';
 /**
  * Shazam source implementation.
  */
@@ -134,46 +134,10 @@ export default class ShazamSource {
                 }
             });
             if (statusCode === 403) {
-                const validationResponse = await http1makeRequest(SHAZAM_VALIDATION_URL, {
-                    method: 'GET',
-                    headers: {
-                        Origin: 'https://www.shazam.com',
-                        'User-Agent': SHAZAM_ANDROID_USER_AGENT
-                    }
+                return ((await this.resolveViaCommerce(url)) ?? {
+                    loadType: 'empty',
+                    data: {}
                 });
-                const validationHeader = validationResponse.headers?.['x-shz-validation'];
-                const validation = Array.isArray(validationHeader)
-                    ? validationHeader[0]
-                    : validationHeader;
-                if (validationResponse.error ||
-                    validationResponse.statusCode !== 200 ||
-                    typeof validation !== 'string' ||
-                    !validation) {
-                    return { loadType: 'empty', data: {} };
-                }
-                const pathParts = new URL(url).pathname.split('/').filter(Boolean);
-                const identifier = pathParts[1];
-                const slug = pathParts[2];
-                if (!identifier || !slug) {
-                    return { loadType: 'empty', data: {} };
-                }
-                const searchUrl = `${SHAZAM_COMMERCE_SEARCH_BASE}?limit=5&types=songs&term=` +
-                    encodeURIComponent(decodeURIComponent(slug).replace(/[-_]+/g, ' '));
-                const searchResponse = await http1makeRequest(searchUrl, {
-                    headers: {
-                        Authorization: `Bearer ${validation}`,
-                        Origin: 'https://www.shazam.com',
-                        'User-Agent': SHAZAM_ANDROID_USER_AGENT
-                    }
-                });
-                if (searchResponse.error || searchResponse.statusCode !== 200) {
-                    return { loadType: 'empty', data: {} };
-                }
-                const song = this.extractSearchSongs(searchResponse.body).find((item) => item.id === identifier);
-                const track = song ? this.buildTrack(song) : null;
-                return track
-                    ? { loadType: 'track', data: track }
-                    : { loadType: 'empty', data: {} };
             }
             if (error || statusCode !== 200) {
                 return { loadType: 'empty', data: {} };
@@ -181,6 +145,17 @@ export default class ShazamSource {
             const html = this.getTextBody({ body });
             if (!html) {
                 return { loadType: 'empty', data: {} };
+            }
+            const cleanUrl = url.replace(/[?#].*$/, '').replace(/\/$/, '');
+            const match = cleanUrl.match(/\/song\/(\d+)(?:\/[^/?#]+)?$/);
+            const identifier = match?.[1];
+            if (!identifier) {
+                return { loadType: 'empty', data: {} };
+            }
+            if (!html.includes(identifier)) {
+                const commerceResult = await this.resolveViaCommerce(url);
+                if (commerceResult)
+                    return commerceResult;
             }
             const appleMusicUrl = this.extractHrefStartingAt(html, 'href="https://www.shazam.com/applemusic/song/');
             const durationMs = this.extractDurationMs(html);
@@ -191,50 +166,104 @@ export default class ShazamSource {
             if (!title || title === 'Unknown') {
                 const ogTitle = this.extractMetaContent(html, 'og:title');
                 if (ogTitle) {
-                    const titleMatch = ogTitle.match(/^(.+?) - (.+?):/);
-                    if (titleMatch?.[1] && titleMatch?.[2]) {
-                        title = titleMatch[1];
-                        artist = titleMatch[2];
+                    const parts = ogTitle.match(/^(.+?) - (.+?):/);
+                    if (parts?.[1] && parts?.[2]) {
+                        title = parts[1];
+                        artist = parts[2];
                     }
                     else {
                         title = ogTitle;
                     }
                 }
             }
-            if (!title)
-                title = 'Unknown';
-            if (!artist)
-                artist = 'Unknown';
-            if (!artworkUrl) {
-                artworkUrl = this.extractMetaContent(html, 'og:image');
-            }
+            title ??= 'Unknown';
+            artist ??= 'Unknown';
+            artworkUrl ??= this.extractMetaContent(html, 'og:image');
             if (title === 'Unknown' && !appleMusicUrl) {
                 return { loadType: 'empty', data: {} };
             }
-            const cleanUrl = url.replace(/[?#].*$/, '').replace(/\/$/, '');
-            const identifierMatch = cleanUrl.match(/\/song\/(\d+)(?:\/[^/?#]+)?$/);
-            if (!identifierMatch) {
-                return { loadType: 'empty', data: {} };
-            }
-            const identifier = identifierMatch[1];
-            if (!identifier) {
-                return { loadType: 'empty', data: {} };
-            }
-            const track = this.createTrack({
-                identifier,
-                author: artist,
-                length: durationMs || 0,
-                title,
-                uri: cleanUrl,
-                artworkUrl,
-                isrc
-            }, appleMusicUrl ? { appleMusicUrl } : {});
-            return { loadType: 'track', data: track };
+            return {
+                loadType: 'track',
+                data: this.createTrack({
+                    identifier,
+                    author: artist,
+                    length: durationMs || 0,
+                    title,
+                    uri: cleanUrl,
+                    artworkUrl,
+                    isrc
+                }, appleMusicUrl ? { appleMusicUrl } : {})
+            };
         }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
             logger('error', 'Shazam', `Failed to resolve ${url}: ${message}`);
             return { loadType: 'error', exception: { message, severity: 'fault' } };
+        }
+    }
+    async resolveViaCommerce(url) {
+        try {
+            const validationRes = await http1makeRequest(SHAZAM_VALIDATION_URL, {
+                method: 'GET',
+                headers: {
+                    Origin: 'https://www.shazam.com',
+                    'User-Agent': SHAZAM_ANDROID_USER_AGENT
+                }
+            });
+            const rawToken = validationRes.headers?.['x-shz-validation'];
+            const token = Array.isArray(rawToken) ? rawToken[0] : rawToken;
+            if (validationRes.error ||
+                validationRes.statusCode !== 200 ||
+                typeof token !== 'string' ||
+                !token) {
+                return null;
+            }
+            const pathParts = new URL(url).pathname.split('/').filter(Boolean);
+            const identifier = pathParts[1];
+            const slug = pathParts[2];
+            if (!identifier || !slug)
+                return null;
+            const searchTerm = decodeURIComponent(slug).replace(/[-_]+/g, ' ');
+            const searchUrl = `${SHAZAM_COMMERCE_SEARCH_BASE}?limit=5&types=songs&term=` +
+                encodeURIComponent(searchTerm);
+            const searchRes = await http1makeRequest(searchUrl, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Origin: 'https://www.shazam.com',
+                    'User-Agent': SHAZAM_ANDROID_USER_AGENT
+                }
+            });
+            if (!searchRes.error && searchRes.statusCode === 200) {
+                const song = this.extractSearchSongs(searchRes.body).find((s) => s.id === identifier);
+                if (song) {
+                    const track = this.buildTrack(song);
+                    if (track)
+                        return { loadType: 'track', data: track };
+                }
+            }
+            const catalogRes = await http1makeRequest(`https://api.music.apple.com/v1/catalog/US/songs/${encodeURIComponent(identifier)}`, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Origin: 'https://www.shazam.com',
+                    'User-Agent': SHAZAM_ANDROID_USER_AGENT
+                }
+            });
+            if (!catalogRes.error && catalogRes.statusCode === 200) {
+                const payload = this.parseJsonBody(catalogRes.body);
+                const items = payload ? this.getArray(payload, 'data') : [];
+                for (const item of items) {
+                    const song = this.toSongItem(item);
+                    if (song?.id === identifier) {
+                        const track = this.buildTrack(song);
+                        if (track)
+                            return { loadType: 'track', data: track };
+                    }
+                }
+            }
+            return null;
+        }
+        catch {
+            return null;
         }
     }
     /**
