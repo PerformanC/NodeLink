@@ -37,7 +37,7 @@ export default class ConfigValidationManager {
             optional: true
           },
           password: { type: 'string', min: 1, optional: true },
-          useBunServer: { type: 'boolean', default: false, optional: true }
+          useBunServer: { type: 'boolean', default: true, optional: true }
         }
       },
       cluster: {

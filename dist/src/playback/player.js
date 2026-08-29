@@ -2450,6 +2450,8 @@ export class Player {
             this.sponsorBlock.categories = updates.categories;
         if (updates.actionTypes !== undefined)
             this.sponsorBlock.actionTypes = updates.actionTypes;
+        if (updates.skipMarginMs !== undefined)
+            this.sponsorBlock.skipMarginMs = updates.skipMarginMs;
     }
     /**
      * Overrides SponsorBlock segments for the current track.

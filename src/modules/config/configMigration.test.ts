@@ -11,7 +11,7 @@ test('migrateConfig maps legacy flat config to hierarchical structure', () => {
       host: '0.0.0.0',
       port: 3000,
       password: 'legacy-pass',
-      useBunServer: false
+      useBunServer: true
     },
     connection: {
       interval: 12345,
