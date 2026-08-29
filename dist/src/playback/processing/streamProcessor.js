@@ -306,10 +306,9 @@ async function _openRangeStream(url, start, proxy) {
     const res = await fetch(url, {
         headers: { Range: `bytes=${start}-` }
     });
-    if (!res.ok) {
+    if (!res.ok || !res.body) {
         throw new Error(`HTTP ${res.status} while opening range stream`);
     }
-    // @ts-expect-error - Node.js Readable.fromWeb accepts ReadableStream
     return Readable.fromWeb(res.body);
 }
 const _seekOffset = (res) => {

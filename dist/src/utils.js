@@ -1436,6 +1436,52 @@ async function makeRequest(urlString, options, nodelink) {
         return http1makeRequest(urlString, options);
     }
     const localAddress = finalNodeLink?.routePlanner?.getIP?.() ?? undefined;
+    if (typeof Bun !== 'undefined' &&
+        !streamOnly &&
+        !body &&
+        !localAddress &&
+        !options.network?.proxy &&
+        (method === 'GET' || method === 'HEAD')) {
+        let t = null;
+        try {
+            const ac = new AbortController();
+            t = timeout ? setTimeout(() => ac.abort(), timeout) : null;
+            const res = await fetch(urlString, {
+                method,
+                headers: customHeaders,
+                signal: ac.signal
+            });
+            if (t) {
+                clearTimeout(t);
+                t = null;
+            }
+            if (method === 'HEAD' || res.status === 204 || res.status === 304) {
+                return {
+                    statusCode: res.status,
+                    headers: Object.fromEntries(res.headers),
+                    body: ''
+                };
+            }
+            const buf = await res.arrayBuffer();
+            if (buf.byteLength > maxResponseBodyBytes)
+                throw new Error('body too large');
+            const text = Buffer.from(buf).toString();
+            const ct = res.headers.get('content-type') ?? '';
+            const out = ct.includes('application/json') && text ? JSON.parse(text) : text;
+            return {
+                statusCode: res.status,
+                headers: Object.fromEntries(res.headers),
+                body: out
+            };
+        }
+        catch (e) {
+            if (t)
+                clearTimeout(t);
+            const msg = e.message;
+            if (msg === 'body too large' || e instanceof SyntaxError)
+                throw e;
+        }
+    }
     try {
         const url = new URL(urlString);
         if (http2FailedHosts.has(url.host)) {

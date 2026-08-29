@@ -1076,32 +1076,28 @@ const ipcMessageTracker = {
   trackSent(type: string, payload: unknown): void {
     if (!this.enabled) return
     try {
-      const size = Buffer.byteLength(JSON.stringify(payload))
-      const entry = this.sent.get(type) || {
-        count: 0,
-        totalBytes: 0,
-        maxBytes: 0
-      }
-      entry.count++
-      entry.totalBytes += size
-      entry.maxBytes = Math.max(entry.maxBytes, size)
-      this.sent.set(type, entry)
+      const size = v8.serialize(payload).byteLength
+      const e = this.sent.get(type) ?? { count: 0, totalBytes: 0, maxBytes: 0 }
+      e.count++
+      e.totalBytes += size
+      e.maxBytes = Math.max(e.maxBytes, size)
+      this.sent.set(type, e)
     } catch {}
   },
 
   trackReceived(type: string, payload: unknown): void {
     if (!this.enabled) return
     try {
-      const size = Buffer.byteLength(JSON.stringify(payload))
-      const entry = this.received.get(type) || {
+      const size = v8.serialize(payload).byteLength
+      const e = this.received.get(type) ?? {
         count: 0,
         totalBytes: 0,
         maxBytes: 0
       }
-      entry.count++
-      entry.totalBytes += size
-      entry.maxBytes = Math.max(entry.maxBytes, size)
-      this.received.set(type, entry)
+      e.count++
+      e.totalBytes += size
+      e.maxBytes = Math.max(e.maxBytes, size)
+      this.received.set(type, e)
     } catch {}
   },
 

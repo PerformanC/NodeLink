@@ -457,11 +457,10 @@ async function _openRangeStream(
   const res = await fetch(url, {
     headers: { Range: `bytes=${start}-` }
   })
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     throw new Error(`HTTP ${res.status} while opening range stream`)
   }
-  // @ts-expect-error - Node.js Readable.fromWeb accepts ReadableStream
-  return Readable.fromWeb(res.body)
+  return Readable.fromWeb(res.body as never)
 }
 
 type MP4BoxSeekResult = number | { offset?: number; time?: number }
