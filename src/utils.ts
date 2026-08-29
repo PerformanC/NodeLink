@@ -2288,8 +2288,17 @@ async function checkDependencyUpdates(
         fs.existsSync(path.resolve(process.cwd(), 'bun.lock'))
       const isPnpm =
         fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml')) && !isBun
+      const deps =
+        (packageJson as { dependencies?: Record<string, string> })
+          .dependencies || {}
       const pkgTargets = updates
-        .map((u) => `"${u.name}@^${u.latest}"`)
+        .map((u) => {
+          if (u.source === 'GitHub') {
+            const spec = deps[u.name]
+            if (spec) return `"${u.name}@${spec}"`
+          }
+          return `"${u.name}@^${u.latest}"`
+        })
         .join(' ')
       const cmd = isPnpm
         ? `pnpm add ${pkgTargets}`
