@@ -623,6 +623,7 @@ export class CrossfadeController extends Transform {
     this.transition = null
     this.armed = null
     this.mainPending = null
+    this.removeAllListeners()
     callback(error)
   }
 

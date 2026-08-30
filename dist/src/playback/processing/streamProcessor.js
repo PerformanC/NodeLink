@@ -514,6 +514,7 @@ class BaseAudioResource {
             pipe.abort?.();
             pipe.unpipe?.();
             pipe.cleanup?.();
+            pipe.removeAllListeners?.();
             pipe.destroy?.();
         }
         this.pipes.length = 0;
