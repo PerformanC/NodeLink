@@ -437,6 +437,12 @@ export default class CipherManager {
         const { body, error, statusCode } = response;
         this.reportProxyStatus(proxy, !error && statusCode === 200, statusCode ?? 500, Date.now() - startTime);
         const watchPage = typeof body === 'string' ? body : '';
+        if (statusCode === 429) {
+            logger('warn', 'YouTube-Cipher', 'Watch page returned 429, attempting fallback endpoints for player script...');
+            const fallback = await this._fetchFallbackPlayerScriptUrl(videoId);
+            if (fallback)
+                return fallback;
+        }
         if (error || statusCode !== 200 || !watchPage) {
             const reason = error || `Status ${statusCode ?? 'unknown'}`;
             throw new Error(`Failed to fetch watch page for player script: ${reason}`);
@@ -448,5 +454,51 @@ export default class CipherManager {
             return null;
         }
         return `https://www.youtube.com${scriptUrl.replace(/\/[a-z]{2}_[A-Z]{2}\//, '/en_US/')}`;
+    }
+    /**
+     * Fallback for 429 on the watch page.
+     * Tries music.youtube.com then tv_config, each with proxy and without.
+     */
+    async _fetchFallbackPlayerScriptUrl(_videoId) {
+        const userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36';
+        const candidates = [
+            'https://music.youtube.com',
+            'https://www.youtube.com/tv_config?action_get_config=true&client=lb4&theme=cl'
+        ];
+        for (const url of candidates) {
+            for (const withProxy of [true, false]) {
+                const proxy = withProxy ? this.pickProxy(true) : undefined;
+                const start = Date.now();
+                let res;
+                try {
+                    res = await makeRequest(url, {
+                        method: 'GET',
+                        headers: { 'User-Agent': userAgent },
+                        proxy
+                    });
+                }
+                catch {
+                    this.reportProxyStatus(proxy, false, 500, Date.now() - start);
+                    continue;
+                }
+                const { body, error, statusCode } = res;
+                this.reportProxyStatus(proxy, !error && statusCode === 200, statusCode ?? 500, Date.now() - start);
+                if (error || statusCode !== 200 || !body)
+                    continue;
+                const content = typeof body === 'string' ? body : JSON.stringify(body);
+                const jsUrl = content.match(/"jsUrl":"([^"]+)"/)?.[1] ??
+                    content.match(/(\/s\/player\/[^"]+\.js)/)?.[1];
+                if (!jsUrl)
+                    continue;
+                const normalized = jsUrl.startsWith('http')
+                    ? jsUrl
+                    : `https://www.youtube.com${jsUrl.replace(/\/[a-z]{2}_[A-Z]{2}\//, '/en_US/')}`;
+                logger('info', 'YouTube-Cipher', `Obtained player script via fallback ${url} (proxy=${!!withProxy}): ${normalized}`);
+                this.nodelink.credentialManager?.set('yt_player_script_url', normalized, CACHE_DURATION_MS);
+                return normalized;
+            }
+        }
+        logger('warn', 'YouTube-Cipher', 'All fallback endpoints failed to provide player script URL');
+        return null;
     }
 }
