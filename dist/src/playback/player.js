@@ -2130,6 +2130,7 @@ export class Player {
         if (this.connection?.audioStream) {
             this._snapshotPosition();
             this.connection.audioStream.setFilters(this.filters);
+            this._fading('trackEndSchedule', { startPosition: this._realPosition() });
         }
         if (!this.nextResourceIsCrossfade) {
             this.nextResource?.setFilters(this.filters);
@@ -2691,7 +2692,10 @@ export class Player {
             if (!Number.isFinite(total) || total <= 0)
                 return false;
             const startPosition = payload.startPosition || 0;
-            const remaining = Math.max(0, total - startPosition);
+            const playbackSpeed = this._getAudioStream()?.getEffectiveRate?.() ??
+                this._getTimescaleSpeed();
+            const remaining = Math.max(0, total - startPosition) /
+                (playbackSpeed > 0 ? playbackSpeed : 1);
             const teSection = this.fading?.trackEnd;
             const hasFade = teSection &&
                 Number.isFinite(teSection.duration) &&

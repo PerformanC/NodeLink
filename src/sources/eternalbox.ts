@@ -885,7 +885,7 @@ export default class EternalboxSource implements SourceInstance {
     frameEnds: number[]
     totalBytes: number
   } {
-    const mp4boxFile = MP4Box.createFile()
+    const mp4boxFile = MP4Box.createFile(false)
     const frames: Buffer[] = []
     const frameStarts: number[] = []
     const frameEnds: number[] = []
@@ -902,16 +902,16 @@ export default class EternalboxSource implements SourceInstance {
       if (!audioTrack?.timescale || !audioTrack.audio) return
       timescale = audioTrack.timescale
       audioConfig = this._getAudioConfig(audioTrack)
-      mp4boxFile.setExtractionOptions(audioTrack.id, null, { nbSamples: 1 })
+      mp4boxFile.setExtractionOptions(audioTrack.id, null, { nbSamples: 50 })
       mp4boxFile.start()
     }
 
     mp4boxFile.onSamples = (
-      _id: number,
+      id: number,
       _user: unknown,
       samples: MP4Box.Sample[]
     ) => {
-      if (!audioConfig || !timescale) return
+      if (!audioConfig || !timescale || !samples?.length) return
       for (const sample of samples) {
         if (!sample?.data) continue
         const sampleData = Buffer.from(sample.data)
@@ -927,6 +927,15 @@ export default class EternalboxSource implements SourceInstance {
         frameStarts.push(sample.dts / timescale)
         frameEnds.push((sample.dts + sample.duration) / timescale)
       }
+
+      const lastSample = samples[samples.length - 1]
+      const lastNumber = (lastSample as unknown as { number?: number })?.number
+      if (typeof lastNumber === 'number') {
+        const file = mp4boxFile as unknown as {
+          releaseUsedSamples: (trackId: number, sampleNumber: number) => void
+        }
+        file.releaseUsedSamples(id, lastNumber + 1)
+      }
     }
 
     const arrayBuffer = buffer.buffer.slice(
@@ -935,7 +944,16 @@ export default class EternalboxSource implements SourceInstance {
     ) as ArrayBuffer & { fileStart: number }
     arrayBuffer.fileStart = 0
     mp4boxFile.appendBuffer(arrayBuffer)
-    mp4boxFile.flush()
+    try {
+      mp4boxFile.flush()
+    } catch {}
+
+    try {
+      mp4boxFile.stop()
+    } catch {}
+    mp4boxFile.onReady = undefined
+    mp4boxFile.onSamples = undefined
+    mp4boxFile.onError = undefined
 
     return { frames, frameStarts, frameEnds, totalBytes }
   }

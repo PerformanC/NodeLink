@@ -319,63 +319,71 @@ const _seekOffset = (res) => {
 };
 async function _buildMp4SeekOptions(url, seekTimeMs, proxy) {
     const mp4Box = await getMP4Box();
-    const mp4 = mp4Box.createFile();
+    const mp4 = mp4Box.createFile(false);
     const prefetch = [];
     let readyInfo = null;
     let nextStart = 0;
-    await new Promise(async (resolve, reject) => {
-        mp4.onError = (e) => reject(new Error(`MP4Box init error: ${e}`));
-        mp4.onReady = (info) => {
-            readyInfo = info;
-            resolve();
-        };
-        const CHUNK = 512 * 1024;
-        const MAX_FETCHES = 40;
-        try {
-            for (let i = 0; i < MAX_FETCHES && !readyInfo; i++) {
-                const buf = await _fetchRange(url, nextStart, nextStart + CHUNK - 1, proxy);
-                const ab = _toArrayBufferWithFileStart(buf, nextStart);
-                prefetch.push({ fileStart: nextStart, data: ab });
-                const appended = mp4.appendBuffer(ab);
-                if (typeof appended === 'number') {
-                    nextStart = appended;
-                }
-                else {
-                    nextStart += ab.byteLength;
-                }
-                if (!Number.isFinite(nextStart) || nextStart < 0)
-                    break;
-            }
-            if (!readyInfo) {
-                reject(new Error('Could not parse MP4 metadata (moov not found quickly).'));
-            }
-        }
-        catch (e) {
-            reject(e);
-        }
-    });
-    const info = readyInfo;
-    const audioTrack = info?.tracks.find((t) => t.codec?.startsWith('mp4a'));
-    if (!audioTrack) {
-        throw new Error('No AAC track found in MP4/M4A');
-    }
-    mp4.setExtractionOptions(audioTrack.id, null, { nbSamples: 1 });
-    const seekTimeSec = seekTimeMs / 1000;
-    const mp4boxFile = mp4;
-    const seekRes = mp4boxFile.seek(seekTimeSec, true);
-    const startOffset = _seekOffset(seekRes);
     try {
-        mp4.stop();
+        await new Promise(async (resolve, reject) => {
+            mp4.onError = (e) => reject(new Error(`MP4Box init error: ${e}`));
+            mp4.onReady = (info) => {
+                readyInfo = info;
+                resolve();
+            };
+            const CHUNK = 512 * 1024;
+            const MAX_FETCHES = 40;
+            try {
+                for (let i = 0; i < MAX_FETCHES && !readyInfo; i++) {
+                    const buf = await _fetchRange(url, nextStart, nextStart + CHUNK - 1, proxy);
+                    const ab = _toArrayBufferWithFileStart(buf, nextStart);
+                    prefetch.push({ fileStart: nextStart, data: ab });
+                    const appended = mp4.appendBuffer(ab);
+                    if (typeof appended === 'number') {
+                        nextStart = appended;
+                    }
+                    else {
+                        nextStart += ab.byteLength;
+                    }
+                    if (!Number.isFinite(nextStart) || nextStart < 0)
+                        break;
+                }
+                if (!readyInfo) {
+                    reject(new Error('Could not parse MP4 metadata (moov not found quickly).'));
+                }
+            }
+            catch (e) {
+                reject(e);
+            }
+        });
+        const info = readyInfo;
+        const audioTrack = info?.tracks.find((t) => t.codec?.startsWith('mp4a'));
+        if (!audioTrack) {
+            throw new Error('No AAC track found in MP4/M4A');
+        }
+        mp4.setExtractionOptions(audioTrack.id, null, { nbSamples: 1 });
+        const seekTimeSec = seekTimeMs / 1000;
+        const mp4boxFile = mp4;
+        const seekRes = mp4boxFile.seek(seekTimeSec, true);
+        const startOffset = _seekOffset(seekRes);
+        if (!Number.isFinite(startOffset) || startOffset < 0) {
+            throw new Error(`MP4Box seek returned invalid offset: ${JSON.stringify(seekRes)}`);
+        }
+        return {
+            prefetch,
+            baseFileStart: startOffset,
+            seekTimeSec
+        };
     }
-    catch { }
-    if (!Number.isFinite(startOffset) || startOffset < 0) {
-        throw new Error(`MP4Box seek returned invalid offset: ${JSON.stringify(seekRes)}`);
+    finally {
+        try {
+            mp4.stop();
+            mp4.flush();
+        }
+        catch { }
+        mp4.onReady = null;
+        mp4.onSamples = null;
+        mp4.onError = null;
     }
-    return {
-        prefetch,
-        baseFileStart: startOffset,
-        seekTimeSec
-    };
 }
 const _createSeekableProxyRequest = (proxy) => {
     if (!proxy)
@@ -502,8 +510,10 @@ class BaseAudioResource {
         }
         for (let i = this.pipes.length - 1; i >= 0; i--) {
             const pipe = this.pipes[i];
+            pipe.resume?.();
             pipe.abort?.();
             pipe.unpipe?.();
+            pipe.cleanup?.();
             pipe.destroy?.();
         }
         this.pipes.length = 0;
@@ -693,6 +703,9 @@ class SymphoniaDecoderStream extends Transform {
     abort() {
         this._aborted = true;
         this._cancelTimers();
+    }
+    cleanup() {
+        this._cleanup();
     }
     _cancelTimers() {
         if (this._timeoutId) {
@@ -1044,15 +1057,28 @@ class AACDecoderStream extends Transform {
         })
             .catch((err) => this.emit('error', err));
     }
-    _destroy(err, cb) {
+    cleanup() {
         this.ringBuffer.dispose();
         this.pendingChunks.length = 0;
-        if (this.decoder)
-            this.decoder.free?.();
+        if (this.decoder) {
+            try {
+                this.decoder.free?.();
+                this.decoder.destroy?.();
+            }
+            catch { }
+            this.decoder = null;
+        }
         if (this.resampler) {
-            this.resampler.destroy?.();
+            try {
+                this.resampler.destroy?.();
+            }
+            catch { }
             this.resampler = null;
         }
+        this.resamplerCreationPromise = null;
+    }
+    _destroy(err, cb) {
+        this.cleanup();
         super._destroy(err, cb);
     }
     _downmixToStereo(interleavedPCM, channels, samplesPerChannel) {
@@ -1213,12 +1239,25 @@ class AACDecoderStream extends Transform {
                                         converterType: _getResamplerConverterType(this.resamplingQuality, libSampleRate)
                                     }))
                                         .then((resampler) => {
+                                        if (this.destroyed || this.closed) {
+                                            try {
+                                                resampler.destroy?.();
+                                            }
+                                            catch { }
+                                            return null;
+                                        }
                                         this.resampler = resampler;
                                         this.resamplerCreationPromise = null;
                                         return resampler;
+                                    })
+                                        .catch((err) => {
+                                        this.resamplerCreationPromise = null;
+                                        throw err;
                                     });
                                 }
                                 const resampler = await this.resamplerCreationPromise;
+                                if (!resampler || this.destroyed || this.closed)
+                                    return;
                                 const resampled = resampler.full(pcm);
                                 const pcmInt16 = new Int16Array(resampled.length);
                                 for (let i = 0; i < resampled.length; i++) {
@@ -1268,12 +1307,7 @@ class AACDecoderStream extends Transform {
             }
             catch (_err) { }
         }
-        if (this.resampler) {
-            this.resampler.destroy?.();
-            this.resampler = null;
-        }
-        if (this.decoder)
-            this.decoder.destroy?.();
+        this.cleanup();
         callback();
     }
 }
@@ -1375,7 +1409,7 @@ class MP4ToAACStream extends Transform {
         }
         this._initPromise = (async () => {
             const mp4Box = await getMP4Box();
-            this.mp4boxFile = mp4Box.createFile(false);
+            this.mp4boxFile = mp4Box.createFile(true);
             this._setupMP4BoxHandlers();
         })();
         await this._initPromise;
