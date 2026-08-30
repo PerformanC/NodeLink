@@ -717,6 +717,57 @@ export default class SpotifySource {
                 });
             }
         }
+        else if (type === 'playlist' && searchV2.playlists) {
+            for (const item of searchV2.playlists.items) {
+                const playlist = item.data;
+                const id = playlist.uri.split(':').pop() || '';
+                const artwork = playlist.images?.items?.[0]?.sources?.[0]?.url || null;
+                const owner = playlist.ownerV2?.data?.name || 'Unknown';
+                const info = {
+                    title: playlist.name,
+                    author: owner,
+                    length: 0,
+                    identifier: id,
+                    isSeekable: false,
+                    isStream: false,
+                    uri: `https://open.spotify.com/playlist/${id}`,
+                    artworkUrl: artwork,
+                    isrc: null,
+                    sourceName: 'spotify',
+                    position: 0
+                };
+                results.push({
+                    encoded: encodeTrack({ ...info, details: [] }),
+                    info,
+                    pluginInfo: { type: 'playlist' }
+                });
+            }
+        }
+        else if (type === 'artist' && searchV2.artists) {
+            for (const item of searchV2.artists.items) {
+                const artist = item.data;
+                const id = artist.uri.split(':').pop() || '';
+                const artwork = artist.visuals?.avatarImage?.sources?.[0]?.url || null;
+                const info = {
+                    title: artist.profile.name,
+                    author: 'Spotify',
+                    length: 0,
+                    identifier: id,
+                    isSeekable: false,
+                    isStream: false,
+                    uri: `https://open.spotify.com/artist/${id}`,
+                    artworkUrl: artwork,
+                    isrc: null,
+                    sourceName: 'spotify',
+                    position: 0
+                };
+                results.push({
+                    encoded: encodeTrack({ ...info, details: [] }),
+                    info,
+                    pluginInfo: { type: 'artist' }
+                });
+            }
+        }
         return results;
     }
     /**
