@@ -193,7 +193,9 @@ export class Player {
             const timeoutId = setTimeout(() => {
                 conn.off(event, handler);
                 logger('warn', 'Player', `waitEvent: Timeout waiting for '${event}' on guild ${this.guildId}`);
-                reject(new Error(`Event ${event} timed out after ${timeout}ms for guild ${this.guildId}`));
+                reject(new Error(`Event ${event} timed out after ${timeout}ms for guild ${this.guildId}`, event === 'playerStateChange'
+                    ? { cause: 'VOICE_STATE_TIMEOUT' }
+                    : undefined));
             }, timeout);
             conn.on(event, handler);
         });
@@ -324,6 +326,34 @@ export class Player {
         }
     }
     /**
+     * Tears down a dead voice connection and builds a fresh one.
+     *
+     * The voice library keeps per-connection reconnect counters, so reusing a
+     * connection that hit the circuit breaker would trip it again instantly.
+     * A new connection object resets those counters.
+     */
+    _resetVoiceConnection() {
+        const conn = this.connection;
+        if (!conn || this.destroying)
+            return;
+        logger('warn', 'Player', `Resetting dead voice connection for guild ${this.guildId}`);
+        try {
+            conn.removeListener('stateChange', this._connStateHandler);
+            conn.removeListener('playerStateChange', this._connPlayHandler);
+            conn.removeListener('error', this._connErrorHandler);
+            conn.removeListener('stuck', this._connStuckHandler);
+            conn.removeListener('speakStart', this._connSpeakStartHandler);
+            if (this.nodelink.voiceRelay?.detach) {
+                this.nodelink.voiceRelay.detach(conn);
+            }
+            conn.destroy();
+        }
+        catch { }
+        this.connection = null;
+        this.connStatus = 'disconnected';
+        this._initConnection();
+    }
+    /**
      * Handles connection state transitions.
      */
     _onConn(state) {
@@ -369,10 +399,11 @@ export class Player {
                     track: this.track,
                     exception: {
                         message: 'Voice reconnection circuit breaker triggered',
-                        severity: 'fault',
+                        severity: 'suspicious', // setting this to fault will make the client recive this as a trackError.
                         cause: 'RECONNECT_CIRCUIT_BREAKER'
                     }
                 });
+                this._resetVoiceConnection();
             }
             this.emitEvent(GatewayEvents.WEBSOCKET_CLOSED, {
                 code: state.code,
@@ -536,8 +567,20 @@ export class Player {
                 cause = 'VOICE_CONNECTION_RESET';
                 shouldStop = false;
             }
+            else if (error.cause === 'VOICE_CONNECTION_TIMEOUT' ||
+                error.message === 'Voice connection timed out') {
+                logger('warn', 'Player', `Voice connection timed out for guild ${this.guildId}. Stopping this playback attempt.`);
+                severity = 'suspicious';
+                cause = 'VOICE_CONNECTION_TIMEOUT';
+            }
+            else if (error.cause === 'VOICE_STATE_TIMEOUT') {
+                logger('warn', 'Player', `Voice playback state timed out for guild ${this.guildId}. Stopping this playback attempt.`);
+                severity = 'suspicious';
+                cause = 'VOICE_STATE_TIMEOUT';
+            }
             else if (error.message.includes('stream') ||
                 error.message.includes('timeout') ||
+                error.message.includes('timed out') ||
                 error.name === 'AbortError') {
                 logger('warn', 'Player', `Stream error detected for guild ${this.guildId}. Stopping playback.`);
                 severity = 'common';
@@ -1148,9 +1191,7 @@ export class Player {
             }
         }
         if (!this.connection?.udpInfo?.secretKey) {
-            const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`;
-            logger('error', 'Player', errorMessage);
-            this._onError(new Error(errorMessage));
+            this._onError(new Error(`Voice connection timed out for guild ${this.guildId} (missing UDP info).`, { cause: 'VOICE_CONNECTION_TIMEOUT' }));
             return false;
         }
         const resolvedSourceName = urlData.newTrack?.info
@@ -1694,12 +1735,13 @@ export class Player {
         }
         if (!this.connection?.udpInfo?.secretKey) {
             logger('debug', 'Player', `Waiting for voice connection to be ready for guild ${this.guildId}`);
-            await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
+            try {
+                await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
+            }
+            catch { }
         }
         if (!this.connection?.udpInfo?.secretKey) {
-            const errorMessage = `Voice connection for guild ${this.guildId} is not ready (missing UDP info). Aborting playback.`;
-            logger('error', 'Player', errorMessage);
-            this._onError(new Error(errorMessage));
+            this._onError(new Error(`Voice connection timed out for guild ${this.guildId} (missing UDP info).`, { cause: 'VOICE_CONNECTION_TIMEOUT' }));
             return false;
         }
         const fetched = await this._fetchResource(this.track.info, urlData, position);
@@ -2206,11 +2248,27 @@ export class Player {
             changed = true;
         }
         if (this.voice.sessionId && this.voice.token && this.voice.endpoint) {
-            if (!changed && !force) {
+            // The voice library wipes voiceServer/udpInfo when the connection dies
+            // (e.g. reconnect circuit breaker) but keeps matching payload values on
+            // our side, so an identical Discord re-send would hit the early return
+            // below and never reconnect. Bypass the skip when the connection is
+            // down and re-supply state plus an explicit connect instead.
+            // Note: `connecting` is deliberately not dead - a handshake is already
+            // in flight and re-calling connect() would tear it down and restart it.
+            const connectionDead = !this.connection ||
+                this.connStatus === 'disconnected' ||
+                this.connStatus === 'destroyed' ||
+                !this.connection.voiceServer;
+            if (!changed && !force && !connectionDead) {
                 logger('debug', 'Player', `Voice state for guild ${this.guildId} is unchanged. Skipping update.`);
                 return;
             }
-            logger('debug', 'Player', `Updating voice state for guild ${this.guildId}`);
+            if (connectionDead) {
+                logger('warn', 'Player', `Voice connection is down for guild ${this.guildId} (status: ${this.connStatus}). Re-supplying voice state and reconnecting.`);
+            }
+            else {
+                logger('debug', 'Player', `Updating voice state for guild ${this.guildId}`);
+            }
             if (!this.connection)
                 this._initConnection();
             this.connection?.voiceStateUpdate({

@@ -191,13 +191,14 @@ interface LiveYoutubeConfig {
  */
 interface GlobalNodelinkLike {
   sessions: {
-    values: () => IterableIterator<{
-      id: string
-      userId?: string
-      players: {
-        players: Map<string, unknown>
-      }
-    }>
+    get: (sessionId: string) =>
+      | {
+          id: string
+          players: {
+            players: Map<string, unknown>
+          }
+        }
+      | undefined
   }
   handleIPCMessage: (msg: unknown) => void
   handleVoiceFrame?: (payload: Buffer) => void
@@ -1370,14 +1371,13 @@ export default class WorkerManager {
     }
 
     if (affectedGuilds.length > 0) {
-      for (const playerKey of affectedGuilds) {
-        const [guildId] = playerKey.split(':')
-        const nodelink = getGlobalNodelink()
-        if (!nodelink) continue
-        for (const session of nodelink.sessions.values()) {
-          const sessionKey = `${guildId}:${session.userId}`
-          if (session.players.players.has(sessionKey)) {
-            session.players.players.delete(sessionKey)
+      const nodelink = getGlobalNodelink()
+      if (nodelink) {
+        for (const playerKey of affectedGuilds) {
+          const [sessionId] = playerKey.split(':')
+          if (!sessionId) continue
+          const session = nodelink.sessions.get(sessionId)
+          if (session?.players.players.delete(playerKey)) {
             logger(
               'debug',
               'Cluster',
@@ -1385,13 +1385,12 @@ export default class WorkerManager {
             )
           }
         }
-      }
 
-      const nodelink = getGlobalNodelink()
-      nodelink?.handleIPCMessage({
-        type: 'workerFailed',
-        payload: { workerId: worker.id, affectedGuilds }
-      })
+        nodelink.handleIPCMessage({
+          type: 'workerFailed',
+          payload: { workerId: worker.id, affectedGuilds }
+        })
+      }
     }
 
     try {

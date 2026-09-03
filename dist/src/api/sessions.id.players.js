@@ -544,7 +544,7 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
         await session.players.seek(guildId, payload.position);
     }
     if (payload.endTime !== undefined) {
-        const playerState = await session.players.toJSON(guildId);
+        const playerState = await session.players.toJSON(guildId, true);
         await session.players.seek(guildId, playerState.state.position, payload.endTime ?? undefined);
     }
     if (payload.filters !== undefined) {
@@ -562,7 +562,7 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
     if (payload.ducking !== undefined) {
         await session.players.setDucking(guildId, payload.ducking);
     }
-    return await session.players.toJSON(guildId);
+    return await session.players.toJSON(guildId, true);
 }
 /**
  * Handles requests for the players route.

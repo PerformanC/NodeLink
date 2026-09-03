@@ -925,24 +925,22 @@ export default class WorkerManager {
             logger('warn', 'Cluster', `Player ${playerKey} unassigned due to worker ${workerId} exit. Will be reassigned on next request.`);
         }
         if (affectedGuilds.length > 0) {
-            for (const playerKey of affectedGuilds) {
-                const [guildId] = playerKey.split(':');
-                const nodelink = getGlobalNodelink();
-                if (!nodelink)
-                    continue;
-                for (const session of nodelink.sessions.values()) {
-                    const sessionKey = `${guildId}:${session.userId}`;
-                    if (session.players.players.has(sessionKey)) {
-                        session.players.players.delete(sessionKey);
+            const nodelink = getGlobalNodelink();
+            if (nodelink) {
+                for (const playerKey of affectedGuilds) {
+                    const [sessionId] = playerKey.split(':');
+                    if (!sessionId)
+                        continue;
+                    const session = nodelink.sessions.get(sessionId);
+                    if (session?.players.players.delete(playerKey)) {
                         logger('debug', 'Cluster', `Removed stale player placeholder for ${playerKey} from session ${session.id}`);
                     }
                 }
+                nodelink.handleIPCMessage({
+                    type: 'workerFailed',
+                    payload: { workerId: worker.id, affectedGuilds }
+                });
             }
-            const nodelink = getGlobalNodelink();
-            nodelink?.handleIPCMessage({
-                type: 'workerFailed',
-                payload: { workerId: worker.id, affectedGuilds }
-            });
         }
         try {
             worker.process.kill();

@@ -513,9 +513,10 @@ interface PlayersRoutePlayerManager {
    * Serializes player state.
    *
    * @param guildId - Target guild identifier.
+   * @param repairMissing - Whether a missing cluster player should be repaired.
    * @returns Promise resolving to the player JSON payload.
    */
-  toJSON: (guildId: string) => Promise<PlayerStateJSON>
+  toJSON: (guildId: string, repairMissing?: boolean) => Promise<PlayerStateJSON>
 }
 
 /**
@@ -1317,7 +1318,7 @@ async function applyPlayerPatch(
   }
 
   if (payload.endTime !== undefined) {
-    const playerState = await session.players.toJSON(guildId)
+    const playerState = await session.players.toJSON(guildId, true)
     await session.players.seek(
       guildId,
       playerState.state.position,
@@ -1354,7 +1355,7 @@ async function applyPlayerPatch(
     await session.players.setDucking(guildId, payload.ducking)
   }
 
-  return await session.players.toJSON(guildId)
+  return await session.players.toJSON(guildId, true)
 }
 
 /**

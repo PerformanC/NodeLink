@@ -90,27 +90,46 @@ export default class PlayerManager {
      * @param guildId - Target guild id.
      * @param command - Command name.
      * @param args - Command argument list.
+     * @param repairMissing - Recreates a missing worker player and retries once.
      * @internal
      */
-    async runClusterPlayerCommand(guildId, command, args) {
+    async runClusterPlayerCommand(guildId, command, args, repairMissing = false) {
         const session = this.getSessionOrThrow();
         const playerKey = this.getPlayerKey(guildId);
         const workerManager = this.getWorkerManagerOrThrow();
         const worker = workerManager.getWorkerForGuild(playerKey);
-        if (!worker) {
-            throw new Error('Player not assigned to a worker.');
+        let missingMessage = 'Player not assigned to a worker.';
+        if (worker) {
+            const result = await workerManager.execute(worker, 'playerCommand', {
+                sessionId: this.sessionId,
+                guildId,
+                userId: this.getSessionUserId(session),
+                command,
+                args: [...args]
+            });
+            if (!result?.playerNotFound) {
+                return result;
+            }
+            missingMessage = 'Player not found.';
         }
-        const result = await workerManager.execute(worker, 'playerCommand', {
-            sessionId: this.sessionId,
-            guildId,
-            userId: this.getSessionUserId(session),
-            command,
-            args: [...args]
-        });
-        if (result?.playerNotFound) {
-            throw new Error('Player not found.');
+        workerManager.unassignGuild(playerKey);
+        this.players.delete(playerKey);
+        if (!repairMissing) {
+            throw new Error(missingMessage);
         }
-        return result;
+        logger('warn', 'PlayerManager', `Repairing missing cluster player for guild ${guildId} (session: ${this.sessionId})`);
+        await this.create(guildId);
+        return this.runClusterPlayerCommand(guildId, command, args);
+    }
+    /**
+     * Executes a mutating player command and repairs missing worker state once.
+     * @param guildId - Target guild id.
+     * @param command - Command name.
+     * @param args - Command argument list.
+     * @internal
+     */
+    runClusterMutation(guildId, command, args) {
+        return this.runClusterPlayerCommand(guildId, command, args, true);
     }
     /**
      * Runs configured player interceptors for the given action.
@@ -280,7 +299,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'play', [trackPayload]);
+            return this.runClusterMutation(guildId, 'play', [trackPayload]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.play(trackPayload);
@@ -293,7 +312,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'preload', [trackPayload]);
+            return this.runClusterMutation(guildId, 'preload', [trackPayload]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.preload(trackPayload);
@@ -306,7 +325,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'clearNextTrack', []);
+            return this.runClusterMutation(guildId, 'clearNextTrack', []);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.clearNextTrack();
@@ -319,7 +338,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'stop', []);
+            return this.runClusterMutation(guildId, 'stop', []);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.stop();
@@ -332,7 +351,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'pause', [shouldPause]);
+            return this.runClusterMutation(guildId, 'pause', [shouldPause]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.pause(shouldPause);
@@ -345,7 +364,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'seek', [position, endTime]);
+            return this.runClusterMutation(guildId, 'seek', [position, endTime]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.seek(position, endTime);
@@ -358,7 +377,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'volume', [level]);
+            return this.runClusterMutation(guildId, 'volume', [level]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.volume(level);
@@ -371,7 +390,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'setFilters', [
+            return this.runClusterMutation(guildId, 'setFilters', [
                 filtersPayload
             ]);
         }
@@ -386,7 +405,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'setFading', [fadingConfig]);
+            return this.runClusterMutation(guildId, 'setFading', [fadingConfig]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.setFading(fadingConfig);
@@ -399,7 +418,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'setCrossfade', [
+            return this.runClusterMutation(guildId, 'setCrossfade', [
                 crossfadeConfig
             ]);
         }
@@ -411,7 +430,7 @@ export default class PlayerManager {
      */
     async setLoudnessNormalizer(guildId, enabled) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'setLoudnessNormalizer', [
+            return this.runClusterMutation(guildId, 'setLoudnessNormalizer', [
                 enabled
             ]);
         }
@@ -426,7 +445,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'updateVoice', [
+            return this.runClusterMutation(guildId, 'updateVoice', [
                 voicePayload
             ]);
         }
@@ -436,10 +455,12 @@ export default class PlayerManager {
     }
     /**
      * Serializes player state to a JSON-compatible object.
+     * @param guildId - Target guild id.
+     * @param repairMissing - Recreates a missing worker player before retrying.
      */
-    async toJSON(guildId) {
+    async toJSON(guildId, repairMissing = false) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'toJSON', []);
+            return this.runClusterPlayerCommand(guildId, 'toJSON', [], repairMissing);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.toJSON();
@@ -449,7 +470,7 @@ export default class PlayerManager {
      */
     async addMix(guildId, trackPayload, volume = null) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'addMix', [
+            return this.runClusterMutation(guildId, 'addMix', [
                 trackPayload,
                 volume
             ]);
@@ -462,7 +483,7 @@ export default class PlayerManager {
      */
     async removeMix(guildId, mixId) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'removeMix', [mixId]);
+            return this.runClusterMutation(guildId, 'removeMix', [mixId]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.removeMix(mixId);
@@ -472,7 +493,7 @@ export default class PlayerManager {
      */
     async updateMix(guildId, mixId, volume) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'updateMix', [mixId, volume]);
+            return this.runClusterMutation(guildId, 'updateMix', [mixId, volume]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.updateMix(mixId, volume);
@@ -492,7 +513,7 @@ export default class PlayerManager {
      */
     async subscribeLyrics(guildId, skipTrackSource) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'subscribeLyrics', [
+            return this.runClusterMutation(guildId, 'subscribeLyrics', [
                 skipTrackSource
             ]);
         }
@@ -505,7 +526,7 @@ export default class PlayerManager {
      */
     async unsubscribeLyrics(guildId) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'unsubscribeLyrics', []);
+            return this.runClusterMutation(guildId, 'unsubscribeLyrics', []);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         await player.unsubscribeLyrics();
@@ -526,7 +547,7 @@ export default class PlayerManager {
      */
     async updateSponsorBlock(guildId, updates) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'updateSponsorBlock', [
+            return this.runClusterMutation(guildId, 'updateSponsorBlock', [
                 updates
             ]);
         }
@@ -539,7 +560,7 @@ export default class PlayerManager {
      */
     async setSponsorBlockSegments(guildId, segments) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'setSponsorBlockSegments', [
+            return this.runClusterMutation(guildId, 'setSponsorBlockSegments', [
                 segments
             ]);
         }
@@ -552,7 +573,7 @@ export default class PlayerManager {
      */
     async clearSponsorBlock(guildId) {
         if (this.isCluster) {
-            return this.runClusterPlayerCommand(guildId, 'clearSponsorBlock', []);
+            return this.runClusterMutation(guildId, 'clearSponsorBlock', []);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         player.clearSponsorBlock();
