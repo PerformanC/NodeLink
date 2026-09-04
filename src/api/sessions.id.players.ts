@@ -434,7 +434,7 @@ interface PlayersRoutePlayerManager {
   seek: (
     guildId: string,
     position?: number,
-    endTime?: number
+    endTime?: number | null
   ) => Promise<boolean | object>
 
   /**
@@ -1322,7 +1322,7 @@ async function applyPlayerPatch(
     await session.players.seek(
       guildId,
       playerState.state.position,
-      payload.endTime ?? undefined
+      payload.endTime
     )
   }
 
