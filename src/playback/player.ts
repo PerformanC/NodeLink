@@ -2137,7 +2137,7 @@ export class Player {
    */
   public async seek(
     position?: number,
-    endTime?: number,
+    endTime?: number | null,
     forceLegacy = false
   ): Promise<boolean> {
     logger(
@@ -2240,12 +2240,12 @@ export class Player {
       if (forceLegacy) {
         seekPromise = this._legacySeek(
           seekPosition,
-          endTime !== undefined ? endTime : this.track.endTime
+          endTime === null ? undefined : (endTime ?? this.track.endTime)
         )
       } else if (canNativeSeek) {
         seekPromise = this._seekUsingSource(
           seekPosition,
-          endTime !== undefined ? endTime : this.track.endTime
+          endTime === null ? undefined : (endTime ?? this.track.endTime)
         )
       } else if (
         !unsupportedSources.includes(resolvedSourceName) &&
@@ -2255,12 +2255,12 @@ export class Player {
       ) {
         seekPromise = this._seekeableSeek(
           seekPosition,
-          endTime !== undefined ? endTime : this.track.endTime
+          endTime === null ? undefined : (endTime ?? this.track.endTime)
         )
       } else {
         seekPromise = this._legacySeek(
           seekPosition,
-          endTime !== undefined ? endTime : this.track.endTime
+          endTime === null ? undefined : (endTime ?? this.track.endTime)
         )
       }
 

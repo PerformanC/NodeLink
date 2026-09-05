@@ -687,7 +687,7 @@ export default class PlayerManager {
   async seek(
     guildId: string,
     position?: number,
-    endTime?: number
+    endTime?: number | null
   ): Promise<boolean | PlayerCommandResponse> {
     const interception = await this._runInterceptors(
       'seek',

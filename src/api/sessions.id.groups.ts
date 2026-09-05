@@ -105,7 +105,7 @@ interface GroupsRoutePlayerManager {
   seek: (
     guildId: string,
     position?: number,
-    endTime?: number
+    endTime?: number | null
   ) => Promise<boolean | object>
   volume: (guildId: string, level: number) => Promise<boolean | object>
   setFilters: (
@@ -544,7 +544,7 @@ async function applyGroupPatch(
         await session.players.seek(
           guildId,
           playerState.state.position,
-          payload.endTime ?? undefined
+          payload.endTime
         )
       }
 
