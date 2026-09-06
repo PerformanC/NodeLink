@@ -21,7 +21,7 @@
         "@ecliptia/seekable-stream": "github:1Lucas1apk/seekable-stream",
         "@performanc/pwsl-server": "github:performanc/internals#PWSL-server",
         "@performanc/voice": "github:PerformanC/voice",
-        "@toddynnn/symphonia-decoder": "^1.2.1",
+        "@toddynnn/symphonia-decoder": "^1.2.3",
         "@toddynnn/voice-opus": "^1.0.1",
         "fastest-validator": "^1.19.1",
         "mp4box": "^2.4.1",

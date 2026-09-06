@@ -2220,16 +2220,19 @@ class StreamAudioResource extends BaseAudioResource {
         return decoder;
     }
     _createOpusPipeline(stream, type) {
+        if (!_isWebmFormat(type.toLowerCase())) {
+            // Ogg Opus decodes natively in Symphonia (libopus adapter)
+            // symphonia-adapter-libopus, only has the decoder.
+            return this._createSymphoniaPipeline(stream, type);
+        }
         const decoder = new OpusDecoder({
             rate: AUDIO_CONFIG.sampleRate,
             channels: AUDIO_CONFIG.channels
         });
         const streams = [stream];
-        if (_isWebmFormat(type.toLowerCase())) {
-            const demuxer = new WebmOpusDemuxer();
-            streams.push(demuxer);
-            this.pipes?.push(demuxer);
-        }
+        const demuxer = new WebmOpusDemuxer();
+        streams.push(demuxer);
+        this.pipes?.push(demuxer);
         streams.push(decoder);
         this.pipes?.push(decoder);
         pipeline(streams, (err) => {
@@ -2527,11 +2530,16 @@ export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, 
         case SupportedFormats.OPUS: {
             if (_isWebmFormat(type.toLowerCase())) {
                 streams.push(new WebmOpusDemuxer());
+                streams.push(new OpusDecoder({
+                    rate: AUDIO_CONFIG.sampleRate,
+                    channels: AUDIO_CONFIG.channels
+                }));
             }
-            streams.push(new OpusDecoder({
-                rate: AUDIO_CONFIG.sampleRate,
-                channels: AUDIO_CONFIG.channels
-            }));
+            else {
+                streams.push(new SymphoniaDecoderStream({
+                    codecRegistryHint: _getSymphoniaCodecHint(type)
+                }));
+            }
             break;
         }
         default:
