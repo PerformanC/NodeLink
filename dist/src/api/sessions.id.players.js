@@ -545,7 +545,7 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
     }
     if (payload.endTime !== undefined) {
         const playerState = await session.players.toJSON(guildId, true);
-        await session.players.seek(guildId, playerState.state.position, payload.endTime ?? undefined);
+        await session.players.seek(guildId, playerState.state.position, payload.endTime);
     }
     if (payload.filters !== undefined) {
         await session.players.setFilters(guildId, payload.filters);

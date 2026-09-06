@@ -3352,8 +3352,8 @@ export class Player {
         )
         return
       }
-
-      if (connectionDead) {
+      // null here means the connection is still connecting, so its not "dead".
+      if (connectionDead && this.connection !== null) {
         logger(
           'warn',
           'Player',

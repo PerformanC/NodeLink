@@ -1482,19 +1482,19 @@ export class Player {
                 (this.streamInfo?.protocol === 'sabr' ||
                     (sourceName === 'deezer' && resolvedSourceName === 'deezer'));
             if (forceLegacy) {
-                seekPromise = this._legacySeek(seekPosition, endTime !== undefined ? endTime : this.track.endTime);
+                seekPromise = this._legacySeek(seekPosition, endTime === null ? undefined : (endTime ?? this.track.endTime));
             }
             else if (canNativeSeek) {
-                seekPromise = this._seekUsingSource(seekPosition, endTime !== undefined ? endTime : this.track.endTime);
+                seekPromise = this._seekUsingSource(seekPosition, endTime === null ? undefined : (endTime ?? this.track.endTime));
             }
             else if (!unsupportedSources.includes(resolvedSourceName) &&
                 this.streamInfo?.url &&
                 this.streamInfo.protocol !== 'hls' &&
                 this.streamInfo.protocol !== 'dash') {
-                seekPromise = this._seekeableSeek(seekPosition, endTime !== undefined ? endTime : this.track.endTime);
+                seekPromise = this._seekeableSeek(seekPosition, endTime === null ? undefined : (endTime ?? this.track.endTime));
             }
             else {
-                seekPromise = this._legacySeek(seekPosition, endTime !== undefined ? endTime : this.track.endTime);
+                seekPromise = this._legacySeek(seekPosition, endTime === null ? undefined : (endTime ?? this.track.endTime));
             }
             const startPosition = this._realPosition();
             const result = await seekPromise;
@@ -2263,7 +2263,8 @@ export class Player {
                 logger('debug', 'Player', `Voice state for guild ${this.guildId} is unchanged. Skipping update.`);
                 return;
             }
-            if (connectionDead) {
+            // null here means the connection is still connecting, so its not "dead".
+            if (connectionDead && this.connection !== null) {
                 logger('warn', 'Player', `Voice connection is down for guild ${this.guildId} (status: ${this.connStatus}). Re-supplying voice state and reconnecting.`);
             }
             else {

@@ -279,7 +279,7 @@ async function applyGroupPatch(runtime, session, groupId, payload) {
             }
             if (payload.endTime !== undefined && trackToPlay === undefined) {
                 const playerState = await session.players.toJSON(guildId);
-                await session.players.seek(guildId, playerState.state.position, payload.endTime ?? undefined);
+                await session.players.seek(guildId, playerState.state.position, payload.endTime);
             }
             if (payload.filters !== undefined) {
                 await session.players.setFilters(guildId, payload.filters);
