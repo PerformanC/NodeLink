@@ -1423,24 +1423,96 @@ export default class SpotifySource implements SourceInstance {
   public async getRecommendations(seed: string): Promise<SourceResult> {
     const token = this.anonymousToken || this.accessToken
     if (!token) return { loadType: 'empty', data: {} }
+
+    let id = seed.trim()
+    if (id.includes('seed_tracks=')) {
+      const match = id.match(/seed_tracks=([A-Za-z0-9]+)/)
+      if (match?.[1]) id = match[1]
+    } else if (id.startsWith('http://') || id.startsWith('https://')) {
+      const match = id.match(/\/track\/([A-Za-z0-9]+)/)
+      if (match?.[1]) id = match[1]
+    } else if (id.startsWith('spotify:track:')) {
+      id = id.split(':')[2] || id
+    } else if (id.includes(',')) {
+      const first = id.split(',')[0]
+      if (first) id = first.trim()
+    }
+
     try {
-      let id = seed
-      if (seed.includes('seed_tracks=')) {
-        const parts = seed.split('seed_tracks=')
-        if (parts[1]) id = parts[1].split('&')[0] || seed
-      }
       const res = await http1makeRequest(
         `${SPOTIFY_CLIENT_API_URL}/inspiredby-mix/v2/seed_to_playlist/spotify:track:${id}?response-format=json`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       const body = res.body as { mediaItems?: Array<{ uri: string }> }
       if (res.statusCode === 200 && body.mediaItems?.[0]?.uri) {
-        return this._resolvePlaylist(body.mediaItems[0].uri.split(':')[2] || '')
+        const playlistResult = await this._resolvePlaylist(
+          body.mediaItems[0].uri.split(':')[2] || ''
+        )
+        if (
+          playlistResult.loadType === 'playlist' &&
+          Array.isArray((playlistResult.data as { tracks?: TrackData[] }).tracks) &&
+          (playlistResult.data as { tracks: TrackData[] }).tracks.length > 0
+        ) {
+          return playlistResult
+        }
       }
-      return { loadType: 'empty', data: {} }
-    } catch {
-      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      logger(
+        'debug',
+        'Spotify',
+        `Radio mix recommendations failed for ${id}: ${(e as Error).message}`
+      )
     }
+
+    try {
+      const maxTracks =
+        (this.nodelink.options.playback.maxPlaylistLength as number) || 50
+      const limit = Math.min(Math.max(maxTracks, 1), 50)
+
+      const data = await this._internalApiRequest<{
+        seoRecommendedTrack?: {
+          items?: Array<{ data: SpotifyGraphQLTrack }>
+        }
+      }>(QUERIES.getRecommendations, {
+        uri: `spotify:track:${id}`,
+        limit
+      })
+
+      const items = data?.seoRecommendedTrack?.items || []
+      if (items.length > 0) {
+        const tracks: TrackData[] = []
+        for (const item of items) {
+          if (!item?.data) continue
+          const track = this._isLocalTrack(item.data)
+            ? await this._buildLocalTrack(item.data)
+            : this._buildTrackFromInternal(item.data)
+          if (track) tracks.push(track)
+          if (tracks.length >= maxTracks) break
+        }
+
+        if (tracks.length > 0) {
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: `Spotify Recommendations for ${id}`,
+                selectedTrack: 0
+              },
+              tracks,
+              pluginInfo: {}
+            }
+          }
+        }
+      }
+    } catch (e) {
+      logger(
+        'debug',
+        'Spotify',
+        `GraphQL recommendations fallback failed for ${id}: ${(e as Error).message}`
+      )
+    }
+
+    return { loadType: 'empty', data: {} }
   }
 
   /**
