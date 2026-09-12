@@ -1,5 +1,5 @@
 import { pipeline } from 'node:stream';
-import { decodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Cached dynamic import for the stream processor module.
  */
@@ -19,7 +19,7 @@ const LOAD_STREAM_HEADERS = {
  */
 function getStreamProcessorModule() {
     if (!streamProcessorModulePromise) {
-        streamProcessorModulePromise = import("../playback/processing/streamProcessor.js");
+        streamProcessorModulePromise = import('../playback/processing/streamProcessor.js');
     }
     return streamProcessorModulePromise;
 }
@@ -224,7 +224,7 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
         sendErrorResponse(req, res, 500, 'Internal Server Error', 'Load stream runtime contract is incomplete.', parsedUrl.pathname, true);
         return;
     }
-    if (!runtime.options.enableLoadStreamEndpoint) {
+    if (!runtime.options.api.enableLoadStreamEndpoint) {
         sendErrorResponse(req, res, 404, 'Not Found', 'The requested route was not found.', parsedUrl.pathname);
         return;
     }
@@ -285,7 +285,7 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
         if (urlResult.url && !isHls && !isLocal && !isSabr) {
             const resource = (await createSeekeableAudioResource(input.guildId || 'api-stream', urlResult.url, input.position, undefined, streamProcessorRuntime, input.filters, {
                 streamInfo: urlResult,
-                loudnessNormalizer: runtime.options.audio?.loudnessNormalizer
+                loudnessNormalizer: runtime.options.playback.audio?.loudnessNormalizer
             }, input.volume / 100, null, true));
             if ('exception' in resource) {
                 sendErrorResponse(req, res, 500, 'Internal Server Error', resource.exception.message, parsedUrl.pathname);
@@ -308,7 +308,7 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
             }
             fetchedStream = fetched.stream;
             const resource = createAudioResource(input.guildId || 'api-stream', fetched.stream, fetched.type ??
-                (typeof urlResult.format === 'string' ? urlResult.format : 'unknown'), streamProcessorRuntime, input.filters, input.volume / 100, null, true, runtime.options.audio?.loudnessNormalizer);
+                (typeof urlResult.format === 'string' ? urlResult.format : 'unknown'), streamProcessorRuntime, input.filters, input.volume / 100, null, true, runtime.options.playback.audio?.loudnessNormalizer);
             pcmStream = resource.stream;
         }
         pcmStream.on('error', (error) => {

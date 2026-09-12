@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
-import { desEcbDecryptBase64ToUtf8 } from "../decrypters/des-ecb.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { desEcbDecryptBase64ToUtf8 } from '../decrypters/des-ecb.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_BASE = 'https://www.jiosaavn.com/api.php';
 const J_BUFFER = Buffer.from('38346591');
 const HEADERS = {
@@ -289,7 +289,7 @@ export default class JioSaavnSource {
         const { stream, error, statusCode } = await http1makeRequest(url, {
             method: 'GET',
             streamOnly: true,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy
         });
         if (error || statusCode !== 200 || !stream) {
             return this.exceptionLoadResult(`Failed to load stream: ${error || statusCode || 'unknown'}`);
@@ -333,7 +333,7 @@ export default class JioSaavnSource {
         const { body, error, statusCode } = await http1makeRequest(url.toString(), {
             method: 'GET',
             headers: HEADERS,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy
         });
         if (error || statusCode !== 200) {
             throw new Error(`JioSaavn API request failed: ${statusCode || 'unknown'}`);

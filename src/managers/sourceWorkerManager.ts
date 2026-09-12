@@ -107,7 +107,7 @@ type ExecuteAllResultEntry =
 const hasSocketSend = (
   res: ServerResponse | DelegatedResponse
 ): res is DelegatedResponse & { send: (chunk: Buffer) => void } =>
-  typeof (res as DelegatedResponse).send === 'function'
+  !!(res as DelegatedResponse).send
 
 type InternalResponse = {
   headersSent: boolean
@@ -171,7 +171,8 @@ const buildSourceWorkerExecArgv = (
   const env = process.env as NodeJS.ProcessEnv & SourceWorkerEnv
 
   for (const arg of Array.from(args)) {
-    if (arg.startsWith('--max-old-space-size=')) args.delete(arg)
+    if (arg.startsWith('--max-old-space-size=') || arg === '--expose-gc')
+      args.delete(arg)
   }
 
   const maxOldSpaceMb = parsePositiveInt(

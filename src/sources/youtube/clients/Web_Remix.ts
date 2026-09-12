@@ -52,6 +52,8 @@ export default class WebRemix extends BaseClient {
 
   /**
    * Returns the YouTube Music client context for innertube requests.
+   *
+   * This is only used for getting the videoDetails, no playback.
    * @param context - General YouTube context with language, region, and visitor data
    * @returns Client context configured for WEB_REMIX
    */
@@ -59,12 +61,12 @@ export default class WebRemix extends BaseClient {
     return {
       client: {
         clientName: 'WEB_REMIX',
-        clientVersion: '1.20260302.03.01',
+        clientVersion: '1.20260721.00.00',
         userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) YouTubeMusic/3.12.0 Chrome/148.0.7778.271 Electron/42.5.0 Safari/537.36',
         hl: context.client.hl,
         gl: context.client.gl,
-        visitorData: context.client.visitorData
+        applicationState: 'ACTIVE'
       },
       user: { lockedSafetyMode: false },
       request: { useSsl: true }
@@ -93,11 +95,10 @@ export default class WebRemix extends BaseClient {
   ): Promise<SourceResult> {
     const sourceName = 'ytmusic'
 
-    let params = 'EgWKAQIIAWoSEAMQBRAEEAkQChAVEBAQDhAR' // Default (Tracks)
-    if (type === 'playlist')
-      params = 'EgeKAQQoAEABahIQAxAFEAQQCRAKEBUQEBAOEBE%3D'
-    if (type === 'album') params = 'EgWKAQIYAWoSEAMQBRAEEAkQChAVEBAQDhAR'
-    if (type === 'artist') params = 'EgWKAQIgAWoSEAMQBRAEEAkQChAVEBAQDhAR'
+    let params = 'EgWKAQIIAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D' // Default (Tracks)
+    if (type === 'playlist') params = 'EgeKAQQoAEABahAQBBADEAkQBRAKEBAQFRAR'
+    if (type === 'album') params = 'EgWKAQIYAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D'
+    if (type === 'artist') params = 'EgWKAQIgAWoQEAQQAxAJEAUQChAQEBUQEQ%3D%3D'
 
     const requestBody = {
       context: this.getClient(context),

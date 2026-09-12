@@ -21,10 +21,7 @@ export default class LFO {
   constructor(waveformName = 'SINE', frequency = 0, depth = 0) {
     this.phase = 0
     const wf = Waveforms[waveformName] ?? Waveforms['SINE']
-    this.waveform =
-      typeof wf === 'function'
-        ? wf
-        : (Waveforms['SINE'] as (phase: number) => number)
+    this.waveform = (wf as (phase: number) => number) ?? Waveforms['SINE']
     this._frequency = frequency
     this._depth = depth
   }
@@ -49,10 +46,7 @@ export default class LFO {
    */
   public setWaveform(waveformName: string): void {
     const wf = Waveforms[waveformName] ?? Waveforms['SINE']
-    this.waveform =
-      typeof wf === 'function'
-        ? wf
-        : (Waveforms['SINE'] as (phase: number) => number)
+    this.waveform = (wf as (phase: number) => number) ?? Waveforms['SINE']
   }
 
   /**

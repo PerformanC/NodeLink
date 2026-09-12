@@ -180,7 +180,7 @@ async function handler(
   sendResponse: ApiSendResponse,
   parsedUrl: URL
 ): Promise<void> {
-  if (!nodelink.options.enableTrackStreamEndpoint) {
+  if (!nodelink.options.api.enableTrackStreamEndpoint) {
     sendErrorResponse(
       req,
       res,

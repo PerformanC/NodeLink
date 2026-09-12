@@ -76,11 +76,11 @@ const QUERIES = {
   },
   getPlaylist: {
     name: 'fetchPlaylist',
-    hash: 'bb67e0af06e8d6f52b531f97468ee4acd44cd0f82b988e15c2ea47b1148efc77'
+    hash: 'e4b2953f160e58e38ac025d79b5a9b3aceee5c4c716598e9830bfceb69faff5f'
   },
   getArtist: {
     name: 'queryArtistOverview',
-    hash: '35648a112beb1794e39ab931365f6ae4a8d45e65396d641eeda94e4003d41497'
+    hash: 'ae0e2958a4ab645b35ca19ac04d0495ae12d9c5d7b7286217674801a9aab281a'
   },
   getRecommendations: {
     name: 'internalLinkRecommenderTrack',
@@ -88,7 +88,7 @@ const QUERIES = {
   },
   searchDesktop: {
     name: 'searchDesktop',
-    hash: 'fcad5a3e0d5af727fb76966f06971c19cfa2275e6ff7671196753e008611873c'
+    hash: 'db61238974d27839a136c9dc02bfdbe3fab7635f21cf85976ebff9a1ee281345'
   }
 } as const satisfies Record<string, SpotifyGraphQLOperation>
 
@@ -194,6 +194,15 @@ export default class SpotifySource implements SourceInstance {
   private refreshPromises = new Map<SpotifyTokenType, Promise<boolean>>()
 
   /**
+   * Predictive token refresh timers.
+   * @internal
+   */
+  private tokenRefreshTimers = new Map<
+    SpotifyTokenType,
+    ReturnType<typeof setTimeout>
+  >()
+
+  /**
    * Creates a new SpotifySource instance.
    * @param nodelink - The worker context providing managers and options.
    */
@@ -219,14 +228,24 @@ export default class SpotifySource implements SourceInstance {
     const cm = this.nodelink.credentialManager
     if (!cm) return false
 
-    this.accessToken = cm.get<string>('spotify_access_token')
-    this.anonymousToken = cm.get<string>('spotify_anonymous_token')
-    this.mobileToken = cm.get<string>('spotify_mobile_token')
+    const accessToken = cm.getEntry?.<string>('spotify_access_token')
+    const anonymousToken = cm.getEntry?.<string>('spotify_anonymous_token')
+    const mobileToken = cm.getEntry?.<string>('spotify_mobile_token')
+
+    this.accessToken =
+      accessToken?.value ?? cm.get<string>('spotify_access_token')
+    this.accessTokenExpiry = accessToken?.expiresAt ?? null
+    this.anonymousToken =
+      anonymousToken?.value ?? cm.get<string>('spotify_anonymous_token')
+    this.anonymousTokenExpiry = anonymousToken?.expiresAt ?? null
+    this.mobileToken =
+      mobileToken?.value ?? cm.get<string>('spotify_mobile_token')
+    this.mobileTokenExpiry = mobileToken?.expiresAt ?? null
 
     const hasOfficial = !!(this.config.clientId && this.config.clientSecret)
 
     try {
-      if (hasOfficial && !this.accessToken) await this._ensureToken('official')
+      if (hasOfficial) await this._ensureToken('official')
       await this._ensureToken('anonymous')
       await this._ensureToken('mobile')
 
@@ -280,7 +299,11 @@ export default class SpotifySource implements SourceInstance {
       expiry = this.mobileTokenExpiry
     }
 
-    if (token && (!expiry || now < expiry - TOKEN_REFRESH_MARGIN_MS)) {
+    if (
+      token &&
+      typeof expiry === 'number' &&
+      now < expiry - TOKEN_REFRESH_MARGIN_MS
+    ) {
       return true
     }
 
@@ -294,6 +317,26 @@ export default class SpotifySource implements SourceInstance {
       return await refreshPromise
     } finally {
       this.refreshPromises.delete(type)
+    }
+  }
+
+  /**
+   * Schedules a background token refresh to prevent latency during playback.
+   * @internal
+   */
+  private _scheduleTokenRefresh(type: SpotifyTokenType, expiry: number) {
+    const existing = this.tokenRefreshTimers.get(type)
+    if (existing) clearTimeout(existing)
+
+    const now = Date.now()
+    const timeUntilRefresh = expiry - now - TOKEN_REFRESH_MARGIN_MS
+
+    if (timeUntilRefresh > 0) {
+      const timer = setTimeout(() => {
+        this._refreshToken(type).catch(() => {})
+      }, timeUntilRefresh)
+      timer.unref?.()
+      this.tokenRefreshTimers.set(type, timer)
     }
   }
 
@@ -334,6 +377,7 @@ export default class SpotifySource implements SourceInstance {
           const ttl = (body.expires_in || 3600) * 1000
           this.accessTokenExpiry = Date.now() + ttl
           cm.set('spotify_access_token', this.accessToken, ttl)
+          this._scheduleTokenRefresh('official', this.accessTokenExpiry)
           return true
         }
       }
@@ -357,6 +401,7 @@ export default class SpotifySource implements SourceInstance {
                 this.mobileToken,
                 Math.max(ttl, 60000)
               )
+              this._scheduleTokenRefresh('mobile', expiry)
             } else {
               this.anonymousToken = data.accessToken
               this.anonymousTokenExpiry = expiry
@@ -365,6 +410,7 @@ export default class SpotifySource implements SourceInstance {
                 this.anonymousToken,
                 Math.max(ttl, 60000)
               )
+              this._scheduleTokenRefresh('anonymous', expiry)
             }
             return true
           }
@@ -396,6 +442,7 @@ export default class SpotifySource implements SourceInstance {
                 this.anonymousToken,
                 Math.max(ttl, 60000)
               )
+              this._scheduleTokenRefresh('anonymous', this.anonymousTokenExpiry)
               return true
             }
           } catch (e) {
@@ -417,6 +464,17 @@ export default class SpotifySource implements SourceInstance {
       )
       return false
     }
+  }
+
+  /**
+   * Cleans up all pending timers.
+   * @public
+   */
+  public cleanup(): void {
+    for (const timer of this.tokenRefreshTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.tokenRefreshTimers.clear()
   }
 
   /**
@@ -733,14 +791,10 @@ export default class SpotifySource implements SourceInstance {
       return this.getRecommendations(query)
 
     try {
-      let limit = this.config.playlistLoadLimit || 10
-
-      // fixes the error Argument <limit> for field /searchV2 cannot be greater than 1000
-      // this is a config issue from the user side, but if this can be used as a workaround,
-      // we set it to 10 to avoid the error :p.
-      if (limit > 999) {
-        limit = 10
-      }
+      const limit = Math.min(
+        Math.max(this.nodelink.options.search.maxResults ?? 10, 1),
+        50
+      )
 
       // Priority 1: Internal Search (Rich nodes + Local matching)
       if (this.anonymousToken || this.config.sp_dc) {
@@ -845,6 +899,55 @@ export default class SpotifySource implements SourceInstance {
           encoded: encodeTrack({ ...info, details: [] }),
           info,
           pluginInfo: { type: 'album' }
+        })
+      }
+    } else if (type === 'playlist' && searchV2.playlists) {
+      for (const item of searchV2.playlists.items) {
+        const playlist = item.data
+        const id = playlist.uri.split(':').pop() || ''
+        const artwork = playlist.images?.items?.[0]?.sources?.[0]?.url || null
+        const owner = playlist.ownerV2?.data?.name || 'Unknown'
+        const info: TrackInfo = {
+          title: playlist.name,
+          author: owner,
+          length: 0,
+          identifier: id,
+          isSeekable: false,
+          isStream: false,
+          uri: `https://open.spotify.com/playlist/${id}`,
+          artworkUrl: artwork,
+          isrc: null,
+          sourceName: 'spotify',
+          position: 0
+        }
+        results.push({
+          encoded: encodeTrack({ ...info, details: [] }),
+          info,
+          pluginInfo: { type: 'playlist' }
+        })
+      }
+    } else if (type === 'artist' && searchV2.artists) {
+      for (const item of searchV2.artists.items) {
+        const artist = item.data
+        const id = artist.uri.split(':').pop() || ''
+        const artwork = artist.visuals?.avatarImage?.sources?.[0]?.url || null
+        const info: TrackInfo = {
+          title: artist.profile.name,
+          author: 'Spotify',
+          length: 0,
+          identifier: id,
+          isSeekable: false,
+          isStream: false,
+          uri: `https://open.spotify.com/artist/${id}`,
+          artworkUrl: artwork,
+          isrc: null,
+          sourceName: 'spotify',
+          position: 0
+        }
+        results.push({
+          encoded: encodeTrack({ ...info, details: [] }),
+          info,
+          pluginInfo: { type: 'artist' }
         })
       }
     }
@@ -1017,7 +1120,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolveAlbum(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.maxAlbumPlaylistLength as number) || 1000
+      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Album'
 
@@ -1118,7 +1221,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolvePlaylist(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.maxAlbumPlaylistLength as number) || 1000
+      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Playlist'
 
@@ -1320,24 +1423,96 @@ export default class SpotifySource implements SourceInstance {
   public async getRecommendations(seed: string): Promise<SourceResult> {
     const token = this.anonymousToken || this.accessToken
     if (!token) return { loadType: 'empty', data: {} }
+
+    let id = seed.trim()
+    if (id.includes('seed_tracks=')) {
+      const match = id.match(/seed_tracks=([A-Za-z0-9]+)/)
+      if (match?.[1]) id = match[1]
+    } else if (id.startsWith('http://') || id.startsWith('https://')) {
+      const match = id.match(/\/track\/([A-Za-z0-9]+)/)
+      if (match?.[1]) id = match[1]
+    } else if (id.startsWith('spotify:track:')) {
+      id = id.split(':')[2] || id
+    } else if (id.includes(',')) {
+      const first = id.split(',')[0]
+      if (first) id = first.trim()
+    }
+
     try {
-      let id = seed
-      if (seed.includes('seed_tracks=')) {
-        const parts = seed.split('seed_tracks=')
-        if (parts[1]) id = parts[1].split('&')[0] || seed
-      }
       const res = await http1makeRequest(
         `${SPOTIFY_CLIENT_API_URL}/inspiredby-mix/v2/seed_to_playlist/spotify:track:${id}?response-format=json`,
         { headers: { Authorization: `Bearer ${token}` } }
       )
       const body = res.body as { mediaItems?: Array<{ uri: string }> }
       if (res.statusCode === 200 && body.mediaItems?.[0]?.uri) {
-        return this._resolvePlaylist(body.mediaItems[0].uri.split(':')[2] || '')
+        const playlistResult = await this._resolvePlaylist(
+          body.mediaItems[0].uri.split(':')[2] || ''
+        )
+        if (
+          playlistResult.loadType === 'playlist' &&
+          Array.isArray((playlistResult.data as { tracks?: TrackData[] }).tracks) &&
+          (playlistResult.data as { tracks: TrackData[] }).tracks.length > 0
+        ) {
+          return playlistResult
+        }
       }
-      return { loadType: 'empty', data: {} }
-    } catch {
-      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      logger(
+        'debug',
+        'Spotify',
+        `Radio mix recommendations failed for ${id}: ${(e as Error).message}`
+      )
     }
+
+    try {
+      const maxTracks =
+        (this.nodelink.options.playback.maxPlaylistLength as number) || 50
+      const limit = Math.min(Math.max(maxTracks, 1), 50)
+
+      const data = await this._internalApiRequest<{
+        seoRecommendedTrack?: {
+          items?: Array<{ data: SpotifyGraphQLTrack }>
+        }
+      }>(QUERIES.getRecommendations, {
+        uri: `spotify:track:${id}`,
+        limit
+      })
+
+      const items = data?.seoRecommendedTrack?.items || []
+      if (items.length > 0) {
+        const tracks: TrackData[] = []
+        for (const item of items) {
+          if (!item?.data) continue
+          const track = this._isLocalTrack(item.data)
+            ? await this._buildLocalTrack(item.data)
+            : this._buildTrackFromInternal(item.data)
+          if (track) tracks.push(track)
+          if (tracks.length >= maxTracks) break
+        }
+
+        if (tracks.length > 0) {
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: `Spotify Recommendations for ${id}`,
+                selectedTrack: 0
+              },
+              tracks,
+              pluginInfo: {}
+            }
+          }
+        }
+      }
+    } catch (e) {
+      logger(
+        'debug',
+        'Spotify',
+        `GraphQL recommendations fallback failed for ${id}: ${(e as Error).message}`
+      )
+    }
+
+    return { loadType: 'empty', data: {} }
   }
 
   /**

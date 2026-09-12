@@ -54,7 +54,8 @@ export default class Vibrato extends AnimatableFilter {
     super.applyAnimatedUpdate(
       {
         vibrato: {
-          alpha: targetAlpha
+          alpha: targetAlpha,
+          transition: v.transition
         }
       },
       'vibrato',
@@ -117,5 +118,10 @@ export default class Vibrato extends AnimatableFilter {
     this.rightDelay.clear()
     this.lfo.phase = 0
     return Buffer.alloc(0)
+  }
+
+  public destroy(): void {
+    this.leftDelay.destroy()
+    this.rightDelay.destroy()
   }
 }

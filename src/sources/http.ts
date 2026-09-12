@@ -15,6 +15,7 @@ import type {
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
 import type {
+  HttpRequestResult,
   HttpResponseHeaders,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
@@ -260,14 +261,23 @@ export default class HttpSource {
       let data = await http1makeRequest(url, {
         method: 'HEAD',
         headers: requestHeaders
+      }).catch((err) => {
+        logger(
+          'warn',
+          'HTTP Source',
+          `HEAD request failed for URL: ${url} with error: ${err.message} - falling back to GET request (this is expected for some servers that do not support HEAD)`
+        )
+        return { error: err }
       })
 
       const headContentType = headerToString(
-        (data.headers as Record<string, unknown>)?.['content-type']
+        ((data as HttpRequestResult).headers as Record<string, unknown>)?.[
+          'content-type'
+        ]
       )
       const headOk =
         !data.error &&
-        (data.statusCode || 0) < 400 &&
+        ((data as HttpRequestResult).statusCode || 0) < 400 &&
         isValidMediaType(headContentType)
 
       if (!headOk) {
@@ -277,9 +287,7 @@ export default class HttpSource {
           headers: requestHeaders
         })
         const previewStream = getData?.stream as Readable | undefined
-        if (previewStream && typeof previewStream.destroy === 'function') {
-          previewStream.destroy()
-        }
+        previewStream?.destroy?.()
         data = getData
       }
 
@@ -290,17 +298,19 @@ export default class HttpSource {
         }
       }
 
-      if ((data.statusCode || 0) >= 400) {
+      if (((data as HttpRequestResult).statusCode || 0) >= 400) {
         return {
           loadType: 'error',
           exception: {
-            message: `HTTP error ${data.statusCode} while resolving`,
+            message: `HTTP error ${(data as HttpRequestResult).statusCode} while resolving`,
             severity: 'common'
           }
         }
       }
 
-      const headers = data.headers as HttpResponseHeaders | undefined
+      const headers = (data as HttpRequestResult).headers as
+        | HttpResponseHeaders
+        | undefined
       const contentType = headerToString(
         (headers as Record<string, unknown>)?.['content-type']
       )
@@ -557,7 +567,7 @@ export default class HttpSource {
       const wait = async (ms: number): Promise<void> => {
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(resolve, ms)
-          if (typeof timeout.unref === 'function') timeout.unref()
+          timeout.unref?.()
         })
       }
 

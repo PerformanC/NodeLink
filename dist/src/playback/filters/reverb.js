@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
 const COMB_DELAYS = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
 const ALLPASS_DELAYS = [556, 441, 341, 225];
@@ -40,16 +40,23 @@ class CombFilter {
      * No clamping inside the loop — full Float64 precision.
      */
     process(input) {
-        const output = this.buffer[this.writeIndex] ?? 0;
+        const buf = this.buffer;
+        if (!buf)
+            return 0;
+        const output = buf[this.writeIndex] ?? 0;
         this.filterStore = output * this.damp2 + this.filterStore * this.damp1;
-        this.buffer[this.writeIndex] = input + this.filterStore * this.feedback;
+        buf[this.writeIndex] = input + this.filterStore * this.feedback;
         this.writeIndex = (this.writeIndex + 1) % this.size;
         return output;
     }
     clear() {
-        this.buffer.fill(0);
+        this.buffer?.fill(0);
         this.filterStore = 0;
         this.writeIndex = 0;
+    }
+    destroy() {
+        this.buffer = null;
+        this.filterStore = 0;
     }
 }
 /**
@@ -264,5 +271,21 @@ export default class Reverb extends AnimatableFilter {
         this.wetHPAccL = 0;
         this.wetHPAccR = 0;
         return Buffer.alloc(0);
+    }
+    destroy() {
+        for (const comb of [
+            ...this.combFiltersL,
+            ...this.combFiltersR,
+            ...this.customCombsL,
+            ...this.customCombsR
+        ]) {
+            comb.destroy();
+        }
+        this.combFiltersL = [];
+        this.combFiltersR = [];
+        this.customCombsL = [];
+        this.customCombsR = [];
+        this.allpassBuffersL = [];
+        this.allpassBuffersR = [];
     }
 }

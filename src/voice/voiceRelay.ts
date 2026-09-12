@@ -215,7 +215,7 @@ export function createVoiceRelay({
     if (!conn || conn._voiceRelayAttached) return
     conn._voiceRelayAttached = true
 
-    conn.on('speakStart', (userId: string, ssrc: number) => {
+    const speakStartHandler = (userId: string, ssrc: number) => {
       void handleSpeakStart(guildId, userId, ssrc).catch((err: Error) => {
         if (logger) {
           logger(
@@ -225,12 +225,29 @@ export function createVoiceRelay({
           )
         }
       })
-    })
-
-    conn.on('speakEnd', (userId: string, ssrc: number) => {
+    }
+    const speakEndHandler = (userId: string, ssrc: number) => {
       handleSpeakStop(guildId, userId, ssrc)
-    })
+    }
+
+    conn._voiceRelaySpeakStart = speakStartHandler
+    conn._voiceRelaySpeakEnd = speakEndHandler
+
+    conn.on('speakStart', speakStartHandler)
+    conn.on('speakEnd', speakEndHandler)
   }
 
-  return { attach }
+  const detach = (connection: VoiceConnection): void => {
+    const conn = connection as ExtendedVoiceConnection
+    if (!conn._voiceRelayAttached) return
+    if (conn._voiceRelaySpeakStart) {
+      conn.removeListener('speakStart', conn._voiceRelaySpeakStart)
+    }
+    if (conn._voiceRelaySpeakEnd) {
+      conn.removeListener('speakEnd', conn._voiceRelaySpeakEnd)
+    }
+    conn._voiceRelayAttached = false
+  }
+
+  return { attach, detach }
 }

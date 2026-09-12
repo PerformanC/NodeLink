@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
-import { http1makeRequest, logger } from "../../utils.js";
-import { parse as parsePlaylist } from "./PlaylistParser.js";
-import SegmentFetcher from "./SegmentFetcher.js";
+import { http1makeRequest, logger } from '../../utils.js';
+import { parse as parsePlaylist } from './PlaylistParser.js';
+import SegmentFetcher from './SegmentFetcher.js';
 const MAX_HISTORY = 200;
 const MAX_GAP = 30;
 const MASTER_REFRESH_INTERVAL = 3;
@@ -51,7 +51,7 @@ export default class HLSHandler extends PassThrough {
         this.currentUrl = url;
         this.headers = options.headers ?? {};
         this.localAddress = options.localAddress ?? null;
-        this.proxy = options.proxy ?? null;
+        this.proxy = options.network?.proxy ?? options.proxy ?? null;
         this.onResolveUrl = options.onResolveUrl ?? null;
         this.strategy =
             options.strategy ??
@@ -286,6 +286,14 @@ export default class HLSHandler extends PassThrough {
             this._fetchSegments().catch((err) => {
                 logger('error', 'HLSHandler', `Segment fetch error: ${err.message}`);
             });
+        }
+        if (!this.isLive &&
+            this.segmentQueue.length === 0 &&
+            !this.isFetching &&
+            !this.stop &&
+            !this.destroyed) {
+            this.end();
+            return;
         }
         if (this.isLive && !playlistContent.includes('#EXT-X-ENDLIST')) {
             this._scheduleNextTick(parsed.targetDuration);

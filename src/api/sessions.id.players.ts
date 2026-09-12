@@ -7,6 +7,7 @@ import type {
 } from '../typings/api/api.types.ts'
 import type { Session } from '../typings/index.types.ts'
 import type {
+  CrossfadeConfig,
   FadingConfig,
   FiltersState,
   PlayerStateJSON,
@@ -98,6 +99,11 @@ interface PlayerPatchPayload {
   loudnessNormalizer?: boolean
 
   /**
+   * Auto-ducking toggle (lowers music when users speak).
+   */
+  ducking?: boolean
+
+  /**
    * Optional filter payload.
    */
   filters?: FiltersState
@@ -106,6 +112,9 @@ interface PlayerPatchPayload {
    * Optional fading configuration payload.
    */
   fading?: ApiRequest['body']
+
+  /** Optional crossfade configuration payload. */
+  crossfade?: ApiRequest['body']
 
   /**
    * Voice state update payload.
@@ -218,6 +227,11 @@ interface PlayerPatchBodyInput {
   loudnessNormalizer?: boolean
 
   /**
+   * Candidate auto-ducking toggle.
+   */
+  ducking?: boolean
+
+  /**
    * Candidate filters payload.
    */
   filters?: ApiRequest['body']
@@ -226,6 +240,9 @@ interface PlayerPatchBodyInput {
    * Candidate fading payload.
    */
   fading?: ApiRequest['body']
+
+  /** Candidate crossfade configuration. */
+  crossfade?: ApiRequest['body']
 
   /**
    * Candidate voice payload.
@@ -271,6 +288,16 @@ interface FadingConfigInput {
   seek?: FadingSectionInput
   pause?: FadingSectionInput
   resume?: FadingSectionInput
+
+  /**
+   * Candidate ducking configuration.
+   */
+  ducking?: {
+    enabled?: boolean
+    duration?: number
+    targetVolume?: number
+    curve?: string
+  }
 }
 
 /**
@@ -407,7 +434,7 @@ interface PlayersRoutePlayerManager {
   seek: (
     guildId: string,
     position?: number,
-    endTime?: number
+    endTime?: number | null
   ) => Promise<boolean | object>
 
   /**
@@ -443,6 +470,12 @@ interface PlayersRoutePlayerManager {
     fadingConfig?: FadingConfig
   ) => Promise<boolean | object>
 
+  /** Applies per-player crossfade settings. */
+  setCrossfade: (
+    guildId: string,
+    crossfadeConfig?: CrossfadeConfig
+  ) => Promise<boolean | object>
+
   /**
    * Toggles loudness normalization.
    *
@@ -454,6 +487,15 @@ interface PlayersRoutePlayerManager {
     guildId: string,
     enabled: boolean
   ) => Promise<boolean | object>
+
+  /**
+   * Toggles auto-ducking.
+   *
+   * @param guildId - Target guild identifier.
+   * @param enabled - Whether auto-ducking should be enabled.
+   * @returns Promise resolving once the command is applied.
+   */
+  setDucking: (guildId: string, enabled: boolean) => Promise<boolean | object>
 
   /**
    * Updates voice state.
@@ -471,9 +513,10 @@ interface PlayersRoutePlayerManager {
    * Serializes player state.
    *
    * @param guildId - Target guild identifier.
+   * @param repairMissing - Whether a missing cluster player should be repaired.
    * @returns Promise resolving to the player JSON payload.
    */
-  toJSON: (guildId: string) => Promise<PlayerStateJSON>
+  toJSON: (guildId: string, repairMissing?: boolean) => Promise<PlayerStateJSON>
 }
 
 /**
@@ -616,11 +659,11 @@ function getQueryParams(parsedUrl: URL): PlayerPatchQuery | null {
     return {}
   }
 
-  if (noReplaceRaw === 'true') {
+  if (noReplaceRaw.toLowerCase() === 'true') {
     return { noReplace: true }
   }
 
-  if (noReplaceRaw === 'false') {
+  if (noReplaceRaw.toLowerCase() === 'false') {
     return { noReplace: false }
   }
 
@@ -819,6 +862,11 @@ function getPlayerPatchPayload(
     return null
   }
 
+  const ducking = payload.ducking
+  if (ducking !== undefined && typeof ducking !== 'boolean') {
+    return null
+  }
+
   const filtersValue = payload.filters
   if (
     filtersValue !== undefined &&
@@ -833,6 +881,14 @@ function getPlayerPatchPayload(
   if (
     fading !== undefined &&
     (!fading || typeof fading !== 'object' || Array.isArray(fading))
+  ) {
+    return null
+  }
+
+  const crossfade = payload.crossfade
+  if (
+    crossfade !== undefined &&
+    (!crossfade || typeof crossfade !== 'object' || Array.isArray(crossfade))
   ) {
     return null
   }
@@ -867,8 +923,10 @@ function getPlayerPatchPayload(
     volume,
     paused,
     loudnessNormalizer,
+    ducking,
     filters: filtersValue as FiltersState | undefined,
     fading,
+    crossfade,
     voice: voice ?? undefined
   }
 }
@@ -936,7 +994,61 @@ function sanitizeFadingConfig(raw: ApiRequest['body']): FadingConfig {
   updateSection('pause')
   updateSection('resume')
 
+  if (isObjectRecord(payload.ducking)) {
+    const duckingInput = payload.ducking as NonNullable<
+      FadingConfigInput['ducking']
+    >
+    safe.ducking = {
+      enabled: duckingInput.enabled === true,
+      duration:
+        typeof duckingInput.duration === 'number' &&
+        Number.isFinite(duckingInput.duration)
+          ? Math.max(0, duckingInput.duration)
+          : 500,
+      targetVolume:
+        typeof duckingInput.targetVolume === 'number' &&
+        Number.isFinite(duckingInput.targetVolume)
+          ? Math.max(0, Math.min(1, duckingInput.targetVolume))
+          : 0.3,
+      curve:
+        typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
+    }
+  }
+
   return safe
+}
+
+/**
+ * Sanitizes crossfade settings and bounds their per-player resource usage.
+ * @param raw - Raw crossfade payload.
+ * @returns Safe crossfade configuration.
+ */
+function sanitizeCrossfadeConfig(raw: ApiRequest['body']): CrossfadeConfig {
+  if (!isObjectRecord(raw)) return { enabled: false }
+
+  const duration = Number(raw.duration)
+  const minBufferMs = Number(raw.minBufferMs)
+  const bufferMs = Number(raw.bufferMs)
+  const curve = raw.curve
+  const mode = raw.mode
+
+  return {
+    enabled: raw.enabled === true,
+    duration: Number.isFinite(duration)
+      ? Math.max(0, Math.min(30000, Math.round(duration)))
+      : 5000,
+    curve:
+      curve === 'linear' || curve === 'sine' || curve === 'sinusoidal'
+        ? curve
+        : 'sinusoidal',
+    mode: mode === 'stream' ? 'stream' : 'preload',
+    minBufferMs: Number.isFinite(minBufferMs)
+      ? Math.max(20, Math.min(30000, Math.round(minBufferMs)))
+      : 250,
+    bufferMs: Number.isFinite(bufferMs)
+      ? Math.max(0, Math.min(30000, Math.round(bufferMs)))
+      : 0
+  }
 }
 
 /**
@@ -1167,18 +1279,6 @@ async function applyPlayerPatch(
   const shouldClearNextTrack =
     payload.nextTrack === null || payload.nextTrack?.encoded === null
 
-  if (shouldClearNextTrack) {
-    await session.players.clearNextTrack(guildId)
-  } else if (payload.nextTrack) {
-    const trackToPreload = await resolvePreloadPayload(
-      runtime,
-      payload.nextTrack
-    )
-    if (trackToPreload) {
-      await session.players.preload(guildId, trackToPreload)
-    }
-  }
-
   if (stopPlayer) {
     await session.players.stop(guildId)
   }
@@ -1191,6 +1291,18 @@ async function applyPlayerPatch(
       startTime: payload.position,
       endTime: payload.endTime ?? undefined
     })
+  }
+
+  if (shouldClearNextTrack) {
+    await session.players.clearNextTrack(guildId)
+  } else if (payload.nextTrack) {
+    const trackToPreload = await resolvePreloadPayload(
+      runtime,
+      payload.nextTrack
+    )
+    if (trackToPreload) {
+      await session.players.preload(guildId, trackToPreload)
+    }
   }
 
   if (payload.volume !== undefined) {
@@ -1206,11 +1318,11 @@ async function applyPlayerPatch(
   }
 
   if (payload.endTime !== undefined) {
-    const playerState = await session.players.toJSON(guildId)
+    const playerState = await session.players.toJSON(guildId, true)
     await session.players.seek(
       guildId,
       playerState.state.position,
-      payload.endTime ?? undefined
+      payload.endTime
     )
   }
 
@@ -1225,6 +1337,13 @@ async function applyPlayerPatch(
     )
   }
 
+  if (payload.crossfade !== undefined) {
+    await session.players.setCrossfade(
+      guildId,
+      sanitizeCrossfadeConfig(payload.crossfade)
+    )
+  }
+
   if (payload.loudnessNormalizer !== undefined) {
     await session.players.setLoudnessNormalizer(
       guildId,
@@ -1232,7 +1351,11 @@ async function applyPlayerPatch(
     )
   }
 
-  return await session.players.toJSON(guildId)
+  if (payload.ducking !== undefined) {
+    await session.players.setDucking(guildId, payload.ducking)
+  }
+
+  return await session.players.toJSON(guildId, true)
 }
 
 /**
@@ -1319,7 +1442,6 @@ async function handler(
 
   try {
     if (req.method === 'GET') {
-      await session.players.create(pathParams.guildId)
       sendResponse(
         req,
         res,

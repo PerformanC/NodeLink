@@ -1,7 +1,7 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import LFO from './dsp/lfo.js';
 const MAX_DELAY_MS = 60;
 const MAX_DELAY_SAMPLES = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
 class XorShift32 {
@@ -34,15 +34,24 @@ class InterpDelayLine {
         this.buf = new Float32Array(size);
     }
     clear() {
-        this.buf.fill(0);
+        this.buf?.fill(0);
         this.w = 0;
     }
+    destroy() {
+        this.buf = null;
+    }
     write(x) {
-        this.buf[this.w] = x;
-        this.w = (this.w + 1) % this.buf.length;
+        const buf = this.buf;
+        if (!buf)
+            return;
+        buf[this.w] = x;
+        this.w = (this.w + 1) % buf.length;
     }
     read(delaySamples) {
-        const n = this.buf.length;
+        const buf = this.buf;
+        if (!buf)
+            return 0;
+        const n = buf.length;
         let r = this.w - delaySamples;
         while (r < 0)
             r += n;
@@ -51,7 +60,7 @@ class InterpDelayLine {
         const i0 = r | 0;
         const i1 = (i0 + 1) % n;
         const frac = r - i0;
-        return (this.buf[i0] ?? 0) * (1 - frac) + (this.buf[i1] ?? 0) * frac;
+        return (buf[i0] ?? 0) * (1 - frac) + (buf[i1] ?? 0) * frac;
     }
 }
 class Biquad {
@@ -336,5 +345,11 @@ export default class Phonograph extends AnimatableFilter {
         this.env = 0;
         this.agcGain = 1;
         return Buffer.alloc(0);
+    }
+    destroy() {
+        this.delay.destroy();
+        this.r1.destroy();
+        this.r2.destroy();
+        this.r3.destroy();
     }
 }

@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger, makeRequest } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 const DECRYPTION_KEY = 'IFYOUWANTTHEARTISTSTOGETPAIDDONOTDOWNLOADFROMMIXCLOUD';
 const MIXCLOUD_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const DEFAULT_MAX_RESULTS = 10;
@@ -217,7 +217,7 @@ export default class MixcloudSource {
                 };
             })
                 .filter((track) => track.info.uri.length > 0)
-                .slice(0, this.config.maxSearchResults || DEFAULT_MAX_RESULTS);
+                .slice(0, this.config.search.maxResults || DEFAULT_MAX_RESULTS);
             if (tracks.length === 0)
                 return this.emptyResult();
             return { loadType: 'search', data: tracks };
@@ -341,7 +341,7 @@ export default class MixcloudSource {
             let cursor = null;
             let hasNextPage = true;
             let playlistName = 'Mixcloud Playlist';
-            const maxTracks = this.config.maxAlbumPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH;
+            const maxTracks = this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH;
             while (hasNextPage && tracks.length < maxTracks) {
                 const response = await this._request(queryTemplate(cursor));
                 const body = this.parseObjectBody(response.body);
@@ -411,7 +411,7 @@ export default class MixcloudSource {
             let cursor = null;
             let hasNextPage = true;
             let userDisplayName = username;
-            const maxTracks = this.config.maxAlbumPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH;
+            const maxTracks = this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH;
             while (hasNextPage && tracks.length < maxTracks) {
                 const response = await this._request(queryTemplate(cursor));
                 const body = this.parseObjectBody(response.body);

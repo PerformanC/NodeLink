@@ -1,5 +1,5 @@
-import { PassThrough } from 'node:stream';
-import { encodeTrack, logger, makeRequest } from "../utils.js";
+import { PassThrough, pipeline } from 'node:stream';
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 /**
  * Piper TTS source implementation.
  */
@@ -259,15 +259,18 @@ export default class PiperSource {
                 throw new Error(`Piper TTS returned status ${response.statusCode}`);
             }
             const stream = new PassThrough();
-            response.stream.pipe(stream);
-            response.stream.on('end', () => {
-                stream.emit('finishBuffering');
+            stream.once('close', () => {
+                ;
+                response.stream.destroy?.();
             });
-            response.stream.on('error', (error) => {
-                logger('error', 'Sources', `Piper TTS stream error: ${error.message}`);
-                if (!stream.destroyed) {
-                    stream.destroy(error);
+            pipeline(response.stream, stream, (error) => {
+                if (error) {
+                    if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                        logger('error', 'Sources', `Piper TTS stream error: ${error.message}`);
+                    }
+                    return;
                 }
+                stream.emit('finishBuffering');
             });
             return { stream, type: 'wav' };
         }

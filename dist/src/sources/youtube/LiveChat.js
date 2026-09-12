@@ -1,5 +1,5 @@
-import { logger, makeRequest } from "../../utils.js";
-import Web from "./clients/Web.js";
+import { logger, makeRequest } from '../../utils.js';
+import Web from './clients/Web.js';
 /**
  * Helper responsible for bootstrapping and polling YouTube live chat.
  *

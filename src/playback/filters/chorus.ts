@@ -75,7 +75,8 @@ export default class Chorus extends AnimatableFilter {
     super.applyAnimatedUpdate(
       {
         chorus: {
-          alpha: targetAlpha
+          alpha: targetAlpha,
+          transition: c.transition
         }
       },
       'chorus',
@@ -178,5 +179,11 @@ export default class Chorus extends AnimatableFilter {
     if (lfos[3]) lfos[3].phase = (3 * Math.PI) / 2
 
     return Buffer.alloc(0)
+  }
+
+  public destroy(): void {
+    for (const delay of this.delays) {
+      delay.destroy()
+    }
   }
 }

@@ -1,8 +1,8 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import Allpass from "./dsp/allpass.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import Allpass from './dsp/allpass.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_STAGES = 12;
 /**
@@ -54,7 +54,8 @@ export default class Phaser extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : isActive ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             phaser: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: p.transition
             }
         }, 'phaser', { alpha: 0.0 });
     }

@@ -1,4 +1,4 @@
-import { http1makeRequest, logger } from "../utils.js";
+import { http1makeRequest, logger } from '../utils.js';
 /**
  * Letras suggest endpoint for track discovery.
  * @internal

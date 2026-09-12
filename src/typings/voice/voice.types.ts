@@ -87,6 +87,11 @@ export interface VoiceRelay {
    * @param guildId - The guild ID for context.
    */
   attach: (connection: VoiceConnection, guildId: string) => void
+  /**
+   * Detaches the relay from a voice connection.
+   * @param connection - The voice connection to detach from.
+   */
+  detach: (connection: VoiceConnection) => void
 }
 
 /**
@@ -110,4 +115,6 @@ export interface ActiveStreamEntry {
  */
 export type ExtendedVoiceConnection = VoiceConnection & {
   _voiceRelayAttached?: boolean
+  _voiceRelaySpeakStart?: (userId: string, ssrc: number) => void
+  _voiceRelaySpeakEnd?: (userId: string, ssrc: number) => void
 }

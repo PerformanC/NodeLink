@@ -9,8 +9,8 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PATH_VERSION } from "../constants.js";
-import { logger, sendErrorResponse, sendResponse, verifyMethod } from "../utils.js";
+import { PATH_VERSION } from '../constants.js';
+import { logger, sendErrorResponse, sendResponse, verifyMethod } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const defaultMethods = ['GET'];
@@ -81,9 +81,9 @@ async function loadRoutes() {
                 else if (routeName.includes('.')) {
                     const parts = routeName.split('.');
                     const basePattern = parts
-                        .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9]+)' : part))
+                        .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9_-]+)' : part))
                         .join('/');
-                    pathname = new RegExp(`^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9]+)?/?$`);
+                    pathname = new RegExp(`^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9_-]+)?/?$`);
                 }
                 else {
                     pathname = `/${PATH_VERSION}/${routeName}`;
@@ -92,7 +92,12 @@ async function loadRoutes() {
                     handler: module.handler,
                     methods: module.methods ?? defaultMethods
                 };
-                if (pathname instanceof RegExp) {
+                if (module.paths && module.paths.length > 0) {
+                    for (const explicitPath of module.paths) {
+                        staticRoutes.set(explicitPath, routeData);
+                    }
+                }
+                else if (pathname instanceof RegExp) {
                     dynamicRoutes.push([pathname, routeData]);
                 }
                 else {
@@ -121,12 +126,35 @@ const routesPromise = loadRoutes();
  * @public
  */
 async function requestHandler(nodelink, req, res) {
+    const corsEnabled = nodelink.options.server.cors === true;
+    const requestedHeaders = corsEnabled
+        ? getHeaderValue(req.headers['access-control-request-headers'])
+        : undefined;
+    const allowHeaders = requestedHeaders ||
+        'Authorization, Content-Type, Accept, Origin, User-Agent, Client-Name, User-Id, Session-Id, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers';
     const originalWriteHead = res.writeHead;
     res.writeHead = (status, headers) => {
+        if (corsEnabled) {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
+            res.setHeader('Access-Control-Allow-Headers', allowHeaders);
+            res.setHeader('Access-Control-Max-Age', '86400');
+        }
         res.setHeader('Nodelink-Api-Version', '4');
         res.setHeader('IamNodelink', 'true');
         return originalWriteHead.call(res, status, headers);
     };
+    if (corsEnabled) {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
+        res.setHeader('Access-Control-Allow-Headers', allowHeaders);
+        res.setHeader('Access-Control-Max-Age', '86400');
+        if (req.method === 'OPTIONS') {
+            res.writeHead(204);
+            res.end();
+            return;
+        }
+    }
     const startTime = Date.now();
     const requestUrl = req.url ?? '/';
     const headerAccess = req.headers;
@@ -171,7 +199,7 @@ async function requestHandler(nodelink, req, res) {
         parsedUrl.pathname === `/${PATH_VERSION}/profiler/ui` ||
         parsedUrl.pathname === `/${PATH_VERSION}/profiler/file`;
     if (isMetricsEndpoint) {
-        const metricsConfig = nodelink.options.metrics || {};
+        const metricsConfig = nodelink.options.api.metrics || {};
         if (!metricsConfig.enabled) {
             logger('warn', 'Metrics', `Metrics endpoint disabled - ${clientAddress} attempted to access ${parsedUrl.pathname}`);
             res.writeHead(404, { 'Content-Type': 'text/plain' });

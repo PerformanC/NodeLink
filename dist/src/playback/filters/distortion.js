@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
 /**
  * Applies various distortion effects (sin, cos, tan, etc.).
@@ -44,7 +44,8 @@ export default class Distortion extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : isActive ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             distortion: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: dist.transition
             }
         }, 'distortion', { alpha: 0.0 });
     }

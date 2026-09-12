@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { encodeTrack, logger } from "../utils.js";
+import { encodeTrack, logger } from '../utils.js';
 /**
  * Mapping between file extensions and the stream types returned by the local
  * source.

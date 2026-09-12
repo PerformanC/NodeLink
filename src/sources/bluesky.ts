@@ -37,16 +37,6 @@ interface BlueskySourceConfig {
 }
 
 /**
- * Runtime options subset read by the Bluesky source.
- */
-interface BlueskyRuntimeOptions {
-  /**
-   * Global search-result limit used by several sources.
-   */
-  maxSearchResults?: number
-}
-
-/**
  * Service entry returned by a DID document or PLC directory response.
  */
 interface BlueskyServiceEntry {
@@ -317,13 +307,12 @@ export default class BlueskySource {
    * @param nodelink - Worker runtime used by the source implementation.
    */
   public constructor(nodelink: WorkerNodeLink) {
-    const options = nodelink.options as BlueskyRuntimeOptions
+    const options = nodelink.options
     this.nodelink = nodelink
     this.config = {
       maxSearchResults:
-        typeof options.maxSearchResults === 'number'
-          ? options.maxSearchResults
-          : undefined
+        (options.sources?.bluesky as { maxSearchResults?: number })
+          ?.maxSearchResults ?? options.search?.maxResults
     }
     this.searchTerms = ['bksearch']
     this.patterns = [

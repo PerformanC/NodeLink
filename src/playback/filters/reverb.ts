@@ -20,7 +20,7 @@ const OFFSET_ROOM = 0.7
  * (which happens at feedback > ~0.75 on loud material).
  */
 class CombFilter {
-  private readonly buffer: Float64Array
+  private buffer: Float64Array | null
   private readonly size: number
   private writeIndex = 0
   private filterStore = 0
@@ -47,17 +47,24 @@ class CombFilter {
    * No clamping inside the loop — full Float64 precision.
    */
   public process(input: number): number {
-    const output = this.buffer[this.writeIndex] ?? 0
+    const buf = this.buffer
+    if (!buf) return 0
+    const output = buf[this.writeIndex] ?? 0
     this.filterStore = output * this.damp2 + this.filterStore * this.damp1
-    this.buffer[this.writeIndex] = input + this.filterStore * this.feedback
+    buf[this.writeIndex] = input + this.filterStore * this.feedback
     this.writeIndex = (this.writeIndex + 1) % this.size
     return output
   }
 
   public clear(): void {
-    this.buffer.fill(0)
+    this.buffer?.fill(0)
     this.filterStore = 0
     this.writeIndex = 0
+  }
+
+  public destroy(): void {
+    this.buffer = null
+    this.filterStore = 0
   }
 }
 
@@ -364,5 +371,22 @@ export default class Reverb extends AnimatableFilter {
     this.wetHPAccR = 0
 
     return Buffer.alloc(0)
+  }
+
+  public destroy(): void {
+    for (const comb of [
+      ...this.combFiltersL,
+      ...this.combFiltersR,
+      ...this.customCombsL,
+      ...this.customCombsR
+    ]) {
+      comb.destroy()
+    }
+    this.combFiltersL = []
+    this.combFiltersR = []
+    this.customCombsL = []
+    this.customCombsR = []
+    this.allpassBuffersL = []
+    this.allpassBuffersR = []
   }
 }

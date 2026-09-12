@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const LETRAS_PATTERN = /^https?:\/\/(?:www\.)?letras\.(?:mus\.br|com)\/[a-z0-9-]+\/[^/]+\/?/i;
 const ARTIST_PATTERN = /^https?:\/\/(?:www\.)?letras\.(?:mus\.br|com)\/([a-z0-9-]+)\//i;
 const SOLR_ENDPOINT = 'https://solr.sscdn.co/letras/m1/';
@@ -141,10 +141,10 @@ export default class LetrasMusSource {
         this.patterns = [LETRAS_PATTERN];
         const options = nodelink.options;
         this.maxSearchResults =
-            typeof options.maxSearchResults === 'number' &&
-                Number.isInteger(options.maxSearchResults) &&
-                options.maxSearchResults > 0
-                ? options.maxSearchResults
+            typeof options.search?.maxResults === 'number' &&
+                Number.isInteger(options.search?.maxResults) &&
+                options.search?.maxResults > 0
+                ? options.search.maxResults
                 : 10;
     }
     /**

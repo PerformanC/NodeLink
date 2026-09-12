@@ -376,7 +376,7 @@ export default class PandoraSource implements SourceInstance {
       types: ['TR'],
       listener: null,
       start: 0,
-      count: this.options.maxSearchResults ?? 10,
+      count: this.options.search.maxResults ?? 10,
       annotate: true,
       searchTime: 0,
       annotationRecipe: 'CLASS_OF_2019'
@@ -559,7 +559,9 @@ export default class PandoraSource implements SourceInstance {
    * @internal
    */
   private getMaxPlaylistLength(): number {
-    return (this.options.maxAlbumPlaylistLength as number | undefined) ?? 100
+    return (
+      (this.options.playback.maxPlaylistLength as number | undefined) ?? 100
+    )
   }
 
   /**
@@ -1099,8 +1101,7 @@ export default class PandoraSource implements SourceInstance {
       )
 
       if (
-        !searchResult ||
-        searchResult.loadType !== 'search' ||
+        searchResult?.loadType !== 'search' ||
         !Array.isArray(searchResult.data) ||
         searchResult.data.length === 0
       ) {

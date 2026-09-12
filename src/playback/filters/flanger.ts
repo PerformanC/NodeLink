@@ -110,4 +110,8 @@ export default class Flanger extends AnimatableFilter {
     this.lfo.phase = 0
     return Buffer.alloc(0)
   }
+
+  public destroy(): void {
+    this.delayLine.destroy()
+  }
 }

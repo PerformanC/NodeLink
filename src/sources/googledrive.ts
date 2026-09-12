@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import { PassThrough, type Readable } from 'node:stream'
+import type { GoogleDriveSourceConfig } from '../typings/config/config.types.ts'
 import type {
   SourceInstance,
   SourceResult,
@@ -106,9 +107,9 @@ export default class GoogleDriveSource implements SourceInstance {
     }
 
     const driveConfig = this.nodelink.options.sources?.googledrive as
-      | Record<string, unknown>
+      | GoogleDriveSourceConfig
       | undefined
-    const userCookies = driveConfig?.cookies as string | undefined
+    const userCookies = driveConfig?.cookies
     if (userCookies) {
       cookiesStr = userCookies
     }
@@ -671,7 +672,7 @@ export default class GoogleDriveSource implements SourceInstance {
     const wait = async (ms: number): Promise<void> => {
       await new Promise<void>((resolve) => {
         const timeout = setTimeout(resolve, ms)
-        if (typeof timeout.unref === 'function') timeout.unref()
+        timeout.unref?.()
       })
     }
 

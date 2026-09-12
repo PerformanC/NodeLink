@@ -20,7 +20,7 @@ const parsePositiveIntEnv = (key: string, fallback: number): number => {
 }
 const BUFFER_SIZE = parsePositiveIntEnv(
   'NODELINK_WEBM_DEMUX_RING_BYTES',
-  2 * 1024 * 1024
+  512 * 1024
 )
 
 const TAGS: Readonly<Record<string, boolean>> = Object.freeze({
@@ -252,8 +252,8 @@ abstract class WebmBaseDemuxer extends Transform {
         const skipped = this.ringBuffer.length
         if (skipped > 0) webmOpusProfiler.skippedBytes += skipped
         this.skipUntil = res._skipUntil
-        this.ringBuffer.skip(this.ringBuffer.length)
-        this.processed += BigInt(this.ringBuffer.length)
+        this.ringBuffer.skip(skipped)
+        this.processed += BigInt(skipped)
         break
       }
 

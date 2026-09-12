@@ -19,7 +19,7 @@ export class ScratchTransformer extends Transform {
      * Internal circular buffer for storing PCM samples.
      * Storing as floats (0.0 to 1.0) simplifies resampling math.
      */
-    inputBuffer;
+    inputBuffer = null;
     inputReadPos = 0;
     inputWritePos = 0;
     maxBufferSize;
@@ -32,7 +32,6 @@ export class ScratchTransformer extends Transform {
         this.sampleRate = options.sampleRate ?? 48000;
         this.channels = options.channels ?? 2;
         this.maxBufferSize = this.sampleRate * this.channels * 5;
-        this.inputBuffer = new Float32Array(this.maxBufferSize);
     }
     /**
      * Triggers a scratch movement.
@@ -42,6 +41,8 @@ export class ScratchTransformer extends Transform {
     scratchTo(durationMs, style) {
         const duration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 500;
         this._lastEffectCompleted = false;
+        if (duration > 0)
+            this._ensureInputBuffer();
         if (style === 'start' && this.inputWritePos > 0) {
             const latencySamples = 1024 * this.channels;
             this.inputReadPos = Math.max(this.channels, this.inputWritePos - latencySamples);
@@ -82,6 +83,14 @@ export class ScratchTransformer extends Transform {
     }
     getRate() {
         return this.currentRate;
+    }
+    _ensureInputBuffer() {
+        if (!this.inputBuffer) {
+            this.inputBuffer = new Float32Array(this.maxBufferSize);
+            this.inputReadPos = 0;
+            this.inputWritePos = 0;
+        }
+        return this.inputBuffer;
     }
     /**
      * Core math for rate modulation. Simulates the physics of a DJ's hand.
@@ -137,8 +146,14 @@ export class ScratchTransformer extends Transform {
     process(chunk) {
         if (chunk.length === 0)
             return chunk;
+        if (!this.state &&
+            Math.abs(this.currentRate - 1.0) <= 0.001 &&
+            this.inputWritePos <= this.inputReadPos + this.channels) {
+            return chunk;
+        }
         const incomingSamples = chunk.length / 2;
         const incomingFrames = incomingSamples / this.channels;
+        const inputBuffer = this._ensureInputBuffer();
         if (this.inputWritePos + incomingSamples > this.maxBufferSize) {
             this._compact();
             if (this.inputWritePos + incomingSamples > this.maxBufferSize) {
@@ -148,7 +163,7 @@ export class ScratchTransformer extends Transform {
             }
         }
         for (let i = 0; i < incomingSamples; i++) {
-            this.inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767;
+            inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767;
         }
         const outI16 = new Int16Array(incomingSamples);
         const frameDurationMs = 1000 / this.sampleRate;
@@ -174,10 +189,10 @@ export class ScratchTransformer extends Transform {
             const safeIPos = Math.max(this.channels, Math.min(this.inputWritePos - this.channels * 3, iPos));
             const frac = (this.inputReadPos - iPos) / this.channels;
             for (let c = 0; c < this.channels; c++) {
-                const p0 = this.inputBuffer[safeIPos - this.channels + c] || 0;
-                const p1 = this.inputBuffer[safeIPos + c] || 0;
-                const p2 = this.inputBuffer[safeIPos + this.channels + c] || 0;
-                const p3 = this.inputBuffer[safeIPos + this.channels * 2 + c] || 0;
+                const p0 = inputBuffer[safeIPos - this.channels + c] || 0;
+                const p1 = inputBuffer[safeIPos + c] || 0;
+                const p2 = inputBuffer[safeIPos + this.channels + c] || 0;
+                const p3 = inputBuffer[safeIPos + this.channels * 2 + c] || 0;
                 const val = 0.5 *
                     (2 * p1 +
                         (-p0 + p2) * frac +
@@ -198,6 +213,8 @@ export class ScratchTransformer extends Transform {
      * This allows the "disk" to be pulled backwards immediately even at the start of a chunk.
      */
     _compact() {
+        if (!this.inputBuffer)
+            return;
         const historyFrames = this.sampleRate * 1;
         const keepSamples = historyFrames * this.channels;
         const integralReadPos = Math.floor(this.inputReadPos / this.channels) * this.channels;
@@ -208,5 +225,10 @@ export class ScratchTransformer extends Transform {
         this.inputBuffer.copyWithin(0, copyStart, this.inputWritePos);
         this.inputReadPos -= copyStart;
         this.inputWritePos = remaining;
+    }
+    _destroy(_err, cb) {
+        this.inputBuffer = null;
+        this.state = null;
+        cb(null);
     }
 }

@@ -4,7 +4,7 @@
  */
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 const API_BASE = 'https://api.tidal.com/v1/';
 const CACHE_VALIDITY_DAYS = 7;
 const TIDAL_ASSET_URL = 'https://tidal.com/assets/index-CJ0DsMmf.js';
@@ -136,7 +136,7 @@ export default class TidalSource {
             return this.getRecommendations(query);
         }
         try {
-            const limit = this.asNumber(this.nodelink.options.maxSearchResults) ?? 10;
+            const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10;
             const data = await this.getJson('search', {
                 query,
                 limit,

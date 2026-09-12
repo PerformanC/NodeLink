@@ -154,6 +154,8 @@ export class LoudnessNormalizer {
     process(inputView) {
         if (inputView.length === 0)
             return;
+        if (!this._channelBuffer)
+            return;
         const frameCount = inputView.length / this.channels;
         const channelBuffer = this._channelBuffer;
         let energyState = this._energyState;
@@ -213,5 +215,9 @@ export class LoudnessNormalizer {
         this._attackAlpha = fround(Math.exp(-1 / (attackTime * sr)));
         this._releaseAlpha = fround(Math.exp(-1 / (releaseTime * sr)));
         this._energyAlpha = fround(Math.exp(-1 / (shortTermTime * sr)));
+    }
+    destroy() {
+        this._channelBuffer = null;
+        this.filters = [];
     }
 }

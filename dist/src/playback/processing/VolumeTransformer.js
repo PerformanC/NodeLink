@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { Transform } from 'node:stream';
-import { LoudnessNormalizer } from "./LoudnessNormalizer.js";
+import { LoudnessNormalizer } from './LoudnessNormalizer.js';
 const INT16_MAX = 32767;
 const INT16_MIN = -32768;
 const DEFAULT_CURVE = 'sinusoidal';
@@ -81,6 +81,18 @@ export class VolumeTransformer extends Transform {
                 gateThresholdLUFS: options.gateThresholdLUFS
             })
             : null;
+    }
+    setAGCEnabled(enabled) {
+        if (enabled && !this.agc) {
+            this.agc = new LoudnessNormalizer({
+                sampleRate: this.sampleRate,
+                channels: this.channels,
+                targetLoudness: -14
+            });
+        }
+        else if (!enabled && this.agc) {
+            this.agc = null;
+        }
     }
     _getFadeCurveValue(progress) {
         const clamped = Math.min(1, Math.max(0, progress));
@@ -185,7 +197,7 @@ export class VolumeTransformer extends Transform {
         const { gainStart, gainEnd } = this._computeFadeGains(usableSamples);
         const gainStep = usableSamples > 1 ? (gainEnd - gainStart) / (usableSamples - 1) : 0;
         let gain = gainStart;
-        if (this.lookaheadSamples > 0) {
+        if (this.lookaheadSamples > 0 && this.lookaheadBuffer) {
             const outputBuffer = alignedBufferIfRequired(chunk.length);
             const outputView = new Int16Array(outputBuffer.buffer, outputBuffer.byteOffset, usableSamples);
             if (useBufferOps) {
@@ -254,5 +266,11 @@ export class VolumeTransformer extends Transform {
         catch (error) {
             callback(error);
         }
+    }
+    _destroy(_err, cb) {
+        this.lookaheadBuffer = null;
+        this.agc?.destroy?.();
+        this.agc = null;
+        cb(null);
     }
 }

@@ -17,7 +17,7 @@ const TOKENS_LOG_PATH = path.join(process.cwd(), 'po_tokens.jsonl')
 const PO_CONFIG = {
   apiKey: 'AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw',
   userAgent:
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
   ytBaseUrl: 'https://www.youtube.com',
   googBaseUrl: 'https://jnn-pa.googleapis.com'
 }
@@ -27,6 +27,34 @@ const PO_CONFIG = {
  * @internal
  */
 const textEncoder = new TextEncoder()
+
+/**
+ * Parses the loose JSON inside `window.ytAtN(...)` (`\xNN`, trailing commas, single quotes).
+ * @internal
+ */
+function parseLooseJSON(looseJson: string): Record<string, unknown> {
+  const sanitized = looseJson.replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) =>
+    String.fromCharCode(Number.parseInt(hex, 16))
+  )
+  let jsonStr = sanitized.replace(/,\s*([\]}])/g, '$1')
+  jsonStr = jsonStr.replace(/'((?:[^'\\]|\\[\s\S])*)'/g, (_, inner: string) =>
+    JSON.stringify(inner.replace(/\\'/g, "'"))
+  )
+  jsonStr = jsonStr.replace(/([{,]\s*)([a-zA-Z0-9_$]+)\s*:/g, '$1"$2":')
+  const parsed = JSON.parse(jsonStr) as Record<string, unknown>
+  for (const k in parsed) {
+    const v = parsed[k]
+    if (
+      typeof v === 'string' &&
+      (v.trim().startsWith('{') || v.trim().startsWith('['))
+    ) {
+      try {
+        parsed[k] = JSON.parse(v as string) as unknown
+      } catch {}
+    }
+  }
+  return parsed
+}
 
 /**
  * Helper class for handling promises that are resolved or rejected externally.
@@ -299,7 +327,7 @@ export class PoTokenManager {
   private _idleTimer: NodeJS.Timeout | null = null
 
   /**
-   * Refreshes the idle timeout for JSDOM resources.
+   * Refreshes the idle timeout for NativeDOM resources.
    * @internal
    */
   private _refreshIdleTimer(): void {
@@ -309,7 +337,7 @@ export class PoTokenManager {
         logger(
           'debug',
           'PoToken',
-          'Idle timeout reached. Cleaning up JSDOM resources.'
+          'Idle timeout reached. Cleaning up NativeDOM resources.'
         )
         this.reset()
       },
@@ -319,8 +347,8 @@ export class PoTokenManager {
   }
 
   /**
-   * Applies JSDOM environment to globalThis.
-   * @param dom - JSDOM instance.
+   * Applies NativeDOM environment to globalThis.
+   * @param dom - NativeDOM instance.
    * @internal
    */
   private _applyDomGlobals(dom: {
@@ -358,7 +386,7 @@ export class PoTokenManager {
   }
 
   /**
-   * Cleans up JSDOM and restores previous globals.
+   * Cleans up NativeDOM and restores previous globals.
    * @internal
    */
   private _cleanupDom(): void {
@@ -367,10 +395,27 @@ export class PoTokenManager {
       this._dom = null
     }
 
+    const g2 = globalThis as unknown as Record<string, unknown>
+    try {
+      if ((g2.yt as Record<string, unknown> | undefined)?.config_) {
+        Reflect.deleteProperty(g2, 'yt')
+      }
+    } catch {}
+    const win2 = g2.window as Record<string, unknown> | undefined
+    try {
+      if ((win2?.yt as Record<string, unknown> | undefined)?.config_) {
+        Reflect.deleteProperty(win2 as Record<string, unknown>, 'yt')
+      }
+    } catch {
+      try {
+        if (win2) (win2 as Record<string, unknown>).yt = undefined as unknown
+      } catch {}
+    }
+
     const p = this._prevGlobals
     if (!p) return
 
-    const g = globalThis as unknown as Record<string, unknown>
+    const g = g2
     for (const k of ['window', 'document', 'location', 'origin'] as const) {
       if (p[k] === undefined) delete g[k]
       else g[k] = p[k]
@@ -391,7 +436,6 @@ export class PoTokenManager {
         headers: { 'user-agent': PO_CONFIG.userAgent }
       })
       const html = await response.text()
-
       const marker = '"VISITOR_DATA":"'
       const start = html.indexOf(marker)
       if (start !== -1) {
@@ -399,12 +443,91 @@ export class PoTokenManager {
         const end = html.indexOf('"', from)
         if (end !== -1) return html.slice(from, end)
       }
-
       throw new Error('Could not find visitorData in HTML')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       logger('error', 'PoToken', `Failed to fetch visitorData: ${message}`)
       return ''
+    }
+  }
+
+  private async getChallengeFromHomepage(): Promise<
+    AttestationChallenge | undefined
+  > {
+    try {
+      const res = await fetch('https://www.youtube.com', {
+        headers: {
+          accept: '*/*',
+          'accept-language': 'en-US,en;q=0.7',
+          'user-agent': PO_CONFIG.userAgent
+        }
+      })
+      if (!res.ok) return undefined
+      const html = await res.text()
+      const ytcfgMatch = html.match(/ytcfg\.set\(({.+?})\);/s)
+      if (ytcfgMatch?.[1]) {
+        try {
+          const ytcfg = JSON.parse(ytcfgMatch[1]) as Record<string, unknown>
+          const ytObj = { config_: ytcfg }
+          ;(globalThis as unknown as Record<string, unknown>).yt = ytObj
+          const win = (globalThis as unknown as Record<string, unknown>)
+            .window as Record<string, unknown> | undefined
+          if (win) win.yt = ytObj
+          if (
+            ytcfg.VISITOR_DATA &&
+            typeof ytcfg.VISITOR_DATA === 'string' &&
+            !this.visitorData
+          ) {
+            this.visitorData = ytcfg.VISITOR_DATA
+          }
+        } catch {}
+      } else {
+        logger('warn', 'PoToken', 'homepage-challenge: no ytcfg found')
+      }
+      const attMatch = html.match(/window\.ytAtN\(\s*({[\s\S]*?})\s*\)/)
+      if (!attMatch?.[1]) {
+        logger('warn', 'PoToken', 'homepage-challenge: no ytAtN in page')
+        return undefined
+      }
+      const attData = parseLooseJSON(attMatch[1]) as Record<string, unknown>
+      const r = (attData.R ?? attData.r) as Record<string, unknown> | undefined
+      const bgChallenge = r?.bgChallenge as
+        | {
+            program?: string
+            globalName?: string
+            interpreterUrl?: {
+              privateDoNotAccessOrElseTrustedResourceUrlWrappedValue?: string
+            }
+          }
+        | undefined
+      if (!bgChallenge?.program || !bgChallenge?.interpreterUrl) {
+        logger(
+          'warn',
+          'PoToken',
+          'homepage-challenge: ytAtN payload missing bgChallenge'
+        )
+        return undefined
+      }
+      logger('debug', 'PoToken', 'Using challenge from homepage (patched)')
+      return {
+        bg_challenge: {
+          program: bgChallenge.program,
+          global_name: bgChallenge.globalName as string,
+          interpreter_url: {
+            private_do_not_access_or_else_trusted_resource_url_wrapped_value:
+              bgChallenge.interpreterUrl
+                .privateDoNotAccessOrElseTrustedResourceUrlWrappedValue as string
+          }
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      logger(
+        'warn',
+        'PoToken',
+        `homepage-challenge: failed (${msg}), falling back`
+      )
+      return undefined
     }
   }
 
@@ -426,13 +549,13 @@ export class PoTokenManager {
           'user-agent': PO_CONFIG.userAgent,
           'x-goog-api-key': PO_CONFIG.apiKey,
           'x-youtube-client-name': '1',
-          'x-youtube-client-version': '2.20260114.01.00'
+          'x-youtube-client-version': '2.20260706.00.00'
         },
         body: JSON.stringify({
           context: {
             client: {
               clientName: 'WEB',
-              clientVersion: '2.20260114.01.00',
+              clientVersion: '2.20260706.00.00',
               visitorData
             }
           },
@@ -500,31 +623,55 @@ export class PoTokenManager {
 
     if (existingVisitorData) {
       this.visitorData = existingVisitorData
-    } else {
-      this.visitorData = await this.fetchVisitorData()
     }
     logger(
       'debug',
       'PoToken',
-      `VisitorData: ${this.visitorData?.slice(0, 20)}...`
+      `VisitorData: ${this.visitorData?.slice(0, 20) ?? '(none, will extract from homepage)'}...`
     )
 
-    this._cleanupDom()
-    const { JSDOM } = await import('jsdom')
-    this._dom = new JSDOM(
-      '<!DOCTYPE html><html lang="en"><head><title></title></head><body></body></html>',
-      {
-        url: 'https://www.youtube.com/',
-        referrer: 'https://www.youtube.com/',
-        userAgent: PO_CONFIG.userAgent
-      }
+    await this._initializeWithDom()
+    logger(
+      'debug',
+      'PoToken',
+      'BotGuard initialization with NativeDOM complete'
     )
+  }
+
+  /**
+   * Internal helper to perform BotGuard initialization with NativeDOM.
+   * @internal
+   */
+  private async _initializeWithDom(): Promise<void> {
+    this._cleanupDom()
+
+    const { NativeDOM } = await import('./nativeDOM.ts')
+    this._dom = new NativeDOM({
+      url: 'https://www.youtube.com/',
+      referrer: 'https://www.youtube.com/',
+      userAgent: PO_CONFIG.userAgent
+    })
+
     this._applyDomGlobals(this._dom)
 
     logger('debug', 'PoToken', 'Fetching attestation challenge...')
-    const challengeResponse = await this.getAttestationChallenge(
-      this.visitorData || ''
-    )
+    // Homepage pair is preferred: bound to ytcfg EVENT_ID, never worse than /att/get.
+    let challengeResponse: AttestationChallenge | undefined =
+      await this.getChallengeFromHomepage()
+    if (!challengeResponse) {
+      if (!this.visitorData) {
+        const vd = await this.fetchVisitorData()
+        if (vd) this.visitorData = vd
+      }
+      logger(
+        'debug',
+        'PoToken',
+        'Using challenge from /att/get (legacy fallback)'
+      )
+      challengeResponse = await this.getAttestationChallenge(
+        this.visitorData || ''
+      )
+    }
     if (!challengeResponse.bg_challenge)
       throw new Error('Could not get challenge')
 
@@ -562,11 +709,17 @@ export class PoTokenManager {
       body: JSON.stringify([requestKey, botguardResponse])
     })
 
-    const response = (await integrityTokenResponse.json()) as [string, unknown]
-    if (typeof response[0] !== 'string')
-      throw new Error('Could not get integrity token')
+    const response = (await integrityTokenResponse.json()) as unknown[]
+    let token = ''
+    if (response && typeof response[0] === 'string') {
+      token = response[0]
+    } else if (response && typeof response[3] === 'string') {
+      token = response[3]
+    }
 
-    this.integrityToken = response[0]
+    if (!token) throw new Error('Could not get integrity token')
+
+    this.integrityToken = token
     logger(
       'debug',
       'PoToken',

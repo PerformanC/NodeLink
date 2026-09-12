@@ -11,6 +11,7 @@ import type {
   HttpRequestResult,
   NodelinkRuntime
 } from '../utils.types.ts'
+import type { ClientInfoMsg, PreviousSessionState } from './sabr.types.ts'
 import type { TrackInfo } from './source.types.ts'
 
 /**
@@ -195,10 +196,48 @@ export interface YouTubeContext {
     platform?: string
 
     /**
+     * Operating system name identifier.
+     * @example 'Windows', 'Android', 'iOS', 'Linux'
+     */
+    osName?: string
+
+    /**
+     * UTC offset in minutes relative to GMT.
+     * @example 0, -180, 120
+     */
+    utcOffsetMinutes?: number
+
+    /**
+     * Operating system version string.
+     * @example '10.0', '13', '14.1'
+     */
+    osVersion?: string
+
+    /**
      * User agent string sent with API requests.
      * @example 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)...'
      */
     userAgent?: string
+
+    /**
+     * Client form factor.
+     */
+    clientFormFactor?: string
+
+    /**
+     * User interface theme.
+     */
+    userInterfaceTheme?: string
+
+    /**
+     * Browser name.
+     */
+    browserName?: string
+
+    /**
+     * Browser version string.
+     */
+    browserVersion?: string
   }
 }
 
@@ -561,6 +600,38 @@ export interface YouTubePlayerResponse {
       likeCount?: string | number
       [key: string]: unknown
     }
+    microformatDataRenderer: {
+      urlCanonical: string
+      title: string
+      description: string
+      thumbnail: unknown[]
+      siteName: string
+      appName: string
+      androidPackage: string
+      iosAppStoreId: string
+      iosAppArguments: string
+      ogType: string
+      urlApplinksIos: string
+      urlApplinksAndroid: string
+      urlTwitterIos: string
+      urlTwitterAndroid: string
+      twitterCardType: string
+      twitterSiteHandle: string
+      schemaDotOrgType: string
+      noindex: boolean
+      unlisted: boolean
+      paid: boolean
+      familySafe: boolean
+      availableCountries: unknown[]
+      pageOwnerDetails: Record<string, unknown>
+      videoDetails: Record<string, unknown>
+      linkAlternates: unknown[]
+      viewCount: string
+      publishDate: string
+      category: string
+      uploadDate: string
+      [key: string]: unknown
+    }
   }
 
   /** Playability status for the video */
@@ -866,6 +937,8 @@ export interface YouTubeSourceConfig {
   resolveExternalLinks?: boolean
   /** When `true`, fetches channel information (avatar, subscriber count) during Holo resolution. */
   fetchChannelInfo?: boolean
+  /** When `true`, official albums (OLAK) are resolved via an internal audio-only mirror search to ensure gapless playback. */
+  mirrorOfficialAlbums?: boolean
   /** Allow additional unknown configuration keys for forward compatibility. */
   [key: string]: unknown
 }
@@ -910,6 +983,8 @@ export interface TrackUrlData {
   hlsUrl?: string | null
   /** Array of available format entries with their metadata. */
   formats?: FormatEntry[]
+  /** The specific itag used for this track URL. */
+  itag?: number
   /** Additional metadata attached to the track URL (content length, proxy info, access tokens, etc.). */
   additionalData?: Record<string, unknown>
   /** New track information when resolution redirects to a different track (e.g., fallback sources). */
@@ -945,6 +1020,8 @@ export interface FormatEntry {
   mimeType?: string
   /** Average bitrate in bits per second for this format variant. */
   bitrate?: number
+  /** Audio track identifier for multilingual audio. */
+  audioTrackId?: string
   /** Allow additional format-specific properties for forward compatibility. */
   [key: string]: unknown
 }
@@ -966,8 +1043,10 @@ export interface StreamResult {
     responseStream?: Readable
     /** Underlying SABR stream instance (SABR protocol only). */
     _sabrStream?: unknown
-    /** Returns the current SABR session state for reconnection (SABR protocol only). */
-    getSessionState?: () => unknown
+    /** Pauses SABR requests and returns state for a seek replacement. */
+    beginSeekHandoff?: () => Promise<unknown>
+    /** Resumes SABR requests when a seek replacement fails. */
+    cancelSeekHandoff?: () => void
     /** Destroys the stream and releases all associated resources. */
     destroy: (err?: Error) => void
   }
@@ -1004,25 +1083,31 @@ export interface TrackUrlAdditionalData {
   /** Server-side ABR streaming URL used to establish SABR sessions. */
   serverAbrStreamingUrl?: string
   /** Video playback ustreamer configuration blob used by SABR for media serving. */
-  videoPlaybackUstreamerConfig?: unknown
+  videoPlaybackUstreamerConfig?: string | Uint8Array
   /** Proof-of-origin token required by SABR for bot-detection bypass. */
-  poToken?: string
+  poToken?: string | Uint8Array
   /** Client identification metadata passed to SABR session initialization. */
-  clientInfo?: unknown
+  clientInfo?: ClientInfoMsg
   /** Available format entries used by SABR to select audio quality. */
   formats?: FormatEntry[]
+  /** The specific itag used for this track URL. */
+  itag?: number
   /** Start time offset in seconds for SABR stream initialization. */
   startTime?: number
   /** Position callback used by SABR to report playback progress. */
-  positionCallback?: unknown
+  positionCallback?: (positionMs: number) => void
+  /** Callback used by SABR to stop its playhead while playback is paused. */
+  playbackPaused?: () => boolean
   /** Previous SABR session state for session continuation. */
-  previousSession?: unknown
+  previousSession?: PreviousSessionState
   /** Unique key identifying this stream in the active streams map. */
   streamKey?: string | symbol
   /** User-Agent header value for SABR HTTP requests. */
   userAgent?: string
   /** Playback cookie used for authenticated SABR sessions. */
-  playbackCookie?: unknown
+  playbackCookie?: string | Uint8Array
+  /** YouTube client name that resolved this URL (e.g. 'AndroidVR', 'Web'). */
+  client?: string
   /** Allow additional properties for future extensibility. */
   [key: string]: unknown
 }

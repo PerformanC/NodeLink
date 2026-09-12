@@ -1,4 +1,8 @@
 import type {
+  SonglinkSourceConfig,
+  SourcesRegistry
+} from '../typings/config/config.types.ts'
+import type {
   SourceResult,
   TrackInfo,
   TrackUrlResult,
@@ -69,7 +73,7 @@ export default class SongLinkSource {
   /**
    * Raw source configuration block.
    */
-  public readonly config: Record<string, unknown>
+  public readonly config: SonglinkSourceConfig
 
   /**
    * Search aliases supported by this source.
@@ -136,11 +140,7 @@ export default class SongLinkSource {
     }
   ) {
     this.nodelink = nodelink
-    const sourceConfig = this.nodelink.options.sources?.songlink
-    this.config =
-      sourceConfig && typeof sourceConfig === 'object'
-        ? (sourceConfig as Record<string, unknown>)
-        : {}
+    this.config = this.nodelink.options.sources.songlink
     this.searchTerms = ['slsearch']
     this.patterns = [SONG_LINK_PATTERN]
     this.priority = 95
@@ -270,7 +270,7 @@ export default class SongLinkSource {
     _searchType = 'track'
   ): Promise<SourceResult> {
     try {
-      const maxSearchRaw = this.nodelink.options.maxSearchResults
+      const maxSearchRaw = this.nodelink.options.search?.maxResults
       const limit =
         typeof maxSearchRaw === 'number' && Number.isFinite(maxSearchRaw)
           ? maxSearchRaw
@@ -695,7 +695,8 @@ export default class SongLinkSource {
    * @returns True when source can be used.
    */
   private _isSourceAvailable(sourceName: string): boolean {
-    const sourceConfig = this.nodelink.options.sources?.[sourceName]
+    const sourceConfig =
+      this.nodelink.options.sources[sourceName as keyof SourcesRegistry]
     if (!sourceConfig?.enabled) return false
     return !!this.nodelink.sources.getSource(sourceName)
   }

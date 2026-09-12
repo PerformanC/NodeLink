@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import { encodeTrack, http1makeRequest, logger, makeRequest } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Google Drive source implementation.
  * Follows HttpSource pattern.
@@ -533,8 +533,7 @@ export default class GoogleDriveSource {
         const wait = async (ms) => {
             await new Promise((resolve) => {
                 const timeout = setTimeout(resolve, ms);
-                if (typeof timeout.unref === 'function')
-                    timeout.unref();
+                timeout.unref?.();
             });
         };
         const onData = (chunk) => {

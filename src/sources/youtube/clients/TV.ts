@@ -53,15 +53,28 @@ export default class TV extends BaseClient {
     return {
       client: {
         clientName: 'TVHTML5',
-        clientVersion: '7.20260113.16.00',
+        clientVersion: '7.20260708.13.02',
+        browserVersion: '25.lts.40.1035033-gold',
+        browserName: 'Cobalt',
         userAgent:
-          'Mozilla/5.0 (Fuchsia) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 CrKey/1.56.500000',
+          'Mozilla/5.0 (SMART-TV; Linux; Tizen 8.0) Cobalt/Version (unlike Gecko) v8/11.4.233.17-gold Starboard/16, Tizen;Samsung;KantM_2024;8.0/2300.0 (Samsung, QN90D_98, Wired',
         hl: context.client.hl,
         gl: context.client.gl
       },
       user: { lockedSafetyMode: false },
       request: { useSsl: true }
     }
+  }
+
+  /**
+   * Returns player parameters for TV playback.
+   *
+   * @returns Base64-encoded player parameters string
+   */
+  override getPlayerParams(): string | null {
+    // around D8 03 01 w field 59? or 27? makes me confused.
+    // will appear betwenn 0AMB ... xxxxxxMIw (-5/6 letters that always updates)
+    return '2AMB'
   }
 
   /**

@@ -71,7 +71,7 @@ export default class HLSHandler extends PassThrough {
     this.currentUrl = url
     this.headers = options.headers ?? {}
     this.localAddress = options.localAddress ?? null
-    this.proxy = options.proxy ?? null
+    this.proxy = options.network?.proxy ?? options.proxy ?? null
     this.onResolveUrl = options.onResolveUrl ?? null
     this.strategy =
       options.strategy ??
@@ -385,6 +385,17 @@ export default class HLSHandler extends PassThrough {
       this._fetchSegments().catch((err: Error) => {
         logger('error', 'HLSHandler', `Segment fetch error: ${err.message}`)
       })
+    }
+
+    if (
+      !this.isLive &&
+      this.segmentQueue.length === 0 &&
+      !this.isFetching &&
+      !this.stop &&
+      !this.destroyed
+    ) {
+      this.end()
+      return
     }
 
     if (this.isLive && !playlistContent.includes('#EXT-X-ENDLIST')) {

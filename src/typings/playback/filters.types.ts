@@ -138,6 +138,16 @@ export interface RotationSettings {
 }
 
 /**
+ * Configuration for the Tesseract (4D Rotation) filter.
+ * @public
+ */
+export interface TesseractSettings {
+  rotationHz?: number
+  transition?: AnimationTransition
+  alpha?: number
+}
+
+/**
  * Configuration for the LowPass filter.
  * @public
  */
@@ -325,6 +335,7 @@ export interface FilterSettings {
   compressor?: CompressorSettings
   phonograph?: PhonographSettings
   tape?: TapeSettings
+  tesseract?: TesseractSettings
   [key: string]: unknown
 }
 
@@ -366,6 +377,11 @@ export interface FilterInstance {
    * Returns true if the filter is currently active or animating back to its disabled state.
    */
   isActive?: () => boolean
+
+  /**
+   * Releases any internal resources.
+   */
+  destroy?: () => void
 }
 
 /**

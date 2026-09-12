@@ -111,10 +111,10 @@ async function loadRoutes(): Promise<ApiRouteCollection> {
         } else if (routeName.includes('.')) {
           const parts = routeName.split('.')
           const basePattern = parts
-            .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9]+)' : part))
+            .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9_-]+)' : part))
             .join('/')
           pathname = new RegExp(
-            `^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9]+)?/?$`
+            `^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9_-]+)?/?$`
           )
         } else {
           pathname = `/${PATH_VERSION}/${routeName}`
@@ -125,7 +125,11 @@ async function loadRoutes(): Promise<ApiRouteCollection> {
           methods: module.methods ?? defaultMethods
         }
 
-        if (pathname instanceof RegExp) {
+        if (module.paths && module.paths.length > 0) {
+          for (const explicitPath of module.paths) {
+            staticRoutes.set(explicitPath, routeData)
+          }
+        } else if (pathname instanceof RegExp) {
           dynamicRoutes.push([pathname, routeData])
         } else {
           staticRoutes.set(pathname, routeData)
@@ -160,12 +164,49 @@ async function requestHandler(
   req: ApiRequest,
   res: ApiResponse
 ): Promise<void> {
+  const corsEnabled = nodelink.options.server.cors === true
+  const requestedHeaders = corsEnabled
+    ? getHeaderValue(
+        (req.headers as Record<string, string | string[] | undefined>)[
+          'access-control-request-headers'
+        ]
+      )
+    : undefined
+  const allowHeaders =
+    requestedHeaders ||
+    'Authorization, Content-Type, Accept, Origin, User-Agent, Client-Name, User-Id, Session-Id, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers'
+
   const originalWriteHead = res.writeHead
   res.writeHead = (status, headers) => {
+    if (corsEnabled) {
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader(
+        'Access-Control-Allow-Methods',
+        'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
+      )
+      res.setHeader('Access-Control-Allow-Headers', allowHeaders)
+      res.setHeader('Access-Control-Max-Age', '86400')
+    }
     res.setHeader('Nodelink-Api-Version', '4')
     res.setHeader('IamNodelink', 'true')
 
     return originalWriteHead.call(res, status, headers)
+  }
+
+  if (corsEnabled) {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
+    )
+    res.setHeader('Access-Control-Allow-Headers', allowHeaders)
+    res.setHeader('Access-Control-Max-Age', '86400')
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
   }
 
   const startTime = Date.now()
@@ -224,7 +265,7 @@ async function requestHandler(
     parsedUrl.pathname === `/${PATH_VERSION}/profiler/ui` ||
     parsedUrl.pathname === `/${PATH_VERSION}/profiler/file`
   if (isMetricsEndpoint) {
-    const metricsConfig = nodelink.options.metrics || {}
+    const metricsConfig = nodelink.options.api.metrics || {}
     if (!metricsConfig.enabled) {
       logger(
         'warn',

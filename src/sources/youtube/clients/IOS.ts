@@ -72,6 +72,15 @@ export default class IOS extends BaseClient {
   }
 
   /**
+   * Returns player parameters for IOS playback.
+   *
+   * @returns Base64-encoded player parameters string
+   */
+  override getPlayerParams(): string | null {
+    return '2AMB'
+  }
+
+  /**
    * IOS client does not require a player script.
    *
    * @returns Always false for the IOS client

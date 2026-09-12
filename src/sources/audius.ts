@@ -251,7 +251,7 @@ export default class AudiusSource implements SourceInstance {
    */
   public async search(query: string): Promise<SourceResult> {
     try {
-      const limit = this.nodelink.options.maxSearchResults || 10
+      const limit = this.nodelink.options.search.maxResults || 10
       const endpoint = `/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}`
       const data = await this._apiRequest<AudiusTrack[]>(endpoint)
 

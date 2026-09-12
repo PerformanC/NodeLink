@@ -4,12 +4,18 @@ import http from 'node:http'
 import { resolve as resolvePath } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import WebSocketServer from '@performanc/pwsl-server'
-
+import type ProxyManager from './managers/proxyManager.ts'
 import RoutePlannerManager from './managers/routePlannerManager.ts'
 import SessionManager from './managers/sessionManager.ts'
 import StatsManager from './managers/statsManager.ts'
 import {
+  migrateConfig,
+  persistConfig
+} from './modules/config/configMigration.ts'
+import { cleanupBunServer, createBunServer } from './server/bunServer.ts'
+import {
   applyEnvOverrides,
+  checkDependencyUpdates,
   checkForUpdates,
   cleanupHttpAgents,
   cleanupLogger,
@@ -23,7 +29,6 @@ import {
   verifyDiscordID
 } from './utils.ts'
 import 'dotenv/config'
-import type { ServerWebSocket } from 'bun'
 import { GatewayEvents, MINIMUM_NODE_VERSION } from './constants.ts'
 import ConfigValidationManager from './managers/configValidationManager.ts'
 import type ConnectionManager from './managers/connectionManager.ts'
@@ -38,14 +43,15 @@ import type SourceWorkerManager from './managers/sourceWorkerManager.ts'
 import type TrackCacheManager from './managers/trackCacheManager.ts'
 import type WorkerManager from './managers/workerManager.ts'
 import type { ApiMiddlewareExtension } from './typings/api/api.types.ts'
-import type { NodelinkConfig } from './typings/config/config.types.ts'
+import type {
+  JsonValue,
+  NodelinkConfig
+} from './typings/config/config.types.ts'
 import type {
   AudioInterceptorExtension,
-  BunSocketData,
   ConfigLoadError,
   FilterExtension,
   GitInfo,
-  IBunSocketWrapper,
   NodelinkServer as INodelinkServer,
   NodelinkExtensions,
   NodelinkServerType,
@@ -55,7 +61,6 @@ import type {
   PlayerInterceptorExtension,
   PlayerManagerConstructor,
   RequestShim,
-  ResponseShim,
   RouteExtension,
   SessionSocket,
   SourceExtension,
@@ -63,7 +68,7 @@ import type {
   VoiceRelay,
   WebSocketInterceptorExtension
 } from './typings/index.types.ts'
-import type { ClientInfo, IPCMessage, ReqShim } from './typings/shared.types.ts'
+import type { ClientInfo, IPCMessage } from './typings/shared.types.ts'
 import { parseVoiceFrameHeader } from './voice/voiceFrames.ts'
 import { createVoiceRelay } from './voice/voiceRelay.ts'
 
@@ -73,9 +78,11 @@ type ProfilerApiModule = typeof import('./api/profiler.ts')
 let profilerApiPromise: Promise<ProfilerApiModule> | null = null
 
 const isRuntimeAtLeast = (current: string, minimum: string): boolean =>
-  current.replace(/^v/, '').localeCompare(minimum.replace(/^v/, ''), undefined, {
-    numeric: true
-  }) >= 0
+  current
+    .replace(/^v/, '')
+    .localeCompare(minimum.replace(/^v/, ''), undefined, {
+      numeric: true
+    }) >= 0
 
 type NodeLtsCacheEntry = {
   version: string
@@ -85,7 +92,8 @@ type NodeLtsCacheEntry = {
 const NODE_LTS_CREDENTIAL_KEY = 'runtime.node.latestLts'
 const NODE_LTS_CREDENTIAL_TTL_MS = 24 * 60 * 60 * 1000
 const NODE_LTS_MEMORY_TTL_MS = 10 * 60 * 1000
-let latestNodeLtsCache: { value: string | null; expiresAt: number } | null = null
+let latestNodeLtsCache: { value: string | null; expiresAt: number } | null =
+  null
 
 const getLatestNodeLtsVersion = async (
   credentialManager: CredentialManager | null
@@ -285,34 +293,136 @@ const getTrackCacheManagerClass = async (): Promise<
 }
 
 let config: NodelinkConfig
-const resolveRootConfigUrl = (fileName: string): string =>
-  pathToFileURL(resolvePath(process.cwd(), fileName)).href
 
-try {
-  config = (await import(resolveRootConfigUrl('config.js')))
-    .default as unknown as NodelinkConfig
-} catch (e) {
-  const error = e as ConfigLoadError
-  if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT') {
-    try {
-      config = (await import(resolveRootConfigUrl('config.default.js')))
-        .default as unknown as NodelinkConfig
-      console.log(
-        '[WARN] Config: config.js not found, using config.default.js. It is recommended to create a config.js file for your own configuration.'
-      )
-    } catch (e2) {
-      console.error(
-        '[ERROR] Config: Failed to load config.default.js. Please make sure it exists.'
-      )
-      throw e2
+const loadConfig = async (): Promise<NodelinkConfig> => {
+  const resolveRootConfigUrl = (fileName: string): string =>
+    pathToFileURL(resolvePath(process.cwd(), fileName)).href
+  const resolveConfigExport = (
+    importedModule: Record<string, unknown>,
+    fileName: string
+  ): Record<string, unknown> => {
+    const candidate =
+      (
+        importedModule as {
+          default?: unknown
+          config?: unknown
+        }
+      ).default ??
+      (
+        importedModule as {
+          default?: unknown
+          config?: unknown
+        }
+      ).config
+
+    if (
+      candidate &&
+      typeof candidate === 'object' &&
+      Object.keys(candidate as Record<string, unknown>).length > 0
+    ) {
+      return candidate as Record<string, unknown>
     }
-  } else {
-    throw e
+
+    throw new Error(
+      `[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`
+    )
   }
+
+  /**
+   * Loads and merges configuration files.
+   * Prioritizes config.ts/js, falls back to config.default.ts/js.
+   * @returns Migrated and merged configuration object.
+   */
+  const loadAndMerge = async (): Promise<NodelinkConfig> => {
+    // 1. Load defaults (Mandatory)
+    let baseConfig: Record<string, unknown> = {}
+    let defaultFileName = 'config.default.ts'
+    try {
+      const module = await import(resolveRootConfigUrl('config.default.ts'))
+      baseConfig = resolveConfigExport(
+        module as Record<string, unknown>,
+        'config.default.ts'
+      )
+    } catch {
+      try {
+        const module = await import(resolveRootConfigUrl('config.default.js'))
+        baseConfig = resolveConfigExport(
+          module as Record<string, unknown>,
+          'config.default.js'
+        )
+        defaultFileName = 'config.default.js'
+      } catch {
+        throw new Error(
+          '[ERROR] Config: Base configuration (config.default.ts/js) not found.'
+        )
+      }
+    }
+
+    // 2. Try to load user configuration
+    let userConfig: Record<string, unknown> = {}
+    let userFileName: string | null = null
+    const userCandidates = ['config.ts', 'config.js']
+
+    for (const fileName of userCandidates) {
+      try {
+        const module = await import(resolveRootConfigUrl(fileName))
+        userConfig = resolveConfigExport(
+          module as Record<string, unknown>,
+          fileName
+        )
+        userFileName = fileName
+        console.log(`[INFO] Config: Loaded user configuration from ${fileName}`)
+        break
+      } catch (e) {
+        const error = e as ConfigLoadError
+        const isNotFound =
+          error.code === 'ERR_MODULE_NOT_FOUND' ||
+          error.code === 'ENOENT' ||
+          error.message?.includes('Cannot find module')
+        if (isNotFound) continue
+        throw e
+      }
+    }
+
+    if (!userFileName) {
+      console.log(`[INFO] Config: No user configuration found. Using defaults.`)
+    }
+
+    // 3. Merge user config over defaults
+    // We do a deep merge for 'sources', 'lyrics', 'meanings', 'pluginConfig'
+    // and a shallow merge for the rest to keep it simple but functional.
+    const merged = { ...baseConfig }
+    for (const [key, value] of Object.entries(userConfig)) {
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        baseConfig[key] &&
+        typeof baseConfig[key] === 'object' &&
+        !Array.isArray(baseConfig[key])
+      ) {
+        merged[key] = {
+          ...(baseConfig[key] as Record<string, unknown>),
+          ...(value as Record<string, unknown>)
+        }
+      } else {
+        merged[key] = value
+      }
+    }
+
+    const migrated = migrateConfig(merged as Record<string, JsonValue>)
+    await persistConfig(migrated, userFileName ?? defaultFileName)
+
+    return migrated as unknown as NodelinkConfig
+  }
+
+  return await loadAndMerge()
 }
 
+config = await loadConfig()
+
 // Apply environment variable overrides after config is loaded
-applyEnvOverrides(config)
+applyEnvOverrides(config as unknown as Record<string, unknown>)
 
 const clusterEnabled =
   // biome-ignore lint/complexity/useLiteralKeys: TypeScript requires index signature access
@@ -337,6 +447,22 @@ initLogger(
 const isBun = typeof Bun !== 'undefined'
 
 if (!cluster.isWorker) {
+  const supportGuidelines = `\x1b[35m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                            SUPPORT GUIDELINES                                │
+│                                                                              │
+│  1. Turn on debugging in config.ts before asking for help.                   │
+│  2. Test the 'dev' branch (git checkout dev) to ensure it's not fixed yet.   │
+│  3. If providing logs, start copying EXACTLY from this box onwards.          │
+│  4. Cut logs or missing Node.js version will result in an ignored ticket.    │
+│  5. FAQ and Rules: https://discord.gg/bVz6ppZ3SP                             │
+│                    https://discord.gg/z4ayqfeBdB                             │
+╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m
+
+  *
+`
+  process.stdout.write(supportGuidelines)
+
   const ascii = `
    ▄   ████▄ ██▄   ▄███▄   █    ▄█    ▄   █  █▀
     █  █   █ █  █  █▀   ▀  █    ██     █  █▄█
@@ -344,114 +470,23 @@ if (!cluster.isWorker) {
 █ █  █ ▀████ █  █  █▄   ▄▀ ███▄ ▐█ █ █  █ █  █  v${getVersion()}
 █  █ █       ███▀  ▀███▀       ▀ ▐ █  █ █   █   Powered by PerformanC;
 █   ██                             █   ██  ▀    rewritten by 1Lucas1.apk;
+                                                maintained by 1Lucas1.apk & ToddyTheNoobDud
 `
   process.stdout.write(`\x1b[32m${ascii}\x1b[0m\n`)
+  try {
+    await checkForUpdates()
+  } catch (e: unknown) {
+    logger('error', 'Git', `Update check failed: ${(e as Error).message}`)
+  }
+
+  try {
+    await checkDependencyUpdates()
+  } catch (e: unknown) {
+    logger('error', 'Git', `Dependency check failed: ${(e as Error).message}`)
+  }
 }
 
-await checkForUpdates()
 memoryTrace('bootstrap:after-check-for-updates')
-
-/**
- * Wrapper for Bun's ServerWebSocket that implements EventEmitter
- * Provides compatibility with Node.js WebSocket implementations
- */
-class BunSocketWrapper extends EventEmitter implements IBunSocketWrapper {
-  ws: ServerWebSocket<BunSocketData>
-  remoteAddress: string
-
-  /**
-   * Creates a new BunSocketWrapper
-   * @param ws - Bun ServerWebSocket instance
-   */
-  constructor(ws: ServerWebSocket<BunSocketData>) {
-    super()
-    this.ws = ws
-    this.remoteAddress = ws?.data?.remoteAddress || 'unknown'
-  }
-
-  /**
-   * Sends data through the WebSocket connection
-   * @param data - Data to send
-   * @returns True if sent successfully
-   */
-  /**
-   * Sends data through the WebSocket connection
-   * @param data - Data to send
-   * @returns True if sent successfully
-   * @public
-   */
-  send(data: string | Buffer): boolean {
-    try {
-      const r = this.ws.send(data)
-      return r !== 0
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Sends a WebSocket ping frame
-   * @param data - Optional ping data
-   * @returns True if sent successfully
-   * @public
-   */
-  ping(data?: string | Buffer): boolean {
-    try {
-      this.ws.ping?.(data)
-      return true
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Closes the connection.
-   *
-   * Here is a list of close codes:
-   * - `1000` means "normal closure" **(default)**
-   * - `1009` means a message was too big and was rejected
-   * - `1011` means the server encountered an error
-   * - `1012` means the server is restarting
-   * - `1013` means the server is too busy or the client is rate-limited
-   * - `4000` through `4999` are reserved for applications (you can use it!)
-   *
-   * To close the connection abruptly, use `terminate()`.
-   *
-   * @param code The close code to send
-   * @param reason The close reason to send
-   * @public
-   */
-  close(code?: number, reason?: string): void {
-    this.ws.close(code, reason)
-  }
-
-  /**
-   * Terminates the connection immediately
-   * @public
-   */
-  terminate(): void {
-    this.ws.close(1000, 'Terminated')
-  }
-
-  /**
-   * Internal handler for received messages
-   * @param message - Message data
-   * @internal
-   */
-  _handleMessage(message: string | Buffer): void {
-    this.emit('message', message)
-  }
-
-  /**
-   * Internal handler for connection close events
-   * @param code - Close code
-   * @param reason - Close reason
-   * @internal
-   */
-  _handleClose(code: number, reason: string): void {
-    this.emit('close', code, reason)
-  }
-}
 
 /**
  * Main NodeLink server class
@@ -468,6 +503,7 @@ class NodelinkServer extends EventEmitter {
   lyrics: LyricsManager | null
   meanings: MeaningManager | null
   _sourceInitPromise: Promise<void>
+  proxyManager: ProxyManager | null
   routePlanner: RoutePlannerManager
   credentialManager: CredentialManager | null
   trackCacheManager: TrackCacheManager | null
@@ -530,6 +566,7 @@ class NodelinkServer extends EventEmitter {
 
     this.routePlanner = new RoutePlannerManager(this)
     memoryTrace('constructor:after-route-planner')
+    this.proxyManager = null
     this.credentialManager = null
     memoryTrace('constructor:after-credential-manager')
     this.trackCacheManager = null
@@ -567,8 +604,8 @@ class NodelinkServer extends EventEmitter {
 
     this.voiceSockets = new Map()
     this.voiceRelay = createVoiceRelay({
-      enabled: options.voiceReceive?.enabled || false,
-      format: options.voiceReceive?.format || 'pcm',
+      enabled: options.playback.voiceReceive?.enabled || false,
+      format: options.playback.voiceReceive?.format || 'pcm',
       sendFrame: (frame: Buffer) => this.handleVoiceFrame(frame),
       logger
     }) as unknown as VoiceRelay
@@ -659,13 +696,13 @@ class NodelinkServer extends EventEmitter {
       .then(([CredentialManagerClass, TrackCacheManagerClass]) => {
         if (!this.credentialManager) {
           this.credentialManager = new CredentialManagerClass(
-            this as unknown as { options: Record<string, unknown> }
+            this as unknown as { options: NodelinkConfig }
           ) as unknown as CredentialManager
         }
 
         if (!this.trackCacheManager) {
           this.trackCacheManager = new TrackCacheManagerClass(
-            this as unknown as { options: Record<string, unknown> }
+            this as unknown as { options: NodelinkConfig }
           ) as unknown as TrackCacheManager
         }
       })
@@ -677,23 +714,28 @@ class NodelinkServer extends EventEmitter {
   }
 
   /**
-   * Starts the heartbeat interval to keep WebSocket connections alive
+   * Starts the heartbeat interval to keep WebSocket connections alive.
+   *
+   * No-op when running under `Bun.serve` because Bun handles WebSocket pings
+   * natively via `websocket.sendPings: true`. Running both would double the
+   * keepalive traffic.
    * @internal
    */
   _startHeartbeat() {
     if (this._heartbeatInterval) return
+    if (this._usingBunServer) return
 
     this._heartbeatInterval = setInterval(() => {
       for (const session of this.sessions.activeSessions.values()) {
         if (session.socket && !session.isPaused) {
           try {
-            if (typeof session.socket.sendFrame === 'function') {
+            if (session.socket.sendFrame) {
               session.socket.sendFrame(Buffer.alloc(0), {
                 len: 0,
                 fin: true,
                 opcode: 0x09
               })
-            } else if (typeof session.socket.ping === 'function') {
+            } else if (session.socket.ping) {
               session.socket.ping()
             }
           } catch (_e) {
@@ -891,84 +933,91 @@ class NodelinkServer extends EventEmitter {
           'Resume',
           `Processing websocket connection. oldSessionId: ${oldSessionId}`
         )
+        let session = null
         if (oldSessionId) {
-          const session = this.sessions.resume(oldSessionId, socket)
+          session = this.sessions.resume(oldSessionId, socket)
 
-          if (session) {
+          if (!session) {
+            logger(
+              'warn',
+              'Server',
+              `Session-ID provided by ${clientInfo.name} does not exist or is not resumable: ${oldSessionId}, creating a new session`
+            )
+          }
+        }
+
+        if (session) {
+          logger(
+            'info',
+            'Server',
+            `\x1b[36m${clientInfo.name}\x1b[0m${
+              clientInfo.version ? `/\x1b[32mv${clientInfo.version}\x1b[0m` : ''
+            } resumed session with ID: ${oldSessionId}`
+          )
+          this.statsManager.incrementSessionResume(clientInfo.name, true)
+
+          socket.on('close', (...args: (string | number | Buffer)[]) => {
+            const code = args[0] as number
+            const reason = args[1] as string
+            if (!this.sessions.has(oldSessionId)) return
+
+            const session = this.sessions.get(oldSessionId)
+            if (!session) return
+
             logger(
               'info',
               'Server',
-              `\x1b[36m${clientInfo.name}\x1b[0m${
+              `\x1b[36m${clientInfo.name}\x1b[0m/\x1b[32mv${
                 clientInfo.version
-                  ? `/\x1b[32mv${clientInfo.version}\x1b[0m`
-                  : ''
-              } resumed session with ID: ${oldSessionId}`
-            )
-            this.statsManager.incrementSessionResume(clientInfo.name, true)
-
-            socket.on('close', (...args: (string | number | Buffer)[]) => {
-              const code = args[0] as number
-              const reason = args[1] as string
-              if (!this.sessions.has(oldSessionId)) return
-
-              const session = this.sessions.get(oldSessionId)
-              if (!session) return
-
-              logger(
-                'info',
-                'Server',
-                `\x1b[36m${clientInfo.name}\x1b[0m/\x1b[32mv${
-                  clientInfo.version
-                }\x1b[0m disconnected with code ${code} and reason: ${
-                  reason || 'without reason'
-                }`
-              )
-
-              if (session.resuming) {
-                this.sessions.pause(oldSessionId)
-              } else {
-                this.sessions.shutdown(oldSessionId)
-              }
-
-              const sessionCount = this.sessions.activeSessions?.size || 0
-              this.statsManager.setWebsocketConnections(sessionCount)
-            })
-
-            socket.send(
-              JSON.stringify({
-                op: 'ready',
-                resumed: true,
-                sessionId: oldSessionId
-              })
+              }\x1b[0m disconnected with code ${code} and reason: ${
+                reason || 'without reason'
+              }`
             )
 
-            while (session.eventQueue.length > 0) {
-              const event = session.eventQueue.shift()
-              if (event) socket.send(event)
-            }
-
-            for (const [
-              playerKey,
-              playerInfo
-            ] of session.players.players.entries()) {
-              if (this.workerManager) {
-                const worker = this.workerManager.getWorkerForGuild(playerKey)
-                if (worker) {
-                  this.workerManager.execute(worker, 'playerCommand', {
-                    sessionId: session.id,
-                    guildId: playerInfo.guildId,
-                    command: 'forceUpdate',
-                    args: []
-                  })
-                }
-              } else {
-                playerInfo._sendUpdate()
-              }
+            if (session.resuming) {
+              this.sessions.pause(oldSessionId)
+            } else {
+              this.sessions.shutdown(oldSessionId)
             }
 
             const sessionCount = this.sessions.activeSessions?.size || 0
             this.statsManager.setWebsocketConnections(sessionCount)
+          })
+
+          socket.send(
+            JSON.stringify({
+              op: 'ready',
+              resumed: true,
+              sessionId: oldSessionId
+            })
+          )
+
+          while (session.eventQueue.length > 0) {
+            const event = session.eventQueue.shift()
+            if (event) socket.send(event)
           }
+
+          for (const [
+            playerKey,
+            playerInfo
+          ] of session.players.players.entries()) {
+            if (this.workerManager) {
+              const worker = this.workerManager.getWorkerForGuild(playerKey)
+              if (worker) {
+                this.workerManager.execute(worker, 'playerCommand', {
+                  sessionId: session.id,
+                  guildId: playerInfo.guildId,
+                  command: 'forceUpdate',
+                  args: []
+                })
+              }
+            } else {
+              playerInfo._sendUpdate()
+            }
+          }
+
+          const sessionCount = this.sessions.activeSessions?.size || 0
+          this.statsManager.setWebsocketConnections(sessionCount)
         } else {
           const sessionId = this.sessions.create(
             request as unknown as RequestShim,
@@ -1199,6 +1248,123 @@ class NodelinkServer extends EventEmitter {
         }
       }
     )
+
+    this.socket?.on(
+      '/v4/websocket/voice',
+      (
+        socket: SessionSocket,
+        request: RequestShim,
+        _clientInfo: ClientInfo,
+        _sessionId: string,
+        guildId: string
+      ) => {
+        socket.guildId = guildId
+
+        if (!this.options.playback.voiceReceive?.enabled) {
+          try {
+            socket.close(1008, 'Voice receive disabled')
+          } catch {}
+          return
+        }
+
+        logger(
+          'info',
+          'Voice',
+          `Voice websocket connected from ${request.socket?.remoteAddress || 'unknown'} | guild ${guildId}`
+        )
+
+        this.registerVoiceSocket(guildId, socket)
+      }
+    )
+
+    this.socket?.on(
+      '/v4/websocket/youtube/live',
+      (
+        socket: SessionSocket,
+        request: RequestShim,
+        _clientInfo: ClientInfo,
+        _sessionId: string,
+        id: string
+      ) => {
+        let videoId = id
+        socket.guildId = id // Tag it with videoId or guildId equivalent
+
+        if (/^\d{17,20}$/.test(id)) {
+          const player = this.sessions.getPlayer(id)
+          if (player?.track?.info?.sourceName?.includes('youtube')) {
+            videoId = player.track.info.identifier
+          }
+        } else if (id.length > 50) {
+          try {
+            const decoded = decodeTrack(id)
+            if (decoded?.info?.sourceName?.includes('youtube')) {
+              videoId = decoded.info.identifier
+            }
+          } catch (_e) {}
+        }
+
+        if (!this.sourceWorkerManager) {
+          const yt = this.sources?.getSource('youtube')
+          if (!yt) {
+            socket.close(1008, 'YouTube source not enabled')
+            return
+          }
+          const liveChatFn = yt.handleLiveChat
+          if (liveChatFn) {
+            liveChatFn.call(yt, socket, videoId)
+          } else {
+            socket.close(1008, 'YouTube live chat not supported')
+          }
+          return
+        }
+
+        logger(
+          'info',
+          'YouTube-LiveChat',
+          `Delegating live chat for video: ${videoId} to worker`
+        )
+
+        const resShim = {
+          headersSent: false,
+          send: (data: string | Buffer) => {
+            const payload = Buffer.isBuffer(data)
+              ? data
+              : Buffer.from(String(data))
+            socket.sendFrame?.(payload, {
+              len: payload.length,
+              fin: true,
+              opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
+            })
+          },
+          writeHead: (status: number) => {
+            if (status !== 200) socket.close(1011, 'Worker failed')
+          },
+          write: (data: string | Buffer) => {
+            const payload = Buffer.isBuffer(data)
+              ? data
+              : Buffer.from(String(data))
+            socket.sendFrame?.(payload, {
+              len: payload.length,
+              fin: true,
+              opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
+            })
+          },
+          end: () => socket.close(1000, 'Finished'),
+          on: (
+            event: string,
+            cb: (...args: (string | Buffer | number)[]) => void
+          ) => socket.on(event, cb)
+        }
+
+        this.sourceWorkerManager.delegate(
+          request,
+          resShim,
+          'loadLiveChat',
+          { videoId },
+          { isWebSocket: true }
+        )
+      }
+    )
   }
 
   /**
@@ -1206,359 +1372,9 @@ class NodelinkServer extends EventEmitter {
    * @internal
    */
   _createBunServer() {
-    const port = this.options.server.port
-    const host = this.options.server.host || '0.0.0.0'
-    const password = this.options.server.password
-    const self = this
-
-    logger(
-      'warn',
-      'Server',
-      'Running with Bun.serve, remember this is experimental!'
-    )
-
-    this.server = Bun.serve({
-      port,
-      hostname: host,
-      maxRequestBodySize: 1024 * 1024 * 50,
-
-      async fetch(req, server) {
-        const url = new URL(req.url)
-        const pathname = url.pathname.endsWith('/')
-          ? url.pathname.slice(0, -1)
-          : url.pathname
-
-        if (pathname === '/v4/profiler/socket') {
-          const remoteAddress = server.requestIP(req)?.address || 'unknown'
-          const isInternal = /^(::1|localhost|127\.0\.0\.1)/.test(remoteAddress)
-          const endpoint = self.options.cluster?.endpoint || {}
-          const patchEnabled = endpoint.patchEnabled === true
-          const allowExternalPatch = endpoint.allowExternalPatch === true
-          const expectedCode =
-            typeof endpoint.code === 'string' && endpoint.code.length > 0
-              ? endpoint.code
-              : 'CAPYBARA'
-          const providedCode =
-            url.searchParams.get('code') ||
-            req.headers.get('x-nodelink-code') ||
-            req.headers.get('x-worker-code')
-
-          if (!patchEnabled) {
-            return new Response('Profiler socket endpoint is disabled.', {
-              status: 403,
-              statusText: 'Forbidden'
-            })
-          }
-          if (!allowExternalPatch && !isInternal) {
-            return new Response('External profiler socket access is blocked.', {
-              status: 403,
-              statusText: 'Forbidden'
-            })
-          }
-          if (!providedCode || providedCode !== expectedCode) {
-            return new Response('Invalid or missing profiler code.', {
-              status: 403,
-              statusText: 'Forbidden'
-            })
-          }
-
-          const success = server.upgrade(req, {
-            data: {
-              clientInfo: { name: 'ProfilerUI', version: '1' },
-              sessionId: null,
-              reqHeaders: Object.fromEntries(req.headers),
-              remoteAddress,
-              url: req.url
-            }
-          })
-
-          if (success) return undefined
-          return new Response('WebSocket upgrade failed', { status: 400 })
-        }
-
-        if (pathname === '/v4/websocket') {
-          const remoteAddress = server.requestIP(req)?.address || 'unknown'
-          const clientAddress = `[External] (${remoteAddress})`
-
-          const clientName = req.headers.get('client-name')
-          const auth = req.headers.get('authorization')
-          const userId = req.headers.get('user-id')
-          const sessionId = req.headers.get('session-id')
-
-          if (auth !== password) {
-            logger(
-              'warn',
-              'Server',
-              `Unauthorized connection attempt from ${clientAddress} - Invalid password provided: ${auth || 'None'}`
-            )
-            return new Response('Invalid password provided.', {
-              status: 401,
-              statusText: 'Unauthorized',
-              headers: {
-                'Nodelink-Api-Version': '4',
-                IamNodelink: 'true'
-              }
-            })
-          }
-
-          if (!clientName) {
-            logger(
-              'warn',
-              'Server',
-              `Missing client-name from ${clientAddress}`
-            )
-            return new Response('Invalid or missing Client-Name header.', {
-              status: 400,
-              statusText: 'Bad Request',
-              headers: {
-                'Nodelink-Api-Version': '4',
-                IamNodelink: 'true'
-              }
-            })
-          }
-
-          if (!userId || !verifyDiscordID(userId)) {
-            logger('warn', 'Server', `Invalid user ID from ${clientAddress}`)
-            return new Response('Invalid or missing User-Id header.', {
-              status: 400,
-              statusText: 'Bad Request',
-              headers: {
-                'Nodelink-Api-Version': '4',
-                IamNodelink: 'true'
-              }
-            })
-          }
-
-          const clientInfo = parseClient(clientName) as ClientInfo | null
-          if (!clientInfo) {
-            logger(
-              'warn',
-              'Server',
-              `Invalid client-name from ${clientAddress}`
-            )
-            return new Response('Invalid or missing Client-Name header.', {
-              status: 400,
-              statusText: 'Bad Request',
-              headers: {
-                'Nodelink-Api-Version': '4',
-                IamNodelink: 'true'
-              }
-            })
-          }
-
-          const success = server.upgrade(req, {
-            data: {
-              clientInfo,
-              sessionId,
-              reqHeaders: Object.fromEntries(req.headers),
-              remoteAddress,
-              url: req.url
-            }
-          })
-
-          if (success) return undefined
-          return new Response('WebSocket upgrade failed', {
-            status: 400,
-            headers: {
-              'Nodelink-Api-Version': '4',
-              IamNodelink: 'true'
-            }
-          })
-        }
-
-        return new Promise((resolve) => {
-          interface RequestShimInternal extends RequestShim {
-            _endCb?: () => void
-          }
-
-          const reqShim: RequestShimInternal = {
-            method: req.method,
-            url: url.pathname + url.search,
-            headers: Object.fromEntries(req.headers),
-            socket: { remoteAddress: server.requestIP(req)?.address },
-            on: (event: string, cb: (data: Buffer) => void) => {
-              if (event === 'data') {
-                req
-                  .arrayBuffer()
-                  .then((buf: ArrayBuffer) => {
-                    cb(Buffer.from(buf))
-                    if (reqShim._endCb) reqShim._endCb()
-                  })
-                  .catch(() => {})
-              }
-              if (event === 'end') {
-                reqShim._endCb = cb as () => void
-              }
-            }
-          }
-
-          const resShim: ResponseShim = {
-            _status: 200,
-            _headers: {},
-            _body: [],
-            writeHead(
-              status: number,
-              headers?: Record<string, string | string[]>
-            ) {
-              this._status = status
-              if (headers) Object.assign(this._headers, headers)
-            },
-            setHeader(name: string, value: string | string[]) {
-              this._headers[name] = value
-            },
-            getHeader(name: string) {
-              return this._headers[name] as string | string[] | undefined
-            },
-            end(data?: string | Buffer) {
-              if (data) this._body.push(data)
-              const finalBody = Buffer.concat(
-                this._body.map((chunk) =>
-                  Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-                )
-              )
-
-              const headers = new Headers()
-              for (const [key, value] of Object.entries(this._headers)) {
-                if (Array.isArray(value)) {
-                  for (const v of value) headers.append(key, v)
-                } else if (value !== undefined) {
-                  headers.set(key, String(value))
-                }
-              }
-
-              const response = new Response(finalBody, {
-                status: this._status,
-                headers
-              })
-              resolve(response)
-            },
-            write(data: string | Buffer) {
-              if (data) this._body.push(data)
-            }
-          }
-
-          void getRequestHandler()
-            .then((handler) =>
-              handler(
-                self as unknown as Parameters<RequestHandlerType>[0],
-                reqShim as unknown as RequestShim,
-                resShim
-              )
-            )
-            .catch((error: Error) => {
-              logger(
-                'error',
-                'Server',
-                `Failed to handle Bun request: ${error.message}`
-              )
-              if (!resShim._status || resShim._status < 400) {
-                resShim.writeHead(500, { 'Content-Type': 'text/plain' })
-              }
-              resShim.end('Internal Server Error')
-            })
-        })
-      },
-
-      websocket: {
-        sendPings: true,
-        data: {} as BunSocketData,
-        open(ws) {
-          if (!ws.data) return
-          const wrapper = new BunSocketWrapper(ws)
-          ws.data.wrapper = wrapper
-
-          const { clientInfo, sessionId, reqHeaders } = ws.data
-
-          const reqShim: ReqShim = {
-            headers: reqHeaders as Record<string, string | string[]>,
-            url: ws.data.url,
-            socket: { remoteAddress: ws.data.remoteAddress }
-          }
-
-          let pathname = '/v4/websocket'
-          try {
-            pathname = new URL(ws.data.url).pathname
-          } catch {}
-
-          if (pathname === '/v4/profiler/socket') {
-            logger(
-              'info',
-              'ProfilerSocket',
-              `Profiler socket connected from [External] (${ws.data.remoteAddress})`
-            )
-            self.socket?.emit(
-              '/v4/profiler/socket',
-              wrapper,
-              reqShim,
-              null,
-              null
-            )
-            return
-          }
-
-          logger(
-            'info',
-            'Server',
-            `\x1b[36m${clientInfo.name}\x1b[0m${
-              clientInfo.version ? `/\x1b[32mv${clientInfo.version}\x1b[0m` : ''
-            } connected from [External] (${ws.data.remoteAddress}) | \x1b[33mURL:\x1b[0m ${ws.data.url}`
-          )
-
-          let eventName = '/v4/websocket'
-          let guildId = null
-          let liveId = null
-          try {
-            const url = new URL(ws.data.url)
-            const voiceMatch = url.pathname.match(
-              /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/
-            )
-            const liveMatch = url.pathname.match(
-              /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/
-            )
-
-            if (voiceMatch) {
-              if (!self.options.voiceReceive?.enabled) {
-                try {
-                  wrapper.close(1008, 'Voice receive disabled')
-                } catch {}
-                return
-              }
-              eventName = '/v4/websocket/voice'
-              guildId = voiceMatch[1]
-            } else if (liveMatch) {
-              eventName = '/v4/websocket/youtube/live'
-              liveId = liveMatch[1]
-            }
-          } catch {}
-
-          if (self.socket) {
-            self.socket.emit(
-              eventName,
-              wrapper,
-              reqShim,
-              clientInfo,
-              sessionId,
-              guildId || liveId
-            )
-          }
-        },
-        message(ws: ServerWebSocket<BunSocketData>, message: string | Buffer) {
-          ws.data?.wrapper?._handleMessage(message)
-        },
-        close(
-          ws: ServerWebSocket<BunSocketData>,
-          code: number,
-          reason: string
-        ) {
-          ws.data?.wrapper?._handleClose(code, reason)
-        }
-      }
-    })
-
-    logger(
-      'started',
-      'Server',
-      `Successfully listening on ${host}:${port} (Bun Native)`
+    this.server = createBunServer(
+      this as unknown as import('./server/bunServer.ts').BunServerContext,
+      getRequestHandler
     )
   }
 
@@ -1850,7 +1666,7 @@ class NodelinkServer extends EventEmitter {
             return rejectUpgrade(400, 'Bad Request', 'Invalid User-Id header.')
           }
 
-          if (voiceMatch && !this.options.voiceReceive?.enabled) {
+          if (voiceMatch && !this.options.playback.voiceReceive?.enabled) {
             return rejectUpgrade(
               404,
               'Not Found',
@@ -1932,123 +1748,6 @@ class NodelinkServer extends EventEmitter {
         }
       }
     )
-
-    this.socket?.on(
-      '/v4/websocket/voice',
-      (
-        socket: SessionSocket,
-        request: RequestShim,
-        _clientInfo: ClientInfo,
-        _sessionId: string,
-        guildId: string
-      ) => {
-        socket.guildId = guildId
-
-        if (!this.options.voiceReceive?.enabled) {
-          try {
-            socket.close(1008, 'Voice receive disabled')
-          } catch {}
-          return
-        }
-
-        logger(
-          'info',
-          'Voice',
-          `Voice websocket connected from ${request.socket?.remoteAddress || 'unknown'} | guild ${guildId}`
-        )
-
-        this.registerVoiceSocket(guildId, socket)
-      }
-    )
-
-    this.socket?.on(
-      '/v4/websocket/youtube/live',
-      (
-        socket: SessionSocket,
-        request: RequestShim,
-        _clientInfo: ClientInfo,
-        _sessionId: string,
-        id: string
-      ) => {
-        let videoId = id
-        socket.guildId = id // Tag it with videoId or guildId equivalent
-
-        if (/^\d{17,20}$/.test(id)) {
-          const player = this.sessions.getPlayer(id)
-          if (player?.track?.info?.sourceName?.includes('youtube')) {
-            videoId = player.track.info.identifier
-          }
-        } else if (id.length > 50) {
-          try {
-            const decoded = decodeTrack(id)
-            if (decoded?.info?.sourceName?.includes('youtube')) {
-              videoId = decoded.info.identifier
-            }
-          } catch (_e) {}
-        }
-
-        if (!this.sourceWorkerManager) {
-          const yt = this.sources?.getSource('youtube')
-          if (!yt) {
-            socket.close(1008, 'YouTube source not enabled')
-            return
-          }
-          const liveChatFn = yt.handleLiveChat
-          if (typeof liveChatFn === 'function') {
-            liveChatFn.call(yt, socket, videoId)
-          } else {
-            socket.close(1008, 'YouTube live chat not supported')
-          }
-          return
-        }
-
-        logger(
-          'info',
-          'YouTube-LiveChat',
-          `Delegating live chat for video: ${videoId} to worker`
-        )
-
-        const resShim = {
-          headersSent: false,
-          send: (data: string | Buffer) => {
-            const payload = Buffer.isBuffer(data)
-              ? data
-              : Buffer.from(String(data))
-            socket.sendFrame?.(payload, {
-              len: payload.length,
-              fin: true,
-              opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
-            })
-          },
-          writeHead: (status: number) => {
-            if (status !== 200) socket.close(1011, 'Worker failed')
-          },
-          write: (data: string | Buffer) => {
-            const payload = Buffer.isBuffer(data)
-              ? data
-              : Buffer.from(String(data))
-            socket.sendFrame?.(payload, {
-              len: payload.length,
-              fin: true,
-              opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
-            })
-          },
-          end: () => socket.close(1000, 'Finished'),
-          on: (
-            event: string,
-            cb: (...args: (string | Buffer | number)[]) => void
-          ) => socket.on(event, cb)
-        }
-
-        this.sourceWorkerManager.delegate(
-          request,
-          resShim,
-          'loadLiveChat',
-          { videoId },
-          { isWebSocket: true }
-        )
-      }
-    )
   }
 
   /**
@@ -2108,16 +1807,16 @@ class NodelinkServer extends EventEmitter {
     if (this._globalUpdater) return
     const updateInterval = Math.max(
       1,
-      this.options?.playerUpdateInterval ?? 5000
+      this.options?.playback.playerUpdateInterval ?? 5000
     )
     const statsSendInterval = Math.max(
       1,
-      this.options?.statsUpdateInterval ?? 30000
+      this.options?.playback.statsUpdateInterval ?? 30000
     )
-    const metricsInterval = this.options?.metrics?.enabled
+    const metricsInterval = this.options?.api.metrics?.enabled
       ? 5000
       : statsSendInterval
-    const zombieThreshold = this.options?.zombieThresholdMs ?? 60000
+    const zombieThreshold = this.options?.playback.zombieThresholdMs ?? 60000
 
     this._globalUpdater = setInterval(() => {
       for (const session of this.sessions.values()) {
@@ -2125,6 +1824,7 @@ class NodelinkServer extends EventEmitter {
         for (const player of session.players.players.values()) {
           if (player?.track && !player.isPaused && player.connection) {
             if (
+              player.connStatus === 'connected' &&
               player._lastStreamDataTime > 0 &&
               Date.now() - player._lastStreamDataTime >= zombieThreshold
             ) {
@@ -2228,29 +1928,13 @@ class NodelinkServer extends EventEmitter {
    */
   async _cleanupWebSocketServer(): Promise<void> {
     if (this._usingBunServer && this.server) {
-      try {
-        logger('info', 'WebSocket', 'Stopping Bun server...')
-        await (
-          this.server as {
-            stop: (force: boolean) => Promise<void>
-            unref: () => void
-          }
-        ).stop(true)
-        ;(
-          this.server as {
-            stop: (force: boolean) => Promise<void>
-            unref: () => void
-          }
-        ).unref()
-        logger('info', 'WebSocket', 'Bun server stopped successfully')
-      } catch (e) {
-        const error = e as Error
-        logger(
-          'error',
-          'WebSocket',
-          `Error stopping Bun server: ${error?.message ?? String(e)}`
-        )
-      }
+      await cleanupBunServer(
+        this as unknown as import('./server/bunServer.ts').BunServerContext,
+        this.server as {
+          stop: (force?: boolean) => Promise<void>
+          unref: () => void
+        }
+      )
       return
     }
 
@@ -2492,7 +2176,7 @@ class NodelinkServer extends EventEmitter {
         'Running as cluster worker — waiting for sockets from master.'
       )
       process.on('message', (msg: IPCMessage | { type: string }, handle) => {
-        if (!msg || msg.type !== 'sticky-session') return
+        if (msg?.type !== 'sticky-session') return
         if (!handle) return
         try {
           try {
@@ -2529,6 +2213,7 @@ class NodelinkServer extends EventEmitter {
 
     this.connectionManager?.start()
     memoryTrace('start:ready')
+
     return this
   }
 
@@ -2540,9 +2225,9 @@ class NodelinkServer extends EventEmitter {
     if (this._globalUpdater) return
     const statsSendInterval = Math.max(
       1,
-      this.options?.statsUpdateInterval ?? 30000
+      this.options?.playback.statsUpdateInterval ?? 30000
     )
-    const metricsInterval = this.options?.metrics?.enabled
+    const metricsInterval = this.options?.api.metrics?.enabled
       ? 5000
       : statsSendInterval
 
@@ -2682,9 +2367,20 @@ class NodelinkServer extends EventEmitter {
 // Guard the master / single-process against unhandled socket errors (EPIPE,
 // ECONNRESET) that surface when a WebSocket client disconnects mid-write and
 // the underlying library has already removed listeners via removeAllListeners().
+// Pipeline premature-close during stream cleanup is tolerated the same way as
+// in the playback worker: it must not kill the process.
 process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
-  if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') {
-    logger('debug', 'Server', `Suppressed uncaught socket error: ${err.code}`)
+  if (
+    err?.code === 'EPIPE' ||
+    err?.code === 'ECONNRESET' ||
+    err?.code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    err?.message === 'aborted'
+  ) {
+    logger(
+      'debug',
+      'Server',
+      `Suppressed uncaught socket error: ${err.code ?? err.message}`
+    )
     return
   }
 
@@ -2702,7 +2398,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 if (clusterEnabled && cluster.isPrimary) {
   if (config.sources?.youtube?.getOAuthToken) {
-    // dynamicly import OAuth (if enabled)
+    // dynamically import OAuth (if enabled)
     const OAuth = (
       await import('./sources/youtube/OAuth.ts').catch((e) => {
         logger(
@@ -2774,6 +2470,12 @@ if (clusterEnabled && cluster.isPrimary) {
       )
       process.stdout.write(
         '  \x1b[1m\x1b[34m➜\x1b[0m \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m\n\n'
+      )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mHaving issues? Use "git checkout dev" to see if it\'s fixed.\x1b[0m\n'
+      )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mRead the FAQ & follow the support template in our Discord.\x1b[0m\n\n'
       )
 
       logger(
@@ -2855,6 +2557,13 @@ if (clusterEnabled && cluster.isPrimary) {
       await nserver.trackCacheManager?.forceSave()
 
       nserver.sourceWorkerManager?.destroy?.()
+      nserver.workerManager?.destroy?.()
+      nserver.connectionManager?.destroy?.()
+      nserver.proxyManager?.destroy?.()
+      nserver.routePlanner?.dispose?.()
+      nserver.credentialManager?.destroy?.()
+      nserver.trackCacheManager?.destroy?.()
+
       await nserver._cleanupWebSocketServer()
 
       if ((nserver.server as http.Server)?.listening) {
@@ -2877,6 +2586,12 @@ if (clusterEnabled && cluster.isPrimary) {
       )
       process.stdout.write(
         '  \x1b[1m\x1b[34m➜\x1b[0m \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m\n\n'
+      )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mHaving issues? Use "git checkout dev" to see if it\'s fixed.\x1b[0m\n'
+      )
+      process.stdout.write(
+        '  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mRead the FAQ & follow the support template in our Discord.\x1b[0m\n\n'
       )
 
       process.exit(0)

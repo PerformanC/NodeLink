@@ -104,6 +104,7 @@ export interface ActiveStreamEntry {
   pcmStream: PCMStream
   fetched: TrackStreamResult & { type?: string }
   cancelled: boolean
+  cleaned: boolean
 }
 
 /**

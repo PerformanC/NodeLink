@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { Float64DelayLine } from "./dsp/float64Delay.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { Float64DelayLine } from './dsp/float64Delay.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 2000;
 const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
@@ -49,7 +49,8 @@ export default class Echo extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : isActive ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             echo: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: e.transition
             }
         }, 'echo', { alpha: 0.0 });
     }
@@ -116,5 +117,9 @@ export default class Echo extends AnimatableFilter {
         this.delayLineL.clear();
         this.delayLineR.clear();
         return Buffer.alloc(0);
+    }
+    destroy() {
+        this.delayLineL.destroy();
+        this.delayLineR.destroy();
     }
 }

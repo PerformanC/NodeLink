@@ -1,6 +1,15 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough, pipeline } from 'node:stream'
 import type {
+  BandcampApiSearchResponse,
+  BandcampJsonLdData,
+  BandcampTrackBuildInput,
+  BandcampTralbumData,
+  BandcampTralbumTrack
+} from '../typings/sources/bandcamp.types.ts'
+import type {
+  PlaylistData,
   SourceResult,
+  TrackData,
   TrackInfo,
   TrackStreamResult,
   TrackUrlResult,
@@ -13,252 +22,13 @@ import type {
 import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
 const BANDCAMP_BASE_URL = 'https://bandcamp.com'
+const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
 const BANDCAMP_TRACK_PATTERN =
   /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/
-const SEARCH_RESULT_REGEX =
-  /<li class="searchresult data-search"[\s\S]*?<\/li>/g
-const SEARCH_URL_REGEX = /<a class="artcont" href="([^"]+)">/
-const SEARCH_TITLE_REGEX = /<div class="heading">\s*<a[^>]*>\s*(.+?)\s*<\/a>/
-const SEARCH_SUBHEAD_REGEX = /<div class="subhead">([\s\S]*?)<\/div>/
-const SEARCH_ARTWORK_REGEX = /<div class="art">\s*<img src="([^"]+)"/
-const STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\\s]+/
-const TRALBUM_REGEX = /data-tralbum=(["'])([\s\S]+?)\1/
-
-/**
- * Runtime options used by the Bandcamp source.
- */
-interface BandcampRuntimeOptions {
-  /**
-   * Maximum number of tracks returned for search operations.
-   */
-  maxSearchResults?: number
-}
-
-/**
- * Minimal Bandcamp track payload used by `data-tralbum`.
- */
-interface BandcampTralbumTrack {
-  /**
-   * Internal track identifier exposed by Bandcamp.
-   */
-  track_id?: string | number
-
-  /**
-   * Secondary internal identifier used by some pages.
-   */
-  id?: string | number
-
-  /**
-   * Relative per-track page URL when the payload represents an album.
-   */
-  title_link?: string
-
-  /**
-   * Human-readable track title.
-   */
-  title?: string
-
-  /**
-   * Duration in seconds.
-   */
-  duration?: number
-}
-
-/**
- * Minimal Bandcamp page payload used by the source.
- */
-interface BandcampTralbumData {
-  /**
-   * Artist name extracted from the page payload.
-   */
-  artist?: string
-
-  /**
-   * Artwork identifier used to build the public image URL.
-   */
-  art_id?: string | number
-
-  /**
-   * Current page metadata.
-   */
-  current?: {
-    /**
-     * Album or track title.
-     */
-    title?: string
-  }
-
-  /**
-   * Track list present on the page.
-   */
-  trackinfo?: BandcampTralbumTrack[]
-}
-
-/**
- * Raw search result values parsed from the Bandcamp search page.
- */
-interface BandcampSearchResult {
-  /**
-   * Result title.
-   */
-  title: string
-
-  /**
-   * Result artist name.
-   */
-  author: string
-
-  /**
-   * Canonical Bandcamp page URL.
-   */
-  uri: string
-
-  /**
-   * Search thumbnail when available.
-   */
-  artworkUrl: string | null
-}
-
-/**
- * Track fields required to build an encoded Bandcamp track.
- */
-interface BandcampTrackBuildInput {
-  /**
-   * Stable track identifier when already known.
-   */
-  identifier?: string | null
-
-  /**
-   * Whether the track can be seeked.
-   */
-  isSeekable?: boolean
-
-  /**
-   * Track author.
-   */
-  author?: string | null
-
-  /**
-   * Track duration in milliseconds.
-   */
-  length?: number
-
-  /**
-   * Whether the track is a stream.
-   */
-  isStream?: boolean
-
-  /**
-   * Track title.
-   */
-  title?: string | null
-
-  /**
-   * Canonical public URL.
-   */
-  uri: string
-
-  /**
-   * Artwork URL when available.
-   */
-  artworkUrl: string | null
-}
-
-/**
- * Encodable Bandcamp track payload.
- */
-interface BandcampTrackInfo extends TrackEncodeInput {
-  [x: string]: unknown
-  /**
-   * Whether the resolved item can be seeked.
-   */
-  isSeekable: boolean
-
-  /**
-   * Canonical Bandcamp page URL.
-   */
-  uri: string
-
-  /**
-   * Artwork URL returned by Bandcamp.
-   */
-  artworkUrl: string | null
-
-  /**
-   * Bandcamp does not expose ISRC in this path.
-   */
-  isrc: null
-}
-
-/**
- * Encoded Bandcamp track returned by the source manager.
- */
-interface BandcampTrackData {
-  /**
-   * Base64-encoded Lavalink-compatible track payload.
-   */
-  encoded: string
-
-  /**
-   * Human-readable track information.
-   */
-  info: BandcampTrackInfo
-
-  /**
-   * Bandcamp does not currently attach plugin metadata here.
-   */
-  pluginInfo: Record<string, unknown>
-}
-
-/**
- * Playlist payload returned when an album resolves to multiple tracks.
- */
-interface BandcampPlaylistData {
-  /**
-   * Playlist metadata shown to the client.
-   */
-  info: {
-    /**
-     * Album title.
-     */
-    name: string
-
-    /**
-     * Index of the selected track.
-     */
-    selectedTrack: number
-  }
-
-  /**
-   * Source-specific playlist metadata.
-   */
-  pluginInfo: Record<string, unknown>
-
-  /**
-   * Encoded tracks that belong to the album.
-   */
-  tracks: BandcampTrackData[]
-}
-
-/**
- * Direct playback URL descriptor returned by Bandcamp.
- */
-interface BandcampTrackUrlSuccess extends TrackUrlResult {
-  /**
-   * Final MP3 stream URL extracted from the page.
-   */
-  url: string
-
-  /**
-   * Bandcamp playback is resolved as HTTPS.
-   */
-  protocol: 'https'
-
-  /**
-   * Bandcamp stream format used by this extractor.
-   */
-  format: 'mp3'
-}
+const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/
+const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/
+const JSON_LD_REGEX =
+  /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/script>/
 
 /**
  * Bandcamp source implementation.
@@ -319,17 +89,28 @@ export default class BandcampSource {
   }
 
   /**
-   * Searches Bandcamp track results for a plain-text query.
+   * Searches Bandcamp track results using the internal JSON search API.
+   *
+   * The previous HTML-scraping approach broke because `bandcamp.com/search`
+   * now returns a client-challenge page that requires JavaScript.  The
+   * internal autocomplete API used by the Bandcamp frontend returns
+   * structured JSON and does not require authentication.
    *
    * @param query Search string received from the API or unified search flow.
    * @returns Search results, an empty payload, or a structured exception.
    */
   public async search(query: string): Promise<SourceResult> {
     try {
-      const request = await makeRequest(
-        `${this.baseUrl}/search?q=${encodeURIComponent(query)}&item_type=t&from=results`,
-        { method: 'GET' }
-      )
+      const request = await makeRequest(BANDCAMP_SEARCH_API_URL, {
+        method: 'POST',
+        disableBodyCompression: true,
+        body: {
+          search_text: query,
+          search_filter: 't',
+          full_page: true,
+          fan_id: null
+        }
+      })
 
       if (request.error || request.statusCode !== 200) {
         return {
@@ -337,25 +118,16 @@ export default class BandcampSource {
           exception: {
             message:
               request.error ??
-              `BandCamp returned an invalid status: ${request.statusCode}`,
+              `BandCamp search API returned status ${request.statusCode}.`,
             severity: 'fault',
             cause: 'Request Failed'
           }
         }
       }
 
-      const body = this.getResponseText(request)
-      if (body === null) {
-        return this.createSourceException(
-          'BandCamp search returned an unreadable response body.',
-          'fault',
-          'Invalid Response'
-        )
-      }
+      const response = this.getJsonBody<BandcampApiSearchResponse>(request.body)
 
-      const resultBlocks = body.match(SEARCH_RESULT_REGEX)
-
-      if (!resultBlocks || resultBlocks.length === 0) {
+      if (!response?.auto?.results || response.auto.results.length === 0) {
         logger(
           'debug',
           'Sources',
@@ -364,16 +136,25 @@ export default class BandcampSource {
         return { loadType: 'empty', data: {} }
       }
 
-      const tracks: BandcampTrackData[] = []
+      const tracks: TrackData[] = []
       const maxResults = this.getMaxSearchResults()
 
-      for (const block of resultBlocks) {
+      for (const item of response.auto.results) {
         if (tracks.length >= maxResults) break
 
-        const result = this.parseSearchResult(block)
-        if (!result) continue
+        if (!item.name || !item.item_url_path) continue
 
-        tracks.push(this.buildTrack(result))
+        tracks.push(
+          this.buildTrack({
+            identifier: item.id != null ? String(item.id) : null,
+            title: item.name,
+            author: item.band_name || null,
+            uri: item.item_url_path,
+            artworkUrl: item.art_id
+              ? this.createArtworkUrl(item.art_id)
+              : (item.img ?? null)
+          })
+        )
       }
 
       if (tracks.length === 0) {
@@ -403,13 +184,23 @@ export default class BandcampSource {
   /**
    * Resolves a Bandcamp track or album URL into a track or playlist payload.
    *
+   * Uses `data-tralbum` as the primary metadata source and enriches with
+   * JSON-LD structured data (ISRC, duration, artwork) when available.
+   *
    * @param url Canonical Bandcamp URL to resolve.
    * @returns A track, playlist, empty result, or a structured exception.
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
-      const tralbumData = await this.extractTralbumData(url)
-      if (!tralbumData?.trackinfo || tralbumData.trackinfo.length === 0) {
+      const pageData = await this.fetchPageData(url)
+      if (!pageData) {
+        logger('warn', 'Sources', `Failed to fetch BandCamp page for: ${url}`)
+        return { loadType: 'empty', data: {} }
+      }
+
+      const { tralbum, jsonLd } = pageData
+
+      if (!tralbum?.trackinfo || tralbum.trackinfo.length === 0) {
         logger(
           'warn',
           'Sources',
@@ -418,13 +209,19 @@ export default class BandcampSource {
         return { loadType: 'empty', data: {} }
       }
 
-      const artworkUrl = this.createArtworkUrl(tralbumData.art_id)
-      const author = this.normalizeText(tralbumData.artist) ?? 'Unknown Artist'
+      const artworkUrl =
+        this.createArtworkUrl(tralbum.art_id) ??
+        (typeof jsonLd?.image === 'string' ? jsonLd.image : null)
+      const author =
+        this.normalizeText(tralbum.artist) ??
+        this.normalizeText(jsonLd?.byArtist?.name) ??
+        'Unknown Artist'
+      const pageIsrc = tralbum.current?.isrc ?? jsonLd?.isrcCode ?? null
 
-      if (tralbumData.trackinfo.length > 1) {
-        const tracks: BandcampTrackData[] = []
+      if (tralbum.trackinfo.length > 1) {
+        const tracks: TrackData[] = []
 
-        for (const item of tralbumData.trackinfo) {
+        for (const item of tralbum.trackinfo) {
           const trackUrl = item.title_link
             ? this.buildAbsoluteTrackUrl(item.title_link, url)
             : null
@@ -449,11 +246,10 @@ export default class BandcampSource {
           return { loadType: 'empty', data: {} }
         }
 
-        const playlist: BandcampPlaylistData = {
+        const playlist: PlaylistData = {
           info: {
             name:
-              this.normalizeText(tralbumData.current?.title) ??
-              'BandCamp Playlist',
+              this.normalizeText(tralbum.current?.title) ?? 'BandCamp Playlist',
             selectedTrack: 0
           },
           pluginInfo: {} as Record<string, unknown>,
@@ -463,7 +259,7 @@ export default class BandcampSource {
         return { loadType: 'playlist', data: playlist }
       }
 
-      const trackData = tralbumData.trackinfo[0]
+      const trackData = tralbum.trackinfo[0]
       if (!trackData) {
         return { loadType: 'empty', data: {} }
       }
@@ -472,11 +268,14 @@ export default class BandcampSource {
         identifier: this.getTrackIdentifier(trackData, url),
         isSeekable: true,
         author,
-        length: this.toDurationMilliseconds(trackData.duration),
+        length:
+          this.toDurationMilliseconds(trackData.duration) ??
+          this.parseIsoDuration(jsonLd?.duration),
         isStream: false,
         title: this.normalizeText(trackData.title),
         uri: url,
-        artworkUrl
+        artworkUrl,
+        isrc: pageIsrc
       })
 
       return { loadType: 'track', data: track }
@@ -492,12 +291,20 @@ export default class BandcampSource {
   /**
    * Extracts the direct Bandcamp MP3 stream URL from a track page.
    *
+   * When possible, the stream URL is extracted directly from the
+   * `data-tralbum` payload to avoid an additional HTTP round-trip.
+   * Falls back to a regex scan of the full page body when the structured
+   * extraction does not yield a URL.
+   *
    * @param track Decoded track information produced by the source manager.
    * @returns A direct stream URL descriptor or a structured exception.
    */
   public async getTrackUrl(
     track: TrackInfo
-  ): Promise<BandcampTrackUrlSuccess | SourceResult> {
+  ): Promise<
+    | (TrackUrlResult & { url: string; protocol: 'https'; format: 'mp3' })
+    | SourceResult
+  > {
     try {
       const { body, error, statusCode } = await makeRequest(track.uri, {
         method: 'GET'
@@ -526,9 +333,10 @@ export default class BandcampSource {
         }
       }
 
-      const streamUrlMatch = page.match(STREAM_URL_REGEX)
+      // Try extracting stream URL from the structured tralbum data first.
+      const streamUrl = this.extractStreamUrlFromPage(page, track.identifier)
 
-      if (!streamUrlMatch) {
+      if (!streamUrl) {
         return {
           loadType: 'error',
           exception: {
@@ -540,7 +348,7 @@ export default class BandcampSource {
       }
 
       return {
-        url: this.decodeHtmlEntities(streamUrlMatch[0]),
+        url: streamUrl,
         protocol: 'https',
         format: 'mp3'
       }
@@ -579,7 +387,10 @@ export default class BandcampSource {
     try {
       const response = await makeRequest(url, {
         method: 'GET',
-        streamOnly: true
+        streamOnly: true,
+        headers: {
+          Referer: decodedTrack.uri
+        }
       })
 
       if (response.error || response.statusCode !== 200 || !response.stream) {
@@ -596,7 +407,22 @@ export default class BandcampSource {
       }
 
       const stream = new PassThrough()
-      response.stream.pipe(stream)
+      stream.once('close', () => {
+        ;(response.stream as { destroy?: () => void }).destroy?.()
+      })
+      pipeline(
+        response.stream,
+        stream,
+        (error: NodeJS.ErrnoException | null) => {
+          if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger(
+              'error',
+              'Sources',
+              `BandCamp stream error: ${error.message}`
+            )
+          }
+        }
+      )
 
       return { stream }
     } catch (error) {
@@ -620,14 +446,16 @@ export default class BandcampSource {
   }
 
   /**
-   * Fetches and parses the `data-tralbum` payload from a Bandcamp page.
+   * Fetches a Bandcamp page and extracts both `data-tralbum` and JSON-LD data.
    *
    * @param url Bandcamp track or album URL.
-   * @returns Parsed `data-tralbum` content or `null` when extraction fails.
+   * @returns Parsed page metadata or `null` when extraction fails.
    */
-  public async extractTralbumData(
-    url: string
-  ): Promise<BandcampTralbumData | null> {
+  public async fetchPageData(url: string): Promise<{
+    tralbum: BandcampTralbumData | null
+    jsonLd: BandcampJsonLdData | null
+    rawPage: string
+  } | null> {
     const { body, error, statusCode } = await makeRequest(url, {
       method: 'GET'
     })
@@ -644,20 +472,10 @@ export default class BandcampSource {
     const page = this.getResponseText({ body })
     if (page === null) return null
 
-    const match = page.match(TRALBUM_REGEX)
-    if (!match?.[2]) return null
+    const tralbum = this.parseTralbumFromPage(page)
+    const jsonLd = this.parseJsonLdFromPage(page)
 
-    try {
-      const decodedString = this.decodeHtmlEntities(match[2])
-      return JSON.parse(decodedString) as BandcampTralbumData
-    } catch (error) {
-      logger(
-        'warn',
-        'Sources',
-        `Failed to parse BandCamp tralbum payload for ${url}: ${error instanceof Error ? error.message : 'invalid JSON'}`
-      )
-      return null
-    }
+    return { tralbum, jsonLd, rawPage: page }
   }
 
   /**
@@ -666,8 +484,8 @@ export default class BandcampSource {
    * @param partialInfo Track fields collected from search or page resolution.
    * @returns An encoded track entry compatible with the source manager.
    */
-  public buildTrack(partialInfo: BandcampTrackBuildInput): BandcampTrackData {
-    const track: BandcampTrackInfo = {
+  public buildTrack(partialInfo: BandcampTrackBuildInput): TrackData {
+    const track: TrackEncodeInput & TrackInfo = {
       identifier:
         partialInfo.identifier?.trim() ||
         this.getIdentifierFromUrl(partialInfo.uri),
@@ -679,7 +497,7 @@ export default class BandcampSource {
       title: partialInfo.title?.trim() || 'Unknown Title',
       uri: partialInfo.uri,
       artworkUrl: partialInfo.artworkUrl,
-      isrc: null,
+      isrc: partialInfo.isrc ?? null,
       sourceName: 'bandcamp',
       details: []
     }
@@ -703,42 +521,80 @@ export default class BandcampSource {
   }
 
   /**
-   * Extracts a usable search result from a raw Bandcamp HTML block.
+   * Parses the `data-tralbum` JSON payload from a Bandcamp page body.
    *
-   * @param block Raw HTML fragment for a single search result entry.
-   * @returns Parsed search metadata or `null` when the entry is incomplete.
+   * @param page Full HTML page body.
+   * @returns Parsed tralbum data, or `null` when not found or invalid.
    */
-  private parseSearchResult(block: string): BandcampSearchResult | null {
-    const urlMatch = block.match(SEARCH_URL_REGEX)
-    const titleMatch = block.match(SEARCH_TITLE_REGEX)
-    const subheadMatch = block.match(SEARCH_SUBHEAD_REGEX)
-    const artworkMatch = block.match(SEARCH_ARTWORK_REGEX)
+  private parseTralbumFromPage(page: string): BandcampTralbumData | null {
+    const match = page.match(TRALBUM_REGEX)
+    if (!match?.[1]) return null
 
-    if (!titleMatch?.[1] || !subheadMatch?.[1] || !urlMatch?.[1]) {
+    try {
+      const decoded = this.decodeHtmlEntities(match[1])
+      return JSON.parse(decoded) as BandcampTralbumData
+    } catch (error) {
+      logger(
+        'warn',
+        'Sources',
+        `Failed to parse BandCamp tralbum payload: ${error instanceof Error ? error.message : 'invalid JSON'}`
+      )
       return null
     }
+  }
 
-    const rawTitle = titleMatch[1]
-    const rawSubhead = subheadMatch[1]
-    const rawUri = urlMatch[1]
-    const title = this.normalizeText(this.stripHtml(rawTitle))
-    const fullSubhead = this.normalizeText(this.stripHtml(rawSubhead))
-    const uri = rawUri.split('?')[0]
+  /**
+   * Parses the JSON-LD `MusicRecording` block from a Bandcamp page body.
+   *
+   * @param page Full HTML page body.
+   * @returns Parsed JSON-LD data, or `null` when not found or invalid.
+   */
+  private parseJsonLdFromPage(page: string): BandcampJsonLdData | null {
+    const match = page.match(JSON_LD_REGEX)
+    if (!match?.[1]) return null
 
-    if (!title || !fullSubhead || !uri) {
+    try {
+      return JSON.parse(match[1].trim()) as BandcampJsonLdData
+    } catch {
       return null
     }
+  }
 
-    const artistSegments = fullSubhead.split(' de ')
-    const author =
-      artistSegments[artistSegments.length - 1]?.trim() || 'Unknown Artist'
+  /**
+   * Extracts the MP3 stream URL from a Bandcamp page body.
+   *
+   * Tries the structured `data-tralbum` `trackinfo[].file["mp3-128"]` field
+   * first, then falls back to a regex scan for a `t4.bcbits.com/stream` URL.
+   */
+  private extractStreamUrlFromPage(
+    page: string,
+    trackId?: string
+  ): string | null {
+    // Try structured extraction from tralbum first.
+    const tralbum = this.parseTralbumFromPage(page)
+    if (tralbum?.trackinfo) {
+      // Find the specific track if an ID is provided, otherwise default to the first
+      const trackData = trackId
+        ? tralbum.trackinfo.find(
+            (t) => String(t.track_id) === trackId || String(t.id) === trackId
+          ) || tralbum.trackinfo[0]
+        : tralbum.trackinfo[0]
 
-    return {
-      title,
-      author,
-      uri,
-      artworkUrl: artworkMatch?.[1] ?? null
+      if (trackData?.file) {
+        const mp3Url = trackData.file['mp3-128']
+        if (mp3Url) {
+          return this.decodeHtmlEntities(mp3Url)
+        }
+      }
     }
+
+    // Fallback: regex scan of the full page.
+    const decodedPage = this.decodeHtmlEntities(page)
+    // Fix: The regex must allow `&` to capture the token parameters.
+    const streamUrlMatch = decodedPage.match(
+      /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\s]+/
+    )
+    return streamUrlMatch ? streamUrlMatch[0] : null
   }
 
   /**
@@ -762,8 +618,37 @@ export default class BandcampSource {
   }
 
   /**
-   * Decodes the small subset of HTML entities used by the Bandcamp pages this
-   * source parses.
+   * Safely parses a JSON body from an HTTP response.
+   *
+   * @param body Raw response body from the HTTP helper.
+   * @returns The parsed JSON object, or `null` when parsing fails.
+   */
+  private getJsonBody<T>(body: HttpRequestResult['body']): T | null {
+    if (
+      body !== null &&
+      body !== undefined &&
+      typeof body === 'object' &&
+      !Buffer.isBuffer(body)
+    ) {
+      return body as T
+    }
+
+    const text = this.getResponseText({ body })
+    if (text === null) return null
+
+    try {
+      return JSON.parse(text) as T
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Decodes HTML entities commonly found in Bandcamp page attributes and
+   * JSON payloads embedded in HTML.
+   *
+   * Handles named entities, decimal numeric entities, and hexadecimal
+   * numeric entities.
    *
    * @param value Raw HTML fragment or encoded attribute value.
    * @returns A decoded string safe to use in URLs and titles.
@@ -773,20 +658,16 @@ export default class BandcampSource {
       .replaceAll('&quot;', '"')
       .replaceAll('&#34;', '"')
       .replaceAll('&#39;', "'")
+      .replaceAll('&#x27;', "'")
       .replaceAll('&apos;', "'")
-      .replaceAll('&amp;', '&')
       .replaceAll('&lt;', '<')
       .replaceAll('&gt;', '>')
-  }
-
-  /**
-   * Removes HTML tags from a fragment extracted from the Bandcamp search page.
-   *
-   * @param value Raw HTML fragment.
-   * @returns Plain-text content with tags removed.
-   */
-  private stripHtml(value: string): string {
-    return value.replace(/<[^>]+>/g, ' ')
+      .replaceAll('&nbsp;', ' ')
+      .replaceAll('&amp;', '&')
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
+        String.fromCharCode(parseInt(hex, 16))
+      )
+      .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
   }
 
   /**
@@ -815,12 +696,38 @@ export default class BandcampSource {
   }
 
   /**
+   * Parses an ISO 8601 duration string into milliseconds.
+   *
+   * Handles the `P00H05M20S` format used by Bandcamp's JSON-LD.
+   *
+   * @param iso ISO 8601 duration string.
+   * @returns Duration in milliseconds, or `-1` when parsing fails.
+   */
+  private parseIsoDuration(iso?: string | null): number {
+    if (!iso) return -1
+
+    const match = iso.match(
+      /P(?:(\d+)D)?(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?/
+    )
+    if (!match) return -1
+
+    const days = parseInt(match[1] || '0', 10)
+    const hours = parseInt(match[2] || '0', 10)
+    const minutes = parseInt(match[3] || '0', 10)
+    const seconds = parseFloat(match[4] || '0')
+
+    return Math.round(
+      (days * 86400 + hours * 3600 + minutes * 60 + seconds) * 1000
+    )
+  }
+
+  /**
    * Builds the public Bandcamp artwork URL from an `art_id` value.
    *
    * @param artId Artwork identifier exposed by `data-tralbum`.
    * @returns The public image URL or `null` when no artwork exists.
    */
-  private createArtworkUrl(artId?: string | number): string | null {
+  private createArtworkUrl(artId?: string | number | null): string | null {
     if (artId === undefined || artId === null || artId === '') {
       return null
     }
@@ -869,8 +776,8 @@ export default class BandcampSource {
    * @returns A positive integer limit used when parsing search results.
    */
   private getMaxSearchResults(): number {
-    const options = this.nodelink.options as BandcampRuntimeOptions
-    const limit = options.maxSearchResults
+    const options = this.nodelink.options
+    const limit = options.search.maxResults
 
     return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
       ? limit

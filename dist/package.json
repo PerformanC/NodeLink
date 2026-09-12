@@ -1,10 +1,10 @@
 {
     "name": "nodelink",
-    "version": "3.8.0-dev.20260422.1",
+    "version": "3.9.0",
     "scripts": {
         "build": "tsc --incremental false",
-        "start": "node --dns-result-order=ipv4first --import tsx src/index.ts",
-        "start:experimental": "node --experimental-transform-types --dns-result-order=ipv4first src/index.ts",
+        "start": "node -e \"const v=process.versions.node.split('.').map(Number); const t=(v[0]===22&&v[1]>=6)||v[0]>=23; require('child_process').spawnSync('node', ['--dns-result-order=ipv4first', ...(t?['--experimental-strip-types','src/index.ts']:['dist/src/index.js']), ...process.argv.slice(1)], {stdio:'inherit'})\" --",
+        "start:experimental": "node --dns-result-order=ipv4first src/index.ts",
         "start:dist": "node --dns-result-order=ipv4first dist/src/index.js",
         "start:bun": "bun run --dns-result-order=ipv4first src/index.ts",
         "type-check": "tsc --noEmit",
@@ -21,24 +21,21 @@
         "@ecliptia/seekable-stream": "github:1Lucas1apk/seekable-stream",
         "@performanc/pwsl-server": "github:performanc/internals#PWSL-server",
         "@performanc/voice": "github:PerformanC/voice",
-        "@toddynnn/symphonia-decoder": "1.0.6",
+        "@toddynnn/symphonia-decoder": "^1.2.3",
         "@toddynnn/voice-opus": "^1.0.1",
         "fastest-validator": "^1.19.1",
-        "jsdom": "^29.0.2",
-        "mp4box": "^2.3.0",
+        "mp4box": "^2.4.1",
         "prom-client": "^15.1.3",
-        "proxy-agent": "^8.0.1"
+        "proxy-agent": "^8.0.2"
     },
     "devDependencies": {
-        "@biomejs/biome": "^2.4.12",
-        "@commitlint/cli": "20.5.0",
-        "@commitlint/config-conventional": "20.5.0",
-        "@types/bun": "^1.3.12",
-        "@types/jsdom": "^28.0.1",
-        "@types/node": "^25.6.0",
+        "@biomejs/biome": "^2.5.0",
+        "@commitlint/cli": "21.0.2",
+        "@commitlint/config-conventional": "21.0.2",
+        "@types/bun": "^1.3.14",
+        "@types/node": "^26.0.0",
         "dotenv": "^17.4.2",
         "husky": "9.1.7",
-        "tsx": "^4.21.0",
-        "typescript": "^6.0.3"
+        "typescript": "^7.0.2"
     }
 }

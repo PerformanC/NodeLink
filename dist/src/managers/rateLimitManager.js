@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const DEFAULT_PER_USER = {
     maxRequests: 50,
     timeWindowMs: 5000
@@ -48,7 +48,9 @@ export default class RateLimitManager {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = this._resolveConfig(nodelink.options?.rateLimit);
+        this.config = this._resolveConfig(nodelink.options?.api?.rateLimit ??
+            nodelink.options?.security?.rateLimit ??
+            nodelink.options?.rateLimit);
         this.store = new Map();
         this.cleanupInterval = setInterval(() => this._cleanup(), this._resolveCleanupInterval());
         this.cleanupInterval.unref?.();

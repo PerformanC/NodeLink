@@ -119,6 +119,10 @@ export interface HttpRequestOptions {
   maxRetries?: number
   /** Proxy settings for the request. */
   proxy?: HttpProxyConfig
+  /** Backward-compatible network block used by some callers. */
+  network?: {
+    proxy?: HttpProxyConfig
+  }
 }
 
 /**
@@ -353,6 +357,11 @@ export interface NodelinkRuntime {
   routePlanner?: RoutePlannerRuntime
   /** Optional stats manager instance. */
   statsManager?: StatsManager
+  /** Loaded server configuration. */
+  options?: {
+    /** Core server section. */
+    server?: { cors?: boolean }
+  }
 }
 
 /**

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendErrorResponse } from "../utils.js";
+import { sendErrorResponse } from '../utils.js';
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -94,6 +94,7 @@ function buildPage(code) {
       <div class="card"><div class="label">Trace Buffer</div><div id="traceCount" class="big">0</div><div class="sub">network + events</div></div>
       <div class="card"><div class="label">Players Active</div><div id="playersActive" class="big">0</div><div class="sub">across workers</div></div>
       <div class="card"><div class="label">Heap Pressure</div><div id="heapPressure" class="big">0.0%</div><div class="sub">heapUsed/heapTotal</div></div>
+      <div class="card"><div class="label">V8 Internal</div><div id="v8Internal" class="big">0 MB</div><div class="sub">v8 gap</div></div>
     </div>
 
     <div class="mem-ribbon-wrap">
@@ -611,7 +612,18 @@ function buildPage(code) {
 
       const safeRss = Math.max(rss, 1)
       const heapReservedFree = Math.max(0, allocated - used)
-      const trackedNative = Math.max(0, Math.max(external, arrayBuffers))
+      const trackedNative = Math.max(0, external + arrayBuffers)
+
+      // V8 heap spaces sum
+      let v8HeapTotal = 0
+      for (const p of procs) {
+        const spaces = p?.heapSpaces || p?.runtime?.heapSpaces || []
+        for (const s of spaces) {
+          v8HeapTotal += Number(s?.spaceSize || 0)
+        }
+      }
+      const v8Internal = Math.max(0, allocated - v8HeapTotal)
+
       const unattributed = Math.max(0, rss - used - heapReservedFree - trackedNative)
 
       const usedPct = Math.max(0, Math.min(100, (used / safeRss) * 100))
@@ -655,6 +667,9 @@ function buildPage(code) {
       if (memHeroMachineRssMetric) memHeroMachineRssMetric.textContent = fmtBytes(rss) + ' · ' + machineRssPct.toFixed(1) + '%'
       if (memHeroMachineOtherMetric) memHeroMachineOtherMetric.textContent = fmtBytes(machineOtherAbs) + ' · ' + machineOtherPct.toFixed(1) + '%'
       if (memHeroMachineFreeMetric) memHeroMachineFreeMetric.textContent = fmtBytes(machineFree) + ' · ' + machineFreePct.toFixed(1) + '%'
+
+      const v8InternalEl = document.getElementById('v8Internal')
+      if (v8InternalEl) v8InternalEl.textContent = fmtBytes(v8Internal) + ' · ' + ((v8Internal / Math.max(rss, 1)) * 100).toFixed(1) + '%'
 
       const masterRss = Number(snapshot?.master?.memory?.rss || 0)
       let workersRss = 0

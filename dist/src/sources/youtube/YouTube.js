@@ -1,20 +1,11 @@
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../../playback/hls/HLSHandler.js";
-import { getBestMatch, http1makeRequest, logger, makeRequest } from "../../utils.js";
-import CipherManager from "./CipherManager.js";
-import Android from "./clients/Android.js";
-import AndroidVR from "./clients/AndroidVR.js";
-import IOS from "./clients/IOS.js";
-import Music from "./clients/Music.js";
-import TV from "./clients/TV.js";
-import TVCast from "./clients/TVCast.js";
-import Web from "./clients/Web.js";
-import WebRemix from "./clients/Web_Remix.js";
-import WebEmbedded from "./clients/WebEmbedded.js";
-import { checkURLType, YOUTUBE_CONSTANTS } from "./common.js";
-import YouTubeLiveChat from "./LiveChat.js";
-import OAuth from "./OAuth.js";
-import { SabrStream } from "./sabr/sabr.js";
+import HLSHandler from '../../playback/hls/HLSHandler.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
+import CipherManager from './CipherManager.js';
+import { checkURLType, YOUTUBE_CONSTANTS } from './common.js';
+import YouTubeLiveChat from './LiveChat.js';
+import OAuth from './OAuth.js';
+import { SabrStream } from './sabr/sabr.js';
 /** Size in bytes of each range-request chunk for direct HTTP streaming. */
 const CHUNK_SIZE = 64 * 1024;
 /** Maximum consecutive errors before triggering URL recovery. */
@@ -23,6 +14,13 @@ const MAX_RETRIES = 3;
 const MAX_URL_REFRESH = 10;
 /** Interval in milliseconds between visitor data refreshes. */
 const VISITOR_DATA_INTERVAL = 3_600_000;
+/** PassThrough buffer size. 48KB = ~3s of 128kbps Opus, enough to cover reconnect gaps. */
+const STREAM_BUFFER_SIZE = 48 * 1024;
+/** Refresh URL before YouTube's ~6h expiry. */
+const URL_MAX_AGE_MS = 4.5 * 60 * 60 * 1000;
+/** Recovery base delay with exponential backoff. So 2s, 4s, 8s, etc. */
+const RECOVER_BASE_DELAY_MS = 2000;
+const MAX_RETRY_DELAY_MS = 8000;
 /**
  * Manages a scored pool of proxies with automatic health tracking.
  *
@@ -145,16 +143,24 @@ export default class YouTubeSource {
     oauth;
     /** Interval handle for periodic visitor data refresh, or `null` when not running. */
     visitorDataInterval;
+    /** Interval handle to clear failingClientsByTrack periodically. */
+    failingClientsInterval;
     /** Cipher/signature decryption manager shared across all innertube clients. */
     cipherManager;
     /** Live chat connection handler for YouTube live streams. */
     liveChat;
     /** Map of active download streams keyed by a unique symbol or string, used for cancellation. */
     activeStreams;
+    /** SABR streams tracked for guild-aware abort when a player is destroyed. */
+    activeSabrStreams = new Map();
     /** Set of fallback-mirror lookup keys currently in flight, used to prevent infinite recursion loops. */
     mirrorFallbackInFlight;
+    /** Map of track identifiers to a set of client names that failed to provide a playable URL. */
+    failingClientsByTrack;
     /** YouTube innertube request context sent with every API call (device info, locale, visitor data). */
     ytContext;
+    /** Dynamic bandwidth estimate in bits per second (starts at 128kbps/16KB/s). */
+    bandwidthEstimate = 128_000;
     // -- Public fields consumed by the framework --
     /** Additional source names this source can proxy through (e.g. `['ytmusic']`). */
     additionalsSourceName;
@@ -172,7 +178,8 @@ export default class YouTubeSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = nodelink.options.sources?.youtube;
+        this.config = nodelink.options.sources
+            .youtube;
         this.proxyManager = new YouTubeProxyManager(this.config.proxies || []);
         this.additionalsSourceName = ['ytmusic'];
         this.searchTerms = ['ytsearch', 'ytmsearch'];
@@ -186,6 +193,7 @@ export default class YouTubeSource {
         this.clients = {};
         this.oauth = null;
         this.visitorDataInterval = null;
+        this.failingClientsInterval = null;
         this.cipherManager = new CipherManager(nodelink);
         this.liveChat = new YouTubeLiveChat(nodelink, {
             getProxy: this.getProxy.bind(this),
@@ -193,6 +201,7 @@ export default class YouTubeSource {
         });
         this.activeStreams = new Map();
         this.mirrorFallbackInFlight = new Set();
+        this.failingClientsByTrack = new Map();
         this.ytContext = {
             client: {
                 screenDensityFloat: 1,
@@ -234,6 +243,19 @@ export default class YouTubeSource {
     async setup() {
         logger('info', 'YouTube', 'Setting up YouTube source...');
         this.oauth = new OAuth(this.nodelink);
+        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TV_DOWN }, { default: TVCast }, { default: Web }, { default: WebEmbedded }, { default: VisionOs }] = await Promise.all([
+            import('./clients/Android.js'),
+            import('./clients/AndroidVR.js'),
+            import('./clients/IOS.js'),
+            import('./clients/Music.js'),
+            import('./clients/Web_Remix.js'),
+            import('./clients/TV.js'),
+            import('./clients/TV_downgraded.js'),
+            import('./clients/TVCast.js'),
+            import('./clients/Web.js'),
+            import('./clients/WebEmbedded.js'),
+            import('./clients/visionOs.js')
+        ]);
         const clientClasses = {
             Android,
             AndroidVR,
@@ -241,9 +263,11 @@ export default class YouTubeSource {
             Music,
             WebRemix,
             TV,
+            TV_DOWN,
             TVCast,
             Web,
-            WebEmbedded
+            WebEmbedded,
+            VisionOs
         };
         for (const clientName of Object.keys(clientClasses)) {
             const ClientCtor = clientClasses[clientName];
@@ -253,16 +277,41 @@ export default class YouTubeSource {
         }
         logger('debug', 'YouTube', `Initialized clients: ${Object.keys(this.clients).join(', ')}`);
         await this._fetchVisitorData();
-        await this.cipherManager.getCachedPlayerScript();
-        await this.cipherManager.checkCipherServerStatus();
+        await this._loadPlayerScriptWithRetry();
         if (this.visitorDataInterval)
             clearInterval(this.visitorDataInterval);
         this.visitorDataInterval = setInterval(() => this._fetchVisitorData(), VISITOR_DATA_INTERVAL);
-        if (typeof this.visitorDataInterval.unref === 'function') {
-            this.visitorDataInterval.unref();
-        }
+        this.visitorDataInterval.unref?.();
+        if (this.failingClientsInterval)
+            clearInterval(this.failingClientsInterval);
+        this.failingClientsInterval = setInterval(() => this.failingClientsByTrack.clear(), 1000 * 60 * 60 * 12);
+        this.failingClientsInterval.unref?.();
         logger('info', 'YouTube', 'YouTube source setup complete.');
         return true;
+    }
+    /**
+     * Loads the player script with retries, tolerating transient rate limits
+     * (HTTP 429) during startup bursts. Failure never blocks source
+     * initialization; the script is re-fetched lazily on the next cipher
+     * operation.
+     * @internal
+     */
+    async _loadPlayerScriptWithRetry() {
+        const maxAttempts = 3;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                await this.cipherManager.getCachedPlayerScript();
+                return;
+            }
+            catch (e) {
+                logger('warn', 'YouTube', `Player script load failed (attempt ${attempt}/${maxAttempts}): ${e.message}`);
+                if (attempt === maxAttempts) {
+                    logger('warn', 'YouTube', 'Continuing without a cached player script; it will be fetched lazily.');
+                    return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+            }
+        }
     }
     /**
      * Tears down the YouTube source by aborting active streams, clearing
@@ -274,13 +323,54 @@ export default class YouTubeSource {
             cancelSignal.aborted = true;
         }
         this.activeStreams.clear();
+        for (const [, entry] of this.activeSabrStreams.entries()) {
+            try {
+                entry.stream.destroy();
+            }
+            catch { }
+            try {
+                entry.sabr.destroy();
+            }
+            catch { }
+        }
+        this.activeSabrStreams.clear();
         if (this.visitorDataInterval) {
             clearInterval(this.visitorDataInterval);
             this.visitorDataInterval = null;
         }
+        if (this.failingClientsInterval) {
+            clearInterval(this.failingClientsInterval);
+            this.failingClientsInterval = null;
+        }
         if (this.oauth)
             this.oauth.cleanup?.();
         this.cipherManager?.cleanup?.();
+        this.failingClientsByTrack.clear();
+    }
+    /**
+     * Aborts all SABR streams for a guild (called on player destroy to stop
+     * background analysis windows that would otherwise keep stalling on 403s).
+     * @internal
+     */
+    abortGuildStreams(guildId) {
+        for (const [key, entry] of this.activeSabrStreams.entries()) {
+            if (entry.guildId !== guildId)
+                continue;
+            try {
+                entry.stream.destroy();
+            }
+            catch { }
+            try {
+                entry.sabr.destroy();
+            }
+            catch { }
+            this.activeSabrStreams.delete(key);
+            const cancel = this.activeStreams.get(key);
+            if (cancel) {
+                cancel.aborted = true;
+                this.activeStreams.delete(key);
+            }
+        }
     }
     /**
      * Fetches visitor data and player script URL from YouTube embed pages.
@@ -292,6 +382,9 @@ export default class YouTubeSource {
      * @returns Promise that resolves when the fetch attempt completes.
      */
     async _fetchVisitorData() {
+        // this should prevent the visitorData getting initialized twice.
+        if (process.env.WORKER_TYPE === 'source')
+            return;
         const cachedPlayerScript = this.nodelink.credentialManager?.get('yt_player_script_url');
         if (cachedPlayerScript) {
             this.cipherManager.setPlayerScriptUrl(cachedPlayerScript);
@@ -300,58 +393,100 @@ export default class YouTubeSource {
         let visitorFound = false;
         let playerScriptUrl = null;
         try {
-            const { body: data, error, statusCode } = await makeRequest('https://www.youtube.com/embed', {
+            const { body, error, statusCode } = await http1makeRequest('https://music.youtube.com/sw.js_data', {
                 method: 'GET',
-                headers: {
-                    Cookie: 'YSC=cz5kYp3ZuIE; VISITOR_INFO1_LIVE=U-0T5oUyzf8;'
-                }
+                responseType: 'buffer',
+                disableBodyCompression: true
             });
             if (!error && statusCode === 200) {
-                const bodyStr = data;
-                const visitorMatch = bodyStr?.match(/"VISITOR_DATA":"([^"]+)"/);
-                if (visitorMatch?.[1]) {
-                    this.ytContext.client.visitorData = visitorMatch[1];
-                    this.nodelink.credentialManager?.set('yt_visitor_data', visitorMatch[1], 60 * 60 * 1000);
+                const text = body.toString('utf-8');
+                const json = text.slice(text.indexOf('\n') + 1);
+                const visitorData = this._extractVisitorData(JSON.parse(json));
+                if (visitorData) {
+                    this.ytContext.client.visitorData = visitorData;
                     visitorFound = true;
-                    logger('debug', 'YouTube', 'visitorData refreshed and cached.');
-                }
-                const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/);
-                if (playerScriptMatch?.[1]) {
-                    playerScriptUrl = playerScriptMatch[1].replace(/\/[a-z]{2}_[A-Z]{2}\//, '/en_US/');
-                    this.nodelink.credentialManager?.set('yt_player_script_url', playerScriptUrl, 12 * 60 * 60 * 1000);
-                    logger('debug', 'YouTube', `Player script URL: ${playerScriptUrl}`);
-                }
-            }
-            else {
-                logger('warn', 'YouTube', `Embed request failed: ${error?.message || `Status ${statusCode}`}`);
-            }
-            if (!visitorFound) {
-                const { body: guideData, error: guideError, statusCode: guideStatusCode } = await makeRequest('https://www.youtube.com/youtubei/v1/guide', {
-                    method: 'POST',
-                    body: { context: this.ytContext },
-                    disableBodyCompression: true
-                });
-                const guideBody = guideData;
-                if (!guideError &&
-                    guideStatusCode === 200 &&
-                    guideBody?.responseContext?.visitorData) {
-                    this.ytContext.client.visitorData =
-                        guideBody.responseContext.visitorData;
-                    this.nodelink.credentialManager?.set('yt_visitor_data', guideBody.responseContext.visitorData, 60 * 60 * 1000);
-                    visitorFound = true;
-                    logger('debug', 'YouTube', 'visitorData refreshed via guide and cached.');
-                }
-                else {
-                    logger('warn', 'YouTube', 'Failed to refresh visitorData via guide; using cached fallback if present.');
+                    logger('debug', 'YouTube', `visitorData obtained from sw.js_data endpoint (len=${visitorData.length})`);
                 }
             }
         }
         catch (e) {
-            logger('error', 'YouTube', `Error fetching visitor data: ${e.message}`);
-            logger('warn', 'YouTube', 'Using cached visitorData fallback (if present).');
+            logger('debug', 'YouTube', `sw.js_data endpoint failed: ${e.message}`);
+        }
+        if (!visitorFound) {
+            try {
+                const { body: data, error, statusCode } = await makeRequest('https://www.youtube.com/embed', {
+                    method: 'GET',
+                    headers: {
+                        Cookie: 'YSC=LUAfwHpna4E; VISITOR_INFO1_LIVE=Zuih2uZbq3I;'
+                    }
+                });
+                if (!error && statusCode === 200) {
+                    const bodyStr = data;
+                    const visitorMatch = bodyStr?.match(/"VISITOR_DATA":"([^"]+)"/);
+                    if (visitorMatch?.[1]) {
+                        this.ytContext.client.visitorData = visitorMatch[1];
+                        visitorFound = true;
+                        logger('debug', 'YouTube', 'visitorData refreshed from embed.');
+                    }
+                    if (!cachedPlayerScript) {
+                        const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/);
+                        if (playerScriptMatch?.[1]) {
+                            playerScriptUrl = playerScriptMatch[1].replace(/\/[a-z]{2}_[A-Z]{2}\//, '/en_US/');
+                            this.nodelink.credentialManager?.set('yt_player_script_url', playerScriptUrl, 12 * 60 * 60 * 1000);
+                            logger('debug', 'YouTube', `Player script URL: ${playerScriptUrl}`);
+                        }
+                    }
+                }
+                else {
+                    logger('warn', 'YouTube', `Embed request failed: ${error?.message || `Status ${statusCode}`}`);
+                }
+                if (!visitorFound) {
+                    const { body: guideData, error: guideError, statusCode: guideStatusCode } = await makeRequest('https://www.youtube.com/youtubei/v1/guide', {
+                        method: 'POST',
+                        body: { context: this.ytContext },
+                        disableBodyCompression: true
+                    });
+                    const guideBody = guideData;
+                    if (!guideError &&
+                        guideStatusCode === 200 &&
+                        guideBody?.responseContext?.visitorData) {
+                        this.ytContext.client.visitorData =
+                            guideBody.responseContext.visitorData;
+                        visitorFound = true;
+                        logger('debug', 'YouTube', 'visitorData refreshed via guide.');
+                    }
+                    else {
+                        logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.');
+                    }
+                }
+            }
+            catch (e) {
+                logger('error', 'YouTube', `Error fetching visitor data: ${e.message}`);
+            }
         }
         if (playerScriptUrl)
             this.cipherManager.setPlayerScriptUrl(playerScriptUrl);
+    }
+    /**
+     * Recursively searches the parsed `sw.js_data` payload for the visitor data
+     * token. The token is a protobuf-encoded base64 string embedded somewhere in
+     * the nested response arrays, so its exact position cannot be relied upon.
+     * @param node - Current payload node (array or string) being inspected.
+     * @returns The visitor data token, or `null` when not found.
+     * @internal
+     */
+    _extractVisitorData(node) {
+        if (typeof node === 'string') {
+            return /^Cg[A-Za-z0-9+/=_%-]{100,}$/.test(node) ? node : null;
+        }
+        if (Array.isArray(node)) {
+            for (const child of node) {
+                const found = this._extractVisitorData(child);
+                if (found)
+                    return found;
+            }
+        }
+        return null;
     }
     /**
      * Searches YouTube for tracks, playlists, or recommendations.
@@ -445,7 +580,7 @@ export default class YouTubeSource {
                     logger('debug', 'YouTube', `Music client failed for recommendations: ${e.message}`);
                 }
             }
-            if ((!automixRes || automixRes.loadType !== 'playlist') &&
+            if (automixRes?.loadType !== 'playlist' &&
                 (this.clients.TV || this.clients.TVCast || this.clients.WebRemix)) {
                 try {
                     const tvClient = this.clients.TV ?? this.clients.TVCast;
@@ -494,6 +629,31 @@ export default class YouTubeSource {
      * @returns Promise resolving to a source result with track/playlist data or an exception.
      */
     async resolve(url, type) {
+        const result = await this._resolveWorker(url, type);
+        if (this.config.mirrorOfficialAlbums &&
+            url.includes('list=OLAK') &&
+            result.loadType === 'playlist') {
+            const tracks = result.data?.tracks;
+            if (tracks) {
+                for (const track of tracks) {
+                    if (track.info && !track.info.uri.includes('olak=true')) {
+                        const separator = track.info.uri.includes('?') ? '&' : '?';
+                        track.info.uri += `${separator}olak=true`;
+                        track.encoded = encodeTrack({
+                            ...track.info,
+                            details: []
+                        });
+                    }
+                }
+            }
+        }
+        return result;
+    }
+    /**
+     * Internal worker for URL resolution.
+     * @internal
+     */
+    async _resolveWorker(url, type) {
         const liveMatch = url.match(/^https?:\/\/(?:www\.)?youtube\.com\/live\/([\w-]+)/);
         if (liveMatch) {
             const videoId = liveMatch[1];
@@ -522,7 +682,7 @@ export default class YouTubeSource {
                         return result;
                     }
                     if (result?.loadType === 'error' &&
-                        result.data?.cause === 'UpstreamPlayability') {
+                        result.exception?.cause === 'UpstreamPlayability') {
                         const listIdMatch = url.match(/[?&]list=([\w-]+)/);
                         const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
                         const listId = listIdMatch ? listIdMatch[1] : null;
@@ -565,7 +725,7 @@ export default class YouTubeSource {
                             }
                         }
                     }
-                    const errorMessage = result?.data?.message ||
+                    const errorMessage = result?.exception?.message ||
                         `${clientName} client returned empty or failed.`;
                     clientErrors.push({ client: clientName, message: errorMessage });
                     logger('debug', 'YouTube', `${clientName} client returned empty or failed for Music URL.`);
@@ -691,12 +851,11 @@ export default class YouTubeSource {
             const playerBody = playerResult?.body;
             if (!playerBody || playerBody.error)
                 return vanillaTrack;
-            const { buildHoloTrack } = await import("./common.js");
-            const holoTrack = await buildHoloTrack(info, null, info.sourceName === 'ytmusic' ? 'ytmusic' : 'youtube', 
-            // biome-ignore lint/suspicious/noExplicitAny: buildHoloTrack is dynamically imported from JS with inferred null-typed param
-            playerBody, {
+            const { buildHoloTrack } = await import('./common.js');
+            const holoTrack = await buildHoloTrack(info, null, info.sourceName === 'ytmusic' ? 'ytmusic' : 'youtube', playerBody, {
                 fetchChannelInfo: options.fetchChannelInfo ?? false,
-                resolveExternalLinks: options.resolveExternalLinks ?? false
+                resolveExternalLinks: options.resolveExternalLinks ?? false,
+                search: {}
             });
             if (holoTrack)
                 holoTrack.userData = userData;
@@ -721,6 +880,44 @@ export default class YouTubeSource {
      * @returns Promise resolving to track URL data with stream info or an exception.
      */
     async getTrackUrl(decodedTrack, itag, forceRefresh = false) {
+        if (decodedTrack.uri?.includes('olak=true')) {
+            logger('debug', 'YouTube', `Resolving mirrored audio track for official album: ${decodedTrack.identifier}`);
+            let searchTitle = decodedTrack.title;
+            let searchAuthor = decodedTrack.author;
+            if (searchTitle.includes(' - ')) {
+                const parts = searchTitle.split(' - ');
+                if (parts[0] && parts.length > 1) {
+                    searchAuthor = parts[0].trim();
+                    searchTitle = parts.slice(1).join(' - ').trim();
+                }
+            }
+            const query = `${searchAuthor} ${searchTitle}`;
+            const searchTrack = {
+                ...decodedTrack,
+                title: searchTitle,
+                author: searchAuthor
+            };
+            try {
+                const res = await this.search(query, 'ytmsearch');
+                if (res.loadType === 'search' && res.data.length) {
+                    const best = getBestMatch(res.data, searchTrack);
+                    if (best) {
+                        const urlData = await this.getTrackUrl(best.info, itag, forceRefresh);
+                        return {
+                            newTrack: { info: best.info },
+                            url: urlData.url,
+                            protocol: urlData.protocol,
+                            format: typeof urlData.format === 'string' ? urlData.format : undefined,
+                            additionalData: urlData.additionalData,
+                            exception: urlData.exception
+                        };
+                    }
+                }
+            }
+            catch (e) {
+                logger('warn', 'YouTube', `Failed to mirror OLAK track ${decodedTrack.identifier}: ${e.message}`);
+            }
+        }
         if (!forceRefresh) {
             const cached = this.nodelink.trackCacheManager?.get('youtube', decodedTrack.identifier);
             if (cached) {
@@ -739,7 +936,12 @@ export default class YouTubeSource {
         if (!clientList.length)
             clientList = ['Web'];
         const clientErrors = [];
+        const failingClients = this.failingClientsByTrack.get(decodedTrack.identifier);
         for (const clientName of clientList) {
+            if (failingClients?.has(clientName)) {
+                logger('debug', 'YouTube', `Skipping known failing client ${clientName} for track ${decodedTrack.identifier}`);
+                continue;
+            }
             const client = this.clients[clientName];
             if (!client)
                 continue;
@@ -750,6 +952,16 @@ export default class YouTubeSource {
                 const urlData = await client.getTrackUrl(decodedTrack, this.ytContext, this.cipherManager, itag, proxyToUse);
                 const proxyLatency = Date.now() - proxyStartTime;
                 if (urlData.exception) {
+                    const isNoStream = urlData.exception.cause === 'UpstreamNoStream';
+                    const isNotFound = urlData.exception.status === 404;
+                    if (isNoStream || isNotFound) {
+                        if (!this.failingClientsByTrack.has(decodedTrack.identifier)) {
+                            this.failingClientsByTrack.set(decodedTrack.identifier, new Set());
+                        }
+                        this.failingClientsByTrack
+                            .get(decodedTrack.identifier)
+                            ?.add(clientName);
+                    }
                     this.reportProxyStatus(proxyToUse, false, urlData.exception.status || 500, proxyLatency);
                     clientErrors.push({
                         client: clientName,
@@ -767,6 +979,14 @@ export default class YouTubeSource {
                         urlData.format = bestAudio.mimeType?.includes('webm')
                             ? 'webm/opus'
                             : 'm4a';
+                    }
+                    if (urlData.additionalData) {
+                        ;
+                        urlData.additionalData.client =
+                            clientName;
+                    }
+                    else {
+                        urlData.additionalData = { client: clientName };
                     }
                     return urlData;
                 }
@@ -796,7 +1016,13 @@ export default class YouTubeSource {
                         logger('debug', 'YouTube', `URL pre-flight check successful for client ${clientName}.`);
                         const result = {
                             ...urlData,
-                            additionalData: { contentLength, proxy: proxyToUse }
+                            additionalData: {
+                                contentLength,
+                                proxy: proxyToUse,
+                                itag: urlData.itag,
+                                formats: urlData.formats,
+                                client: clientName
+                            }
                         };
                         this.nodelink.trackCacheManager?.set('youtube', decodedTrack.identifier, result, 1000 * 60 * 60 * 5);
                         return result;
@@ -825,7 +1051,11 @@ export default class YouTubeSource {
                             const result = {
                                 url: urlData.hlsUrl,
                                 protocol: 'hls',
-                                format: 'mpegts'
+                                format: 'mpegts',
+                                additionalData: {
+                                    client: clientName,
+                                    proxy: proxyToUse
+                                }
                             };
                             this.nodelink.trackCacheManager?.set('youtube', decodedTrack.identifier, result, 1000 * 60 * 60 * 5);
                             return result;
@@ -852,7 +1082,11 @@ export default class YouTubeSource {
                         const result = {
                             url: urlData.hlsUrl,
                             protocol: 'hls',
-                            format: 'mpegts'
+                            format: 'mpegts',
+                            additionalData: {
+                                client: clientName,
+                                proxy: proxyToUse
+                            }
                         };
                         this.nodelink.trackCacheManager?.set('youtube', decodedTrack.identifier, result, 1000 * 60 * 60 * 5);
                         return result;
@@ -935,9 +1169,10 @@ export default class YouTubeSource {
             ? this.config.fallbackSources
             : [];
         const opts = this.nodelink.options;
-        const defaultSources = Array.isArray(opts.defaultSearchSource)
-            ? opts.defaultSearchSource
-            : [opts.defaultSearchSource];
+        const searchConfig = opts.search;
+        const defaultSources = Array.isArray(searchConfig?.defaultSource)
+            ? searchConfig.defaultSource
+            : [searchConfig?.defaultSource];
         const fallbackOrder = [
             ...configuredFallbackSources,
             ...defaultSources,
@@ -965,8 +1200,8 @@ export default class YouTubeSource {
                 !blockedFallbackSources.has(name) &&
                 sourcesConfig[name]?.enabled &&
                 source &&
-                typeof source.search === 'function' &&
-                typeof source.getTrackUrl === 'function');
+                !!source.search &&
+                !!source.getTrackUrl);
         });
         if (fallbackOrder.length === 0)
             return null;
@@ -978,8 +1213,7 @@ export default class YouTubeSource {
             for (const fallbackSource of fallbackOrder) {
                 try {
                     const search = await this.nodelink.sources?.search(fallbackSource, query);
-                    if (!search ||
-                        search.loadType !== 'search' ||
+                    if (search?.loadType !== 'search' ||
                         !Array.isArray(search.data) ||
                         search.data.length === 0) {
                         continue;
@@ -1069,8 +1303,8 @@ export default class YouTubeSource {
                 }
             }
             if (contentLength && contentLength > 0) {
-                logger('debug', 'YouTube', `Using range buffering for ${decodedTrack.title} (${Math.round(contentLength / 1024 / 1024)}MB)`);
-                return this._streamWithRangeRequests(url, contentLength, decodedTrack, cancelSignal, streamKey, additionalData);
+                logger('debug', 'YouTube', `Using Chunked HTTP buffering for ${decodedTrack.title} (${Math.round(contentLength / 1024 / 1024)}MB)`);
+                return this._streamChunkedHttp(url, contentLength, decodedTrack, cancelSignal, streamKey, additionalData);
             }
             return await this._loadDirectStream(url, decodedTrack, cancelSignal, streamKey, additionalData);
         }
@@ -1111,10 +1345,17 @@ export default class YouTubeSource {
             formats: additionalData.formats,
             startTime: additionalData.startTime ?? 0,
             positionCallback: additionalData.positionCallback,
+            playbackPaused: additionalData.playbackPaused,
             previousSession: additionalData.previousSession
         };
         const sabr = new SabrStream(sabrConfig);
         const stream = new PassThrough();
+        const guildIdForStream = additionalData.guildId;
+        this.activeSabrStreams.set(streamKey, {
+            guildId: guildIdForStream,
+            sabr: sabr,
+            stream
+        });
         let readyResolved = false;
         let readyResolve;
         let readyReject;
@@ -1123,17 +1364,19 @@ export default class YouTubeSource {
             readyReject = reject;
         });
         let isRecovering = false;
-        let lastRecoverAt = 0;
+        sabr.once('mediaProgress', () => {
+            if (readyResolved)
+                return;
+            readyResolved = true;
+            readyResolve();
+        });
         sabr.on('data', (chunk) => {
-            if (!readyResolved) {
-                readyResolved = true;
-                readyResolve();
-            }
             if (!stream.write(chunk)) {
                 sabr.pause();
             }
         });
-        stream.on('drain', () => sabr.resume());
+        const onSabrDrain = () => sabr.resume();
+        stream.on('drain', onSabrDrain);
         sabr.on('end', () => {
             if (!readyResolved) {
                 readyResolved = true;
@@ -1142,24 +1385,29 @@ export default class YouTubeSource {
             stream.end();
         });
         sabr.on('finishBuffering', () => stream.emit('finishBuffering'));
-        sabr.on('stall', async () => {
-            if (isRecovering || stream.destroyed)
+        sabr.on('stall', async (reason = 'starvation', recoveryGeneration) => {
+            if (isRecovering ||
+                stream.destroyed ||
+                sabr.destroyed ||
+                _cancelSignal.aborted)
                 return;
-            const now = Date.now();
-            if (now - lastRecoverAt < 2000)
-                return;
-            lastRecoverAt = now;
             isRecovering = true;
+            const generation = recoveryGeneration ?? sabr.getMediaProgressGeneration();
             try {
-                logger('warn', 'YouTube', `SABR stall detected for ${decodedTrack.title}. Refreshing session...`);
+                logger('warn', 'YouTube', `SABR ${reason} recovery requested for ${decodedTrack.title}. Refreshing session...`);
                 const newUrlData = await this.getTrackUrl(decodedTrack, null, true);
-                if (!newUrlData || newUrlData.protocol !== 'sabr') {
+                if (newUrlData?.protocol !== 'sabr') {
                     throw new Error('No SABR session available for recovery');
+                }
+                if (!sabr.canCommitRecovery(generation)) {
+                    logger('debug', 'YouTube', `Discarding stale SABR replacement for ${decodedTrack.title}; media advanced during recovery.`);
+                    sabr.cancelRecovery();
+                    return;
                 }
                 const ad = (newUrlData.additionalData || {});
                 sabr.clearBuffers();
                 sabr.updateSession({
-                    serverAbrStreamingUrl: (ad.serverAbrStreamingUrl || newUrlData.url),
+                    serverAbrStreamingUrl: ad.serverAbrStreamingUrl || newUrlData.url,
                     videoPlaybackUstreamerConfig: ad.videoPlaybackUstreamerConfig,
                     poToken: ad.poToken,
                     visitorData: ad.visitorData,
@@ -1171,8 +1419,15 @@ export default class YouTubeSource {
             }
             catch (err) {
                 logger('warn', 'YouTube', `SABR recovery failed: ${err.message}`);
-                if (!stream.destroyed)
+                if (!readyResolved) {
+                    readyResolved = true;
+                    readyReject(err);
+                    if (!stream.destroyed)
+                        stream.destroy();
+                }
+                else if (!stream.destroyed) {
                     stream.destroy(err);
+                }
             }
             finally {
                 isRecovering = false;
@@ -1183,12 +1438,8 @@ export default class YouTubeSource {
             if (!readyResolved) {
                 readyResolved = true;
                 readyReject(err);
-            }
-            if ((err.message.includes('sabr.malformed_config') ||
-                err.message.includes('sabr.media_serving_enforcement_id_error')) &&
-                !isRecovering) {
-                logger('info', 'YouTube', `Known recoverable error detected (${err.message}), triggering stall recovery...`);
-                sabr.emit('stall');
+                if (!stream.destroyed)
+                    stream.destroy();
                 return;
             }
             if (!stream.destroyed)
@@ -1200,8 +1451,11 @@ export default class YouTubeSource {
             if (isDestroying)
                 return stream;
             isDestroying = true;
+            _cancelSignal.aborted = true;
+            stream.removeListener('drain', onSabrDrain);
             sabr.destroy(err);
             this.activeStreams.delete(streamKey);
+            this.activeSabrStreams.delete(streamKey);
             originalDestroy(err);
             return stream;
         });
@@ -1209,14 +1463,21 @@ export default class YouTubeSource {
             if (isDestroying)
                 return;
             isDestroying = true;
+            _cancelSignal.aborted = true;
+            stream.removeListener('drain', onSabrDrain);
             sabr.destroy();
             this.activeStreams.delete(streamKey);
+            this.activeSabrStreams.delete(streamKey);
         });
         stream._sabrStream = sabr;
-        stream.getSessionState = () => {
+        stream.beginSeekHandoff = () => {
             if (isDestroying || stream.destroyed)
-                return null;
-            return sabr.getSessionState();
+                return Promise.resolve(null);
+            return sabr.beginSeekHandoff();
+        };
+        stream.cancelSeekHandoff = () => {
+            if (!isDestroying && !stream.destroyed)
+                sabr.cancelSeekHandoff();
         };
         const bestAudio = (additionalData.formats ?? [])
             .filter((f) => f.mimeType?.includes('audio'))
@@ -1311,11 +1572,16 @@ export default class YouTubeSource {
         stream.responseStream =
             responseStream;
         let cleanedUp = false;
+        const onDrain = () => {
+            if (!responseStream.destroyed)
+                responseStream.resume();
+        };
         const cleanup = () => {
             if (cleanedUp)
                 return;
             cleanedUp = true;
             cancelSignal.aborted = true;
+            stream.removeListener('drain', onDrain);
             responseStream.removeAllListeners();
             if (!responseStream.destroyed)
                 responseStream.destroy();
@@ -1327,10 +1593,7 @@ export default class YouTubeSource {
                 responseStream.pause();
             }
         });
-        stream.on('drain', () => {
-            if (!responseStream.destroyed)
-                responseStream.resume();
-        });
+        stream.on('drain', onDrain);
         responseStream.on('end', () => {
             cleanup();
             if (!stream.writableEnded) {
@@ -1388,6 +1651,10 @@ export default class YouTubeSource {
         let activeRequest = null;
         let recoverTimeout = null;
         let currentAdditionalData = additionalData;
+        let currentItag = currentAdditionalData?.itag;
+        let availableFormats = currentAdditionalData?.formats || [];
+        const failedItags = new Set();
+        const _isRecovering = false;
         const cleanup = () => {
             if (destroyed)
                 return;
@@ -1469,7 +1736,11 @@ export default class YouTubeSource {
                         (statusCode ?? 0) >= 500) {
                         logger('warn', 'YouTube', `Got ${statusCode} at pos ${position} → forcing recovery`);
                         fetching = false;
-                        recover();
+                        recover({
+                            message: `HTTP ${statusCode}`,
+                            statusCode,
+                            name: 'Error'
+                        });
                         return;
                     }
                     throw new Error(`Range request failed: ${statusCode}`);
@@ -1513,8 +1784,7 @@ export default class YouTubeSource {
                         }
                         else {
                             const timeout = setTimeout(fetchNext, Math.min(1000 * 2 ** (errors - 1), 5000));
-                            if (typeof timeout.unref === 'function')
-                                timeout.unref();
+                            timeout.unref?.();
                         }
                     }
                 };
@@ -1541,8 +1811,7 @@ export default class YouTubeSource {
                     }
                     else {
                         const timeout = setTimeout(fetchNext, Math.min(1000 * 2 ** (errors - 1), 5000));
-                        if (typeof timeout.unref === 'function')
-                            timeout.unref();
+                        timeout.unref?.();
                     }
                 }
             }
@@ -1553,7 +1822,7 @@ export default class YouTubeSource {
             const isForbidden = causeError?.message?.includes('403') || causeError?.statusCode === 403;
             const isAborted = causeError?.message === 'aborted' ||
                 causeError?.code === 'ECONNRESET';
-            if (!isForbidden && !isAborted && refreshes === 0) {
+            if (!isForbidden && refreshes === 0) {
                 logger('debug', 'YouTube', `Retrying same URL for recovery first (cause: ${causeError?.message})...`);
                 errors = 0;
                 fetching = false;
@@ -1573,43 +1842,73 @@ export default class YouTubeSource {
                 return;
             }
             if (isAborted && stream.writableNeedDrain) {
-                logger('debug', 'YouTube', `Stream is paused/backed up, skipping recovery (cause: ${causeError?.message}). Player will recover on resume.`);
-                return;
-            }
-            if (isAborted && stream.writableNeedDrain) {
                 logger('debug', 'YouTube', `Stream is paused/backed up, waiting for drain before recovery (cause: ${causeError?.message})`);
                 await new Promise((resolve) => {
-                    const onDrain = () => {
-                        stream.off('drain', onDrain);
+                    const onDrainOrEnd = () => {
+                        cleanupListeners();
                         resolve();
                     };
-                    stream.once('drain', onDrain);
-                    const timeout = setTimeout(() => {
-                        stream.off('drain', onDrain);
-                        resolve();
-                    }, 60000);
-                    if (typeof timeout.unref === 'function')
-                        timeout.unref();
+                    const cleanupListeners = () => {
+                        stream.off('drain', onDrainOrEnd);
+                        stream.off('close', onDrainOrEnd);
+                        stream.off('error', onDrainOrEnd);
+                    };
+                    stream.once('drain', onDrainOrEnd);
+                    stream.once('close', onDrainOrEnd);
+                    stream.once('error', onDrainOrEnd);
                 });
                 if (destroyed || cancelSignal.aborted || stream.destroyed)
                     return;
-                if (stream.writableNeedDrain) {
-                    logger('debug', 'YouTube', 'Stream still backed up after drain wait, deferring recovery until resume');
-                    return;
-                }
             }
             try {
-                const newUrlData = await this.getTrackUrl(decodedTrack, null, true);
+                let itagToTry = null;
+                if (refreshes > 2 && currentItag) {
+                    failedItags.add(currentItag);
+                    logger('warn', 'YouTube', `Itag ${currentItag} failed consistently. Attempting quality fallback...`);
+                    const currentMime = currentAdditionalData?.formats?.find((f) => f.itag === currentItag)
+                        ?.mimeType || '';
+                    const isWebm = currentMime.includes('webm');
+                    const otherAudioFormats = availableFormats
+                        .filter((f) => f.itag !== currentItag &&
+                        !failedItags.has(f.itag) &&
+                        f.mimeType?.includes('audio') &&
+                        (isWebm
+                            ? f.mimeType.includes('webm')
+                            : f.mimeType.includes('mp4')))
+                        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+                    const bestFallback = otherAudioFormats[0];
+                    if (bestFallback) {
+                        itagToTry = bestFallback.itag;
+                        logger('info', 'YouTube', `Switching to itag ${itagToTry} (available: ${otherAudioFormats.map((f) => f.itag).join(', ')})`);
+                    }
+                }
+                const newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true);
                 if (destroyed || cancelSignal.aborted)
                     return;
                 if (newUrlData.exception || !newUrlData.url) {
                     throw new Error('No valid URL from getTrackUrl');
                 }
+                const oldContentLength = currentAdditionalData?.contentLength ||
+                    contentLength;
+                const newAdditionalData = newUrlData.additionalData;
+                const newContentLength = newAdditionalData?.contentLength;
+                if (oldContentLength &&
+                    newContentLength &&
+                    oldContentLength !== newContentLength) {
+                    const ratio = newContentLength / oldContentLength;
+                    const oldPos = position;
+                    position = Math.floor(position * ratio);
+                    contentLength = newContentLength;
+                    logger('debug', 'YouTube', `Adjusted position for itag switch (${currentItag} -> ${newUrlData.itag || itagToTry}): ${oldPos} -> ${position} bytes (ratio: ${ratio.toFixed(4)})`);
+                }
                 currentUrl = newUrlData.url;
                 currentAdditionalData =
                     newUrlData.additionalData;
+                currentItag = newUrlData.itag || itagToTry || currentItag;
+                if (newUrlData.formats)
+                    availableFormats = newUrlData.formats;
                 errors = 0;
-                logger('debug', 'YouTube', `URL recovered for ${decodedTrack.title} (resume at ${position} bytes, attempt ${refreshes}, cause: ${causeError?.message})`);
+                logger('debug', 'YouTube', `URL recovered for ${decodedTrack.title} (resume at ${position} bytes, attempt ${refreshes}, itag ${currentItag}, cause: ${causeError?.message})`);
                 fetching = false;
                 fetchNext();
             }
@@ -1617,9 +1916,7 @@ export default class YouTubeSource {
                 logger('warn', 'YouTube', `Recovery failed (attempt ${refreshes}): ${error.message}`);
                 if (!destroyed && !cancelSignal.aborted) {
                     recoverTimeout = setTimeout(() => recover(causeError), 4000 + refreshes * 1000);
-                    if (typeof recoverTimeout.unref === 'function') {
-                        recoverTimeout.unref();
-                    }
+                    recoverTimeout.unref?.();
                 }
             }
         };
@@ -1629,6 +1926,470 @@ export default class YouTubeSource {
             cleanup();
             originalDestroy(err);
             return stream;
+        });
+        return { stream };
+    }
+    /**
+     * Streams audio using chunked range requests. This tries to "Replicate" on how the browser
+     * streams audio directly from youtube with code status 206.
+     *
+     * Uses dynamic chunk sizing (256 KB – 512 KB) based on per-stream bandwidth
+     * The limit is around ~570 KB per chunk. But setted to 512KB for better memory efficiency.
+     * Fast-reconnects on ECONNRESET without refreshing the URL until the third consecutive failure.
+     * Opens only 1 connection per stream, reusing it for multiple chunks.
+     * This is the same ideia used for _streamWithRangeRequests, but this tries to limit to 1 connection only.
+     *
+     *
+     * @param url - Initial playback URL.
+     * @param contentLength - Total content length in bytes.
+     * @param decodedTrack - Track metadata for URL recovery.
+     * @param cancelSignal - Shared cancel token for stream abort.
+     * @param streamKey - Unique key for tracking this stream.
+     * @param additionalData - Optional proxy and format info.
+     * @returns StreamResult with the PassThrough stream.
+     */
+    async _streamChunkedHttp(url, contentLength, decodedTrack, cancelSignal, streamKey, additionalData) {
+        const stream = new PassThrough({
+            highWaterMark: STREAM_BUFFER_SIZE
+        });
+        let currentUrl = url;
+        let currentProxy = additionalData?.proxy;
+        if (!currentProxy) {
+            currentProxy = this.getProxy();
+        }
+        let urlFetchTime = Date.now();
+        let isDestroyed = false;
+        let isBackpressured = false;
+        let totalBytesReceived = 0;
+        let currentItag = additionalData?.itag;
+        let currentClient = additionalData?.client || undefined;
+        let consecutiveClientFailures = 0;
+        let parkedForRecovery = false;
+        let availableFormats = additionalData?.formats || [];
+        const failedItags = new Set();
+        let refreshAttempts = 0;
+        let consecutiveResets = 0;
+        let activeResponseStream = null;
+        let bandwidthEstimate = this.bandwidthEstimate || 128_000;
+        const updateBandwidthEstimate = (bytes, durationMs) => {
+            if (bytes <= 0 || durationMs <= 0)
+                return;
+            const bits = bytes * 8;
+            const throughput = (bits / durationMs) * 1000;
+            const alpha = 0.25;
+            bandwidthEstimate = Math.max(128_000, alpha * throughput + (1 - alpha) * bandwidthEstimate);
+            // this will update the class-level bandwidth estimate for future streams,
+            // so that it can be used to seed the estimate for new streams and cause less errors hopefully.
+            this.bandwidthEstimate = bandwidthEstimate;
+        };
+        const onDrain = () => {
+            isBackpressured = false;
+            if (activeResponseStream && !activeResponseStream.destroyed) {
+                activeResponseStream.resume();
+            }
+        };
+        let _wakeUp = null;
+        const cancelSleep = () => {
+            _wakeUp?.();
+            _wakeUp = null;
+        };
+        const sleep = (ms) => new Promise((r) => {
+            const t = setTimeout(() => {
+                _wakeUp = null;
+                r();
+            }, ms);
+            t.unref?.();
+            _wakeUp = () => {
+                clearTimeout(t);
+                r();
+            };
+        });
+        const cleanup = (err) => {
+            if (isDestroyed)
+                return;
+            isDestroyed = true;
+            cancelSignal.aborted = true;
+            cancelSleep();
+            stream.removeListener('drain', onDrain);
+            if (activeResponseStream && !activeResponseStream.destroyed) {
+                activeResponseStream.destroy();
+                activeResponseStream = null;
+            }
+            if (!stream.destroyed)
+                stream.destroy(err);
+            this.activeStreams.delete(streamKey);
+        };
+        // Waits for the PassThrough to drain after a backpressure-caused reset,
+        // without leaving a dangling listener for whichever event didn't fire.
+        const waitForDrainOrClose = () => new Promise((resolve) => {
+            const onReady = () => {
+                stream.removeListener('drain', onReady);
+                stream.removeListener('close', onReady);
+                resolve();
+            };
+            stream.once('drain', onReady);
+            stream.once('close', onReady);
+        });
+        stream.once('close', () => cleanup());
+        stream.once('error', (err) => cleanup(err));
+        stream.on('drain', onDrain);
+        let totalContentLength = contentLength;
+        const refreshUrl = async (reason) => {
+            if (isDestroyed || cancelSignal.aborted)
+                return null;
+            if (++refreshAttempts > MAX_URL_REFRESH) {
+                logger('error', 'YouTube', `Max URL refresh (${MAX_URL_REFRESH}) reached for ${decodedTrack.title}`);
+                return null;
+            }
+            logger('debug', 'YouTube', `Refreshing URL for "${decodedTrack.title}" (reason: ${reason}, ${refreshAttempts}/${MAX_URL_REFRESH})`);
+            try {
+                let itagToTry = null;
+                if (totalBytesReceived === 0 &&
+                    currentItag &&
+                    failedItags.has(currentItag) &&
+                    availableFormats.length > 0) {
+                    const currentMime = availableFormats.find((f) => f.itag === currentItag)?.mimeType || '';
+                    const isWebm = currentMime.includes('webm');
+                    const fallback = availableFormats
+                        .filter((f) => f.itag !== currentItag &&
+                        !failedItags.has(f.itag) &&
+                        f.mimeType?.includes('audio') &&
+                        (isWebm
+                            ? f.mimeType.includes('webm')
+                            : f.mimeType.includes('mp4')))
+                        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+                    if (fallback) {
+                        itagToTry = fallback.itag;
+                        logger('info', 'YouTube', `Switching to itag ${itagToTry} for "${decodedTrack.title}"`);
+                    }
+                }
+                else if (totalBytesReceived > 0 && currentItag) {
+                    itagToTry = currentItag;
+                }
+                if (consecutiveClientFailures >= 2 && currentClient) {
+                    if (!this.failingClientsByTrack.has(decodedTrack.identifier)) {
+                        this.failingClientsByTrack.set(decodedTrack.identifier, new Set());
+                    }
+                    this.failingClientsByTrack
+                        .get(decodedTrack.identifier)
+                        ?.add(currentClient);
+                    logger('warn', 'YouTube', `Client ${currentClient} failed repeatedly mid-stream for "${decodedTrack.title}". Rotating to next client in playback list...`);
+                    this.nodelink.trackCacheManager?.delete?.('youtube', decodedTrack.identifier);
+                    consecutiveClientFailures = 0;
+                }
+                let newUrlData = await this.getTrackUrl(decodedTrack, itagToTry, true);
+                if ((newUrlData.exception || !newUrlData.url) && itagToTry !== null) {
+                    newUrlData = await this.getTrackUrl(decodedTrack, null, true);
+                }
+                if (isDestroyed || cancelSignal.aborted)
+                    return null;
+                if (newUrlData.exception || !newUrlData.url)
+                    return null;
+                const newAd = newUrlData.additionalData;
+                const newClient = newAd?.client || undefined;
+                if (newClient) {
+                    currentClient = newClient;
+                }
+                if (totalBytesReceived > 0 &&
+                    newUrlData.itag &&
+                    currentItag &&
+                    newUrlData.itag !== currentItag) {
+                    logger('warn', 'YouTube', `Client rotation changed format (${currentItag} -> ${newUrlData.itag}) at ${totalBytesReceived} bytes for "${decodedTrack.title}". Parking stream so the player can seek-recover at the exact position on the next client...`);
+                    parkedForRecovery = true;
+                    return null;
+                }
+                currentUrl = newUrlData.url;
+                currentProxy =
+                    newAd?.proxy ||
+                        currentProxy;
+                currentItag = newUrlData.itag || currentItag;
+                if (newUrlData.formats)
+                    availableFormats = newUrlData.formats;
+                if (totalBytesReceived === 0 && newAd?.contentLength) {
+                    totalContentLength = newAd.contentLength;
+                }
+                urlFetchTime = Date.now();
+                consecutiveResets = 0;
+                logger('debug', 'YouTube', `URL refreshed for "${decodedTrack.title}" (itag ${currentItag}, client: ${currentClient || 'unknown'})`);
+                return currentUrl;
+            }
+            catch (err) {
+                logger('error', 'YouTube', `URL refresh failed: ${err.message}`);
+                return null;
+            }
+        };
+        const startStreaming = async () => {
+            const MIN_TARGET_SECONDS = 2;
+            const MAX_TARGET_SECONDS = 12;
+            const INITIAL_TARGET_SECONDS = 4;
+            let targetSeconds = INITIAL_TARGET_SECONDS;
+            const ABS_MIN_BYTES = 64 * 1024;
+            const ABS_MAX_BYTES = 512 * 1024;
+            const trackBytesPerSecond = contentLength > 0 && decodedTrack.length > 0
+                ? contentLength / (decodedTrack.length / 1000)
+                : 16_000;
+            let chunkCount = 0;
+            while (!isDestroyed &&
+                !cancelSignal.aborted &&
+                !parkedForRecovery &&
+                totalBytesReceived < totalContentLength) {
+                const urlAge = Date.now() - urlFetchTime;
+                if (urlAge > URL_MAX_AGE_MS) {
+                    const refreshed = await refreshUrl('URL age > 4.5h');
+                    if (!refreshed) {
+                        if (parkedForRecovery)
+                            return;
+                        cleanup(new Error('Failed to refresh expired URL'));
+                        return;
+                    }
+                }
+                const proxyToUse = currentProxy;
+                const fetchStartTime = Date.now();
+                const bytesPerSecond = bandwidthEstimate / 8;
+                let dynamicChunkSize = Math.floor(bytesPerSecond * targetSeconds);
+                dynamicChunkSize = Math.max(ABS_MIN_BYTES, Math.min(dynamicChunkSize, ABS_MAX_BYTES));
+                const start = totalBytesReceived;
+                const end = Math.min(start + dynamicChunkSize - 1, totalContentLength - 1);
+                const rangeHeader = `bytes=${start}-${end}`;
+                try {
+                    const result = await http1makeRequest(currentUrl, {
+                        method: 'GET',
+                        streamOnly: true,
+                        proxy: proxyToUse,
+                        timeout: 30000,
+                        headers: {
+                            Range: rangeHeader,
+                            'Accept-Encoding': 'identity;q=1, *;q=0',
+                            'Sec-Fetch-Dest': 'video',
+                            'Sec-Fetch-Mode': 'no-cors',
+                            'Sec-Fetch-Site': 'same-origin',
+                            Referer: currentUrl,
+                            Accept: '*/*',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Cache-Control': 'no-cache',
+                            Pragma: 'no-cache',
+                            Priority: 'i'
+                        }
+                    });
+                    if (isDestroyed || cancelSignal.aborted) {
+                        const s = result.stream;
+                        if (s && !s.destroyed) {
+                            s.destroy();
+                        }
+                        return;
+                    }
+                    this.reportProxyStatus(proxyToUse, !result.error && result.statusCode === 206, result.statusCode || 0, Date.now() - fetchStartTime);
+                    if (result.error ||
+                        (result.statusCode !== 200 && result.statusCode !== 206)) {
+                        if (result.statusCode === 416) {
+                            if (totalBytesReceived > 0) {
+                                logger('debug', 'YouTube', `HTTP 416 Range Not Satisfiable at ${totalBytesReceived}/${totalContentLength} bytes -- stream completed`);
+                                if (!stream.writableEnded) {
+                                    stream.emit('finishBuffering');
+                                    stream.end();
+                                }
+                                return;
+                            }
+                            logger('warn', 'YouTube', `HTTP 416 at byte 0 for "${decodedTrack.title}" -- refreshing...`);
+                            if (currentItag)
+                                failedItags.add(currentItag);
+                            const refreshed = await refreshUrl('HTTP 416');
+                            if (refreshed)
+                                continue;
+                            if (parkedForRecovery)
+                                return;
+                            cleanup(new Error('HTTP 416: max URL refresh reached'));
+                            return;
+                        }
+                        if (result.statusCode === 403 || result.statusCode === 404) {
+                            consecutiveClientFailures++;
+                            logger('warn', 'YouTube', `HTTP ${result.statusCode} for "${decodedTrack.title}" (client: ${currentClient || 'unknown'}, failure #${consecutiveClientFailures}) -- refreshing...`);
+                            if (totalBytesReceived === 0 && currentItag) {
+                                failedItags.add(currentItag);
+                            }
+                            const refreshed = await refreshUrl(`HTTP ${result.statusCode}`);
+                            if (refreshed)
+                                continue;
+                            if (parkedForRecovery)
+                                return;
+                            cleanup(new Error(`HTTP ${result.statusCode}: max URL refresh reached`));
+                            return;
+                        }
+                        const retryDelay = Math.min(RECOVER_BASE_DELAY_MS * 2 ** Math.max(0, refreshAttempts - 1), MAX_RETRY_DELAY_MS);
+                        logger('warn', 'YouTube', `HTTP ${result.statusCode}, retrying in ${retryDelay}ms...`);
+                        await sleep(retryDelay);
+                        continue;
+                    }
+                    const contentRangeHeader = result.headers?.['content-range'];
+                    const contentRange = Array.isArray(contentRangeHeader)
+                        ? contentRangeHeader[0]
+                        : contentRangeHeader == null
+                            ? null
+                            : String(contentRangeHeader);
+                    const rangeMatch = result.statusCode === 206
+                        ? /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(contentRange ?? '')
+                        : null;
+                    const responseStart = rangeMatch ? Number(rangeMatch[1]) : -1;
+                    const responseEnd = rangeMatch ? Number(rangeMatch[2]) : -1;
+                    if (result.statusCode !== 206 ||
+                        responseStart !== start ||
+                        responseEnd < responseStart ||
+                        responseEnd > end) {
+                        const responseStream = result.stream;
+                        responseStream?.destroy?.();
+                        logger('warn', 'YouTube', `Invalid range response for ${rangeHeader}: HTTP ${result.statusCode}, Content-Range ${contentRange ?? 'missing'}. Refreshing URL...`);
+                        const refreshed = await refreshUrl('invalid range response');
+                        if (refreshed)
+                            continue;
+                        if (parkedForRecovery)
+                            return;
+                        cleanup(new Error('Invalid HTTP range response'));
+                        return;
+                    }
+                    const responseStream = result.stream;
+                    activeResponseStream = responseStream;
+                    let bytesThisChunk = 0;
+                    let dataStartTime = 0;
+                    await new Promise((resolve, reject) => {
+                        if (isDestroyed || cancelSignal.aborted) {
+                            if (!responseStream.destroyed)
+                                responseStream.destroy();
+                            return resolve();
+                        }
+                        const onData = (chunk) => {
+                            if (isDestroyed || cancelSignal.aborted) {
+                                responseStream.destroy();
+                                return;
+                            }
+                            consecutiveClientFailures = 0;
+                            if (dataStartTime === 0)
+                                dataStartTime = Date.now();
+                            bytesThisChunk += chunk.length;
+                            totalBytesReceived += chunk.length;
+                            if (!stream.write(chunk)) {
+                                isBackpressured = true;
+                                responseStream.pause();
+                            }
+                        };
+                        const onEnd = () => {
+                            responseStream.removeListener('data', onData);
+                            responseStream.removeListener('error', onError);
+                            activeResponseStream = null;
+                            resolve();
+                        };
+                        const onError = (err) => {
+                            responseStream.removeListener('data', onData);
+                            responseStream.removeListener('end', onEnd);
+                            activeResponseStream = null;
+                            if (isDestroyed || cancelSignal.aborted)
+                                resolve();
+                            else
+                                reject(err);
+                        };
+                        responseStream.once('end', onEnd);
+                        responseStream.once('error', onError);
+                        responseStream.on('data', onData);
+                    });
+                    if (!responseStream.destroyed) {
+                        responseStream.destroy();
+                    }
+                    const transferDuration = dataStartTime
+                        ? Date.now() - dataStartTime
+                        : Date.now() - fetchStartTime;
+                    updateBandwidthEstimate(bytesThisChunk, transferDuration);
+                    chunkCount++;
+                    if (chunkCount <= 2) {
+                        targetSeconds = MIN_TARGET_SECONDS;
+                    }
+                    else if (chunkCount <= 5) {
+                        targetSeconds = INITIAL_TARGET_SECONDS;
+                    }
+                    else {
+                        const estimatedSecondsInChunk = bytesThisChunk / trackBytesPerSecond;
+                        if (estimatedSecondsInChunk >= targetSeconds * 0.8) {
+                            targetSeconds = Math.min(targetSeconds + 2, MAX_TARGET_SECONDS);
+                        }
+                        else {
+                            targetSeconds = Math.max(targetSeconds - 2, MIN_TARGET_SECONDS);
+                        }
+                    }
+                    /*
+                    logger(
+                      'debug',
+                      'YouTube',
+                      `Chunk #${chunkCount} complete: ${bytesThisChunk} bytes in ${Date.now() - fetchStartTime}ms (${totalBytesReceived}/${totalContentLength} total, target=${targetSeconds}s)`
+                    ) */
+                    // i was using this for debugging, so i will keep this commented incase i need it later.
+                    if (totalBytesReceived >= totalContentLength) {
+                        if (!stream.writableEnded) {
+                            stream.emit('finishBuffering');
+                            stream.end();
+                        }
+                        return;
+                    }
+                    consecutiveResets = 0;
+                    isBackpressured = false;
+                }
+                catch (err) {
+                    if (isDestroyed || cancelSignal.aborted)
+                        return;
+                    const error = err;
+                    if (error.code === 'ECONNRESET' ||
+                        error.code === 'ERR_STREAM_DESTROYED') {
+                        bandwidthEstimate = Math.max(128_000, bandwidthEstimate * 0.7);
+                        if (isBackpressured) {
+                            consecutiveResets = 0;
+                            isBackpressured = false;
+                            logger('debug', 'YouTube', `Buffer-drain recovery at ${totalBytesReceived} bytes (consecutive resets cleared).`);
+                            if (stream.writableLength > 0) {
+                                await waitForDrainOrClose();
+                            }
+                            continue;
+                        }
+                        logger('warn', 'YouTube', `Connection reset at ${totalBytesReceived} bytes.`);
+                        // Try same URL first (it's probably still valid) since it takes ~6 hours for an URL to expire
+                        const retryDelay = Math.min(250 * 2 ** consecutiveResets, 1000);
+                        consecutiveResets++;
+                        logger('warn', 'YouTube', `Retrying same URL in ${retryDelay}ms (consecutive reset ${consecutiveResets})...`);
+                        await sleep(retryDelay);
+                        if (consecutiveResets >= 3) {
+                            logger('warn', 'YouTube', `Same URL failed ${consecutiveResets} times, refreshing...`);
+                            consecutiveResets = 0;
+                            const refreshed = await refreshUrl('multiple ECONNRESET on same URL');
+                            if (refreshed)
+                                continue;
+                            if (parkedForRecovery)
+                                return;
+                            cleanup(new Error('ECONNRESET: max URL refresh reached'));
+                            return;
+                        }
+                        else {
+                            continue;
+                        }
+                    }
+                    if (error.message?.includes('403') ||
+                        error.message?.includes('404')) {
+                        consecutiveClientFailures++;
+                        if (totalBytesReceived === 0 && currentItag) {
+                            failedItags.add(currentItag);
+                        }
+                        const refreshed = await refreshUrl('mid-stream 403/404');
+                        if (refreshed)
+                            continue;
+                        if (parkedForRecovery)
+                            return;
+                        cleanup(new Error('mid-stream 403/404: max URL refresh reached'));
+                        return;
+                    }
+                    const retryDelay = Math.min(RECOVER_BASE_DELAY_MS * 2 ** Math.max(0, refreshAttempts - 1), MAX_RETRY_DELAY_MS);
+                    logger('warn', 'YouTube', `Stream error for "${decodedTrack.title}": ${error.message}. Retrying in ${retryDelay}ms...`);
+                    await sleep(retryDelay);
+                }
+            }
+        };
+        startStreaming().catch((err) => {
+            logger('error', 'YouTube', `Fatal streaming error: ${err.message}`);
+            cleanup(err);
         });
         return { stream };
     }

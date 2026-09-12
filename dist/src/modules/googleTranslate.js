@@ -1,4 +1,4 @@
-import { http1makeRequest } from "../utils.js";
+import { http1makeRequest } from '../utils.js';
 /**
  * Fallback key used when no custom Google Translate key is configured.
  * @internal

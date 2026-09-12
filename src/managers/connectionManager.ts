@@ -70,7 +70,8 @@ export default class ConnectionManager {
 
   constructor(nodelink: ConnectionManagerContext) {
     this.nodelink = nodelink
-    this.config = nodelink.options.connection || {}
+    this.config =
+      nodelink.options.network?.connection || nodelink.options.connection || {}
     this.interval = null
     this.status = 'unknown'
     this.metrics = { timestamp: Date.now() }
@@ -80,9 +81,6 @@ export default class ConnectionManager {
     this._lastPingMs = undefined
   }
 
-  /**
-   * Starts the periodic connection monitor.
-   */
   start(): void {
     const checkInterval = Math.max(1, this.config.interval || 300000)
     if (checkInterval > 0) {
@@ -91,8 +89,14 @@ export default class ConnectionManager {
         'ConnectionManager',
         `Starting connection checks every ${checkInterval}ms.`
       )
-      this.checkConnection()
-      this.interval = setInterval(() => this.checkConnection(), checkInterval)
+      // Delay the first check so it doesn't feel like part of the startup latency
+      setTimeout(() => {
+        this.checkConnection().catch(() => {})
+      }, 5000)
+      this.interval = setInterval(
+        () => this.checkConnection().catch(() => {}),
+        checkInterval
+      )
     }
   }
 
@@ -104,6 +108,13 @@ export default class ConnectionManager {
       clearInterval(this.interval)
       this.interval = null
     }
+  }
+
+  /**
+   * Stops the monitor and releases resources.
+   */
+  destroy(): void {
+    this.stop()
   }
 
   /**
@@ -236,15 +247,17 @@ export default class ConnectionManager {
     const payload = {
       op: 'event',
       type: GatewayEvents.CONNECTION_STATUS,
+      guildId: '',
       status: this.status,
       metrics: this.metrics
     }
 
-    const payloadStr = JSON.stringify(payload)
-
     if (this.nodelink.sessions?.values) {
       for (const session of this.nodelink.sessions.values()) {
-        session.socket?.send(payloadStr)
+        const player = session.players.players.values().next().value
+        if (!player) continue
+        payload.guildId = player.guildId
+        session.socket?.send(JSON.stringify(payload))
       }
     }
   }

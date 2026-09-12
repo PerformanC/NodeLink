@@ -197,6 +197,11 @@ export interface ApiRouteModule {
   handler: ApiRouteHandler
 
   /**
+   * Static pathnames this module handles, overriding the filename-derived pathname.
+   */
+  paths?: string[]
+
+  /**
    * Allowed HTTP methods (defaults to GET).
    */
   methods?: ApiHttpMethod[]

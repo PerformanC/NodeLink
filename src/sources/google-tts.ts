@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough, pipeline } from 'node:stream'
 import type {
   SourceResult,
   TrackInfo,
@@ -153,7 +153,7 @@ export default class GoogleTTSSource {
     this.nodelink = nodelink
     this.config = this.getConfig()
     this.language = this.config.language ?? 'en-US'
-    this.searchTerms = ['gtts', 'speak']
+    this.searchTerms = ['gtts', 'speak', 'tts']
     this.baseUrl = 'https://translate.google.com'
     this.priority = 50
   }
@@ -412,18 +412,27 @@ export default class GoogleTTSSource {
       }
 
       const stream = new PassThrough()
-      response.stream.pipe(stream)
-
-      response.stream.on('end', () => {
-        stream.emit('finishBuffering')
+      stream.once('close', () => {
+        ;(response.stream as { destroy?: () => void }).destroy?.()
       })
 
-      response.stream.on('error', (error: Error) => {
-        logger('error', 'Sources', `Google TTS stream error: ${error.message}`)
-        if (!stream.destroyed) {
-          stream.destroy(error)
+      pipeline(
+        response.stream,
+        stream,
+        (error: NodeJS.ErrnoException | null) => {
+          if (error) {
+            if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+              logger(
+                'error',
+                'Sources',
+                `Google TTS stream error: ${error.message}`
+              )
+            }
+            return
+          }
+          stream.emit('finishBuffering')
         }
-      })
+      )
 
       return { stream }
     } catch (error) {

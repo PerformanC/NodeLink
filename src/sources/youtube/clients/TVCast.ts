@@ -66,6 +66,15 @@ export default class TVCast extends BaseClient {
   }
 
   /**
+   * Returns player parameters for TVHTML5_CAST playback.
+   *
+   * @returns Base64-encoded player parameters string
+   */
+  override getPlayerParams(): string | null {
+    return '2AMB'
+  }
+
+  /**
    * TV Cast client requires a player script for signature deciphering.
    *
    * @returns Always true for the TV Cast client

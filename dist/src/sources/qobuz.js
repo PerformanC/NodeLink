@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
 /**
@@ -54,7 +54,7 @@ export default class QobuzSource {
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.config = nodelink.options;
-        this.searchTerms = ['qbsearch'];
+        this.searchTerms = ['qbsearch', 'qbisrc'];
         this.recommendationTerm = ['qbrec'];
         this.patterns = [
             /https?:\/\/(?:www\.|play\.|open\.)?qobuz\.com\/(?:(?:[a-z]{2}-[a-z]{2}\/)?(track|album|playlist|artist)\/(?:.+?\/)?([a-zA-Z0-9]+)|(playlist)\/(\d+))/
@@ -631,14 +631,14 @@ export default class QobuzSource {
      * @returns Max search size.
      */
     getMaxSearchResults() {
-        return this.asNumber(this.config.maxSearchResults) ?? 10;
+        return this.asNumber(this.config.search.maxResults) ?? 10;
     }
     /**
      * Reads max playlist/album load size from runtime config.
      * @returns Max playlist size.
      */
     getMaxAlbumPlaylistLength() {
-        return this.asNumber(this.config.maxAlbumPlaylistLength) ?? 100;
+        return this.asNumber(this.config.playback.maxPlaylistLength) ?? 100;
     }
     /**
      * Converts unknown search results into TrackInfo list.

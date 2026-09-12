@@ -1,4 +1,4 @@
-import { logger, sendErrorResponse } from "../utils.js";
+import { logger, sendErrorResponse } from '../utils.js';
 /**
  * Builds a strongly typed runtime view for the lyrics subscription route.
  *

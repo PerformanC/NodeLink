@@ -1,5 +1,5 @@
-import { makeRequest } from "../../../utils.js";
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
+import { makeRequest } from '../../../utils.js';
+import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
 export default class WebParentTools extends BaseClient {
     /**
      * Creates a new WebParentTools client instance.
@@ -28,6 +28,14 @@ export default class WebParentTools extends BaseClient {
                 embedUrl: 'https://www.youtube.com/'
             }
         };
+    }
+    /**
+     * Returns player parameters for WEB_PARENT_TOOLS playback.
+     *
+     * @returns Base64-encoded player parameters string
+     */
+    getPlayerParams() {
+        return '2AMB';
     }
     /**
      * Whether this client requires a player script for signature deciphering.

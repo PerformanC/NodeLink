@@ -49,7 +49,8 @@ export default class Spatial extends AnimatableFilter {
     super.applyAnimatedUpdate(
       {
         spatial: {
-          alpha: targetAlpha
+          alpha: targetAlpha,
+          transition: s.transition
         }
       },
       'spatial',
@@ -119,5 +120,10 @@ export default class Spatial extends AnimatableFilter {
     this.rightDelay.clear()
 
     return Buffer.alloc(0)
+  }
+
+  public destroy(): void {
+    this.leftDelay.destroy()
+    this.rightDelay.destroy()
   }
 }

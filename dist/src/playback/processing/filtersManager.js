@@ -1,22 +1,23 @@
 import { Transform } from 'node:stream';
-import ChannelMix from "../filters/channelMix.js";
-import Chorus from "../filters/chorus.js";
-import Compressor from "../filters/compressor.js";
-import Distortion from "../filters/distortion.js";
-import Echo from "../filters/echo.js";
-import Equalizer from "../filters/equalizer.js";
-import Flanger from "../filters/flanger.js";
-import Highpass from "../filters/highpass.js";
-import Karaoke from "../filters/karaoke.js";
-import Lowpass from "../filters/lowpass.js";
-import Phaser from "../filters/phaser.js";
-import Phonograph from "../filters/phonograph.js";
-import Reverb from "../filters/reverb.js";
-import Rotation from "../filters/rotation.js";
-import Spatial from "../filters/spatial.js";
-import Timescale from "../filters/timescale.js";
-import Tremolo from "../filters/tremolo.js";
-import Vibrato from "../filters/vibrato.js";
+import ChannelMix from '../filters/channelMix.js';
+import Chorus from '../filters/chorus.js';
+import Compressor from '../filters/compressor.js';
+import Distortion from '../filters/distortion.js';
+import Echo from '../filters/echo.js';
+import Equalizer from '../filters/equalizer.js';
+import Flanger from '../filters/flanger.js';
+import Highpass from '../filters/highpass.js';
+import Karaoke from '../filters/karaoke.js';
+import Lowpass from '../filters/lowpass.js';
+import Phaser from '../filters/phaser.js';
+import Phonograph from '../filters/phonograph.js';
+import Reverb from '../filters/reverb.js';
+import Rotation from '../filters/rotation.js';
+import Spatial from '../filters/spatial.js';
+import Tesseract from '../filters/tesseract.js';
+import Timescale from '../filters/timescale.js';
+import Tremolo from '../filters/tremolo.js';
+import Vibrato from '../filters/vibrato.js';
 const FILTER_CLASSES = {
     tremolo: Tremolo,
     vibrato: Vibrato,
@@ -35,7 +36,8 @@ const FILTER_CLASSES = {
     spatial: Spatial,
     reverb: Reverb,
     flanger: Flanger,
-    phonograph: Phonograph
+    phonograph: Phonograph,
+    tesseract: Tesseract
 };
 const CANONICAL_KEY_MAP = {};
 for (const key in FILTER_CLASSES) {
@@ -113,7 +115,7 @@ export class FiltersManager extends Transform {
                 this.filterInstances[name] = new FILTER_CLASSES[name]();
             }
             const instance = this.filterInstances[name];
-            if (instance && typeof instance.update === 'function') {
+            if (instance?.update) {
                 instance.update(normalizedSettings);
             }
         }
@@ -125,8 +127,7 @@ export class FiltersManager extends Transform {
             if (updatedKeys.has(name)) {
                 this.activeFilters.push(instance);
             }
-            else if (typeof instance.isActive === 'function' &&
-                instance.isActive()) {
+            else if (instance.isActive?.()) {
                 this.activeFilters.push(instance);
             }
         }
@@ -143,7 +144,7 @@ export class FiltersManager extends Transform {
             return chunk;
         let processed = chunk;
         for (const filter of this.activeFilters) {
-            if (typeof filter.isActive === 'function' && !filter.isActive())
+            if (filter.isActive?.() === false)
                 continue;
             processed = filter.process(processed);
         }
@@ -156,7 +157,7 @@ export class FiltersManager extends Transform {
         const flushedChunks = [];
         let totalLength = 0;
         for (const filter of this.activeFilters) {
-            if (typeof filter.flush === 'function') {
+            if (filter.flush) {
                 const flushed = filter.flush();
                 if (flushed && flushed.length > 0) {
                     flushedChunks.push(flushed);
@@ -205,7 +206,7 @@ export class FiltersManager extends Transform {
     resetState() {
         for (const name in this.filterInstances) {
             const instance = this.filterInstances[name];
-            if (instance && typeof instance.flush === 'function') {
+            if (instance?.flush) {
                 instance.flush();
             }
             if (name in FILTER_CLASSES) {
@@ -234,11 +235,24 @@ export class FiltersManager extends Transform {
      * @param filters - Filter payload in any supported shape.
      */
     _normalizeFilters(filters) {
-        if (!filters || typeof filters !== 'object')
-            return {};
-        if ('filters' in filters) {
-            return filters.filters ?? {};
+        let normalized = {};
+        if (filters && typeof filters === 'object') {
+            if ('filters' in filters) {
+                normalized = filters.filters ?? {};
+            }
+            else {
+                normalized = filters;
+            }
         }
-        return filters;
+        return normalized;
+    }
+    _destroy(_err, cb) {
+        for (const name in this.filterInstances) {
+            const instance = this.filterInstances[name];
+            instance?.destroy?.();
+            delete this.filterInstances[name];
+        }
+        this.activeFilters = [];
+        cb(null);
     }
 }

@@ -1,13 +1,14 @@
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { SEARCH_TYPE_MAP } from "../typings/sources/soundcloud.types.js";
-import { encodeTrack, http1makeRequest, logger, makeRequest } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { SEARCH_TYPE_MAP } from '../typings/sources/soundcloud.types.js';
+import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 const BASE_URL = 'https://api-v2.soundcloud.com';
 const SOUNDCLOUD_URL = 'https://soundcloud.com';
 const ASSET_PATTERN = /https:\/\/a-v2\.sndcdn\.com\/assets\/[a-zA-Z0-9-]+\.js/g;
 const CLIENT_ID_PATTERN = /(?:[?&/]?(?:client_id)[\s:=&]*"?|"data":{"id":")([A-Za-z0-9]{32})"?/;
-const TRACK_PATTERN = /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s]+$/;
+const TRACK_PATTERN = /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s?]+(\?.*)?$/;
 const SEARCH_URL_PATTERN = /^https?:\/\/(?:www\.)?soundcloud\.com\/search(?:\/(sounds|people|albums|sets))?(?:\?|$)/;
+const SHORT_URL_PATTERN = /^https?:\/\/(?:www\.)?on\.soundcloud\.com\/[A-Za-z0-9]+\/?(?:\?.*)?$/;
 const BATCH_SIZE = 50;
 const DEFAULT_PRIORITY = 85;
 export default class SoundCloudSource {
@@ -15,11 +16,15 @@ export default class SoundCloudSource {
         this.nodelink = nodelink;
         this.baseUrl = BASE_URL;
         this.searchTerms = ['scsearch'];
-        this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN];
+        this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN, SHORT_URL_PATTERN];
         this.priority = DEFAULT_PRIORITY;
         this.clientId = nodelink.options?.sources?.soundcloud?.clientId ?? null;
     }
     async setup() {
+        if (this.clientId) {
+            logger('info', 'Sources', `Loaded SoundCloud (clientId: ${this.clientId}) from config`);
+            return true;
+        }
         const cachedId = this.nodelink.credentialManager.get('soundcloud_client_id');
         if (cachedId) {
             this.clientId = cachedId;
@@ -121,7 +126,7 @@ export default class SoundCloudSource {
             const params = new URLSearchParams({
                 q: searchQuery,
                 client_id: this.clientId ?? '',
-                limit: String(this.nodelink.options.maxSearchResults ?? 50),
+                limit: String(this.nodelink.options.search.maxResults ?? 50),
                 offset: '0',
                 linked_partitioning: '1'
             });
@@ -181,7 +186,7 @@ export default class SoundCloudSource {
         }
     }
     _processUsers(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const users = [];
         for (let i = 0; i < collection.length && users.length < max; i++) {
             const user = collection[i];
@@ -214,7 +219,7 @@ export default class SoundCloudSource {
         return users;
     }
     _processAlbums(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const albums = [];
         for (let i = 0; i < collection.length && albums.length < max; i++) {
             const album = collection[i];
@@ -247,7 +252,7 @@ export default class SoundCloudSource {
         return albums;
     }
     _processPlaylists(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const playlists = [];
         for (let i = 0; i < collection.length && playlists.length < max; i++) {
             const playlist = collection[i];
@@ -280,7 +285,7 @@ export default class SoundCloudSource {
         return playlists;
     }
     _processAll(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const results = [];
         for (let i = 0; i < collection.length && results.length < max; i++) {
             const item = collection[i];
@@ -342,9 +347,41 @@ export default class SoundCloudSource {
         }
         return results;
     }
+    async _expandShortUrl(shortUrl) {
+        const res = await http1makeRequest(shortUrl, {
+            method: 'HEAD'
+        });
+        if (res.finalUrl && res.finalUrl !== shortUrl) {
+            return res.finalUrl.split('?')[0] ?? null;
+        }
+        if ((res.statusCode === 301 ||
+            res.statusCode === 302 ||
+            res.statusCode === 307) &&
+            typeof res.headers?.location === 'string') {
+            const location = res.headers.location;
+            const absolute = location.startsWith('http')
+                ? location
+                : new URL(location, shortUrl).toString();
+            return absolute.split('?')[0] ?? null;
+        }
+        return null;
+    }
     async resolve(url) {
         if (!this._isValidString(url)) {
             return this._buildError('Invalid URL');
+        }
+        if (SHORT_URL_PATTERN.test(url)) {
+            try {
+                const expanded = await this._expandShortUrl(url);
+                if (!expanded) {
+                    return this._buildError('Failed to expand short URL');
+                }
+                url = expanded;
+            }
+            catch (err) {
+                this._logError('Short URL expansion failed', err);
+                return this._buildError(err instanceof Error ? err.message : 'Unknown error');
+            }
         }
         const searchMatch = url.match(SEARCH_URL_PATTERN);
         if (searchMatch) {
@@ -410,7 +447,7 @@ export default class SoundCloudSource {
                 ids.push(t.id);
             }
         }
-        const limit = this.nodelink.options.maxAlbumPlaylistLength ?? 100;
+        const limit = this.nodelink.options.playback.maxPlaylistLength ?? 100;
         const neededIds = ids.slice(0, Math.max(0, limit - complete.length));
         if (neededIds.length > 0) {
             const chunks = [];
@@ -451,7 +488,7 @@ export default class SoundCloudSource {
         };
     }
     _processTracks(collection) {
-        const max = this.nodelink.options.maxSearchResults ?? 50;
+        const max = this.nodelink.options.search.maxResults ?? 50;
         const tracks = [];
         if (!Array.isArray(collection))
             return [];

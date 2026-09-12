@@ -18,9 +18,13 @@ import RoutePlannerManager from '../managers/routePlannerManager.ts'
 import SourceManager from '../managers/sourceManager.ts'
 import StatsManager from '../managers/statsManager.ts'
 import TrackCacheManager from '../managers/trackCacheManager.ts'
+import { migrateConfig } from '../modules/config/configMigration.ts'
 import { getWebmOpusProfilerStats } from '../playback/demuxers/WebmOpus.ts'
 import { bufferPool } from '../playback/structs/BufferPool.ts'
-import type { NodelinkConfig as NodeLinkConfig } from '../typings/config/config.types.ts'
+import type {
+  JsonValue,
+  NodelinkConfig as NodeLinkConfig
+} from '../typings/config/config.types.ts'
 import type {
   NodeLink,
   TrackInfoExtended
@@ -47,7 +51,12 @@ import type {
   WorkerNodeLink,
   WorkerPlayer
 } from '../typings/workers/worker.types.ts'
-import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from '../utils.ts'
+import {
+  applyEnvOverrides,
+  cleanupHttpAgents,
+  initLogger,
+  logger
+} from '../utils.ts'
 import { createVoiceRelay } from '../voice/voiceRelay.ts'
 import {
   createHeadQueue,
@@ -55,6 +64,7 @@ import {
   enqueueHeadQueue,
   getHeadQueueLength
 } from './headQueue.ts'
+import { createStreamFinalizer } from './streamFinalizer.ts'
 
 type WorkerPlayerClass = typeof import('../playback/player.ts').Player
 type CreatePCMStreamFn =
@@ -101,13 +111,73 @@ try {
 let config: NodeLinkConfig
 const resolveRootConfigUrl = (fileName: string): string =>
   pathToFileURL(resolvePath(process.cwd(), fileName)).href
-try {
-  config = (await import(resolveRootConfigUrl('config.js')))
-    .default as unknown as NodeLinkConfig
-} catch {
-  config = (await import(resolveRootConfigUrl('config.default.js')))
-    .default as unknown as NodeLinkConfig
+const resolveConfigExport = (
+  importedModule: Record<string, unknown>,
+  fileName: string
+): Record<string, unknown> => {
+  const candidate =
+    (
+      importedModule as {
+        default?: unknown
+        config?: unknown
+      }
+    ).default ??
+    (
+      importedModule as {
+        default?: unknown
+        config?: unknown
+      }
+    ).config
+
+  if (
+    candidate &&
+    typeof candidate === 'object' &&
+    Object.keys(candidate as Record<string, unknown>).length > 0
+  ) {
+    return candidate as Record<string, unknown>
+  }
+
+  throw new Error(
+    `[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`
+  )
 }
+
+const loadConfig = async (): Promise<NodeLinkConfig> => {
+  const candidates = [
+    'config.ts',
+    'config.js',
+    'config.default.ts',
+    'config.default.js'
+  ]
+
+  for (const fileName of candidates) {
+    try {
+      const module = await import(resolveRootConfigUrl(fileName))
+      const raw = resolveConfigExport(
+        module as Record<string, unknown>,
+        fileName
+      )
+
+      return migrateConfig(
+        raw as Record<string, JsonValue>
+      ) as unknown as NodeLinkConfig
+    } catch (error) {
+      const err = error as { code?: string; message?: string }
+      const isNotFound =
+        err.code === 'ERR_MODULE_NOT_FOUND' ||
+        err.code === 'ENOENT' ||
+        err.message?.includes('Cannot find module')
+      if (isNotFound) continue
+      throw error
+    }
+  }
+
+  throw new Error(
+    '[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).'
+  )
+}
+
+config = await loadConfig()
 applyEnvOverrides(config as unknown as Record<string, unknown>)
 
 const HIBERNATION_ENABLED = config.cluster?.hibernation?.enabled !== false
@@ -142,10 +212,7 @@ const PARALLEL_COMMANDS = new Set([
 ])
 
 const getActiveResourcesBreakdown = (): Record<string, number> => {
-  const list =
-    typeof process.getActiveResourcesInfo === 'function'
-      ? process.getActiveResourcesInfo()
-      : []
+  const list = process.getActiveResourcesInfo?.() ?? []
   const counters: Record<string, number> = {}
   for (const item of list) {
     counters[item] = (counters[item] || 0) + 1
@@ -157,7 +224,7 @@ const getActiveHandlesBreakdown = (): Record<string, number> => {
   const getter = process as unknown as {
     _getActiveHandles?: () => Array<{ constructor?: { name?: string } }>
   }
-  if (typeof getter._getActiveHandles !== 'function') return {}
+  if (!getter._getActiveHandles) return {}
   const handles = getter._getActiveHandles()
   const counters: Record<string, number> = {}
   for (const handle of handles) {
@@ -494,9 +561,7 @@ const handleProfilerCommand = async (
             ? track.info.length
             : 0
       const positionMsRaw =
-        typeof internal._realPosition === 'function'
-          ? internal._realPosition()
-          : internal.position || 0
+        internal._realPosition?.() ?? (internal.position || 0)
       const durationMs = Math.max(0, Number(durationMsRaw) || 0)
       const positionMs = Math.max(0, Number(positionMsRaw) || 0)
       const clampedPosition =
@@ -766,10 +831,7 @@ const handleProfilerCommand = async (
           guildQueues: guildQueues.size,
           activeStreams: activeStreams.size
         },
-        bufferPool:
-          typeof bufferPool.getStats === 'function'
-            ? bufferPool.getStats()
-            : null,
+        bufferPool: bufferPool.getStats?.() ?? null,
         demuxers: {
           webmOpus: getWebmOpusProfilerStats()
         }
@@ -1014,32 +1076,28 @@ const ipcMessageTracker = {
   trackSent(type: string, payload: unknown): void {
     if (!this.enabled) return
     try {
-      const size = Buffer.byteLength(JSON.stringify(payload))
-      const entry = this.sent.get(type) || {
-        count: 0,
-        totalBytes: 0,
-        maxBytes: 0
-      }
-      entry.count++
-      entry.totalBytes += size
-      entry.maxBytes = Math.max(entry.maxBytes, size)
-      this.sent.set(type, entry)
+      const size = v8.serialize(payload).byteLength
+      const e = this.sent.get(type) ?? { count: 0, totalBytes: 0, maxBytes: 0 }
+      e.count++
+      e.totalBytes += size
+      e.maxBytes = Math.max(e.maxBytes, size)
+      this.sent.set(type, e)
     } catch {}
   },
 
   trackReceived(type: string, payload: unknown): void {
     if (!this.enabled) return
     try {
-      const size = Buffer.byteLength(JSON.stringify(payload))
-      const entry = this.received.get(type) || {
+      const size = v8.serialize(payload).byteLength
+      const e = this.received.get(type) ?? {
         count: 0,
         totalBytes: 0,
         maxBytes: 0
       }
-      entry.count++
-      entry.totalBytes += size
-      entry.maxBytes = Math.max(entry.maxBytes, size)
-      this.received.set(type, entry)
+      e.count++
+      e.totalBytes += size
+      e.maxBytes = Math.max(e.maxBytes, size)
+      this.received.set(type, e)
     } catch {}
   },
 
@@ -1094,13 +1152,14 @@ const sendProcessMessage = (
   }
 }
 
-const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, NODE_UNIQUE_ID } =
+const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, WORKER_CLUSTER_ID } =
   process.env as NodeJS.ProcessEnv & {
     EVENT_SOCKET_PATH?: string
     COMMAND_SOCKET_PATH?: string
-    NODE_UNIQUE_ID?: string
+    WORKER_CLUSTER_ID?: string
   }
 
+let WORKER_CLUSTER_ID_OVERRIDE = ''
 let eventSocket: net.Socket | null = null
 let eventSocketPath = EVENT_SOCKET_PATH
 let eventReconnectTimer: NodeJS.Timeout | null = null
@@ -1169,12 +1228,31 @@ const handleSocketDisconnect = (
   scheduleReconnect(socketType)
 }
 
+const sendEventHello = (): boolean => {
+  if (!eventSocket || eventSocket.destroyed) return false
+  const payload = v8.serialize({ pid: process.pid })
+  const header = Buffer.alloc(6)
+  header.writeUInt8(0, 0)
+  header.writeUInt8(0, 1)
+  header.writeUInt32BE(payload.length, 2)
+  try {
+    eventSocket.cork()
+    const okHeader = eventSocket.write(header)
+    const okPayload = eventSocket.write(payload)
+    eventSocket.uncork()
+    return okHeader && okPayload
+  } catch {
+    return false
+  }
+}
+
 const connectEventSocket = (): void => {
   if (!eventSocketPath) return
 
   const socket = net.createConnection(eventSocketPath, () => {
     eventSocket = socket
     clearReconnectTimer('event')
+    sendEventHello()
     logger('info', 'Worker', 'Connected to Master event socket')
   })
   socket.on('error', () => {
@@ -1522,8 +1600,8 @@ const nodelink: WorkerNodeLink = {
 } as unknown as WorkerNodeLink
 
 const createdVoiceRelay = createVoiceRelay({
-  enabled: config.voiceReceive?.enabled,
-  format: config.voiceReceive?.format,
+  enabled: config.playback.voiceReceive?.enabled,
+  format: config.playback.voiceReceive?.format,
   sendFrame: (frame: Buffer) => sendEventBinaryFrame(8, frame),
   logger
 })
@@ -1565,13 +1643,13 @@ function startTimers(hibernating = false): void {
 
   const updateInterval = hibernating
     ? 60000
-    : (config?.playerUpdateInterval ?? 5000)
+    : (config?.playback.playerUpdateInterval ?? 5000)
   const statsInterval = hibernating
     ? 120000
-    : config?.metrics?.enabled
+    : config?.api.metrics?.enabled
       ? 5000
-      : (config?.statsUpdateInterval ?? 30000)
-  const zombieThreshold = config?.zombieThresholdMs ?? 60000
+      : (config?.playback.statsUpdateInterval ?? 30000)
+  const zombieThreshold = config?.playback.zombieThresholdMs ?? 60000
 
   playerUpdateTimer = setInterval(() => {
     if (!process.connected) return
@@ -1579,6 +1657,7 @@ function startTimers(hibernating = false): void {
     for (const player of players.values()) {
       if (player?.track && !player.isPaused && player.connection) {
         if (
+          player.connStatus === 'connected' &&
           player._lastStreamDataTime &&
           player._lastStreamDataTime > 0 &&
           Date.now() - player._lastStreamDataTime >= zombieThreshold
@@ -1689,7 +1768,7 @@ function startTimers(hibernating = false): void {
         elapsedMs > 0 ? (cpuUsage.user + cpuUsage.system) / 1000 / elapsedMs : 0
 
       const mem = process.memoryUsage()
-      const workerIdEnv = NODE_UNIQUE_ID
+      const resolvedClusterId = WORKER_CLUSTER_ID_OVERRIDE || WORKER_CLUSTER_ID
       const eluP50 = hndl.percentile(50) / 1e6
       const eluP95 = hndl.percentile(95) / 1e6
       const eluP99 = hndl.percentile(99) / 1e6
@@ -1705,7 +1784,7 @@ function startTimers(hibernating = false): void {
       }
 
       const stats = {
-        workerId: parseInt(workerIdEnv ?? '0', 10) + 1,
+        workerId: resolvedClusterId ? parseInt(resolvedClusterId, 10) : 0,
         isHibernating,
         players: localPlayers,
         playingPlayers: localPlayingPlayers,
@@ -1808,7 +1887,9 @@ function cleanupActiveStream(
   entry?: ActiveStreamEntry
 ): void {
   const current = entry || activeStreams.get(streamId)
-  if (!current) return
+  if (!current || current.cleaned) return
+
+  current.cleaned = true
 
   if (current.pcmStream && !current.pcmStream.destroyed) {
     current.pcmStream.destroy()
@@ -1871,27 +1952,31 @@ async function startLoadStream(
     payload?.filters || {}
   ) as unknown as PCMStream
 
-  const entry: ActiveStreamEntry = { pcmStream, fetched, cancelled: false }
+  const entry: ActiveStreamEntry = {
+    pcmStream,
+    fetched,
+    cancelled: false,
+    cleaned: false
+  }
   activeStreams.set(streamId, entry)
   streamLifecycle.created++
 
-  const finish = (err?: unknown) => {
-    if (entry.cancelled) {
+  const finish = createStreamFinalizer(entry, {
+    onCancelled: () => {
       streamLifecycle.cancelled++
-      cleanupActiveStream(streamId, entry)
-      return
-    }
-
-    if (err) {
+    },
+    onError: (error) => {
       streamLifecycle.errored++
-      sendStreamError(streamId, getErrorMessage(err))
-    } else {
+      sendStreamError(streamId, getErrorMessage(error))
+    },
+    onEnd: () => {
       streamLifecycle.ended++
       sendStreamEnd(streamId)
+    },
+    onCleanup: () => {
+      cleanupActiveStream(streamId, entry)
     }
-
-    cleanupActiveStream(streamId, entry)
-  }
+  })
 
   pcmStream.on('data', (chunk) => {
     if (!entry.cancelled) sendStreamChunk(streamId, chunk)
@@ -1906,6 +1991,7 @@ function cancelStream(streamId: string): boolean {
   const entry = activeStreams.get(streamId)
   if (!entry) return false
   entry.cancelled = true
+  streamLifecycle.cancelled++
   cleanupActiveStream(streamId, entry)
   return true
 }
@@ -2147,7 +2233,7 @@ async function processQueue(queueKey: string): Promise<void> {
 
         const target = player as Record<string, unknown> | undefined
         const callable = target?.[command]
-        if (player && typeof callable === 'function') {
+        if (player && callable instanceof Function) {
           result = await (callable as (...fnArgs: unknown[]) => unknown).apply(
             player,
             args ?? []
@@ -2155,7 +2241,7 @@ async function processQueue(queueKey: string): Promise<void> {
         } else if (
           command === 'forceUpdate' &&
           player &&
-          typeof (player as WorkerPlayer)._sendUpdate === 'function'
+          (player as WorkerPlayer)._sendUpdate
         ) {
           ;(player as WorkerPlayer)._sendUpdate()
           result = { updated: true }
@@ -2404,6 +2490,12 @@ process.on('message', (msg: unknown) => {
     ipcMessageTracker.trackReceived(message.type, message)
   }
 
+  if (message.type === 'clusterId') {
+    WORKER_CLUSTER_ID_OVERRIDE = String(
+      (message as { clusterId?: number }).clusterId ?? ''
+    )
+    return
+  }
   if (message.type === 'ping') {
     if (process.connected) {
       try {

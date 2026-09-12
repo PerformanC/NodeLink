@@ -1,3 +1,7 @@
+// Copyright (C) 2026 NodeLink.
+// This file is part of NodeLink and is protected under the GNU General Public License v3 (GPLv3).
+// All parts of this project are protected by this license. See LICENSE for details.
+
 import { randomBytes } from 'node:crypto'
 import { Readable } from 'node:stream'
 import type { VoiceAudioStream } from '@performanc/voice'
@@ -12,6 +16,13 @@ interface ExtendedVoiceStream extends VoiceAudioStream {
   pause(): this
   resume(): this
   destroyed: boolean
+}
+
+interface AudioMixerLayerListeners {
+  data: (chunk: Buffer) => void
+  end: () => void
+  close: () => void
+  error: (error: Error) => void
 }
 
 const LAYER_BUFFER_SIZE = 1024 * 1024
@@ -29,6 +40,7 @@ export class AudioMixer extends Readable {
   private defaultVolume: number
   public autoCleanup: boolean
   public enabled: boolean
+  private readonly layerListeners: Map<string, AudioMixerLayerListeners>
 
   /**
    * Creates a new AudioMixer.
@@ -42,6 +54,7 @@ export class AudioMixer extends Readable {
     this.defaultVolume = config.defaultVolume || 0.8
     this.autoCleanup = config.autoCleanup !== false
     this.enabled = config.enabled !== false
+    this.layerListeners = new Map()
   }
 
   override _read(_size: number): void {
@@ -59,9 +72,10 @@ export class AudioMixer extends Readable {
       return
     }
 
-    const baseBuffer = Buffer.alloc(targetSize)
-
-    const mixedBuffer = this.mixBuffers(baseBuffer, chunks)
+    // SILENCE_FRAME is already zero-filled and mixBuffers never mutates
+    // its input, so reuse it instead of allocating + zero-filling a new
+    // base buffer per frame (50/s while mixing).
+    const mixedBuffer = this.mixBuffers(SILENCE_FRAME, chunks)
 
     this.push(mixedBuffer)
   }
@@ -166,7 +180,7 @@ export class AudioMixer extends Readable {
 
     this.mixLayers.set(id, layer)
 
-    stream.on('data', (chunk: Buffer) => {
+    const onData = (chunk: Buffer): void => {
       if (!layer.active) return
 
       if (layer.ringBuffer.length > LAYER_BUFFER_SIZE * 0.8) {
@@ -193,20 +207,32 @@ export class AudioMixer extends Readable {
         layer.receivedBytes += data.length
         layer.ringBuffer.write(data)
       }
-    })
+    }
 
-    stream.once('end', () => {
+    const onEnd = (): void => {
       layer.finishedFeeding = true
-    })
+    }
 
-    stream.once('close', () => {
+    const onClose = (): void => {
       layer.finishedFeeding = true
-    })
+    }
 
-    stream.once('error', (error: Error) => {
+    const onError = (error: Error): void => {
       this.emit('mixError', { id, error })
       this.removeLayer(id, 'ERROR')
+    }
+
+    this.layerListeners.set(id, {
+      data: onData,
+      end: onEnd,
+      close: onClose,
+      error: onError
     })
+
+    stream.on('data', onData)
+    stream.once('end', onEnd)
+    stream.once('close', onClose)
+    stream.once('error', onError)
 
     this.emit('mixStarted', { id, track, volume: layer.volume })
 
@@ -268,8 +294,16 @@ export class AudioMixer extends Readable {
     if (!layer) return false
 
     layer.active = false
+    const listeners = this.layerListeners.get(id)
+    if (listeners) {
+      layer.stream.off('data', listeners.data)
+      layer.stream.off('end', listeners.end)
+      layer.stream.off('close', listeners.close)
+      layer.stream.off('error', listeners.error)
+      this.layerListeners.delete(id)
+    }
+
     if (layer.stream && !(layer.stream as ExtendedVoiceStream).destroyed) {
-      layer.stream.removeAllListeners('data')
       layer.stream.destroy()
     }
     layer.ringBuffer.dispose()
@@ -331,5 +365,16 @@ export class AudioMixer extends Readable {
     const ids = Array.from(this.mixLayers.keys())
     for (const id of ids) this.removeLayer(id, reason)
     return ids.length
+  }
+
+  /**
+   * Destroys the mixer: clears all layers, removes all listeners,
+   * and ends the Readable stream.
+   */
+  public override destroy(): this {
+    this.clearLayers('DESTROYED')
+    this.removeAllListeners()
+    super.destroy()
+    return this
   }
 }

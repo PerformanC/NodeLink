@@ -1,4 +1,4 @@
-import FloatFifoBuffer from "./floatFifoBuffer.js";
+import FloatFifoBuffer from './floatFifoBuffer.js';
 const DEFAULT_FRAME_SIZE = 1024;
 const DEFAULT_OVERLAP = 256;
 const DEFAULT_SEARCH = 128;
@@ -64,6 +64,10 @@ export default class TimeStretch {
     reset() {
         this._buffer.clear();
         this._inputPos = 0;
+        this._prevOverlap = null;
+    }
+    destroy() {
+        this._buffer.destroy();
         this._prevOverlap = null;
     }
     /**

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * User agent string used for general browsing and scraping operations.
  * @internal
@@ -191,13 +191,15 @@ export default class AmazonMusicSource {
             'x-amzn-device-language': 'en_US',
             'x-amzn-currency-of-preference': 'USD',
             'x-amzn-os-version': '1.0',
-            'x-amzn-application-version': '1.0.9172.0',
+            'x-amzn-application-version': '1.0.10905.0',
             'x-amzn-device-time-zone': 'America/New_York',
             'x-amzn-timestamp': String(Date.now()),
             'x-amzn-csrf': this.buildCsrfHeader(cfg.csrf),
             'x-amzn-music-domain': 'music.amazon.com',
             'x-amzn-page-url': pageUrl,
-            'x-amzn-feature-flags': 'hd-supported,uhd-supported'
+            'x-amzn-feature-flags': 'hd-supported,uhd-supported',
+            'x-amnz-age-band': 'ADULT',
+            'x-amzn-has-profile-id': 'true'
         };
     }
     /**

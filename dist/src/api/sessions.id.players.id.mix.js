@@ -1,4 +1,4 @@
-import { decodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Builds a strongly typed runtime view for the mix collection route.
  *
@@ -130,7 +130,7 @@ async function handleCreateMix(req, res, pathParams, runtime, sendResponse, pars
         sendErrorResponse(req, res, 400, 'Bad Request', 'Invalid parameters', parsedUrl.pathname, true);
         return;
     }
-    const mixConfig = runtime.options.mix ?? {
+    const mixConfig = runtime.options.playback.mix ?? {
         enabled: true,
         defaultVolume: 0.8,
         maxLayersMix: 5,

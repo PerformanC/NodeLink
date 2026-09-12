@@ -3,7 +3,7 @@ import fsPromises from 'node:fs/promises';
 import inspector from 'node:inspector';
 import os from 'node:os';
 import v8 from 'node:v8';
-import { sendErrorResponse, sendResponse } from "../utils.js";
+import { sendErrorResponse, sendResponse } from '../utils.js';
 const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const { NODELINK_PROFILER_DIR: profilerDirectoryEnv } = process.env;
 const profilerBaseDir = profilerDirectoryEnv || '.profiles';
@@ -262,9 +262,7 @@ function getMasterActiveResources() {
     const now = Date.now();
     if (_cachedResources && now - _cachedResourcesAt < INTROSPECTION_TTL_MS)
         return _cachedResources;
-    const list = typeof process.getActiveResourcesInfo === 'function'
-        ? process.getActiveResourcesInfo()
-        : [];
+    const list = process.getActiveResourcesInfo?.() ?? [];
     const counters = {};
     for (const item of list)
         counters[item] = (counters[item] || 0) + 1;
@@ -338,14 +336,8 @@ function getMasterRuntimeContext(nodelink) {
             ? traceStore.events
             : traceStore.events.slice(-200)
         : [];
-    const statsSnapshot = nodelink?.statsManager &&
-        typeof nodelink.statsManager.getSnapshot === 'function'
-        ? nodelink.statsManager.getSnapshot()
-        : null;
-    const workerMetrics = nodelink?.workerManager &&
-        typeof nodelink.workerManager.getWorkerMetrics === 'function'
-        ? nodelink.workerManager.getWorkerMetrics()
-        : null;
+    const statsSnapshot = nodelink?.statsManager?.getSnapshot?.() ?? null;
+    const workerMetrics = nodelink?.workerManager?.getWorkerMetrics?.() ?? null;
     const sourceManager = nodelink?.sourceWorkerManager;
     const workerManager = nodelink?.workerManager;
     const connectionManager = nodelink?.connectionManager;
@@ -655,8 +647,8 @@ async function runMasterProfilerCommand(action, payload) {
 async function runWorkerProfilerCommand(manager, workers, action, payload) {
     const timeoutMs = getTimeoutForAction(action);
     const commandPayload = {
-        action,
-        ...(payload ?? {})
+        ...(payload ?? {}),
+        action
     };
     const settled = await Promise.allSettled(workers.map(async (worker) => {
         const response = await manager.execute(worker, 'profilerCommand', commandPayload, { timeoutMs });
@@ -741,7 +733,7 @@ async function collectActionSnapshot(nodelink, action, payload) {
                 'Specialized source workers are not enabled or do not support profiling.';
         }
         else {
-            output.sourceWorkers = await sourceManager.executeAll('profilerCommand', { action, ...safePayload }, { timeoutMs: getTimeoutForAction(action), parseJson: true });
+            output.sourceWorkers = await sourceManager.executeAll('profilerCommand', { ...safePayload, action }, { timeoutMs: getTimeoutForAction(action), parseJson: true });
         }
     }
     return output;

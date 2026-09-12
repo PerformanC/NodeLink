@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { http1makeRequest, logger } from "../utils.js";
+import { http1makeRequest, logger } from '../utils.js';
 class HttpError extends Error {
     status;
     constructor(status, message) {
@@ -22,17 +22,17 @@ class MxmApiError extends Error {
             this.hint = hint;
     }
 }
-const APP_ID = 'web-desktop-app-v1.0';
+const APP_ID = 'android-player-v1.0';
 const TOKEN_TTL = 55000;
 const TOKEN_PERSIST_INTERVAL = 5000;
 const CACHE_TTL = 180000;
 const MAX_CACHE_SIZE = 100;
 const ENDPOINTS = Object.freeze({
-    TOKEN: 'https://apic-desktop.musixmatch.com/ws/1.1/token.get',
-    SEARCH: 'https://apic-desktop.musixmatch.com/ws/1.1/track.search',
-    LYRICS: 'https://apic-desktop.musixmatch.com/ws/1.1/track.lyrics.get',
-    SUBTITLES: 'https://apic-desktop.musixmatch.com/ws/1.1/track.subtitle.get',
-    MACRO: 'https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get'
+    TOKEN: 'https://apic.musixmatch.com/ws/1.1/token.get',
+    SEARCH: 'https://apic.musixmatch.com/ws/1.1/track.search',
+    LYRICS: 'https://apic.musixmatch.com/ws/1.1/track.lyrics.get',
+    SUBTITLES: 'https://apic.musixmatch.com/ws/1.1/track.subtitle.get',
+    MACRO: 'https://apic.musixmatch.com/ws/1.1/macro.subtitles.get'
 });
 const CLEAN_PATTERNS = [
     /\s*\([^)]*(?:official|lyrics?|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi,

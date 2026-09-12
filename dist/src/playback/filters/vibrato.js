@@ -1,8 +1,8 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import DelayLine from "./dsp/delay.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import DelayLine from './dsp/delay.js';
+import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 20;
 const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
@@ -44,7 +44,8 @@ export default class Vibrato extends AnimatableFilter {
                 : 0.0;
         super.applyAnimatedUpdate({
             vibrato: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: v.transition
             }
         }, 'vibrato', { alpha: 0.0 });
     }
@@ -92,5 +93,9 @@ export default class Vibrato extends AnimatableFilter {
         this.rightDelay.clear();
         this.lfo.phase = 0;
         return Buffer.alloc(0);
+    }
+    destroy() {
+        this.leftDelay.destroy();
+        this.rightDelay.destroy();
     }
 }

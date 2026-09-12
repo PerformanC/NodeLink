@@ -1,7 +1,7 @@
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sendErrorResponse, sendResponse } from "../utils.js";
+import { sendErrorResponse, sendResponse } from '../utils.js';
 /**
  * Loopback addresses allowed to access the profiler endpoints when external
  * access is disabled.
@@ -79,19 +79,50 @@ function getSuppliedCode(req, parsedUrl) {
  * @returns Normalized absolute path inside the project root, or `null` when
  * the path escapes the workspace.
  */
-function resolveWorkspacePath(rawPath) {
-    const cwd = process.cwd();
-    const parsedPath = rawPath.startsWith('file://')
-        ? fileURLToPath(rawPath)
-        : rawPath;
-    const absolutePath = path.resolve(cwd, parsedPath);
-    const normalizedCwd = `${cwd}${path.sep}`;
-    if (absolutePath !== cwd &&
-        !absolutePath.startsWith(normalizedCwd) &&
-        !parsedPath.startsWith(normalizedCwd)) {
+export async function resolveWorkspacePath(rawPath, cwd = process.cwd()) {
+    let parsedPath;
+    try {
+        parsedPath = rawPath.startsWith('file://')
+            ? fileURLToPath(rawPath)
+            : rawPath;
+    }
+    catch {
         return null;
     }
-    return absolutePath;
+    const absolutePath = path.resolve(cwd, parsedPath);
+    const lexicalRelativePath = path.relative(cwd, absolutePath);
+    if (lexicalRelativePath === '..' ||
+        lexicalRelativePath.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(lexicalRelativePath)) {
+        return null;
+    }
+    let realCwd;
+    try {
+        realCwd = await fsPromises.realpath(cwd);
+    }
+    catch {
+        return null;
+    }
+    let realPath;
+    try {
+        realPath = await fsPromises.realpath(absolutePath);
+    }
+    catch (error) {
+        const code = error.code;
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+            // Keep the lexical path so missing files continue to return the route's
+            // existing 404 response instead of being treated as path escapes.
+            return absolutePath;
+        }
+        return null;
+    }
+    const realRelativePath = path.relative(realCwd, realPath);
+    if (realRelativePath === '..' ||
+        realRelativePath.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(realRelativePath)) {
+        return null;
+    }
+    return realPath;
 }
 /**
  * Builds candidate paths for source lookup.
@@ -194,7 +225,7 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
         sendErrorResponse(req, res, 400, 'Bad Request', 'Missing path query parameter.', parsedUrl.pathname);
         return;
     }
-    const absolutePath = resolveWorkspacePath(rawPath);
+    const absolutePath = await resolveWorkspacePath(rawPath);
     if (absolutePath === null) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'Path is outside the project root.', parsedUrl.pathname);
         return;
@@ -203,7 +234,12 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
     const context = Math.min(60, Math.max(3, parsePositiveLine(parsedUrl.searchParams.get('context'), 8)));
     try {
         const resolvedPath = await resolveReadablePath(getPathCandidates(absolutePath));
-        sendResponse(req, res, await buildSnippetResponse(resolvedPath, line, context), 200);
+        const safePath = await resolveWorkspacePath(resolvedPath);
+        if (safePath === null) {
+            sendErrorResponse(req, res, 403, 'Forbidden', 'Path is outside the project root.', parsedUrl.pathname);
+            return;
+        }
+        sendResponse(req, res, await buildSnippetResponse(safePath, line, context), 200);
     }
     catch (error) {
         sendErrorResponse(req, res, 404, 'Not Found', `Could not read file: ${error instanceof Error ? error.message : String(error)}`, parsedUrl.pathname);

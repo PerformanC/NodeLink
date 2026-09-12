@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import * as MP4Box from 'mp4box';
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * Common sampling rates for AAC audio.
  * @internal
@@ -129,7 +129,7 @@ export default class EternalboxSource {
             return this.resolve(this._buildJukeboxUrl(query));
         }
         const limit = this.config.searchResults ||
-            this.nodelink.options.maxSearchResults ||
+            this.nodelink.options.search.maxResults ||
             10;
         const url = `${this.baseUrl}/api/analysis/search?query=${encodeURIComponent(query)}&results=${limit}`;
         try {
@@ -536,8 +536,7 @@ export default class EternalboxSource {
         if (!spotify || typeof spotify._apiRequest !== 'function')
             return null;
         try {
-            if (typeof spotify.setup === 'function')
-                await spotify.setup();
+            await spotify.setup?.();
             if (!spotify.accessToken)
                 return null;
             return await spotify._apiRequest(`/tracks/${id}`);
@@ -684,7 +683,7 @@ export default class EternalboxSource {
      * @internal
      */
     _parseMp4ToAdtsFrames(buffer) {
-        const mp4boxFile = MP4Box.createFile();
+        const mp4boxFile = MP4Box.createFile(false);
         const frames = [];
         const frameStarts = [];
         const frameEnds = [];
@@ -697,11 +696,11 @@ export default class EternalboxSource {
                 return;
             timescale = audioTrack.timescale;
             audioConfig = this._getAudioConfig(audioTrack);
-            mp4boxFile.setExtractionOptions(audioTrack.id, null, { nbSamples: 1 });
+            mp4boxFile.setExtractionOptions(audioTrack.id, null, { nbSamples: 50 });
             mp4boxFile.start();
         };
-        mp4boxFile.onSamples = (_id, _user, samples) => {
-            if (!audioConfig || !timescale)
+        mp4boxFile.onSamples = (id, _user, samples) => {
+            if (!audioConfig || !timescale || !samples?.length)
                 return;
             for (const sample of samples) {
                 if (!sample?.data)
@@ -714,11 +713,27 @@ export default class EternalboxSource {
                 frameStarts.push(sample.dts / timescale);
                 frameEnds.push((sample.dts + sample.duration) / timescale);
             }
+            const lastSample = samples[samples.length - 1];
+            const lastNumber = lastSample?.number;
+            if (typeof lastNumber === 'number') {
+                const file = mp4boxFile;
+                file.releaseUsedSamples(id, lastNumber + 1);
+            }
         };
         const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
         arrayBuffer.fileStart = 0;
         mp4boxFile.appendBuffer(arrayBuffer);
-        mp4boxFile.flush();
+        try {
+            mp4boxFile.flush();
+        }
+        catch { }
+        try {
+            mp4boxFile.stop();
+        }
+        catch { }
+        mp4boxFile.onReady = undefined;
+        mp4boxFile.onSamples = undefined;
+        mp4boxFile.onError = undefined;
         return { frames, frameStarts, frameEnds, totalBytes };
     }
     /**

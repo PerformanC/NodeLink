@@ -12,21 +12,25 @@ import http from 'node:http';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import WebSocketServer from '@performanc/pwsl-server';
-import RoutePlannerManager from "./managers/routePlannerManager.js";
-import SessionManager from "./managers/sessionManager.js";
-import StatsManager from "./managers/statsManager.js";
-import { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from "./utils.js";
+import RoutePlannerManager from './managers/routePlannerManager.js';
+import SessionManager from './managers/sessionManager.js';
+import StatsManager from './managers/statsManager.js';
+import { migrateConfig, persistConfig } from './modules/config/configMigration.js';
+import { cleanupBunServer, createBunServer } from './server/bunServer.js';
+import { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, getGitInfo, getStats, getVersion, initLogger, logger, parseClient, verifyDiscordID } from './utils.js';
 import 'dotenv/config';
-import { GatewayEvents, MINIMUM_NODE_VERSION } from "./constants.js";
-import ConfigValidationManager from "./managers/configValidationManager.js";
-import DosProtectionManager from "./managers/dosProtectionManager.js";
-import PluginManager from "./managers/pluginManager.js";
-import RateLimitManager from "./managers/rateLimitManager.js";
-import { parseVoiceFrameHeader } from "./voice/voiceFrames.js";
-import { createVoiceRelay } from "./voice/voiceRelay.js";
+import { GatewayEvents, MINIMUM_NODE_VERSION } from './constants.js';
+import ConfigValidationManager from './managers/configValidationManager.js';
+import DosProtectionManager from './managers/dosProtectionManager.js';
+import PluginManager from './managers/pluginManager.js';
+import RateLimitManager from './managers/rateLimitManager.js';
+import { parseVoiceFrameHeader } from './voice/voiceFrames.js';
+import { createVoiceRelay } from './voice/voiceRelay.js';
 let requestHandlerPromise = null;
 let profilerApiPromise = null;
-const isRuntimeAtLeast = (current, minimum) => current.replace(/^v/, '').localeCompare(minimum.replace(/^v/, ''), undefined, {
+const isRuntimeAtLeast = (current, minimum) => current
+    .replace(/^v/, '')
+    .localeCompare(minimum.replace(/^v/, ''), undefined, {
     numeric: true
 }) >= 0;
 const NODE_LTS_CREDENTIAL_KEY = 'runtime.node.latestLts';
@@ -85,13 +89,13 @@ const getLatestNodeLtsVersion = async (credentialManager) => {
 };
 const getRequestHandler = async () => {
     if (!requestHandlerPromise) {
-        requestHandlerPromise = import("./api/index.js").then((module) => module.default);
+        requestHandlerPromise = import('./api/index.js').then((module) => module.default);
     }
     return requestHandlerPromise;
 };
 const getProfilerApi = async () => {
     if (!profilerApiPromise) {
-        profilerApiPromise = import("./api/profiler.js");
+        profilerApiPromise = import('./api/profiler.js');
     }
     return profilerApiPromise;
 };
@@ -119,61 +123,126 @@ const memoryTrace = (stage) => {
 let playerManagerClassPromise = null;
 const getPlayerManagerClass = async () => {
     if (!playerManagerClassPromise) {
-        playerManagerClassPromise = import("./managers/playerManager.js").then((module) => module.default);
+        playerManagerClassPromise = import('./managers/playerManager.js').then((module) => module.default);
     }
     return playerManagerClassPromise;
 };
 let workerManagerClassPromise = null;
 const getWorkerManagerClass = async () => {
     if (!workerManagerClassPromise) {
-        workerManagerClassPromise = import("./managers/workerManager.js").then((module) => module.default);
+        workerManagerClassPromise = import('./managers/workerManager.js').then((module) => module.default);
     }
     return workerManagerClassPromise;
 };
 let sourceWorkerManagerClassPromise = null;
 const getSourceWorkerManagerClass = async () => {
     if (!sourceWorkerManagerClassPromise) {
-        sourceWorkerManagerClassPromise = import("./managers/sourceWorkerManager.js").then((module) => module.default);
+        sourceWorkerManagerClassPromise = import('./managers/sourceWorkerManager.js').then((module) => module.default);
     }
     return sourceWorkerManagerClassPromise;
 };
 let credentialManagerClassPromise = null;
 const getCredentialManagerClass = async () => {
     if (!credentialManagerClassPromise) {
-        credentialManagerClassPromise = import("./managers/credentialManager.js").then((module) => module.default);
+        credentialManagerClassPromise = import('./managers/credentialManager.js').then((module) => module.default);
     }
     return credentialManagerClassPromise;
 };
 let trackCacheManagerClassPromise = null;
 const getTrackCacheManagerClass = async () => {
     if (!trackCacheManagerClassPromise) {
-        trackCacheManagerClassPromise = import("./managers/trackCacheManager.js").then((module) => module.default);
+        trackCacheManagerClassPromise = import('./managers/trackCacheManager.js').then((module) => module.default);
     }
     return trackCacheManagerClassPromise;
 };
 let config;
-const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
-try {
-    config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.js'))))
-        .default;
-}
-catch (e) {
-    const error = e;
-    if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT') {
+const loadConfig = async () => {
+    const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
+    const resolveConfigExport = (importedModule, fileName) => {
+        const candidate = importedModule.default ??
+            importedModule.config;
+        if (candidate &&
+            typeof candidate === 'object' &&
+            Object.keys(candidate).length > 0) {
+            return candidate;
+        }
+        throw new Error(`[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`);
+    };
+    /**
+     * Loads and merges configuration files.
+     * Prioritizes config.ts/js, falls back to config.default.ts/js.
+     * @returns Migrated and merged configuration object.
+     */
+    const loadAndMerge = async () => {
+        // 1. Load defaults (Mandatory)
+        let baseConfig = {};
+        let defaultFileName = 'config.default.ts';
         try {
-            config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js'))))
-                .default;
-            console.log('[WARN] Config: config.js not found, using config.default.js. It is recommended to create a config.js file for your own configuration.');
+            const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.ts')));
+            baseConfig = resolveConfigExport(module, 'config.default.ts');
         }
-        catch (e2) {
-            console.error('[ERROR] Config: Failed to load config.default.js. Please make sure it exists.');
-            throw e2;
+        catch {
+            try {
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js')));
+                baseConfig = resolveConfigExport(module, 'config.default.js');
+                defaultFileName = 'config.default.js';
+            }
+            catch {
+                throw new Error('[ERROR] Config: Base configuration (config.default.ts/js) not found.');
+            }
         }
-    }
-    else {
-        throw e;
-    }
-}
+        // 2. Try to load user configuration
+        let userConfig = {};
+        let userFileName = null;
+        const userCandidates = ['config.ts', 'config.js'];
+        for (const fileName of userCandidates) {
+            try {
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl(fileName)));
+                userConfig = resolveConfigExport(module, fileName);
+                userFileName = fileName;
+                console.log(`[INFO] Config: Loaded user configuration from ${fileName}`);
+                break;
+            }
+            catch (e) {
+                const error = e;
+                const isNotFound = error.code === 'ERR_MODULE_NOT_FOUND' ||
+                    error.code === 'ENOENT' ||
+                    error.message?.includes('Cannot find module');
+                if (isNotFound)
+                    continue;
+                throw e;
+            }
+        }
+        if (!userFileName) {
+            console.log(`[INFO] Config: No user configuration found. Using defaults.`);
+        }
+        // 3. Merge user config over defaults
+        // We do a deep merge for 'sources', 'lyrics', 'meanings', 'pluginConfig'
+        // and a shallow merge for the rest to keep it simple but functional.
+        const merged = { ...baseConfig };
+        for (const [key, value] of Object.entries(userConfig)) {
+            if (value &&
+                typeof value === 'object' &&
+                !Array.isArray(value) &&
+                baseConfig[key] &&
+                typeof baseConfig[key] === 'object' &&
+                !Array.isArray(baseConfig[key])) {
+                merged[key] = {
+                    ...baseConfig[key],
+                    ...value
+                };
+            }
+            else {
+                merged[key] = value;
+            }
+        }
+        const migrated = migrateConfig(merged);
+        await persistConfig(migrated, userFileName ?? defaultFileName);
+        return migrated;
+    };
+    return await loadAndMerge();
+};
+config = await loadConfig();
 // Apply environment variable overrides after config is loaded
 applyEnvOverrides(config);
 const clusterEnabled = 
@@ -191,6 +260,21 @@ else if (typeof config.cluster?.workers === 'number')
 initLogger(config);
 const isBun = typeof Bun !== 'undefined';
 if (!cluster.isWorker) {
+    const supportGuidelines = `\x1b[35m
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                            SUPPORT GUIDELINES                                │
+│                                                                              │
+│  1. Turn on debugging in config.ts before asking for help.                   │
+│  2. Test the 'dev' branch (git checkout dev) to ensure it's not fixed yet.   │
+│  3. If providing logs, start copying EXACTLY from this box onwards.          │
+│  4. Cut logs or missing Node.js version will result in an ignored ticket.    │
+│  5. FAQ and Rules: https://discord.gg/bVz6ppZ3SP                             │
+│                    https://discord.gg/z4ayqfeBdB                             │
+╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m
+
+  *
+`;
+    process.stdout.write(supportGuidelines);
     const ascii = `
    ▄   ████▄ ██▄   ▄███▄   █    ▄█    ▄   █  █▀
     █  █   █ █  █  █▀   ▀  █    ██     █  █▄█
@@ -198,107 +282,23 @@ if (!cluster.isWorker) {
 █ █  █ ▀████ █  █  █▄   ▄▀ ███▄ ▐█ █ █  █ █  █  v${getVersion()}
 █  █ █       ███▀  ▀███▀       ▀ ▐ █  █ █   █   Powered by PerformanC;
 █   ██                             █   ██  ▀    rewritten by 1Lucas1.apk;
+                                                maintained by 1Lucas1.apk & ToddyTheNoobDud
 `;
     process.stdout.write(`\x1b[32m${ascii}\x1b[0m\n`);
+    try {
+        await checkForUpdates();
+    }
+    catch (e) {
+        logger('error', 'Git', `Update check failed: ${e.message}`);
+    }
+    try {
+        await checkDependencyUpdates();
+    }
+    catch (e) {
+        logger('error', 'Git', `Dependency check failed: ${e.message}`);
+    }
 }
-await checkForUpdates();
 memoryTrace('bootstrap:after-check-for-updates');
-/**
- * Wrapper for Bun's ServerWebSocket that implements EventEmitter
- * Provides compatibility with Node.js WebSocket implementations
- */
-class BunSocketWrapper extends EventEmitter {
-    ws;
-    remoteAddress;
-    /**
-     * Creates a new BunSocketWrapper
-     * @param ws - Bun ServerWebSocket instance
-     */
-    constructor(ws) {
-        super();
-        this.ws = ws;
-        this.remoteAddress = ws?.data?.remoteAddress || 'unknown';
-    }
-    /**
-     * Sends data through the WebSocket connection
-     * @param data - Data to send
-     * @returns True if sent successfully
-     */
-    /**
-     * Sends data through the WebSocket connection
-     * @param data - Data to send
-     * @returns True if sent successfully
-     * @public
-     */
-    send(data) {
-        try {
-            const r = this.ws.send(data);
-            return r !== 0;
-        }
-        catch {
-            return false;
-        }
-    }
-    /**
-     * Sends a WebSocket ping frame
-     * @param data - Optional ping data
-     * @returns True if sent successfully
-     * @public
-     */
-    ping(data) {
-        try {
-            this.ws.ping?.(data);
-            return true;
-        }
-        catch {
-            return false;
-        }
-    }
-    /**
-     * Closes the connection.
-     *
-     * Here is a list of close codes:
-     * - `1000` means "normal closure" **(default)**
-     * - `1009` means a message was too big and was rejected
-     * - `1011` means the server encountered an error
-     * - `1012` means the server is restarting
-     * - `1013` means the server is too busy or the client is rate-limited
-     * - `4000` through `4999` are reserved for applications (you can use it!)
-     *
-     * To close the connection abruptly, use `terminate()`.
-     *
-     * @param code The close code to send
-     * @param reason The close reason to send
-     * @public
-     */
-    close(code, reason) {
-        this.ws.close(code, reason);
-    }
-    /**
-     * Terminates the connection immediately
-     * @public
-     */
-    terminate() {
-        this.ws.close(1000, 'Terminated');
-    }
-    /**
-     * Internal handler for received messages
-     * @param message - Message data
-     * @internal
-     */
-    _handleMessage(message) {
-        this.emit('message', message);
-    }
-    /**
-     * Internal handler for connection close events
-     * @param code - Close code
-     * @param reason - Close reason
-     * @internal
-     */
-    _handleClose(code, reason) {
-        this.emit('close', code, reason);
-    }
-}
 /**
  * Main NodeLink server class
  * Handles WebSocket connections, audio sources, and player management
@@ -314,6 +314,7 @@ class NodelinkServer extends EventEmitter {
     lyrics;
     meanings;
     _sourceInitPromise;
+    proxyManager;
     routePlanner;
     credentialManager;
     trackCacheManager;
@@ -360,6 +361,7 @@ class NodelinkServer extends EventEmitter {
         this._sourceInitPromise = this._initSources(isClusterPrimary, options);
         this.routePlanner = new RoutePlannerManager(this);
         memoryTrace('constructor:after-route-planner');
+        this.proxyManager = null;
         this.credentialManager = null;
         memoryTrace('constructor:after-credential-manager');
         this.trackCacheManager = null;
@@ -395,8 +397,8 @@ class NodelinkServer extends EventEmitter {
         };
         this.voiceSockets = new Map();
         this.voiceRelay = createVoiceRelay({
-            enabled: options.voiceReceive?.enabled || false,
-            format: options.voiceReceive?.format || 'pcm',
+            enabled: options.playback.voiceReceive?.enabled || false,
+            format: options.playback.voiceReceive?.format || 'pcm',
             sendFrame: (frame) => this.handleVoiceFrame(frame),
             logger
         });
@@ -426,9 +428,9 @@ class NodelinkServer extends EventEmitter {
     async _initSources(isClusterPrimary, _options) {
         if (!isClusterPrimary) {
             const [{ default: sourceMan }, { default: lyricsMan }, { default: meaningMan }] = await Promise.all([
-                import("./managers/sourceManager.js"),
-                import("./managers/lyricsManager.js"),
-                import("./managers/meaningManager.js")
+                import('./managers/sourceManager.js'),
+                import('./managers/lyricsManager.js'),
+                import('./managers/meaningManager.js')
             ]);
             this.sources = new sourceMan(this);
             this.lyrics = new lyricsMan(this);
@@ -442,7 +444,7 @@ class NodelinkServer extends EventEmitter {
             await this._connectionManagerInitPromise;
             return;
         }
-        this._connectionManagerInitPromise = import("./managers/connectionManager.js")
+        this._connectionManagerInitPromise = import('./managers/connectionManager.js')
             .then(({ default: ConnectionManagerClass }) => {
             if (!this.connectionManager) {
                 this.connectionManager = new ConnectionManagerClass(this);
@@ -478,24 +480,30 @@ class NodelinkServer extends EventEmitter {
         await this._persistenceManagersInitPromise;
     }
     /**
-     * Starts the heartbeat interval to keep WebSocket connections alive
+     * Starts the heartbeat interval to keep WebSocket connections alive.
+     *
+     * No-op when running under `Bun.serve` because Bun handles WebSocket pings
+     * natively via `websocket.sendPings: true`. Running both would double the
+     * keepalive traffic.
      * @internal
      */
     _startHeartbeat() {
         if (this._heartbeatInterval)
             return;
+        if (this._usingBunServer)
+            return;
         this._heartbeatInterval = setInterval(() => {
             for (const session of this.sessions.activeSessions.values()) {
                 if (session.socket && !session.isPaused) {
                     try {
-                        if (typeof session.socket.sendFrame === 'function') {
+                        if (session.socket.sendFrame) {
                             session.socket.sendFrame(Buffer.alloc(0), {
                                 len: 0,
                                 fin: true,
                                 opcode: 0x09
                             });
                         }
-                        else if (typeof session.socket.ping === 'function') {
+                        else if (session.socket.ping) {
                             session.socket.ping();
                         }
                     }
@@ -637,60 +645,62 @@ class NodelinkServer extends EventEmitter {
                 return originalOn(event, listener);
             };
             logger('debug', 'Resume', `Processing websocket connection. oldSessionId: ${oldSessionId}`);
+            let session = null;
             if (oldSessionId) {
-                const session = this.sessions.resume(oldSessionId, socket);
-                if (session) {
-                    logger('info', 'Server', `\x1b[36m${clientInfo.name}\x1b[0m${clientInfo.version
-                        ? `/\x1b[32mv${clientInfo.version}\x1b[0m`
-                        : ''} resumed session with ID: ${oldSessionId}`);
-                    this.statsManager.incrementSessionResume(clientInfo.name, true);
-                    socket.on('close', (...args) => {
-                        const code = args[0];
-                        const reason = args[1];
-                        if (!this.sessions.has(oldSessionId))
-                            return;
-                        const session = this.sessions.get(oldSessionId);
-                        if (!session)
-                            return;
-                        logger('info', 'Server', `\x1b[36m${clientInfo.name}\x1b[0m/\x1b[32mv${clientInfo.version}\x1b[0m disconnected with code ${code} and reason: ${reason || 'without reason'}`);
-                        if (session.resuming) {
-                            this.sessions.pause(oldSessionId);
-                        }
-                        else {
-                            this.sessions.shutdown(oldSessionId);
-                        }
-                        const sessionCount = this.sessions.activeSessions?.size || 0;
-                        this.statsManager.setWebsocketConnections(sessionCount);
-                    });
-                    socket.send(JSON.stringify({
-                        op: 'ready',
-                        resumed: true,
-                        sessionId: oldSessionId
-                    }));
-                    while (session.eventQueue.length > 0) {
-                        const event = session.eventQueue.shift();
-                        if (event)
-                            socket.send(event);
+                session = this.sessions.resume(oldSessionId, socket);
+                if (!session) {
+                    logger('warn', 'Server', `Session-ID provided by ${clientInfo.name} does not exist or is not resumable: ${oldSessionId}, creating a new session`);
+                }
+            }
+            if (session) {
+                logger('info', 'Server', `\x1b[36m${clientInfo.name}\x1b[0m${clientInfo.version ? `/\x1b[32mv${clientInfo.version}\x1b[0m` : ''} resumed session with ID: ${oldSessionId}`);
+                this.statsManager.incrementSessionResume(clientInfo.name, true);
+                socket.on('close', (...args) => {
+                    const code = args[0];
+                    const reason = args[1];
+                    if (!this.sessions.has(oldSessionId))
+                        return;
+                    const session = this.sessions.get(oldSessionId);
+                    if (!session)
+                        return;
+                    logger('info', 'Server', `\x1b[36m${clientInfo.name}\x1b[0m/\x1b[32mv${clientInfo.version}\x1b[0m disconnected with code ${code} and reason: ${reason || 'without reason'}`);
+                    if (session.resuming) {
+                        this.sessions.pause(oldSessionId);
                     }
-                    for (const [playerKey, playerInfo] of session.players.players.entries()) {
-                        if (this.workerManager) {
-                            const worker = this.workerManager.getWorkerForGuild(playerKey);
-                            if (worker) {
-                                this.workerManager.execute(worker, 'playerCommand', {
-                                    sessionId: session.id,
-                                    guildId: playerInfo.guildId,
-                                    command: 'forceUpdate',
-                                    args: []
-                                });
-                            }
-                        }
-                        else {
-                            playerInfo._sendUpdate();
-                        }
+                    else {
+                        this.sessions.shutdown(oldSessionId);
                     }
                     const sessionCount = this.sessions.activeSessions?.size || 0;
                     this.statsManager.setWebsocketConnections(sessionCount);
+                });
+                socket.send(JSON.stringify({
+                    op: 'ready',
+                    resumed: true,
+                    sessionId: oldSessionId
+                }));
+                while (session.eventQueue.length > 0) {
+                    const event = session.eventQueue.shift();
+                    if (event)
+                        socket.send(event);
                 }
+                for (const [playerKey, playerInfo] of session.players.players.entries()) {
+                    if (this.workerManager) {
+                        const worker = this.workerManager.getWorkerForGuild(playerKey);
+                        if (worker) {
+                            this.workerManager.execute(worker, 'playerCommand', {
+                                sessionId: session.id,
+                                guildId: playerInfo.guildId,
+                                command: 'forceUpdate',
+                                args: []
+                            });
+                        }
+                    }
+                    else {
+                        playerInfo._sendUpdate();
+                    }
+                }
+                const sessionCount = this.sessions.activeSessions?.size || 0;
+                this.statsManager.setWebsocketConnections(sessionCount);
             }
             else {
                 const sessionId = this.sessions.create(request, socket, clientInfo);
@@ -867,275 +877,90 @@ class NodelinkServer extends EventEmitter {
                 }, allocEveryMs);
             }
         });
+        this.socket?.on('/v4/websocket/voice', (socket, request, _clientInfo, _sessionId, guildId) => {
+            socket.guildId = guildId;
+            if (!this.options.playback.voiceReceive?.enabled) {
+                try {
+                    socket.close(1008, 'Voice receive disabled');
+                }
+                catch { }
+                return;
+            }
+            logger('info', 'Voice', `Voice websocket connected from ${request.socket?.remoteAddress || 'unknown'} | guild ${guildId}`);
+            this.registerVoiceSocket(guildId, socket);
+        });
+        this.socket?.on('/v4/websocket/youtube/live', (socket, request, _clientInfo, _sessionId, id) => {
+            let videoId = id;
+            socket.guildId = id; // Tag it with videoId or guildId equivalent
+            if (/^\d{17,20}$/.test(id)) {
+                const player = this.sessions.getPlayer(id);
+                if (player?.track?.info?.sourceName?.includes('youtube')) {
+                    videoId = player.track.info.identifier;
+                }
+            }
+            else if (id.length > 50) {
+                try {
+                    const decoded = decodeTrack(id);
+                    if (decoded?.info?.sourceName?.includes('youtube')) {
+                        videoId = decoded.info.identifier;
+                    }
+                }
+                catch (_e) { }
+            }
+            if (!this.sourceWorkerManager) {
+                const yt = this.sources?.getSource('youtube');
+                if (!yt) {
+                    socket.close(1008, 'YouTube source not enabled');
+                    return;
+                }
+                const liveChatFn = yt.handleLiveChat;
+                if (liveChatFn) {
+                    liveChatFn.call(yt, socket, videoId);
+                }
+                else {
+                    socket.close(1008, 'YouTube live chat not supported');
+                }
+                return;
+            }
+            logger('info', 'YouTube-LiveChat', `Delegating live chat for video: ${videoId} to worker`);
+            const resShim = {
+                headersSent: false,
+                send: (data) => {
+                    const payload = Buffer.isBuffer(data)
+                        ? data
+                        : Buffer.from(String(data));
+                    socket.sendFrame?.(payload, {
+                        len: payload.length,
+                        fin: true,
+                        opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
+                    });
+                },
+                writeHead: (status) => {
+                    if (status !== 200)
+                        socket.close(1011, 'Worker failed');
+                },
+                write: (data) => {
+                    const payload = Buffer.isBuffer(data)
+                        ? data
+                        : Buffer.from(String(data));
+                    socket.sendFrame?.(payload, {
+                        len: payload.length,
+                        fin: true,
+                        opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
+                    });
+                },
+                end: () => socket.close(1000, 'Finished'),
+                on: (event, cb) => socket.on(event, cb)
+            };
+            this.sourceWorkerManager.delegate(request, resShim, 'loadLiveChat', { videoId }, { isWebSocket: true });
+        });
     }
     /**
      * Creates and configures Bun HTTP server with WebSocket support
      * @internal
      */
     _createBunServer() {
-        const port = this.options.server.port;
-        const host = this.options.server.host || '0.0.0.0';
-        const password = this.options.server.password;
-        const self = this;
-        logger('warn', 'Server', 'Running with Bun.serve, remember this is experimental!');
-        this.server = Bun.serve({
-            port,
-            hostname: host,
-            maxRequestBodySize: 1024 * 1024 * 50,
-            async fetch(req, server) {
-                const url = new URL(req.url);
-                const pathname = url.pathname.endsWith('/')
-                    ? url.pathname.slice(0, -1)
-                    : url.pathname;
-                if (pathname === '/v4/profiler/socket') {
-                    const remoteAddress = server.requestIP(req)?.address || 'unknown';
-                    const isInternal = /^(::1|localhost|127\.0\.0\.1)/.test(remoteAddress);
-                    const endpoint = self.options.cluster?.endpoint || {};
-                    const patchEnabled = endpoint.patchEnabled === true;
-                    const allowExternalPatch = endpoint.allowExternalPatch === true;
-                    const expectedCode = typeof endpoint.code === 'string' && endpoint.code.length > 0
-                        ? endpoint.code
-                        : 'CAPYBARA';
-                    const providedCode = url.searchParams.get('code') ||
-                        req.headers.get('x-nodelink-code') ||
-                        req.headers.get('x-worker-code');
-                    if (!patchEnabled) {
-                        return new Response('Profiler socket endpoint is disabled.', {
-                            status: 403,
-                            statusText: 'Forbidden'
-                        });
-                    }
-                    if (!allowExternalPatch && !isInternal) {
-                        return new Response('External profiler socket access is blocked.', {
-                            status: 403,
-                            statusText: 'Forbidden'
-                        });
-                    }
-                    if (!providedCode || providedCode !== expectedCode) {
-                        return new Response('Invalid or missing profiler code.', {
-                            status: 403,
-                            statusText: 'Forbidden'
-                        });
-                    }
-                    const success = server.upgrade(req, {
-                        data: {
-                            clientInfo: { name: 'ProfilerUI', version: '1' },
-                            sessionId: null,
-                            reqHeaders: Object.fromEntries(req.headers),
-                            remoteAddress,
-                            url: req.url
-                        }
-                    });
-                    if (success)
-                        return undefined;
-                    return new Response('WebSocket upgrade failed', { status: 400 });
-                }
-                if (pathname === '/v4/websocket') {
-                    const remoteAddress = server.requestIP(req)?.address || 'unknown';
-                    const clientAddress = `[External] (${remoteAddress})`;
-                    const clientName = req.headers.get('client-name');
-                    const auth = req.headers.get('authorization');
-                    const userId = req.headers.get('user-id');
-                    const sessionId = req.headers.get('session-id');
-                    if (auth !== password) {
-                        logger('warn', 'Server', `Unauthorized connection attempt from ${clientAddress} - Invalid password provided: ${auth || 'None'}`);
-                        return new Response('Invalid password provided.', {
-                            status: 401,
-                            statusText: 'Unauthorized',
-                            headers: {
-                                'Nodelink-Api-Version': '4',
-                                IamNodelink: 'true'
-                            }
-                        });
-                    }
-                    if (!clientName) {
-                        logger('warn', 'Server', `Missing client-name from ${clientAddress}`);
-                        return new Response('Invalid or missing Client-Name header.', {
-                            status: 400,
-                            statusText: 'Bad Request',
-                            headers: {
-                                'Nodelink-Api-Version': '4',
-                                IamNodelink: 'true'
-                            }
-                        });
-                    }
-                    if (!userId || !verifyDiscordID(userId)) {
-                        logger('warn', 'Server', `Invalid user ID from ${clientAddress}`);
-                        return new Response('Invalid or missing User-Id header.', {
-                            status: 400,
-                            statusText: 'Bad Request',
-                            headers: {
-                                'Nodelink-Api-Version': '4',
-                                IamNodelink: 'true'
-                            }
-                        });
-                    }
-                    const clientInfo = parseClient(clientName);
-                    if (!clientInfo) {
-                        logger('warn', 'Server', `Invalid client-name from ${clientAddress}`);
-                        return new Response('Invalid or missing Client-Name header.', {
-                            status: 400,
-                            statusText: 'Bad Request',
-                            headers: {
-                                'Nodelink-Api-Version': '4',
-                                IamNodelink: 'true'
-                            }
-                        });
-                    }
-                    const success = server.upgrade(req, {
-                        data: {
-                            clientInfo,
-                            sessionId,
-                            reqHeaders: Object.fromEntries(req.headers),
-                            remoteAddress,
-                            url: req.url
-                        }
-                    });
-                    if (success)
-                        return undefined;
-                    return new Response('WebSocket upgrade failed', {
-                        status: 400,
-                        headers: {
-                            'Nodelink-Api-Version': '4',
-                            IamNodelink: 'true'
-                        }
-                    });
-                }
-                return new Promise((resolve) => {
-                    const reqShim = {
-                        method: req.method,
-                        url: url.pathname + url.search,
-                        headers: Object.fromEntries(req.headers),
-                        socket: { remoteAddress: server.requestIP(req)?.address },
-                        on: (event, cb) => {
-                            if (event === 'data') {
-                                req
-                                    .arrayBuffer()
-                                    .then((buf) => {
-                                    cb(Buffer.from(buf));
-                                    if (reqShim._endCb)
-                                        reqShim._endCb();
-                                })
-                                    .catch(() => { });
-                            }
-                            if (event === 'end') {
-                                reqShim._endCb = cb;
-                            }
-                        }
-                    };
-                    const resShim = {
-                        _status: 200,
-                        _headers: {},
-                        _body: [],
-                        writeHead(status, headers) {
-                            this._status = status;
-                            if (headers)
-                                Object.assign(this._headers, headers);
-                        },
-                        setHeader(name, value) {
-                            this._headers[name] = value;
-                        },
-                        getHeader(name) {
-                            return this._headers[name];
-                        },
-                        end(data) {
-                            if (data)
-                                this._body.push(data);
-                            const finalBody = Buffer.concat(this._body.map((chunk) => Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-                            const headers = new Headers();
-                            for (const [key, value] of Object.entries(this._headers)) {
-                                if (Array.isArray(value)) {
-                                    for (const v of value)
-                                        headers.append(key, v);
-                                }
-                                else if (value !== undefined) {
-                                    headers.set(key, String(value));
-                                }
-                            }
-                            const response = new Response(finalBody, {
-                                status: this._status,
-                                headers
-                            });
-                            resolve(response);
-                        },
-                        write(data) {
-                            if (data)
-                                this._body.push(data);
-                        }
-                    };
-                    void getRequestHandler()
-                        .then((handler) => handler(self, reqShim, resShim))
-                        .catch((error) => {
-                        logger('error', 'Server', `Failed to handle Bun request: ${error.message}`);
-                        if (!resShim._status || resShim._status < 400) {
-                            resShim.writeHead(500, { 'Content-Type': 'text/plain' });
-                        }
-                        resShim.end('Internal Server Error');
-                    });
-                });
-            },
-            websocket: {
-                sendPings: true,
-                data: {},
-                open(ws) {
-                    if (!ws.data)
-                        return;
-                    const wrapper = new BunSocketWrapper(ws);
-                    ws.data.wrapper = wrapper;
-                    const { clientInfo, sessionId, reqHeaders } = ws.data;
-                    const reqShim = {
-                        headers: reqHeaders,
-                        url: ws.data.url,
-                        socket: { remoteAddress: ws.data.remoteAddress }
-                    };
-                    let pathname = '/v4/websocket';
-                    try {
-                        pathname = new URL(ws.data.url).pathname;
-                    }
-                    catch { }
-                    if (pathname === '/v4/profiler/socket') {
-                        logger('info', 'ProfilerSocket', `Profiler socket connected from [External] (${ws.data.remoteAddress})`);
-                        self.socket?.emit('/v4/profiler/socket', wrapper, reqShim, null, null);
-                        return;
-                    }
-                    logger('info', 'Server', `\x1b[36m${clientInfo.name}\x1b[0m${clientInfo.version ? `/\x1b[32mv${clientInfo.version}\x1b[0m` : ''} connected from [External] (${ws.data.remoteAddress}) | \x1b[33mURL:\x1b[0m ${ws.data.url}`);
-                    let eventName = '/v4/websocket';
-                    let guildId = null;
-                    let liveId = null;
-                    try {
-                        const url = new URL(ws.data.url);
-                        const voiceMatch = url.pathname.match(/^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/);
-                        const liveMatch = url.pathname.match(/^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/);
-                        if (voiceMatch) {
-                            if (!self.options.voiceReceive?.enabled) {
-                                try {
-                                    wrapper.close(1008, 'Voice receive disabled');
-                                }
-                                catch { }
-                                return;
-                            }
-                            eventName = '/v4/websocket/voice';
-                            guildId = voiceMatch[1];
-                        }
-                        else if (liveMatch) {
-                            eventName = '/v4/websocket/youtube/live';
-                            liveId = liveMatch[1];
-                        }
-                    }
-                    catch { }
-                    if (self.socket) {
-                        self.socket.emit(eventName, wrapper, reqShim, clientInfo, sessionId, guildId || liveId);
-                    }
-                },
-                message(ws, message) {
-                    ws.data?.wrapper?._handleMessage(message);
-                },
-                close(ws, code, reason) {
-                    ws.data?.wrapper?._handleClose(code, reason);
-                }
-            }
-        });
-        logger('started', 'Server', `Successfully listening on ${host}:${port} (Bun Native)`);
+        this.server = createBunServer(this, getRequestHandler);
     }
     /**
      * Creates HTTP server (Node.js or Bun)
@@ -1294,7 +1119,7 @@ class NodelinkServer extends EventEmitter {
                     logger('warn', 'Server', `Unauthorized connection attempt from ${clientAddress} - Invalid user ID provided`);
                     return rejectUpgrade(400, 'Bad Request', 'Invalid User-Id header.');
                 }
-                if (voiceMatch && !this.options.voiceReceive?.enabled) {
+                if (voiceMatch && !this.options.playback.voiceReceive?.enabled) {
                     return rejectUpgrade(404, 'Not Found', 'Voice websocket endpoint is disabled.');
                 }
                 for (const key in headers) {
@@ -1329,83 +1154,6 @@ class NodelinkServer extends EventEmitter {
                 logger('warn', 'Server', `Unauthorized connection attempt from ${clientAddress} - Invalid path provided`);
                 return rejectUpgrade(404, 'Not Found', 'Invalid path for WebSocket upgrade.');
             }
-        });
-        this.socket?.on('/v4/websocket/voice', (socket, request, _clientInfo, _sessionId, guildId) => {
-            socket.guildId = guildId;
-            if (!this.options.voiceReceive?.enabled) {
-                try {
-                    socket.close(1008, 'Voice receive disabled');
-                }
-                catch { }
-                return;
-            }
-            logger('info', 'Voice', `Voice websocket connected from ${request.socket?.remoteAddress || 'unknown'} | guild ${guildId}`);
-            this.registerVoiceSocket(guildId, socket);
-        });
-        this.socket?.on('/v4/websocket/youtube/live', (socket, request, _clientInfo, _sessionId, id) => {
-            let videoId = id;
-            socket.guildId = id; // Tag it with videoId or guildId equivalent
-            if (/^\d{17,20}$/.test(id)) {
-                const player = this.sessions.getPlayer(id);
-                if (player?.track?.info?.sourceName?.includes('youtube')) {
-                    videoId = player.track.info.identifier;
-                }
-            }
-            else if (id.length > 50) {
-                try {
-                    const decoded = decodeTrack(id);
-                    if (decoded?.info?.sourceName?.includes('youtube')) {
-                        videoId = decoded.info.identifier;
-                    }
-                }
-                catch (_e) { }
-            }
-            if (!this.sourceWorkerManager) {
-                const yt = this.sources?.getSource('youtube');
-                if (!yt) {
-                    socket.close(1008, 'YouTube source not enabled');
-                    return;
-                }
-                const liveChatFn = yt.handleLiveChat;
-                if (typeof liveChatFn === 'function') {
-                    liveChatFn.call(yt, socket, videoId);
-                }
-                else {
-                    socket.close(1008, 'YouTube live chat not supported');
-                }
-                return;
-            }
-            logger('info', 'YouTube-LiveChat', `Delegating live chat for video: ${videoId} to worker`);
-            const resShim = {
-                headersSent: false,
-                send: (data) => {
-                    const payload = Buffer.isBuffer(data)
-                        ? data
-                        : Buffer.from(String(data));
-                    socket.sendFrame?.(payload, {
-                        len: payload.length,
-                        fin: true,
-                        opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
-                    });
-                },
-                writeHead: (status) => {
-                    if (status !== 200)
-                        socket.close(1011, 'Worker failed');
-                },
-                write: (data) => {
-                    const payload = Buffer.isBuffer(data)
-                        ? data
-                        : Buffer.from(String(data));
-                    socket.sendFrame?.(payload, {
-                        len: payload.length,
-                        fin: true,
-                        opcode: Buffer.isBuffer(data) ? 0x02 : 0x01
-                    });
-                },
-                end: () => socket.close(1000, 'Finished'),
-                on: (event, cb) => socket.on(event, cb)
-            };
-            this.sourceWorkerManager.delegate(request, resShim, 'loadLiveChat', { videoId }, { isWebSocket: true });
         });
     }
     /**
@@ -1443,19 +1191,20 @@ class NodelinkServer extends EventEmitter {
     _startGlobalUpdater() {
         if (this._globalUpdater)
             return;
-        const updateInterval = Math.max(1, this.options?.playerUpdateInterval ?? 5000);
-        const statsSendInterval = Math.max(1, this.options?.statsUpdateInterval ?? 30000);
-        const metricsInterval = this.options?.metrics?.enabled
+        const updateInterval = Math.max(1, this.options?.playback.playerUpdateInterval ?? 5000);
+        const statsSendInterval = Math.max(1, this.options?.playback.statsUpdateInterval ?? 30000);
+        const metricsInterval = this.options?.api.metrics?.enabled
             ? 5000
             : statsSendInterval;
-        const zombieThreshold = this.options?.zombieThresholdMs ?? 60000;
+        const zombieThreshold = this.options?.playback.zombieThresholdMs ?? 60000;
         this._globalUpdater = setInterval(() => {
             for (const session of this.sessions.values()) {
                 if (!session.players)
                     continue;
                 for (const player of session.players.players.values()) {
                     if (player?.track && !player.isPaused && player.connection) {
-                        if (player._lastStreamDataTime > 0 &&
+                        if (player.connStatus === 'connected' &&
+                            player._lastStreamDataTime > 0 &&
                             Date.now() - player._lastStreamDataTime >= zombieThreshold) {
                             logger('warn', 'Player', `Player for guild ${player.guildId} detected as zombie (no stream data).`);
                             player.emitEvent(GatewayEvents.TRACK_STUCK, {
@@ -1540,16 +1289,7 @@ class NodelinkServer extends EventEmitter {
      */
     async _cleanupWebSocketServer() {
         if (this._usingBunServer && this.server) {
-            try {
-                logger('info', 'WebSocket', 'Stopping Bun server...');
-                await this.server.stop(true);
-                this.server.unref();
-                logger('info', 'WebSocket', 'Bun server stopped successfully');
-            }
-            catch (e) {
-                const error = e;
-                logger('error', 'WebSocket', `Error stopping Bun server: ${error?.message ?? String(e)}`);
-            }
+            await cleanupBunServer(this, this.server);
             return;
         }
         if (this.socket) {
@@ -1726,7 +1466,7 @@ class NodelinkServer extends EventEmitter {
         if (startOptions.isClusterWorker) {
             logger('info', 'Server', 'Running as cluster worker — waiting for sockets from master.');
             process.on('message', (msg, handle) => {
-                if (!msg || msg.type !== 'sticky-session')
+                if (msg?.type !== 'sticky-session')
                     return;
                 if (!handle)
                     return;
@@ -1773,8 +1513,8 @@ class NodelinkServer extends EventEmitter {
     _startMasterMetricsUpdater() {
         if (this._globalUpdater)
             return;
-        const statsSendInterval = Math.max(1, this.options?.statsUpdateInterval ?? 30000);
-        const metricsInterval = this.options?.metrics?.enabled
+        const statsSendInterval = Math.max(1, this.options?.playback.statsUpdateInterval ?? 30000);
+        const metricsInterval = this.options?.api.metrics?.enabled
             ? 5000
             : statsSendInterval;
         let lastStatsSendTime = 0;
@@ -1884,9 +1624,14 @@ class NodelinkServer extends EventEmitter {
 // Guard the master / single-process against unhandled socket errors (EPIPE,
 // ECONNRESET) that surface when a WebSocket client disconnects mid-write and
 // the underlying library has already removed listeners via removeAllListeners().
+// Pipeline premature-close during stream cleanup is tolerated the same way as
+// in the playback worker: it must not kill the process.
 process.on('uncaughtException', (err) => {
-    if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') {
-        logger('debug', 'Server', `Suppressed uncaught socket error: ${err.code}`);
+    if (err?.code === 'EPIPE' ||
+        err?.code === 'ECONNRESET' ||
+        err?.code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+        err?.message === 'aborted') {
+        logger('debug', 'Server', `Suppressed uncaught socket error: ${err.code ?? err.message}`);
         return;
     }
     logger('error', 'Server', `Uncaught Exception: ${err.stack || err.message}`);
@@ -1897,8 +1642,8 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 if (clusterEnabled && cluster.isPrimary) {
     if (config.sources?.youtube?.getOAuthToken) {
-        // dynamicly import OAuth (if enabled)
-        const OAuth = (await import("./sources/youtube/OAuth.js").catch((e) => {
+        // dynamically import OAuth (if enabled)
+        const OAuth = (await import('./sources/youtube/OAuth.js').catch((e) => {
             logger('error', 'youtube', `\x1b[1m\x1b[31mOAuth class not found Error: ${e.message}\x1b[0m`);
             process.exit(1);
         })).default;
@@ -1944,6 +1689,8 @@ if (clusterEnabled && cluster.isPrimary) {
             process.stdout.write('\n  \x1b[32m💚 Thank you for using NodeLink!\x1b[0m\n');
             process.stdout.write('  \x1b[37mIf you have ideas, suggestions or want to report bugs, join us on Discord:\x1b[0m\n');
             process.stdout.write('  \x1b[1m\x1b[34m➜\x1b[0m \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m\n\n');
+            process.stdout.write('  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mHaving issues? Use "git checkout dev" to see if it\'s fixed.\x1b[0m\n');
+            process.stdout.write('  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mRead the FAQ & follow the support template in our Discord.\x1b[0m\n\n');
             logger('info', 'Server', 'Shutdown signal received. Cleaning up resources...');
             nserver._stopHeartbeat();
             await nserver.credentialManager?.forceSave();
@@ -1971,7 +1718,7 @@ if (clusterEnabled && cluster.isPrimary) {
     });
 }
 else if (clusterEnabled && cluster.isWorker) {
-    await import("./workers/main.js");
+    await import('./workers/main.js');
 }
 else {
     const serverInstancePromise = (async () => {
@@ -1991,6 +1738,12 @@ else {
             await nserver.credentialManager?.forceSave();
             await nserver.trackCacheManager?.forceSave();
             nserver.sourceWorkerManager?.destroy?.();
+            nserver.workerManager?.destroy?.();
+            nserver.connectionManager?.destroy?.();
+            nserver.proxyManager?.destroy?.();
+            nserver.routePlanner?.dispose?.();
+            nserver.credentialManager?.destroy?.();
+            nserver.trackCacheManager?.destroy?.();
             await nserver._cleanupWebSocketServer();
             if (nserver.server?.listening) {
                 await new Promise((resolve) => nserver.server.close(resolve));
@@ -2003,6 +1756,8 @@ else {
             process.stdout.write('\n  \x1b[32m💚 Thank you for using NodeLink!\x1b[0m\n');
             process.stdout.write('  \x1b[37mIf you have ideas, suggestions or want to report bugs, join us on Discord:\x1b[0m\n');
             process.stdout.write('  \x1b[1m\x1b[34m➜\x1b[0m \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m\n\n');
+            process.stdout.write('  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mHaving issues? Use "git checkout dev" to see if it\'s fixed.\x1b[0m\n');
+            process.stdout.write('  \x1b[1m\x1b[35m➜\x1b[0m \x1b[35mRead the FAQ & follow the support template in our Discord.\x1b[0m\n\n');
             process.exit(0);
         };
         process.once('SIGINT', shutdown);

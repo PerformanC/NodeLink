@@ -1,7 +1,7 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 /**
  * Rotates audio between left and right channels at a specific frequency.
@@ -31,7 +31,8 @@ export default class Rotation extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : this.rotationHz > 0.001 ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             rotation: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: r.transition
             }
         }, 'rotation', { alpha: 0.0 });
     }

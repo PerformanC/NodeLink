@@ -11,7 +11,7 @@ services:
       NODELINK_SERVER_HOST: "0.0.0.0"
       NODELINK_SERVER_PORT: "3000"
       NODELINK_SERVER_PASSWORD: "youshallnotpass" # CHANGE THIS!
-      # NODELINK_SERVER_USEBUNSERVER: "false" # set to true to use Bun.serve websocket (experimental)
+      NODELINK_SERVER_USEBUNSERVER: "true" # set to false to disable the bun.Serve websocket usage (will be redirected to pwsl)
 
       # --- Cluster Configuration ---
       # NODELINK_CLUSTER_ENABLED: "true" # active cluster (or use env CLUSTER_ENABLED)

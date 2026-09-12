@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
 const BANDS = [
     25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000,
@@ -16,11 +16,13 @@ export default class Equalizer extends AnimatableFilter {
     bandGains;
     filtersL;
     filtersR;
+    activeBandIndices;
     constructor() {
         super();
         this.bandGains = new Array(BANDS.length).fill(1.0);
         this.filtersL = BANDS.map((freq) => this._createFilter(freq));
         this.filtersR = BANDS.map((freq) => this._createFilter(freq));
+        this.activeBandIndices = [];
     }
     _createFilter(freq) {
         const omega = (2 * Math.PI * freq) / SAMPLE_RATE;
@@ -61,6 +63,7 @@ export default class Equalizer extends AnimatableFilter {
             if (val !== undefined)
                 this.bandGains[i] = val;
         }
+        const activeIndices = [];
         for (let i = 0; i < BANDS.length; i++) {
             const freq = BANDS[i];
             const gain = this.bandGains[i];
@@ -68,6 +71,12 @@ export default class Equalizer extends AnimatableFilter {
             const filterR = this.filtersR[i];
             if (freq === undefined || gain === undefined || !filterL || !filterR)
                 continue;
+            // Unity-gain bands have H(z) = 1 (passthrough); track them so
+            // process() can skip them entirely instead of running 15 biquads
+            // per sample when only 1-2 bands are boosted/cut.
+            if (Math.abs(gain - 1.0) <= 0.001)
+                continue;
+            activeIndices.push(i);
             const omega = (2 * Math.PI * freq) / SAMPLE_RATE;
             const sin = Math.sin(omega);
             const cos = Math.cos(omega);
@@ -89,6 +98,7 @@ export default class Equalizer extends AnimatableFilter {
             filterR.a1 = a1;
             filterR.a2 = a2;
         }
+        this.activeBandIndices = activeIndices;
     }
     isConfigActive(config) {
         if (config) {
@@ -106,10 +116,14 @@ export default class Equalizer extends AnimatableFilter {
     }
     process(chunk) {
         super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS);
+        const activeIndices = this.activeBandIndices;
+        if (activeIndices.length === 0)
+            return chunk;
         for (let i = 0; i < chunk.length; i += 4) {
             let left = chunk.readInt16LE(i);
             let right = chunk.readInt16LE(i + 2);
-            for (let j = 0; j < BANDS.length; j++) {
+            for (let k = 0; k < activeIndices.length; k++) {
+                const j = activeIndices[k];
                 const fl = this.filtersL[j];
                 const fr = this.filtersR[j];
                 if (!fl || !fr)

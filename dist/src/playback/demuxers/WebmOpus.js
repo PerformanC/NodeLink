@@ -1,6 +1,6 @@
 import { Transform } from 'node:stream';
-import { logger } from "../../utils.js";
-import { RingBuffer } from "../structs/RingBuffer.js";
+import { logger } from '../../utils.js';
+import { RingBuffer } from '../structs/RingBuffer.js';
 const TOO_SHORT = Symbol('TOO_SHORT');
 const INVALID_VINT = Symbol('INVALID_VINT');
 const parsePositiveIntEnv = (key, fallback) => {
@@ -10,7 +10,7 @@ const parsePositiveIntEnv = (key, fallback) => {
     const parsed = Number.parseInt(raw, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
-const BUFFER_SIZE = parsePositiveIntEnv('NODELINK_WEBM_DEMUX_RING_BYTES', 2 * 1024 * 1024);
+const BUFFER_SIZE = parsePositiveIntEnv('NODELINK_WEBM_DEMUX_RING_BYTES', 512 * 1024);
 const TAGS = Object.freeze({
     '1a45dfa3': true,
     18538067: true,
@@ -197,8 +197,8 @@ class WebmBaseDemuxer extends Transform {
                 if (skipped > 0)
                     webmOpusProfiler.skippedBytes += skipped;
                 this.skipUntil = res._skipUntil;
-                this.ringBuffer.skip(this.ringBuffer.length);
-                this.processed += BigInt(this.ringBuffer.length);
+                this.ringBuffer.skip(skipped);
+                this.processed += BigInt(skipped);
                 break;
             }
             if (res.offset) {

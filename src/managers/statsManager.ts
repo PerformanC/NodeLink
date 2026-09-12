@@ -5,6 +5,7 @@ import type {
   StatsSnapshot,
   WorkerMetricsPayload
 } from '../typings/api/stats.types.ts'
+import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import { logger } from '../utils.ts'
 
 type PromClientModule = typeof import('prom-client')
@@ -13,15 +14,8 @@ type PromCounter = InstanceType<PromClientModule['Counter']>
 type PromGauge = InstanceType<PromClientModule['Gauge']>
 type PromCollector = ReturnType<PromClientModule['collectDefaultMetrics']>
 
-export type StatsManagerOptions = {
-  metrics?: {
-    enabled?: boolean
-  }
-  [key: string]: unknown
-}
-
 export type StatsManagerContext = {
-  options: StatsManagerOptions
+  options: NodelinkConfig
 }
 
 const MAX_ENDPOINT_ENTRIES = 500
@@ -137,7 +131,7 @@ export default class StatsManager {
   async initialize(): Promise<void> {
     if (this.initialized) return
 
-    const metricsEnabled = this.nodelink.options.metrics?.enabled ?? false
+    const metricsEnabled = this.nodelink.options.api.metrics?.enabled ?? false
     if (!metricsEnabled) {
       this.initialized = true
       return
@@ -541,6 +535,14 @@ export default class StatsManager {
 
     this.initialized = true
     logger('info', 'StatsManager', 'Prometheus metrics initialized.')
+  }
+
+  /**
+   * Returns the Prometheus registry for custom metric registration.
+   * @public
+   */
+  public getRegistry(): PromRegistry | undefined {
+    return this.promRegister
   }
 
   /**
