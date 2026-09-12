@@ -357,6 +357,11 @@ export interface NodelinkRuntime {
   routePlanner?: RoutePlannerRuntime
   /** Optional stats manager instance. */
   statsManager?: StatsManager
+  /** Loaded server configuration. */
+  options?: {
+    /** Core server section. */
+    server?: { cors?: boolean }
+  }
 }
 
 /**

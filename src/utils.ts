@@ -543,7 +543,19 @@ function sendResponse(
   status: number,
   trace = false
 ): void {
+  const nodelink = runtime.nodelink
+  const corsEnabled = nodelink?.options?.server?.cors === true
   const headers: Record<string, string | number> = {
+    ...(corsEnabled
+      ? {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods':
+            'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD',
+          'Access-Control-Allow-Headers':
+            'Authorization, Content-Type, Accept, Origin, User-Agent, Client-Name, User-Id, Session-Id, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers',
+          'Access-Control-Max-Age': '86400'
+        }
+      : {}),
     'Nodelink-Api-Version': '4',
     IamNodelink: 'true'
   }
@@ -554,7 +566,6 @@ function sendResponse(
     return
   }
 
-  const nodelink = runtime.nodelink
   let finalData = nodelink ? modifyPayload(nodelink, data) : data
 
   if (

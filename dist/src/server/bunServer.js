@@ -114,6 +114,20 @@ export function createBunServer(context, getRequestHandler) {
             return new Response('Internal Server Error', { status: 500 });
         },
         async fetch(req, server) {
+            if (req.method === 'OPTIONS' && context.options.server.cors === true) {
+                return new Response(null, {
+                    status: 204,
+                    headers: {
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD',
+                        'Access-Control-Allow-Headers': req.headers.get('access-control-request-headers') ||
+                            'Authorization, Content-Type, Accept, Origin, User-Agent, Client-Name, User-Id, Session-Id, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers',
+                        'Access-Control-Max-Age': '86400',
+                        'Nodelink-Api-Version': '4',
+                        IamNodelink: 'true'
+                    }
+                });
+            }
             const url = new URL(req.url);
             const pathname = url.pathname.endsWith('/')
                 ? url.pathname.slice(0, -1)

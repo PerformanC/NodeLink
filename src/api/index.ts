@@ -164,12 +164,49 @@ async function requestHandler(
   req: ApiRequest,
   res: ApiResponse
 ): Promise<void> {
+  const corsEnabled = nodelink.options.server.cors === true
+  const requestedHeaders = corsEnabled
+    ? getHeaderValue(
+        (req.headers as Record<string, string | string[] | undefined>)[
+          'access-control-request-headers'
+        ]
+      )
+    : undefined
+  const allowHeaders =
+    requestedHeaders ||
+    'Authorization, Content-Type, Accept, Origin, User-Agent, Client-Name, User-Id, Session-Id, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers'
+
   const originalWriteHead = res.writeHead
   res.writeHead = (status, headers) => {
+    if (corsEnabled) {
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader(
+        'Access-Control-Allow-Methods',
+        'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
+      )
+      res.setHeader('Access-Control-Allow-Headers', allowHeaders)
+      res.setHeader('Access-Control-Max-Age', '86400')
+    }
     res.setHeader('Nodelink-Api-Version', '4')
     res.setHeader('IamNodelink', 'true')
 
     return originalWriteHead.call(res, status, headers)
+  }
+
+  if (corsEnabled) {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
+    )
+    res.setHeader('Access-Control-Allow-Headers', allowHeaders)
+    res.setHeader('Access-Control-Max-Age', '86400')
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
   }
 
   const startTime = Date.now()

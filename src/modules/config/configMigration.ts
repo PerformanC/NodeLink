@@ -17,6 +17,7 @@ export function migrateConfig(
     port: 'server.port',
     password: 'server.password',
     useBunServer: 'server.useBunServer',
+    cors: 'server.cors',
     trustProxy: 'trustProxy',
     connection: 'connection',
     proxy: 'network.proxy',
