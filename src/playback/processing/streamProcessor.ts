@@ -640,6 +640,34 @@ class PCMFrameCounter extends Transform {
   }
 }
 
+/**
+ * Emits 'error' on a pipeline stream only when it can be received.
+ * Emitting with zero 'error' listeners throws, which escapes as an uncaught
+ * exception and kills the worker, so teardown races must never emit blindly.
+ */
+const emitResourceError = (
+  target:
+    | {
+        destroyed?: boolean
+        listenerCount?: (event: string) => number
+        emit?: (event: string, error: unknown) => boolean
+      }
+    | null
+    | undefined,
+  error: unknown
+): void => {
+  if (!target || !error) return
+  try {
+    if (target.destroyed) return
+    if (
+      typeof target.listenerCount === 'function' &&
+      target.listenerCount('error') === 0
+    )
+      return
+    target.emit?.('error', error)
+  } catch {}
+}
+
 class BaseAudioResource {
   pipes: (Readable | Transform)[] | null
   stream: (VoiceAudioStream & Transform) | null
@@ -2831,7 +2859,7 @@ class StreamAudioResource extends BaseAudioResource {
 
     pipeline(stream, demuxer, decoder, (err: Error | null): void => {
       if (err && !this._destroyed) {
-        this.stream?.emit('error', err)
+        emitResourceError(this.stream, err)
       }
     })
 
@@ -2868,7 +2896,7 @@ class StreamAudioResource extends BaseAudioResource {
           streams as unknown as Readable[],
           (err: Error | null): void => {
             if (err && !this._destroyed) {
-              this.stream?.emit('error', err)
+              emitResourceError(this.stream, err)
             }
           }
         )
@@ -2902,7 +2930,7 @@ class StreamAudioResource extends BaseAudioResource {
 
     pipeline(streams as unknown as Readable[], (err: Error | null): void => {
       if (err && !this._destroyed) {
-        this.stream?.emit('error', err)
+        emitResourceError(this.stream, err)
       }
     })
 
@@ -2917,7 +2945,7 @@ class StreamAudioResource extends BaseAudioResource {
 
     pipeline(stream, decoder, (err: Error | null): void => {
       if (err && !this._destroyed) {
-        this.stream?.emit('error', err)
+        emitResourceError(this.stream, err)
       }
     })
 
@@ -2947,7 +2975,7 @@ class StreamAudioResource extends BaseAudioResource {
 
     pipeline(streams as unknown as Readable[], (err: Error | null): void => {
       if (err && !this._destroyed) {
-        this.stream?.emit('error', err)
+        emitResourceError(this.stream, err)
       }
     })
 
@@ -3055,7 +3083,7 @@ class StreamAudioResource extends BaseAudioResource {
 
     pipeline(streams as unknown as Readable[], (err: Error | null): void => {
       if (err && !this._destroyed) {
-        opusEncoder.emit('error', err)
+        emitResourceError(opusEncoder, err)
       }
     })
 
@@ -3164,7 +3192,7 @@ class StreamAudioResource extends BaseAudioResource {
 
       pipeline(pcmStream, volumeTransformer, (err: Error | null): void => {
         if (err && !this._destroyed) {
-          volumeTransformer.emit('error', err)
+          emitResourceError(volumeTransformer, err)
         }
       })
 
@@ -3194,14 +3222,14 @@ class StreamAudioResource extends BaseAudioResource {
     wrappedSource?.on?.('finishBuffering', forwardFinishBuffering)
 
     inputStream.on('error', (err: Error) => {
-      this.stream?.emit('error', err)
+      emitResourceError(this.stream, err)
     })
 
     if (this.pipes) {
       for (const pipe of this.pipes) {
         if (pipe !== this.stream) {
           pipe.on?.('error', (err: Error) => {
-            this.stream?.emit('error', err)
+            emitResourceError(this.stream, err)
           })
         }
       }
@@ -3311,7 +3339,7 @@ export const createSeekeableAudioResource = async (
         ranged,
         passthroughStream,
         (err: NodeJS.ErrnoException | null) => {
-          if (err) passthroughStream.emit('error', err)
+          if (err) emitResourceError(passthroughStream, err)
         }
       )
 
@@ -3348,7 +3376,7 @@ export const createSeekeableAudioResource = async (
     })
 
     pipeline(stream, passthroughStream, (err: NodeJS.ErrnoException | null) => {
-      if (err) passthroughStream.emit('error', err)
+      if (err) emitResourceError(passthroughStream, err)
     })
 
     const format = meta.codec?.container || player.streamInfo?.format

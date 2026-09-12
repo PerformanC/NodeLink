@@ -426,6 +426,24 @@ class PCMFrameCounter extends Transform {
         return (this.totalFrames / this.sampleRate) * 1000;
     }
 }
+/**
+ * Emits 'error' on a pipeline stream only when it can be received.
+ * Emitting with zero 'error' listeners throws, which escapes as an uncaught
+ * exception and kills the worker, so teardown races must never emit blindly.
+ */
+const emitResourceError = (target, error) => {
+    if (!target || !error)
+        return;
+    try {
+        if (target.destroyed)
+            return;
+        if (typeof target.listenerCount === 'function' &&
+            target.listenerCount('error') === 0)
+            return;
+        target.emit?.('error', error);
+    }
+    catch { }
+};
 class BaseAudioResource {
     pipes;
     stream;
@@ -2150,7 +2168,7 @@ class StreamAudioResource extends BaseAudioResource {
         this.pipes?.push(demuxer, decoder);
         pipeline(stream, demuxer, decoder, (err) => {
             if (err && !this._destroyed) {
-                this.stream?.emit('error', err);
+                emitResourceError(this.stream, err);
             }
         });
         return decoder;
@@ -2176,7 +2194,7 @@ class StreamAudioResource extends BaseAudioResource {
                 this.pipes?.push(...streams.slice(1));
                 pipeline(streams, (err) => {
                     if (err && !this._destroyed) {
-                        this.stream?.emit('error', err);
+                        emitResourceError(this.stream, err);
                     }
                 });
                 return decoder;
@@ -2202,7 +2220,7 @@ class StreamAudioResource extends BaseAudioResource {
         this.pipes?.push(...streams.slice(1));
         pipeline(streams, (err) => {
             if (err && !this._destroyed) {
-                this.stream?.emit('error', err);
+                emitResourceError(this.stream, err);
             }
         });
         return decoder;
@@ -2214,7 +2232,7 @@ class StreamAudioResource extends BaseAudioResource {
         this.pipes?.push(decoder);
         pipeline(stream, decoder, (err) => {
             if (err && !this._destroyed) {
-                this.stream?.emit('error', err);
+                emitResourceError(this.stream, err);
             }
         });
         return decoder;
@@ -2237,7 +2255,7 @@ class StreamAudioResource extends BaseAudioResource {
         this.pipes?.push(decoder);
         pipeline(streams, (err) => {
             if (err && !this._destroyed) {
-                this.stream?.emit('error', err);
+                emitResourceError(this.stream, err);
             }
         });
         return decoder;
@@ -2314,7 +2332,7 @@ class StreamAudioResource extends BaseAudioResource {
         this.pipes?.push(opusEncoder);
         pipeline(streams, (err) => {
             if (err && !this._destroyed) {
-                opusEncoder.emit('error', err);
+                emitResourceError(opusEncoder, err);
             }
         });
         this._assignStream(opusEncoder);
@@ -2382,7 +2400,7 @@ class StreamAudioResource extends BaseAudioResource {
             });
             pipeline(pcmStream, volumeTransformer, (err) => {
                 if (err && !this._destroyed) {
-                    volumeTransformer.emit('error', err);
+                    emitResourceError(volumeTransformer, err);
                 }
             });
             this._assignStream(volumeTransformer);
@@ -2405,13 +2423,13 @@ class StreamAudioResource extends BaseAudioResource {
         const wrappedSource = inputStream._sourceStream;
         wrappedSource?.on?.('finishBuffering', forwardFinishBuffering);
         inputStream.on('error', (err) => {
-            this.stream?.emit('error', err);
+            emitResourceError(this.stream, err);
         });
         if (this.pipes) {
             for (const pipe of this.pipes) {
                 if (pipe !== this.stream) {
                     pipe.on?.('error', (err) => {
-                        this.stream?.emit('error', err);
+                        emitResourceError(this.stream, err);
                     });
                 }
             }
@@ -2457,7 +2475,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
             });
             pipeline(ranged, passthroughStream, (err) => {
                 if (err)
-                    passthroughStream.emit('error', err);
+                    emitResourceError(passthroughStream, err);
             });
             const format = hinted || (ext ? ext : 'm4a');
             return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, returnPCM ? true : (player.loudnessNormalizer ?? enableAGC), enableCrossfade);
@@ -2471,7 +2489,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
         });
         pipeline(stream, passthroughStream, (err) => {
             if (err)
-                passthroughStream.emit('error', err);
+                emitResourceError(passthroughStream, err);
         });
         const format = meta.codec?.container || player.streamInfo?.format;
         return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, returnPCM ? true : (player.loudnessNormalizer ?? enableAGC), enableCrossfade);

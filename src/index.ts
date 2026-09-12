@@ -2367,9 +2367,20 @@ class NodelinkServer extends EventEmitter {
 // Guard the master / single-process against unhandled socket errors (EPIPE,
 // ECONNRESET) that surface when a WebSocket client disconnects mid-write and
 // the underlying library has already removed listeners via removeAllListeners().
+// Pipeline premature-close during stream cleanup is tolerated the same way as
+// in the playback worker: it must not kill the process.
 process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
-  if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') {
-    logger('debug', 'Server', `Suppressed uncaught socket error: ${err.code}`)
+  if (
+    err?.code === 'EPIPE' ||
+    err?.code === 'ECONNRESET' ||
+    err?.code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    err?.message === 'aborted'
+  ) {
+    logger(
+      'debug',
+      'Server',
+      `Suppressed uncaught socket error: ${err.code ?? err.message}`
+    )
     return
   }
 
