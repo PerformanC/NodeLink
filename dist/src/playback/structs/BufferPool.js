@@ -8,7 +8,7 @@ const parsePositiveIntEnv = (key, fallback) => {
 };
 const MAX_POOL_SIZE_BYTES = parsePositiveIntEnv('NODELINK_BUFFER_POOL_MAX_BYTES', 20 * 1024 * 1024 // 20 MB - reduced from 50MB
 );
-const MAX_BUCKET_ENTRIES = parsePositiveIntEnv('NODELINK_BUFFER_POOL_MAX_BUCKET_ENTRIES', 4 // reduced from 8
+const MAX_BUCKET_ENTRIES = parsePositiveIntEnv('NODELINK_BUFFER_POOL_MAX_BUCKET_ENTRIES', 16 // hot frame sizes (3840/4000 -> 4096) need depth under many players; total still capped by MAX_POOL_SIZE_BYTES
 );
 const IDLE_CLEAR_MS = parsePositiveIntEnv('NODELINK_BUFFER_POOL_IDLE_CLEAR_MS', 60000 // 1 min - reduced from 3 min
 );

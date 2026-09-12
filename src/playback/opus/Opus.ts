@@ -172,7 +172,10 @@ export class Encoder extends Transform {
         let encoded: Buffer
         if (this.enc.encodeInto && this.encodedScratch) {
           const written = this.enc.encodeInto(frame, this.encodedScratch)
-          encoded = Buffer.from(this.encodedScratch.subarray(0, written))
+          // allocUnsafe + copy avoids the intermediate subarray view object
+          // that Buffer.from(subarray) would allocate per frame (50/s/player).
+          encoded = Buffer.allocUnsafe(written)
+          this.encodedScratch.copy(encoded, 0, 0, written)
         } else {
           encoded =
             this.lib.name === 'opusscript'
@@ -281,7 +284,10 @@ export class Decoder extends Transform {
         // pushing it to scratch would result:
         // the scratch subarray would allow the next frame to overwrite queued audio, causing corruption.
         // and its also required by ownership boundary btw.
-        this.push(Buffer.from(this.pcmScratch.subarray(0, written)))
+        // allocUnsafe + copy avoids the intermediate subarray view per frame.
+        const out = Buffer.allocUnsafe(written)
+        this.pcmScratch.copy(out, 0, 0, written)
+        this.push(out)
       } else {
         this.push(this.dec.decode(chunk))
       }

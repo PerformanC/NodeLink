@@ -43,8 +43,10 @@ export class AudioMixer extends Readable {
             this.push(SILENCE_FRAME);
             return;
         }
-        const baseBuffer = Buffer.alloc(targetSize);
-        const mixedBuffer = this.mixBuffers(baseBuffer, chunks);
+        // SILENCE_FRAME is already zero-filled and mixBuffers never mutates
+        // its input, so reuse it instead of allocating + zero-filling a new
+        // base buffer per frame (50/s while mixing).
+        const mixedBuffer = this.mixBuffers(SILENCE_FRAME, chunks);
         this.push(mixedBuffer);
     }
     /**
