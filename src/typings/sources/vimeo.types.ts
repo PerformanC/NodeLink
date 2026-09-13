@@ -7,7 +7,6 @@
  * @packageDocumentation
  */
 
-import type { PassThrough } from 'node:stream'
 import type {
   SourceResult,
   TrackInfo,
@@ -287,24 +286,6 @@ export interface VimeoConfig {
 }
 
 /**
- * Segment URL build parameters.
- *
- * Combines playlist directory, base path, track path, and segment
- * path into a fully-qualified segment URL.
- * @public
- */
-export interface VimeoSegmentUrlParts {
-  /** Resolved playlist directory URL. */
-  playlistDir: string
-  /** Base path prefix from playlist JSON. */
-  basePath: string
-  /** Track-level path prefix. */
-  trackPath: string
-  /** Individual segment relative path. */
-  segmentPath: string
-}
-
-/**
  * Parsed playlist data consumed by the segment streamer.
  * @public
  */
@@ -331,6 +312,8 @@ export interface VimeoPlaylistData {
   clipId?: number | string
   /** Whether this is DASH format (affects init segment handling). */
   isDashFormat?: boolean
+  /** Container type passed to the playback demuxer. */
+  streamType?: 'fmp4' | 'mp4'
 }
 
 /**
@@ -365,7 +348,7 @@ export interface VimeoSegmentedResult {
   /** Stream protocol identifier. */
   protocol: 'segmented' | 'hls' | 'https'
   /** Container format. */
-  format: 'mp4' | 'mpegts'
+  format: 'fmp4' | 'mp4' | 'mpegts'
   /** Parsed playlist data for segmented streams. */
   playlistData?: VimeoPlaylistData
   /** Additional metadata. */
@@ -411,47 +394,6 @@ export type VimeoStreamResult =
   | VimeoProgressiveResult
   | VimeoSegmentedResult
   | VimeoHlsResult
-
-/**
- * Internal HTTP response shape used by Vimeo source helpers.
- * @public
- */
-export interface VimeoHttpResponse {
-  /** HTTP status code. */
-  statusCode: number
-  /** Response headers. */
-  headers: Record<string, string | string[] | undefined>
-  /** Response body as Buffer. */
-  body: Buffer
-}
-
-/**
- * Options for internal HTTP request helper.
- * @public
- */
-export interface VimeoHttpRequestOptions {
-  /** Maximum number of redirects to follow. @defaultValue 5 */
-  maxRedirects?: number
-  /** Request timeout in milliseconds. @defaultValue 15000 */
-  timeout?: number
-  /** Additional request headers. */
-  headers?: Record<string, string>
-  /** Maximum buffered response body size in bytes. */
-  maxSize?: number
-  /** HTTP method. @defaultValue 'GET' */
-  method?: string
-}
-
-/**
- * Options for the curl subprocess request helper.
- * @public
- */
-export interface VimeoCurlOptions {
-  /** Referer header value. */
-  referer?: string
-  /** Origin header value. */
-  origin?: string
-}
 
 /**
  * Handoff cache entry storing a playlist result with expiration.
@@ -547,12 +489,6 @@ export interface VimeoSourceState {
   patterns: RegExp[]
   /** Source priority for URL pattern matching. */
   priority: number
-  /** Cached curl availability check result. */
-  _curlAvailable: boolean | null
-  /** Set of active PassThrough streams for cleanup tracking. */
-  _activeStreams: Set<PassThrough>
-  /** Handoff cache for passing playlist data between getTrackUrl and loadStream. */
-  _handoff: Map<string, VimeoHandoffEntry>
 }
 
 /**

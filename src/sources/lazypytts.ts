@@ -76,7 +76,7 @@ export default class LazyPyTtsSource {
     const sourceConfig = this.nodelink.options.sources?.lazypytts
     this.config =
       sourceConfig && typeof sourceConfig === 'object'
-        ? (sourceConfig as Record<string, unknown>)
+        ? (sourceConfig as unknown as Record<string, unknown>)
         : {}
     this.searchTerms = ['lazypytts', 'lazytts']
     this.patterns = [/^lazypytts:/i, /^lazytts:/i]

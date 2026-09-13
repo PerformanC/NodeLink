@@ -1,4 +1,4 @@
-import { logger, makeRequest } from "../utils.js";
+import { logger, makeRequest } from '../utils.js';
 /**
  * Monochrome lyrics provider.
  *
@@ -18,10 +18,8 @@ export default class MonochromeLyrics {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        const sources = nodelink.options?.sources;
-        const config = sources?.monochrome || {
-            enabled: false
-        };
+        const sources = nodelink.options.sources;
+        const config = sources.monochrome;
         const defaultUrls = [
             'https://eu-central.monochrome.tf',
             'https://us-west.monochrome.tf',

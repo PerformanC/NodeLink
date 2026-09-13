@@ -1,4 +1,4 @@
-import { logger, makeRequest } from "../utils.js";
+import { logger, makeRequest } from '../utils.js';
 const CLEAN_PATTERNS = [
     /\s*\([^)]*(?:official|lyrics?|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi,
     /\s*\[[^\]]*(?:official|lyrics?|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^\]]*\]/gi,

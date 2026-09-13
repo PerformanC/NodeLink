@@ -1,5 +1,5 @@
 import { PassThrough, Transform } from 'node:stream';
-import { encodeTrack, getVersion, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getVersion, http1makeRequest, logger } from '../utils.js';
 /**
  * Default user agent for HTTP source requests.
  * @internal
@@ -214,6 +214,9 @@ export default class HttpSource {
             let data = await http1makeRequest(url, {
                 method: 'HEAD',
                 headers: requestHeaders
+            }).catch((err) => {
+                logger('warn', 'HTTP Source', `HEAD request failed for URL: ${url} with error: ${err.message} - falling back to GET request (this is expected for some servers that do not support HEAD)`);
+                return { error: err };
             });
             const headContentType = headerToString(data.headers?.['content-type']);
             const headOk = !data.error &&
@@ -226,9 +229,7 @@ export default class HttpSource {
                     headers: requestHeaders
                 });
                 const previewStream = getData?.stream;
-                if (previewStream && typeof previewStream.destroy === 'function') {
-                    previewStream.destroy();
-                }
+                previewStream?.destroy?.();
                 data = getData;
             }
             if (data.error) {
@@ -440,8 +441,7 @@ export default class HttpSource {
             const wait = async (ms) => {
                 await new Promise((resolve) => {
                     const timeout = setTimeout(resolve, ms);
-                    if (typeof timeout.unref === 'function')
-                        timeout.unref();
+                    timeout.unref?.();
                 });
             };
             const finishStream = () => {

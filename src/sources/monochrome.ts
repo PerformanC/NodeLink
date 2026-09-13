@@ -48,6 +48,7 @@ class MonochromeSource implements SourceInstance {
 
   private apiInstances: InstanceHealth[] = []
   private streamingInstances: InstanceHealth[] = []
+  private qobuzInstances: InstanceHealth[] = []
 
   /**
    * Initializes the Monochrome source with health-tracked instance pools.
@@ -55,7 +56,7 @@ class MonochromeSource implements SourceInstance {
    */
   constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
-    const sources = nodelink.options?.sources as
+    const sources = nodelink.options?.sources as unknown as
       | Record<string, { enabled?: boolean }>
       | undefined
     this.config =
@@ -76,6 +77,11 @@ class MonochromeSource implements SourceInstance {
       'https://api.monochrome.tf'
     ]
 
+    const defaultQobuzUrls = [
+      'https://qobuz.kennyy.com.br',
+      'https://trypt-hifi-dl-456461932686.us-west1.run.app'
+    ]
+
     const initPool = (urls: string[]) =>
       urls.map((url) => ({
         url: url.replace(/\/$/, ''),
@@ -92,9 +98,13 @@ class MonochromeSource implements SourceInstance {
     const streamingInstances = this.config.streamingInstances?.length
       ? this.config.streamingInstances
       : instances
+    const qobuzInstances = this.config.qobuzInstances?.length
+      ? this.config.qobuzInstances
+      : defaultQobuzUrls
 
     this.apiInstances = initPool(instances)
     this.streamingInstances = initPool(streamingInstances)
+    this.qobuzInstances = initPool(qobuzInstances)
 
     this.patterns = [
       /^https?:\/\/monochrome\.tf\/(track|album|playlist|artist|video)\/[\w-]+/,
@@ -121,75 +131,16 @@ class MonochromeSource implements SourceInstance {
         return false
       }
 
-      logger(
-        'info',
-        'Monochrome',
-        `Initializing latency check for ${apiCount} instances...`
-      )
-
-      const checkInstance = async (instance: InstanceHealth) => {
-        const start = Date.now()
-        try {
-          const { statusCode } = await http1makeRequest(`${instance.url}/`, {
-            method: 'GET',
-            timeout: 3000
-          })
-          const latency = Date.now() - start
-
-          if (statusCode === 200 || statusCode === 404 || statusCode === 302) {
-            // Success (or at least reachable)
-            if (latency < 500) instance.score = 100
-            else if (latency < 1500) instance.score = 80
-            else if (latency < 3000) instance.score = 50
-            else instance.score = 20
-
-            logger(
-              'debug',
-              'Monochrome',
-              `Instance ${instance.url} - Latency: ${latency}ms, Initial Score: ${instance.score}`
-            )
-          } else {
-            instance.score = 0
-            instance.lastFailure = Date.now()
-            logger(
-              'debug',
-              'Monochrome',
-              `Instance ${instance.url} - Error: Status ${statusCode}, Score: 0`
-            )
-          }
-        } catch (_e) {
-          instance.score = 0
-          instance.lastFailure = Date.now()
-          logger(
-            'debug',
-            'Monochrome',
-            `Instance ${instance.url} - Connection Failed, Score: 0`
-          )
-        }
-      }
-
-      await Promise.allSettled(this.apiInstances.map(checkInstance))
-
-      // Sync streaming scores if they use the same URLs
       for (const s of this.streamingInstances) {
         const api = this.apiInstances.find((a) => a.url === s.url)
         if (api) s.score = api.score
       }
 
-      const reachable = this.apiInstances.filter((i) => i.score > 0).length
       logger(
         'info',
         'Monochrome',
-        `Source is ready with ${apiCount} API (${reachable} reachable) and ${streamCount} streaming instances.`
+        `Source is ready with ${apiCount} API and ${streamCount} streaming instances.`
       )
-
-      if (reachable === 0) {
-        logger(
-          'warn',
-          'Monochrome',
-          'No reachable Monochrome instances at startup. Source will stay loaded but degraded.'
-        )
-      }
 
       return true
     } catch (error) {
@@ -464,7 +415,7 @@ class MonochromeSource implements SourceInstance {
       }
     }
 
-    // 3. Collection resolution (Album/Playlist) with exaustive pagination
+    // 3. Collection resolution (Album/Playlist) with exhaustive pagination
     const collectionMatch = url.match(/(album|playlist)\/([a-f0-9-]+|\d+)/)
     if (collectionMatch) {
       const type = collectionMatch[1] || ''
@@ -479,7 +430,7 @@ class MonochromeSource implements SourceInstance {
       while (
         tracks.length < total &&
         tracks.length <
-          ((this.nodelink.options.maxAlbumPlaylistLength as number) || 1000)
+          ((this.nodelink.options.playback.maxPlaylistLength as number) || 1000)
       ) {
         const res = await this.fetchWithRetry<
           MonochromeResponse<{
@@ -539,6 +490,19 @@ class MonochromeSource implements SourceInstance {
    */
   public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
     const isVideo = track.uri.includes('/video/')
+
+    if (!isVideo && track.isrc) {
+      const qobuzQuality = this.config.qobuzQuality ?? 6
+      const qobuzUrl = await this.fetchQobuzProxyUrl(track.isrc, qobuzQuality)
+      if (qobuzUrl) {
+        return {
+          url: qobuzUrl,
+          protocol: 'https',
+          format: qobuzQuality > 5 ? 'audio/flac' : 'audio/mpeg'
+        }
+      }
+    }
+
     const quality = this.config.quality || 'LOSSLESS'
 
     const params = new URLSearchParams({
@@ -567,39 +531,33 @@ class MonochromeSource implements SourceInstance {
       '2.7'
     )
 
-    if (!response)
-      return {
-        exception: {
-          message: 'Failed to fetch playback manifest',
-          severity: 'fault'
+    if (response) {
+      const uri = this.extractStreamUrl(response)
+      if (uri) {
+        const attr = response?.data?.data?.attributes
+        if (attr?.trackAudioNormalizationData) {
+          logger(
+            'debug',
+            'Monochrome',
+            `Normalization for ${track.identifier}: Gain ${attr.trackAudioNormalizationData.replayGain} dB, Peak ${attr.trackAudioNormalizationData.peakAmplitude}`
+          )
+        }
+        return {
+          url: uri,
+          protocol: uri.includes('.mpd')
+            ? 'dash'
+            : uri.includes('.m3u8')
+              ? 'hls'
+              : 'http'
         }
       }
-
-    const uri = this.extractStreamUrl(response)
-    if (!uri)
-      return {
-        exception: {
-          message: 'Failed to extract playable URI from manifest',
-          severity: 'fault'
-        }
-      }
-
-    const attr = response?.data?.data?.attributes
-    if (attr?.trackAudioNormalizationData) {
-      logger(
-        'debug',
-        'Monochrome',
-        `Normalization for ${track.identifier}: Gain ${attr.trackAudioNormalizationData.replayGain} dB, Peak ${attr.trackAudioNormalizationData.peakAmplitude}`
-      )
     }
 
     return {
-      url: uri,
-      protocol: uri.includes('.mpd')
-        ? 'dash'
-        : uri.includes('.m3u8')
-          ? 'hls'
-          : 'http'
+      exception: {
+        message: 'Failed to fetch playback manifest',
+        severity: 'fault'
+      }
     }
   }
 
@@ -818,6 +776,123 @@ class MonochromeSource implements SourceInstance {
     } catch {
       return null
     }
+  }
+
+  /**
+   * Fetches a direct stream URL from the Qobuz proxy instances.
+   * Steps: search by ISRC → get track ID → download music.
+   * @param isrc - Track ISRC code.
+   * @returns Direct stream URL or null.
+   * @private
+   */
+  private async fetchQobuzProxyUrl(
+    isrc: string,
+    quality: number = 6
+  ): Promise<string | null> {
+    const pool = this.qobuzInstances.filter((i) => i.score > 0)
+    if (pool.length === 0) {
+      logger('warn', 'Monochrome', 'No Qobuz proxy instances available.')
+      return null
+    }
+
+    const proxyHeaders = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+      Accept: '*/*',
+      'Accept-Language': 'en;q=0.8',
+      Origin: 'https://monochrome.tf',
+      Referer: 'https://monochrome.tf/',
+      Pragma: 'no-cache',
+      'Cache-Control': 'no-cache'
+    }
+
+    for (const instance of pool) {
+      instance.activeRequests++
+      try {
+        const searchUrl = `${instance.url}/api/get-music?q=${encodeURIComponent(isrc)}&offset=0`
+        const { body: searchBody, statusCode: searchStatus } =
+          await http1makeRequest(searchUrl, {
+            method: 'GET',
+            timeout: 5000,
+            headers: proxyHeaders
+          })
+
+        if (searchStatus !== 200 || !searchBody) {
+          instance.score = Math.max(instance.score - 10, 0)
+          instance.failures++
+          instance.lastFailure = Date.now()
+          continue
+        }
+
+        const searchData =
+          typeof searchBody === 'string'
+            ? (JSON.parse(searchBody) as Record<string, unknown>)
+            : (searchBody as Record<string, unknown>)
+
+        const tracks = (searchData?.data as Record<string, unknown> | undefined)
+          ?.tracks as Record<string, unknown> | undefined
+        const items = tracks?.items as
+          | Array<Record<string, unknown>>
+          | undefined
+        const track = items?.[0]
+        if (!track) {
+          instance.score = Math.max(instance.score - 5, 0)
+          continue
+        }
+
+        const trackId = track.id as number | undefined
+        if (!trackId) {
+          instance.score = Math.max(instance.score - 5, 0)
+          continue
+        }
+
+        const downloadUrl = `${instance.url}/api/download-music?track_id=${trackId}&quality=${quality}`
+        const { body: downloadBody, statusCode: downloadStatus } =
+          await http1makeRequest(downloadUrl, {
+            method: 'GET',
+            timeout: 5000,
+            headers: proxyHeaders
+          })
+
+        if (downloadStatus !== 200 || !downloadBody) {
+          instance.score = Math.max(instance.score - 10, 0)
+          instance.failures++
+          instance.lastFailure = Date.now()
+          continue
+        }
+
+        const downloadData =
+          typeof downloadBody === 'string'
+            ? (JSON.parse(downloadBody) as Record<string, unknown>)
+            : (downloadBody as Record<string, unknown>)
+
+        const url = (downloadData?.data as Record<string, unknown> | undefined)
+          ?.url as string | undefined
+        if (url) {
+          instance.score = Math.min(instance.score + 5, 100)
+          logger(
+            'debug',
+            'Monochrome',
+            `Qobuz proxy resolved track ${isrc} via ${instance.url}`
+          )
+          return url
+        }
+
+        instance.score = Math.max(instance.score - 5, 0)
+      } catch (e) {
+        instance.score = Math.max(instance.score - 20, 0)
+        instance.lastFailure = Date.now()
+        logger(
+          'error',
+          'Monochrome',
+          `Qobuz proxy error for ${isrc} on ${instance.url}: ${e instanceof Error ? e.message : String(e)}`
+        )
+      } finally {
+        instance.activeRequests--
+      }
+    }
+
+    return null
   }
 
   /**

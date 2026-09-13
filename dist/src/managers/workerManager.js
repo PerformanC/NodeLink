@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import v8 from 'node:v8';
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const getGlobalNodelink = () => globalThis.nodelink;
@@ -124,12 +124,9 @@ export default class WorkerManager {
         this.nextStatelessWorkerIndex = 0;
         this.pendingRequests = new Map();
         this.streamRequests = new Map();
-        const availableParallelism = typeof os.availableParallelism === 'function'
-            ? os.availableParallelism()
-            : os.cpus().length;
         this.maxWorkers =
             config.cluster.workers === 0
-                ? availableParallelism
+                ? os.cpus().length
                 : Math.max(1, config.cluster.workers || 0);
         this.minWorkers = Math.max(1, config.cluster?.minWorkers || 1);
         this.workerLoad = new Map();
@@ -167,7 +164,7 @@ export default class WorkerManager {
         this.commandSocketPath = createSocketPath('commands');
         this.commandServer = null;
         this.commandSockets = new Map();
-        this.eventSockets = new Set();
+        this.eventSockets = new Map();
         this.socketRotateInProgress = false;
         this.lastSocketRotateAt = 0;
         logger('info', 'Cluster', `Primary PID ${process.pid} - WorkerManager initialized. Min: ${this.minWorkers}, Max: ${this.maxWorkers} workers`);
@@ -339,21 +336,11 @@ export default class WorkerManager {
         let cost = playingCount * playingWeight + pausedCount * pausedWeight;
         if (stats.isHibernating)
             return cost;
-        const cpuLoad = stats.cpu?.nodelinkLoad ?? 0;
-        const lagP95 = stats.eventLoopLagP95 ?? stats.eventLoopLag ?? 0;
-        const frameDeficit = stats.frameStats?.deficit ?? 0;
-        const stuckRecoveries = stats.stuckRecoveries ?? 0;
-        if (cpuLoad > this.scalingConfig.cpuPenaltyLimit) {
+        if ((stats.cpu?.nodelinkLoad ?? 0) > this.scalingConfig.cpuPenaltyLimit) {
             cost += this.scalingConfig.maxPlayersPerWorker + 5;
         }
-        if (lagP95 > this.scalingConfig.lagPenaltyLimit) {
+        if ((stats.eventLoopLag ?? 0) > this.scalingConfig.lagPenaltyLimit) {
             cost += this.scalingConfig.maxPlayersPerWorker / 2;
-        }
-        if (frameDeficit > playingCount * 10) {
-            cost += this.scalingConfig.maxPlayersPerWorker / 4;
-        }
-        if (stuckRecoveries > playingCount * 0.1 && playingCount > 0) {
-            cost += this.scalingConfig.maxPlayersPerWorker / 3;
         }
         return cost;
     }
@@ -375,16 +362,38 @@ export default class WorkerManager {
         }
         logger('debug', 'Cluster', `Worker ${workerId} failure history updated: ${JSON.stringify(history)}`);
     }
+    _registerEventSocket(pid, eventSocket) {
+        const worker = this.workers.find((w) => w.process.pid === pid);
+        if (!worker)
+            return;
+        const existing = this.eventSockets.get(worker.id);
+        if (existing && existing !== eventSocket) {
+            try {
+                existing.destroy();
+            }
+            catch { }
+        }
+        eventSocket._workerId = worker.id;
+        this.eventSockets.set(worker.id, eventSocket);
+    }
+    _removeEventSocket(eventSocket) {
+        const workerId = eventSocket?._workerId;
+        if (!workerId)
+            return;
+        if (this.eventSockets.get(workerId) === eventSocket) {
+            this.eventSockets.delete(workerId);
+        }
+    }
     _startSocketServer() {
         this._safeUnlinkSocketPath(this.socketPath);
         this.server = net.createServer((socket) => {
-            this.eventSockets.add(socket);
+            const eventSocket = socket;
             const frameChunks = [];
             let frameBytes = 0;
             socket.on('error', () => {
                 // Ignore per-connection transport errors (EPIPE/ECONNRESET).
             });
-            socket.on('close', () => this.eventSockets.delete(socket));
+            socket.on('close', () => this._removeEventSocket(eventSocket));
             const peekBytes = (count) => {
                 const first = frameChunks[0];
                 if (first && first.length >= count)
@@ -459,7 +468,12 @@ export default class WorkerManager {
                     }
                     try {
                         const data = v8.deserialize(payload);
-                        if (type === 3) {
+                        if (type === 0) {
+                            // Event socket hello - register socket to worker by PID
+                            if (isPidPacket(data))
+                                this._registerEventSocket(data.pid, eventSocket);
+                        }
+                        else if (type === 3) {
                             // playerEvent
                             const nodelink = getGlobalNodelink();
                             if (nodelink)
@@ -469,10 +483,11 @@ export default class WorkerManager {
                                 });
                         }
                         else if (type === 4) {
-                            // workerStats
+                            // workerStats - prefer socket-mapped worker ID over payload workerId
                             if (isWorkerStatsPacket(data)) {
-                                const { workerId, ...stats } = data;
-                                this.statsUpdateBatch.set(workerId, stats);
+                                const { workerId: payloadWorkerId, ...stats } = data;
+                                const resolvedWorkerId = eventSocket._workerId ?? payloadWorkerId;
+                                this.statsUpdateBatch.set(resolvedWorkerId, stats);
                                 if (!this.statsUpdateTimer) {
                                     this.statsUpdateTimer = setTimeout(() => this._flushStatsUpdates(), 100);
                                 }
@@ -620,7 +635,7 @@ export default class WorkerManager {
         const oldEventPath = this.socketPath;
         const oldCommandPath = this.commandSocketPath;
         logger('warn', 'Cluster', `Rotating internal sockets after ${reason} (worker ${sourceWorkerId})`);
-        for (const socket of this.eventSockets) {
+        for (const socket of this.eventSockets.values()) {
             try {
                 socket.destroy();
             }
@@ -865,6 +880,7 @@ export default class WorkerManager {
             WORKER_TYPE: 'playback'
         });
         worker.workerType = 'playback';
+        worker.send({ type: 'clusterId', clusterId: worker.id });
         worker.ready = false;
         this.workers.push(worker);
         this.workersById.set(worker.id, worker);
@@ -909,24 +925,22 @@ export default class WorkerManager {
             logger('warn', 'Cluster', `Player ${playerKey} unassigned due to worker ${workerId} exit. Will be reassigned on next request.`);
         }
         if (affectedGuilds.length > 0) {
-            for (const playerKey of affectedGuilds) {
-                const [guildId] = playerKey.split(':');
-                const nodelink = getGlobalNodelink();
-                if (!nodelink)
-                    continue;
-                for (const session of nodelink.sessions.values()) {
-                    const sessionKey = `${guildId}:${session.userId}`;
-                    if (session.players.players.has(sessionKey)) {
-                        session.players.players.delete(sessionKey);
+            const nodelink = getGlobalNodelink();
+            if (nodelink) {
+                for (const playerKey of affectedGuilds) {
+                    const [sessionId] = playerKey.split(':');
+                    if (!sessionId)
+                        continue;
+                    const session = nodelink.sessions.get(sessionId);
+                    if (session?.players.players.delete(playerKey)) {
                         logger('debug', 'Cluster', `Removed stale player placeholder for ${playerKey} from session ${session.id}`);
                     }
                 }
+                nodelink.handleIPCMessage({
+                    type: 'workerFailed',
+                    payload: { workerId: worker.id, affectedGuilds }
+                });
             }
-            const nodelink = getGlobalNodelink();
-            nodelink?.handleIPCMessage({
-                type: 'workerFailed',
-                payload: { workerId: worker.id, affectedGuilds }
-            });
         }
         try {
             worker.process.kill();
@@ -1051,28 +1065,6 @@ export default class WorkerManager {
                     minCost = cost;
                     bestWorker = worker;
                 }
-            }
-        }
-        if (bestWorker) {
-            const ws = this.workerStats.get(bestWorker.id);
-            const localLoad = this.workerToGuilds.get(bestWorker.id)?.size ?? 0;
-            const lagP99 = ws?.eventLoopLagP99 ?? ws?.eventLoopLag ?? 0;
-            const cpuLoad = ws?.cpu?.nodelinkLoad ?? 0;
-            const stuckRecoveries = ws?.stuckRecoveries ?? 0;
-            const playingCount = localLoad;
-            const admissionDenied = lagP99 > this.scalingConfig.lagPenaltyLimit * 3 ||
-                cpuLoad > 0.95 ||
-                (stuckRecoveries > playingCount * 0.5 && playingCount > 5);
-            if (admissionDenied && this.workers.length < this.maxWorkers) {
-                logger('warn', 'Cluster', `Worker #${bestWorker.id} admission denied (lagP99=${lagP99.toFixed(1)}ms, cpu=${cpuLoad.toFixed(2)}, stuckRecoveries=${stuckRecoveries}). Forking new worker.`);
-                const newWorker = this.forkWorker();
-                if (newWorker) {
-                    this.assignGuildToWorker(playerKey, newWorker);
-                    return newWorker;
-                }
-            }
-            else if (admissionDenied) {
-                logger('warn', 'Cluster', `Worker #${bestWorker.id} admission denied but at max workers. Assigning anyway.`);
             }
         }
         const threshold = this.scalingConfig.maxPlayersPerWorker;
@@ -1251,7 +1243,7 @@ export default class WorkerManager {
             catch { }
         }
         this.commandSockets.clear();
-        for (const socket of this.eventSockets) {
+        for (const socket of this.eventSockets.values()) {
             try {
                 socket.destroy();
             }

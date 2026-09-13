@@ -1,4 +1,4 @@
-import { bufferPool } from "./BufferPool.js";
+import { bufferPool } from './BufferPool.js';
 /**
  * A fast, fixed-size circular buffer for audio chunks.
  * Uses BufferPool for memory management to reduce GC pressure.

@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
 const BUTTERWORTH_Q = Math.SQRT1_2;
 const SUB_BLOCK_FRAMES = 64;
@@ -23,7 +23,8 @@ export default class Lowpass extends AnimatableFilter {
         const targetLogSmoothing = smoothing > 1.0 ? Math.log10(smoothing) : 0;
         super.applyAnimatedUpdate({
             lowpass: {
-                logSmoothing: targetLogSmoothing
+                logSmoothing: targetLogSmoothing,
+                transition: rawConfig.transition
             }
         }, 'lowpass', { logSmoothing: 0 });
     }

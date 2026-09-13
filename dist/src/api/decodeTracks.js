@@ -1,4 +1,4 @@
-import { decodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Default validation message used when the request body is not a non-empty
  * array of encoded track strings.

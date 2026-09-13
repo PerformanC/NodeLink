@@ -15,30 +15,32 @@ import { resolve as resolvePath } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { pathToFileURL } from 'node:url';
 import v8 from 'node:v8';
-import { GatewayEvents } from "../constants.js";
-import ConnectionManager from "../managers/connectionManager.js";
-import CredentialManager from "../managers/credentialManager.js";
-import PluginManager from "../managers/pluginManager.js";
-import RoutePlannerManager from "../managers/routePlannerManager.js";
-import SourceManager from "../managers/sourceManager.js";
-import StatsManager from "../managers/statsManager.js";
-import TrackCacheManager from "../managers/trackCacheManager.js";
-import { getWebmOpusProfilerStats } from "../playback/demuxers/WebmOpus.js";
-import { bufferPool } from "../playback/structs/BufferPool.js";
-import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from "../utils.js";
-import { createVoiceRelay } from "../voice/voiceRelay.js";
-import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from "./headQueue.js";
+import { GatewayEvents } from '../constants.js';
+import ConnectionManager from '../managers/connectionManager.js';
+import CredentialManager from '../managers/credentialManager.js';
+import PluginManager from '../managers/pluginManager.js';
+import RoutePlannerManager from '../managers/routePlannerManager.js';
+import SourceManager from '../managers/sourceManager.js';
+import StatsManager from '../managers/statsManager.js';
+import TrackCacheManager from '../managers/trackCacheManager.js';
+import { migrateConfig } from '../modules/config/configMigration.js';
+import { getWebmOpusProfilerStats } from '../playback/demuxers/WebmOpus.js';
+import { bufferPool } from '../playback/structs/BufferPool.js';
+import { applyEnvOverrides, cleanupHttpAgents, initLogger, logger } from '../utils.js';
+import { createVoiceRelay } from '../voice/voiceRelay.js';
+import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from './headQueue.js';
+import { createStreamFinalizer } from './streamFinalizer.js';
 let playerClassPromise = null;
 let createPCMStreamPromise = null;
 const getPlayerClass = async () => {
     if (!playerClassPromise) {
-        playerClassPromise = import("../playback/player.js").then((module) => module.Player);
+        playerClassPromise = import('../playback/player.js').then((module) => module.Player);
     }
     return playerClassPromise;
 };
 const getCreatePCMStream = async () => {
     if (!createPCMStreamPromise) {
-        createPCMStreamPromise = import("../playback/processing/streamProcessor.js").then((module) => module.createPCMStream);
+        createPCMStreamPromise = import('../playback/processing/streamProcessor.js').then((module) => module.createPCMStream);
     }
     return createPCMStreamPromise;
 };
@@ -57,14 +59,42 @@ try {
 catch (_e) { }
 let config;
 const resolveRootConfigUrl = (fileName) => pathToFileURL(resolvePath(process.cwd(), fileName)).href;
-try {
-    config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.js'))))
-        .default;
-}
-catch {
-    config = (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js'))))
-        .default;
-}
+const resolveConfigExport = (importedModule, fileName) => {
+    const candidate = importedModule.default ??
+        importedModule.config;
+    if (candidate &&
+        typeof candidate === 'object' &&
+        Object.keys(candidate).length > 0) {
+        return candidate;
+    }
+    throw new Error(`[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`);
+};
+const loadConfig = async () => {
+    const candidates = [
+        'config.ts',
+        'config.js',
+        'config.default.ts',
+        'config.default.js'
+    ];
+    for (const fileName of candidates) {
+        try {
+            const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl(fileName)));
+            const raw = resolveConfigExport(module, fileName);
+            return migrateConfig(raw);
+        }
+        catch (error) {
+            const err = error;
+            const isNotFound = err.code === 'ERR_MODULE_NOT_FOUND' ||
+                err.code === 'ENOENT' ||
+                err.message?.includes('Cannot find module');
+            if (isNotFound)
+                continue;
+            throw error;
+        }
+    }
+    throw new Error('[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).');
+};
+config = await loadConfig();
 applyEnvOverrides(config);
 const HIBERNATION_ENABLED = config.cluster?.hibernation?.enabled !== false;
 const HIBERNATION_TIMEOUT = config.cluster?.hibernation?.timeoutMs || 20 * 60 * 1000;
@@ -93,9 +123,7 @@ const PARALLEL_COMMANDS = new Set([
     'profilerCommand'
 ]);
 const getActiveResourcesBreakdown = () => {
-    const list = typeof process.getActiveResourcesInfo === 'function'
-        ? process.getActiveResourcesInfo()
-        : [];
+    const list = process.getActiveResourcesInfo?.() ?? [];
     const counters = {};
     for (const item of list) {
         counters[item] = (counters[item] || 0) + 1;
@@ -104,7 +132,7 @@ const getActiveResourcesBreakdown = () => {
 };
 const getActiveHandlesBreakdown = () => {
     const getter = process;
-    if (typeof getter._getActiveHandles !== 'function')
+    if (!getter._getActiveHandles)
         return {};
     const handles = getter._getActiveHandles();
     const counters = {};
@@ -301,9 +329,7 @@ const handleProfilerCommand = async (payload) => {
                     Number.isFinite(track.info.length)
                     ? track.info.length
                     : 0;
-            const positionMsRaw = typeof internal._realPosition === 'function'
-                ? internal._realPosition()
-                : internal.position || 0;
+            const positionMsRaw = internal._realPosition?.() ?? (internal.position || 0);
             const durationMs = Math.max(0, Number(durationMsRaw) || 0);
             const positionMs = Math.max(0, Number(positionMsRaw) || 0);
             const clampedPosition = durationMs > 0 ? Math.min(positionMs, durationMs) : positionMs;
@@ -482,9 +508,7 @@ const handleProfilerCommand = async (payload) => {
                     guildQueues: guildQueues.size,
                     activeStreams: activeStreams.size
                 },
-                bufferPool: typeof bufferPool.getStats === 'function'
-                    ? bufferPool.getStats()
-                    : null,
+                bufferPool: bufferPool.getStats?.() ?? null,
                 demuxers: {
                     webmOpus: getWebmOpusProfilerStats()
                 }
@@ -685,16 +709,12 @@ const ipcMessageTracker = {
         if (!this.enabled)
             return;
         try {
-            const size = Buffer.byteLength(JSON.stringify(payload));
-            const entry = this.sent.get(type) || {
-                count: 0,
-                totalBytes: 0,
-                maxBytes: 0
-            };
-            entry.count++;
-            entry.totalBytes += size;
-            entry.maxBytes = Math.max(entry.maxBytes, size);
-            this.sent.set(type, entry);
+            const size = v8.serialize(payload).byteLength;
+            const e = this.sent.get(type) ?? { count: 0, totalBytes: 0, maxBytes: 0 };
+            e.count++;
+            e.totalBytes += size;
+            e.maxBytes = Math.max(e.maxBytes, size);
+            this.sent.set(type, e);
         }
         catch { }
     },
@@ -702,16 +722,16 @@ const ipcMessageTracker = {
         if (!this.enabled)
             return;
         try {
-            const size = Buffer.byteLength(JSON.stringify(payload));
-            const entry = this.received.get(type) || {
+            const size = v8.serialize(payload).byteLength;
+            const e = this.received.get(type) ?? {
                 count: 0,
                 totalBytes: 0,
                 maxBytes: 0
             };
-            entry.count++;
-            entry.totalBytes += size;
-            entry.maxBytes = Math.max(entry.maxBytes, size);
-            this.received.set(type, entry);
+            e.count++;
+            e.totalBytes += size;
+            e.maxBytes = Math.max(e.maxBytes, size);
+            this.received.set(type, e);
         }
         catch { }
     },
@@ -745,7 +765,8 @@ const sendProcessMessage = (payload, onError) => {
         return false;
     }
 };
-const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, NODE_UNIQUE_ID } = process.env;
+const { EVENT_SOCKET_PATH, COMMAND_SOCKET_PATH, WORKER_CLUSTER_ID } = process.env;
+let WORKER_CLUSTER_ID_OVERRIDE = '';
 let eventSocket = null;
 let eventSocketPath = EVENT_SOCKET_PATH;
 let eventReconnectTimer = null;
@@ -809,12 +830,32 @@ const handleSocketDisconnect = (socketType, socket) => {
     notifySocketDisconnected(socketType);
     scheduleReconnect(socketType);
 };
+const sendEventHello = () => {
+    if (!eventSocket || eventSocket.destroyed)
+        return false;
+    const payload = v8.serialize({ pid: process.pid });
+    const header = Buffer.alloc(6);
+    header.writeUInt8(0, 0);
+    header.writeUInt8(0, 1);
+    header.writeUInt32BE(payload.length, 2);
+    try {
+        eventSocket.cork();
+        const okHeader = eventSocket.write(header);
+        const okPayload = eventSocket.write(payload);
+        eventSocket.uncork();
+        return okHeader && okPayload;
+    }
+    catch {
+        return false;
+    }
+};
 const connectEventSocket = () => {
     if (!eventSocketPath)
         return;
     const socket = net.createConnection(eventSocketPath, () => {
         eventSocket = socket;
         clearReconnectTimer('event');
+        sendEventHello();
         logger('info', 'Worker', 'Connected to Master event socket');
     });
     socket.on('error', () => {
@@ -1045,7 +1086,7 @@ let lyricsManagerPromise = null;
 let meaningManagerPromise = null;
 const getLyricsManager = async () => {
     if (!lyricsManagerPromise) {
-        lyricsManagerPromise = import("../managers/lyricsManager.js").then(async (module) => {
+        lyricsManagerPromise = import('../managers/lyricsManager.js').then(async (module) => {
             const manager = new module.default(nodelink);
             await manager.loadFolder();
             nodelink.lyrics = manager;
@@ -1056,7 +1097,7 @@ const getLyricsManager = async () => {
 };
 const getMeaningManager = async () => {
     if (!meaningManagerPromise) {
-        meaningManagerPromise = import("../managers/meaningManager.js").then(async (module) => {
+        meaningManagerPromise = import('../managers/meaningManager.js').then(async (module) => {
             const manager = new module.default(nodelink);
             await manager.loadFolder();
             nodelink.meanings = manager;
@@ -1110,8 +1151,8 @@ const nodelink = {
     getMeaningManager
 };
 const createdVoiceRelay = createVoiceRelay({
-    enabled: config.voiceReceive?.enabled,
-    format: config.voiceReceive?.format,
+    enabled: config.playback.voiceReceive?.enabled,
+    format: config.playback.voiceReceive?.format,
     sendFrame: (frame) => sendEventBinaryFrame(8, frame),
     logger
 });
@@ -1147,19 +1188,20 @@ function startTimers(hibernating = false) {
         clearInterval(statsUpdateTimer);
     const updateInterval = hibernating
         ? 60000
-        : (config?.playerUpdateInterval ?? 5000);
+        : (config?.playback.playerUpdateInterval ?? 5000);
     const statsInterval = hibernating
         ? 120000
-        : config?.metrics?.enabled
+        : config?.api.metrics?.enabled
             ? 5000
-            : (config?.statsUpdateInterval ?? 30000);
-    const zombieThreshold = config?.zombieThresholdMs ?? 60000;
+            : (config?.playback.statsUpdateInterval ?? 30000);
+    const zombieThreshold = config?.playback.zombieThresholdMs ?? 60000;
     playerUpdateTimer = setInterval(() => {
         if (!process.connected)
             return;
         for (const player of players.values()) {
             if (player?.track && !player.isPaused && player.connection) {
-                if (player._lastStreamDataTime &&
+                if (player.connStatus === 'connected' &&
+                    player._lastStreamDataTime &&
                     player._lastStreamDataTime > 0 &&
                     Date.now() - player._lastStreamDataTime >= zombieThreshold) {
                     logger('warn', 'Player', `Player for guild ${player.guildId} detected as zombie (no stream data).`);
@@ -1244,7 +1286,7 @@ function startTimers(hibernating = false) {
             lastCpuUsage = process.cpuUsage();
             const nodelinkLoad = elapsedMs > 0 ? (cpuUsage.user + cpuUsage.system) / 1000 / elapsedMs : 0;
             const mem = process.memoryUsage();
-            const workerIdEnv = NODE_UNIQUE_ID;
+            const resolvedClusterId = WORKER_CLUSTER_ID_OVERRIDE || WORKER_CLUSTER_ID;
             const eluP50 = hndl.percentile(50) / 1e6;
             const eluP95 = hndl.percentile(95) / 1e6;
             const eluP99 = hndl.percentile(99) / 1e6;
@@ -1258,7 +1300,7 @@ function startTimers(hibernating = false) {
                 }
             }
             const stats = {
-                workerId: parseInt(workerIdEnv ?? '0', 10) + 1,
+                workerId: resolvedClusterId ? parseInt(resolvedClusterId, 10) : 0,
                 isHibernating,
                 players: localPlayers,
                 playingPlayers: localPlayingPlayers,
@@ -1325,8 +1367,9 @@ process.on('unhandledRejection', (reason, promise) => {
  */
 function cleanupActiveStream(streamId, entry) {
     const current = entry || activeStreams.get(streamId);
-    if (!current)
+    if (!current || current.cleaned)
         return;
+    current.cleaned = true;
     if (current.pcmStream && !current.pcmStream.destroyed) {
         current.pcmStream.destroy();
     }
@@ -1362,25 +1405,30 @@ async function startLoadStream(streamId, payload) {
     }
     const createPCMStream = await getCreatePCMStream();
     const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {});
-    const entry = { pcmStream, fetched, cancelled: false };
+    const entry = {
+        pcmStream,
+        fetched,
+        cancelled: false,
+        cleaned: false
+    };
     activeStreams.set(streamId, entry);
     streamLifecycle.created++;
-    const finish = (err) => {
-        if (entry.cancelled) {
+    const finish = createStreamFinalizer(entry, {
+        onCancelled: () => {
             streamLifecycle.cancelled++;
-            cleanupActiveStream(streamId, entry);
-            return;
-        }
-        if (err) {
+        },
+        onError: (error) => {
             streamLifecycle.errored++;
-            sendStreamError(streamId, getErrorMessage(err));
-        }
-        else {
+            sendStreamError(streamId, getErrorMessage(error));
+        },
+        onEnd: () => {
             streamLifecycle.ended++;
             sendStreamEnd(streamId);
+        },
+        onCleanup: () => {
+            cleanupActiveStream(streamId, entry);
         }
-        cleanupActiveStream(streamId, entry);
-    };
+    });
     pcmStream.on('data', (chunk) => {
         if (!entry.cancelled)
             sendStreamChunk(streamId, chunk);
@@ -1394,6 +1442,7 @@ function cancelStream(streamId) {
     if (!entry)
         return false;
     entry.cancelled = true;
+    streamLifecycle.cancelled++;
     cleanupActiveStream(streamId, entry);
     return true;
 }
@@ -1577,12 +1626,12 @@ async function processQueue(queueKey) {
                 const player = players.get(playerKey);
                 const target = player;
                 const callable = target?.[command];
-                if (player && typeof callable === 'function') {
+                if (player && callable instanceof Function) {
                     result = await callable.apply(player, args ?? []);
                 }
                 else if (command === 'forceUpdate' &&
                     player &&
-                    typeof player._sendUpdate === 'function') {
+                    player._sendUpdate) {
                     ;
                     player._sendUpdate();
                     result = { updated: true };
@@ -1771,6 +1820,10 @@ process.on('message', (msg) => {
     const message = msg;
     if (message.type) {
         ipcMessageTracker.trackReceived(message.type, message);
+    }
+    if (message.type === 'clusterId') {
+        WORKER_CLUSTER_ID_OVERRIDE = String(message.clusterId ?? '');
+        return;
     }
     if (message.type === 'ping') {
         if (process.connected) {

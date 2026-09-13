@@ -15,13 +15,12 @@ import { resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import v8 from 'node:v8';
 import { isMainThread, parentPort, workerData as rawWorkerData, Worker } from 'node:worker_threads';
-import * as utils from "../utils.js";
-import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from "./headQueue.js";
+import { migrateConfig } from '../modules/config/configMigration.js';
+import * as utils from '../utils.js';
+import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from './headQueue.js';
 const __filename = fileURLToPath(import.meta.url);
 const getActiveResourcesBreakdown = () => {
-    const list = typeof process.getActiveResourcesInfo === 'function'
-        ? process.getActiveResourcesInfo()
-        : [];
+    const list = process.getActiveResourcesInfo?.() ?? [];
     const counters = {};
     for (const item of list) {
         counters[item] = (counters[item] || 0) + 1;
@@ -59,12 +58,39 @@ if (isMainThread) {
      * @internal
      */
     async function loadConfig() {
-        try {
-            return (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.js')))).default;
+        const resolveConfigExport = (importedModule, fileName) => {
+            const candidate = importedModule.default ??
+                importedModule.config;
+            if (candidate &&
+                typeof candidate === 'object' &&
+                Object.keys(candidate).length > 0) {
+                return candidate;
+            }
+            throw new Error(`[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`);
+        };
+        const candidates = [
+            'config.ts',
+            'config.js',
+            'config.default.ts',
+            'config.default.js'
+        ];
+        for (const fileName of candidates) {
+            try {
+                const module = await import(__rewriteRelativeImportExtension(resolveRootConfigUrl(fileName)));
+                const raw = resolveConfigExport(module, fileName);
+                return migrateConfig(raw);
+            }
+            catch (error) {
+                const err = error;
+                const isNotFound = err.code === 'ERR_MODULE_NOT_FOUND' ||
+                    err.code === 'ENOENT' ||
+                    err.message?.includes('Cannot find module');
+                if (isNotFound)
+                    continue;
+                throw error;
+            }
         }
-        catch {
-            return (await import(__rewriteRelativeImportExtension(resolveRootConfigUrl('config.default.js')))).default;
-        }
+        throw new Error('[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).');
     }
     const config = await loadConfig();
     utils.applyEnvOverrides(config);
@@ -79,7 +105,7 @@ if (isMainThread) {
         logger: utils.logger,
         pluginManager: null
     };
-    const { default: PluginManagerClass } = await import("../managers/pluginManager.js");
+    const { default: PluginManagerClass } = await import('../managers/pluginManager.js');
     nodelink.pluginManager = new PluginManagerClass(nodelink);
     await nodelink.pluginManager.load('source-worker');
     const maxThreadCount = Math.max(1, specConfig.microWorkers ?? Math.min(2, os.cpus().length));
@@ -439,7 +465,7 @@ else {
         logger: utils.logger,
         pluginManager: null
     };
-    const { default: PluginManagerClass } = await import("../managers/pluginManager.js");
+    const { default: PluginManagerClass } = await import('../managers/pluginManager.js');
     nodelink.pluginManager = new PluginManagerClass(nodelink);
     await nodelink.pluginManager.load('micro-worker');
     /**
@@ -447,12 +473,12 @@ else {
      * @internal
      */
     const [{ createPCMStream, createSeekeableAudioResource }, { default: SourceManager }, { default: CredentialManager }, { default: TrackCacheManager }, { default: RoutePlannerManager }, { default: StatsManager }] = await Promise.all([
-        import("../playback/processing/streamProcessor.js"),
-        import("../managers/sourceManager.js"),
-        import("../managers/credentialManager.js"),
-        import("../managers/trackCacheManager.js"),
-        import("../managers/routePlannerManager.js"),
-        import("../managers/statsManager.js")
+        import('../playback/processing/streamProcessor.js'),
+        import('../managers/sourceManager.js'),
+        import('../managers/credentialManager.js'),
+        import('../managers/trackCacheManager.js'),
+        import('../managers/routePlannerManager.js'),
+        import('../managers/statsManager.js')
     ]);
     nodelink.statsManager = new StatsManager(nodelink);
     nodelink.credentialManager = new CredentialManager(nodelink);
@@ -466,7 +492,7 @@ else {
     let meaningManagerPromise = null;
     const getLyricsManager = async () => {
         if (!lyricsManagerPromise) {
-            lyricsManagerPromise = import("../managers/lyricsManager.js").then(async (module) => {
+            lyricsManagerPromise = import('../managers/lyricsManager.js').then(async (module) => {
                 const manager = new module.default(nodelink);
                 await manager.loadFolder();
                 nodelink.lyrics = manager;
@@ -477,7 +503,7 @@ else {
     };
     const getMeaningManager = async () => {
         if (!meaningManagerPromise) {
-            meaningManagerPromise = import("../managers/meaningManager.js").then(async (module) => {
+            meaningManagerPromise = import('../managers/meaningManager.js').then(async (module) => {
                 const manager = new module.default(nodelink);
                 await manager.loadFolder();
                 nodelink.meanings = manager;

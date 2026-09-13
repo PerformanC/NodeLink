@@ -1,4 +1,4 @@
-import type { Buffer } from 'node:buffer'
+import { Buffer } from 'node:buffer'
 import { createRequire } from 'node:module'
 import { Transform } from 'node:stream'
 import type {
@@ -12,6 +12,12 @@ import { bufferPool } from '../structs/BufferPool.ts'
 
 const require = createRequire(import.meta.url)
 
+const OPUS_MAX_PACKET_SIZE = 4000
+const OPUS_MAX_PACKET_DURATION_MS = 120
+const PCM_SAMPLE_BYTES = 2
+
+// ^^ @toddynnn/voice-opus related, the encodeInto() functions does not check for MAX_PACKET_SIZE, unlike the encode().
+
 const OPUS_CTL = {
   BITRATE: 4002,
   FEC: 4012,
@@ -19,17 +25,6 @@ const OPUS_CTL = {
   DTX: 4016
 }
 
-const parsePositiveIntEnv = (key: string, fallback: number): number => {
-  const raw = process.env[key]
-  if (!raw) return fallback
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-const RING_SIZE = parsePositiveIntEnv(
-  'NODELINK_OPUS_ENCODER_RING_BYTES',
-  512 * 1024
-)
 let ACTIVE_LIB: OpusLibrary | null = null
 
 const _getLib = (): OpusLibrary => {
@@ -51,7 +46,7 @@ const _getLib = (): OpusLibrary => {
     try {
       const mod = require(l.name) as Record<string, unknown>
       const Encoder = l.pick(mod) as OpusLibrary['Encoder']
-      if (typeof Encoder === 'function') {
+      if (Encoder) {
         ACTIVE_LIB = { name: l.name, Encoder }
         return ACTIVE_LIB
       }
@@ -101,7 +96,7 @@ const _applyCtl = (
   }
 
   const fn = enc.applyEncoderCTL || enc.applyEncoderCtl || enc.encoderCTL
-  if (typeof fn === 'function') fn.call(enc, id, val)
+  fn?.call(enc, id, val)
 }
 
 export class Encoder extends Transform {
@@ -109,10 +104,9 @@ export class Encoder extends Transform {
   private lib: OpusLibrary
   private frameSize: number
   private frameBytes: number
-  private ring: Buffer | null
-  private swap: Buffer | null
-  private writePos: number
-  private readPos: number
+  private leftover: Buffer | null
+  private leftoverStorage: Buffer | null
+  private encodedScratch: Buffer | null
 
   constructor({
     rate = 48000,
@@ -131,11 +125,10 @@ export class Encoder extends Transform {
     this.enc = instance as OpusEncoderInstance
     this.lib = lib
     this.frameSize = frameSize
-    this.frameBytes = frameSize * channels * 2
-    this.ring = bufferPool.acquire(RING_SIZE)
-    this.swap = bufferPool.acquire(this.frameBytes)
-    this.writePos = 0
-    this.readPos = 0
+    this.frameBytes = frameSize * channels * PCM_SAMPLE_BYTES
+    this.leftover = null
+    this.leftoverStorage = null
+    this.encodedScratch = Buffer.allocUnsafe(OPUS_MAX_PACKET_SIZE)
   }
 
   override _transform(
@@ -147,68 +140,77 @@ export class Encoder extends Transform {
       cb()
       return
     }
-    if (!this.ring || !this.swap) {
+    if (!this.enc) {
       cb(new Error('Encoder destroyed.'))
       return
     }
 
-    let wp = this.writePos
-    let rp = this.readPos
-    const total = chunk.length
-    let remaining = total
+    let buf: Buffer
+    let pooledBuf: Buffer | null = null
 
-    while (remaining > 0) {
-      const space = RING_SIZE - wp
-      const canWrite = remaining < space ? remaining : space
-      chunk.copy(this.ring, wp, total - remaining, total - remaining + canWrite)
-      remaining -= canWrite
-      wp += canWrite
-      if (wp === RING_SIZE) wp = 0
+    if (this.leftover?.length) {
+      const totalLen = this.leftover.length + chunk.length
+      pooledBuf = bufferPool.acquire(totalLen)
+      this.leftover.copy(pooledBuf, 0)
+      chunk.copy(pooledBuf, this.leftover.length)
+      if (this.leftoverStorage) bufferPool.release(this.leftoverStorage)
+      this.leftover = null
+      this.leftoverStorage = null
+      buf = pooledBuf.subarray(0, totalLen)
+    } else {
+      buf = chunk
     }
 
-    while (true) {
-      const available = wp >= rp ? wp - rp : RING_SIZE - rp + wp
-      if (available < this.frameBytes) break
+    const frames = Math.floor(buf.length / this.frameBytes)
+    const consumed = frames * this.frameBytes
 
-      let frame: Buffer
-      const end = rp + this.frameBytes
-
-      if (end <= RING_SIZE) {
-        frame = this.ring.subarray(rp, end)
-      } else {
-        const first = RING_SIZE - rp
-        this.ring.copy(this.swap, 0, rp, RING_SIZE)
-        this.ring.copy(this.swap, first, 0, this.frameBytes - first)
-        frame = this.swap.subarray(0, this.frameBytes)
-      }
+    for (let i = 0; i < frames; i++) {
+      const off = i * this.frameBytes
+      const frame = buf.subarray(off, off + this.frameBytes)
 
       try {
-        if (!this.enc) throw new Error('Encoder not ready.')
-
-        if (this.lib.name === 'opusscript') {
-          this.push(this.enc.encode(frame, this.frameSize))
+        let encoded: Buffer
+        if (this.enc.encodeInto && this.encodedScratch) {
+          const written = this.enc.encodeInto(frame, this.encodedScratch)
+          // allocUnsafe + copy avoids the intermediate subarray view object
+          // that Buffer.from(subarray) would allocate per frame (50/s/player).
+          encoded = Buffer.allocUnsafe(written)
+          this.encodedScratch.copy(encoded, 0, 0, written)
         } else {
-          this.push(this.enc.encode(frame))
+          encoded =
+            this.lib.name === 'opusscript'
+              ? this.enc.encode(frame, this.frameSize)
+              : this.enc.encode(frame)
         }
+
+        this.push(encoded)
       } catch (e) {
-        this.writePos = wp
-        this.readPos = rp
+        this.leftover = null
+        this.leftoverStorage = null
+        if (pooledBuf) bufferPool.release(pooledBuf)
         cb(e instanceof Error ? e : new Error(String(e)))
         return
       }
-
-      rp += this.frameBytes
-      if (rp >= RING_SIZE) rp -= RING_SIZE
     }
 
-    this.writePos = wp
-    this.readPos = rp
+    if (consumed < buf.length) {
+      const remaining = buf.subarray(consumed)
+      this.leftoverStorage = bufferPool.acquire(remaining.length)
+      remaining.copy(this.leftoverStorage, 0, 0, remaining.length)
+      this.leftover = this.leftoverStorage.subarray(0, remaining.length)
+    }
+
+    // Release the temporary concatenation buffer back to the pool
+    if (pooledBuf) bufferPool.release(pooledBuf)
     cb()
   }
 
   override _flush(cb: (err?: Error) => void): void {
-    this.writePos = 0
-    this.readPos = 0
+    if (this.leftover) {
+      if (this.leftoverStorage) bufferPool.release(this.leftoverStorage)
+      this.leftover = null
+      this.leftoverStorage = null
+    }
     cb()
   }
 
@@ -217,13 +219,11 @@ export class Encoder extends Transform {
       this.enc.delete()
     }
     this.enc = null
-    if (this.ring) {
-      bufferPool.release(this.ring)
-      this.ring = null
-    }
-    if (this.swap) {
-      bufferPool.release(this.swap)
-      this.swap = null
+    this.encodedScratch = null
+    if (this.leftover) {
+      if (this.leftoverStorage) bufferPool.release(this.leftoverStorage)
+      this.leftover = null
+      this.leftoverStorage = null
     }
     cb(err)
   }
@@ -253,6 +253,7 @@ export class Encoder extends Transform {
 export class Decoder extends Transform {
   private dec: OpusDecoderInstance | null
   private lib: OpusLibrary
+  private pcmScratch: Buffer | null
 
   constructor({
     rate = 48000,
@@ -262,6 +263,12 @@ export class Decoder extends Transform {
     const { instance, lib } = _createInstance(rate, channels, 'voip')
     this.dec = instance as OpusDecoderInstance
     this.lib = lib
+    const maxSamplesPerChannel = Math.ceil(
+      (rate * OPUS_MAX_PACKET_DURATION_MS) / 1000
+    )
+    this.pcmScratch = Buffer.allocUnsafe(
+      maxSamplesPerChannel * channels * PCM_SAMPLE_BYTES
+    )
   }
 
   override _transform(
@@ -271,7 +278,19 @@ export class Decoder extends Transform {
   ): void {
     try {
       if (!this.dec) throw new Error('Decoder not ready.')
-      this.push(this.dec.decode(chunk))
+      if (this.dec.decodeInto && this.pcmScratch) {
+        const written = this.dec.decodeInto(chunk, this.pcmScratch)
+        // Copy because stream consumers may retain the chunk after this call.
+        // pushing it to scratch would result:
+        // the scratch subarray would allow the next frame to overwrite queued audio, causing corruption.
+        // and its also required by ownership boundary btw.
+        // allocUnsafe + copy avoids the intermediate subarray view per frame.
+        const out = Buffer.allocUnsafe(written)
+        this.pcmScratch.copy(out, 0, 0, written)
+        this.push(out)
+      } else {
+        this.push(this.dec.decode(chunk))
+      }
       cb()
     } catch (e) {
       cb(e instanceof Error ? e : new Error(String(e)))
@@ -283,6 +302,7 @@ export class Decoder extends Transform {
       this.dec.delete()
     }
     this.dec = null
+    this.pcmScratch = null
     cb(err)
   }
 }

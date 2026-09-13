@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 const TWITTER_AUTH_BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
 const TWITTER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const TWITTER_PATTERN = /https?:\/\/(?:(?:www|m(?:obile)?)\.)?(?:twitter|x)\.com\/(?:[^/]+)\/status\/(\d+)/i;
@@ -356,7 +356,7 @@ export default class TwitterSource {
      */
     getMaxSearchResults() {
         const options = this.nodelink.options;
-        const limit = options.maxSearchResults;
+        const limit = options.search?.maxResults;
         return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
             ? limit
             : 10;

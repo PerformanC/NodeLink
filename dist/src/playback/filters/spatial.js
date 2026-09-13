@@ -1,8 +1,8 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
-import DelayLine from "./dsp/delay.js";
-import LFO from "./dsp/lfo.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
+import DelayLine from './dsp/delay.js';
+import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 30;
 const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
@@ -39,7 +39,8 @@ export default class Spatial extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : isActive ? 1.0 : 0.0;
         super.applyAnimatedUpdate({
             spatial: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: s.transition
             }
         }, 'spatial', { alpha: 0.0 });
     }
@@ -90,5 +91,9 @@ export default class Spatial extends AnimatableFilter {
         this.leftDelay.clear();
         this.rightDelay.clear();
         return Buffer.alloc(0);
+    }
+    destroy() {
+        this.leftDelay.destroy();
+        this.rightDelay.destroy();
     }
 }

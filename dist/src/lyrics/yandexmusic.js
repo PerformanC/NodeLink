@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { http1makeRequest, logger } from "../utils.js";
+import { http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for Yandex Music API.
  * @internal

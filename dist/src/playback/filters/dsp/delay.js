@@ -20,7 +20,7 @@ export default class DelayLine {
      * @param sample - The PCM sample to write.
      */
     write(sample) {
-        this.buffer.writeInt16LE(sample, this.writeIndex * 2);
+        this.buffer?.writeInt16LE(sample, this.writeIndex * 2);
         this.writeIndex = (this.writeIndex + 1) % this.size;
     }
     /**
@@ -31,12 +31,15 @@ export default class DelayLine {
     read(delayInSamples) {
         const safeDelay = Math.max(0, Math.min(Math.floor(delayInSamples), this.size - 1));
         const readIndex = (this.writeIndex - safeDelay + this.size) % this.size;
-        return this.buffer.readInt16LE(readIndex * 2);
+        return this.buffer?.readInt16LE(readIndex * 2) ?? 0;
     }
     /**
      * Clears the delay line buffer.
      */
     clear() {
-        this.buffer.fill(0);
+        this.buffer?.fill(0);
+    }
+    destroy() {
+        this.buffer = null;
     }
 }

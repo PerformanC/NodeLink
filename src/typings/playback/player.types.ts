@@ -1,4 +1,9 @@
-import type { VoiceAudioStream, VoiceConnection } from '@performanc/voice'
+import type { Readable } from 'node:stream'
+import type {
+  VoiceAudioStream,
+  VoiceConnection,
+  VoicePlayerState
+} from '@performanc/voice'
 import type { TrackData } from '../index.types.ts'
 import type {
   TrackStreamResult,
@@ -34,6 +39,7 @@ export interface FadingConfig {
   seek?: FadingSection
   pause?: FadingSection
   resume?: FadingSection
+  ducking?: import('./ducking.types.ts').DuckingConfig
 }
 
 /**
@@ -132,28 +138,68 @@ export interface AudioResource {
     style: import('./processing.types.ts').ScratchStyle
   ): void
   checkScratchEffectCompleted?(): boolean
-  /**
-   * Reports the current effective playback rate (combining all filters and effects).
-   */
   getEffectiveRate?: () => number
-  /**
-   * Returns the current RMS level of the audio stream.
-   */
   getRMS?: () => number
-  /**
-   * Returns true if the audio stream is currently silent.
-   */
   isSilent?: () => boolean
+  setLoudnessNormalizer?(enabled: boolean): void
   destroy(): void
   stream?: VoiceAudioStream | null
+}
+
+export interface ExtendedVoiceConnection extends VoiceConnection {
+  audioStream?: VoiceAudioStream | null
+  udp?: { flush?: () => void }
+  playerState?: VoicePlayerState & { reason?: string }
 }
 
 export interface TrackEnergy {
   rms: number
 }
 
+/** Supported crossfade buffering modes. */
+export type CrossfadeMode = 'preload' | 'stream'
+
+/** Per-player crossfade configuration. */
+export interface CrossfadeConfig {
+  enabled?: boolean
+  duration?: number
+  curve?: import('./processing.types.ts').FadeCurve
+  mode?: CrossfadeMode
+  minBufferMs?: number
+  bufferMs?: number
+}
+
+/** PCM buffering options passed to the crossfade controller. */
+export interface CrossfadePrepareOptions {
+  durationMs: number
+  minBufferMs?: number
+  bufferMs?: number
+}
+
 export interface ExtendedAudioStream extends AudioResource {
   getMainEnergy?: () => TrackEnergy | null
+  destroyed?: boolean
+  _cleanupListeners?: () => void
+  pipes?: Array<{ destroy?: () => void }>
+  isPipelineFinished?: () => boolean
+  getConsumedMs?: () => number
+  prepareCrossfade?(
+    stream: Readable,
+    options: CrossfadePrepareOptions,
+    onComplete: (consumedMs: number) => void
+  ): boolean
+  startCrossfade?(
+    durationMs?: number,
+    curve?: string,
+    availableMs?: number
+  ): boolean
+  clearCrossfade?(): void
+  setCrossfadePaused?(paused: boolean): void
+  getCrossfadeState?(): {
+    active: boolean
+    bufferedMs: number
+    isBridging: boolean
+  }
 }
 
 export interface FilterTransitionsConfig {
@@ -222,6 +268,7 @@ export interface AudioMixer {
     layersPCM: Map<string, { buffer: Buffer; volume: number }>
   ) => Buffer
   hasActiveLayers: () => boolean
+  destroy: () => this
   on: (
     event: 'mixStarted' | 'mixEnded' | 'mixError',
     listener: (data: {
@@ -296,6 +343,7 @@ export interface NodeLinkOptions {
     lookaheadMs?: number
     gateThresholdLUFS?: number
     filterTransitions?: FilterTransitionsConfig
+    crossfade?: CrossfadeConfig
     automix?: {
       enabled?: boolean
       silenceThresholdDb?: number
@@ -308,6 +356,47 @@ export interface NodeLinkOptions {
     autoCleanup?: boolean
   }
   connection?: import('../voice/connection.types.ts').ConnectionConfig
+  search: {
+    maxResults?: number
+    defaultSource?: string | string[]
+    unifiedSources?: string[]
+    resolveExternalLinks?: boolean
+    fetchChannelInfo?: boolean
+    [key: string]: unknown
+  }
+  playback: {
+    maxPlaylistLength?: number
+    playerUpdateInterval?: number
+    statsUpdateInterval?: number
+    trackStuckThresholdMs?: number
+    eventTimeoutMs?: number
+    zombieThresholdMs?: number
+    sponsorblock?: NodeLinkOptions['sponsorblock']
+    filters?: { enabled?: Record<string, boolean> }
+    audio?: NodeLinkOptions['audio']
+    voiceReceive?: { enabled?: boolean; format?: string }
+    mix?: NodeLinkOptions['mix']
+    [key: string]: unknown
+  }
+  experimental: {
+    enableHoloTracks?: boolean
+    [key: string]: unknown
+  }
+  network: {
+    proxy?: {
+      enabled?: boolean
+      list?: unknown[]
+      [key: string]: unknown
+    }
+    connection?: import('../voice/connection.types.ts').ConnectionConfig
+    routePlanner?: {
+      strategy?: string
+      bannedIpCooldown?: number
+      ipBlocks?: Array<string | { cidr: string }>
+      [key: string]: unknown
+    }
+    [key: string]: unknown
+  }
 }
 
 export type AudioOptionsWithTransitions = NonNullable<
@@ -383,7 +472,7 @@ export type LoggerFn = (level: string, ...args: unknown[]) => void
  * NodeLink runtime context required by the player.
  */
 export interface NodeLink {
-  options: Partial<NodeLinkOptions> & {
+  options: NodeLinkOptions & {
     trackStuckThresholdMs: number
     playerUpdateInterval: number
   }
@@ -391,6 +480,7 @@ export interface NodeLink {
   statsManager: StatsManagerLike
   voiceRelay?: {
     attach?: (connection: VoiceConnection, guildId: string) => void
+    detach?: (connection: VoiceConnection) => void
   }
   sources: SourceManagerLike
   lyrics: LyricsManagerLike | null
@@ -399,6 +489,9 @@ export interface NodeLink {
     audioInterceptors?: Array<() => import('node:stream').Transform>
   } & Record<string, unknown>
   pluginManager?: import('../../managers/pluginManager.ts').default | null
+  trackCacheManager?:
+    | import('../../managers/trackCacheManager.ts').default
+    | null
   getLyricsManager?: () => Promise<LyricsManagerLike>
   [key: string]: unknown
 }
@@ -444,6 +537,7 @@ export interface PlayerStateJSON {
   track: PlayerTrack | null
   volume: number
   fading?: FadingConfig | undefined
+  crossfade?: CrossfadeConfig | undefined
   loudnessNormalizer: boolean
   paused: boolean
   filters: FiltersState
@@ -463,7 +557,8 @@ export type CreateAudioResource = (
   volume: number,
   audioMixer: AudioMixer | null,
   returnPCM?: boolean,
-  loudnessNormalizer?: boolean
+  loudnessNormalizer?: boolean,
+  enableCrossfade?: boolean
 ) => AudioResource
 
 /**
@@ -476,9 +571,12 @@ export type CreateSeekeableAudioResource = (
   endTime: number | undefined,
   nodelink: NodeLink,
   initialFilters: FiltersState,
-  player: { streamInfo: StreamInfo },
+  player: { streamInfo: StreamInfo; loudnessNormalizer?: boolean },
   volume: number,
-  audioMixer: AudioMixer | null
+  audioMixer: AudioMixer | null,
+  returnPCM?: boolean,
+  enableAGC?: boolean,
+  enableCrossfade?: boolean
 ) => Promise<
   AudioResource | { exception: { message: string; severity?: string } }
 >

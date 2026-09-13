@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const AUDIOMACK_PATTERNS = [
     /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/song\/[^/]+(?:\?.*)?$/i,
     /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/album\/[^/]+(?:\?.*)?$/i,

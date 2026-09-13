@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import BlowfishCBC from "../decrypters/blowfish-cbc.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import BlowfishCBC from '../decrypters/blowfish-cbc.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
  */
@@ -34,7 +34,7 @@ export default class DeezerSource {
     /**
      * Search aliases handled by this source.
      */
-    searchTerms = ['dzsearch'];
+    searchTerms = ['dzsearch', 'dzisrc'];
     /**
      * Recommendation aliases handled by this source.
      */
@@ -289,7 +289,7 @@ export default class DeezerSource {
                 if (tracks.length === 0)
                     return { loadType: 'empty', data: {} };
                 return {
-                    loadType: type,
+                    loadType: 'playlist',
                     data: {
                         info: {
                             name: entity.title ?? 'Unknown Deezer Collection',
@@ -397,7 +397,26 @@ export default class DeezerSource {
                 }
             }
             catch (error) {
-                logger('warn', 'Deezer', `Direct stream failed for ${decodedTrack.title}: ${this.getErrorMessage(error)}. Falling back to default search.`);
+                const errMsg = this.getErrorMessage(error);
+                if (errMsg.toLowerCase().includes('csrf') && !forceRefresh) {
+                    logger('warn', 'Deezer', `CSRF token expired (${errMsg}). Evicting cache and refreshing credentials...`);
+                    const cm = this.nodelink.credentialManager;
+                    cm?.delete?.('deezer_csrf_token');
+                    cm?.delete?.('deezer_license_token');
+                    cm?.delete?.('deezer_cookie');
+                    this.csrfToken = null;
+                    this.licenseToken = null;
+                    this.cookie = null;
+                    const success = await this.performSetup();
+                    if (success && this.cookie && this.csrfToken && this.licenseToken) {
+                        logger('info', 'Deezer', 'Credentials refreshed. Retrying direct stream...');
+                        return this.getTrackUrl(decodedTrack, _itag, true);
+                    }
+                    logger('warn', 'Deezer', 'Failed to refresh credentials. Falling back to search.');
+                }
+                else {
+                    logger('warn', 'Deezer', `Direct stream failed for ${decodedTrack.title}: ${errMsg}. Falling back to default search.`);
+                }
             }
         }
         const sourceManager = this.getSourceManager();
@@ -951,7 +970,7 @@ export default class DeezerSource {
      * @returns Maximum number of search results to return.
      */
     getMaxSearchResults() {
-        const limit = this.config.maxSearchResults;
+        const limit = this.config.search?.maxResults;
         return typeof limit === 'number' && limit > 0 ? limit : 10;
     }
     /**
@@ -961,7 +980,7 @@ export default class DeezerSource {
      * @returns Maximum collection length for albums, playlists, or artists.
      */
     getMaxCollectionLength(fallback) {
-        const limit = this.config.maxAlbumPlaylistLength;
+        const limit = this.config.playback?.maxPlaylistLength;
         return typeof limit === 'number' && limit > 0 ? limit : fallback;
     }
     /**

@@ -395,7 +395,7 @@ async function handleCreateMix(
     return
   }
 
-  const mixConfig = runtime.options.mix ?? {
+  const mixConfig = runtime.options.playback.mix ?? {
     enabled: true,
     defaultVolume: 0.8,
     maxLayersMix: 5,

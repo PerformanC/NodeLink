@@ -5,10 +5,10 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const hasSocketSend = (res) => typeof res.send === 'function';
+const hasSocketSend = (res) => !!res.send;
 const resolvePlaybackExecPath = () => {
     const distIndex = path.resolve(__dirname, '../index.js');
     if (fs.existsSync(distIndex))
@@ -50,7 +50,7 @@ const buildSourceWorkerExecArgv = (options = null) => {
     const runtime = options?.cluster?.runtime || {};
     const env = process.env;
     for (const arg of Array.from(args)) {
-        if (arg.startsWith('--max-old-space-size='))
+        if (arg.startsWith('--max-old-space-size=') || arg === '--expose-gc')
             args.delete(arg);
     }
     const maxOldSpaceMb = parsePositiveInt(env.NODELINK_SOURCE_WORKER_MAX_OLD_SPACE_MB ??
@@ -296,6 +296,8 @@ class SourceWorkerManager {
                 return;
             logger('warn', 'SourceCluster', `Source worker manager ${worker.process.pid} exited. Respawning...`);
             const index = this.workers.indexOf(worker);
+            if (index === -1)
+                return;
             this.workers.splice(index, 1);
             this.workerLoads.delete(worker.id);
             // Keep at least one source worker alive.
@@ -467,11 +469,16 @@ class SourceWorkerManager {
         request.timeout = setTimeout(() => {
             const activeRequest = this.requests.get(id);
             if (activeRequest) {
-                res.writeHead(504, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    error: 'Gateway Timeout',
-                    message: 'Source worker timed out'
-                }));
+                if (!res.headersSent) {
+                    res.writeHead(504, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        error: 'Gateway Timeout',
+                        message: 'Source worker timed out'
+                    }));
+                }
+                else {
+                    res.end();
+                }
                 this._cleanupRequest(id, activeRequest);
             }
         }, 60000);

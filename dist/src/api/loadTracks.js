@@ -1,5 +1,5 @@
-import { logger, sendErrorResponse } from "../utils.js";
-import { validator } from "../validators.js";
+import { logger, sendErrorResponse } from '../utils.js';
+import { validator } from '../validators.js';
 /**
  * Quick protocol matcher for absolute URLs.
  */
@@ -67,6 +67,13 @@ function parseIdentifier(identifier, defaultSearchSource) {
         if (groups.source === 'search') {
             return { kind: 'unifiedSearch', query: groups.query };
         }
+        if (groups.source.toLowerCase() === 'isrc') {
+            return {
+                kind: 'search',
+                source: normalizeDefaultSearchSource(defaultSearchSource),
+                query: groups.query
+            };
+        }
         return { kind: 'search', source: groups.source, query: groups.query };
     }
     return {
@@ -126,7 +133,7 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
         return sendErrorResponse(req, res, 400, 'missing identifier parameter', IDENTIFIER_REQUIRED_MESSAGE, parsedUrl.pathname, true);
     }
     logger('debug', 'Tracks', `Loading tracks with identifier: "${identifier}"`);
-    const target = parseIdentifier(identifier, nodelink.options.defaultSearchSource);
+    const target = parseIdentifier(identifier, nodelink.options.search.defaultSource);
     const workerRequest = buildWorkerRequest(target);
     const runtime = nodelink;
     try {

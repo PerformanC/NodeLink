@@ -1,4 +1,5 @@
 import { PassThrough } from 'node:stream'
+import HLSHandler from '../playback/hls/HLSHandler.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -378,10 +379,10 @@ export default class PinterestSource {
   }
 
   /**
-   * Selects the first MP4-compatible format from the Pinterest payload.
+   * Selects the first MP4 or HLS format from the Pinterest payload.
    *
    * @param videoList - Available Pinterest video variants.
-   * @returns First playable MP4-capable format, or `null` when none are found.
+   * @returns First playable format, or `null` when none are found.
    */
   private getPlayableFormat(
     videoList: PinterestVideoList | null
@@ -395,7 +396,7 @@ export default class PinterestSource {
     if (videoList.V_360P?.url) return videoList.V_360P
 
     for (const format of Object.values(videoList)) {
-      if (format?.url?.endsWith('.mp4')) {
+      if (format?.url?.includes('.mp4') || format?.url?.includes('.m3u8')) {
         return format
       }
     }
@@ -551,7 +552,7 @@ export default class PinterestSource {
    * @param decodedTrack - Decoded track information previously returned by the
    * resolver.
    * @returns Direct HTTP track URL and its container metadata.
-   * @throws Error when Pinterest does not expose a playable MP4 stream.
+   * @throws Error when Pinterest does not expose a playable media stream.
    */
   public async getTrackUrl(decodedTrack: TrackInfo): Promise<TrackUrlResult> {
     const videoId = decodedTrack.identifier
@@ -564,10 +565,15 @@ export default class PinterestSource {
 
       const format = this.getPlayableFormat(this.getVideoList(data))
       if (!format?.url) {
-        throw new Error('No MP4 format found for Pinterest video')
+        throw new Error('No playable format found for Pinterest video')
       }
 
-      return { url: format.url, protocol: 'http', format: 'mp4' }
+      const isHls = format.url.includes('.m3u8')
+      return {
+        url: format.url,
+        protocol: isHls ? 'hls' : 'http',
+        format: 'mp4'
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Failed to get track URL.'
@@ -585,26 +591,44 @@ export default class PinterestSource {
    *
    * @param _decodedTrack - Decoded track metadata, unused by this source.
    * @param url - Direct media URL returned by `getTrackUrl(...)`.
-   * @param _protocol - Protocol hint, unused by this source.
-   * @param _additionalData - Additional stream metadata, unused by this source.
+   * @param protocol - Protocol hint returned by `getTrackUrl(...)`.
+   * @param additionalData - Additional stream metadata.
    * @returns Playable stream payload, or an exception object when the upstream
    * request fails.
    */
   public async loadStream(
     _decodedTrack: TrackInfo,
     url: string,
-    _protocol?: string,
-    _additionalData?: Record<string, object | string | number | boolean | null>
+    protocol?: string,
+    additionalData?: Record<string, object | string | number | boolean | null>
   ): Promise<TrackStreamResult | PinterestStreamError> {
     try {
+      const headers = {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+        Accept: '*/*'
+      }
+
+      if (protocol === 'hls' || url.includes('.m3u8')) {
+        return {
+          stream: new HLSHandler(url, {
+            type: 'fmp4',
+            strategy: 'segmented',
+            headers,
+            localAddress: this.nodelink.routePlanner?.getIP?.() ?? null,
+            startTime:
+              typeof additionalData?.startTime === 'number'
+                ? additionalData.startTime
+                : 0
+          }),
+          type: 'mp4'
+        }
+      }
+
       const response = await http1makeRequest(url, {
         method: 'GET',
         streamOnly: true,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
-          Accept: '*/*'
-        }
+        headers
       })
 
       if (response.error || !response.stream) {

@@ -44,7 +44,7 @@ export class ScratchTransformer extends Transform {
    * Internal circular buffer for storing PCM samples.
    * Storing as floats (0.0 to 1.0) simplifies resampling math.
    */
-  private inputBuffer: Float32Array
+  private inputBuffer: Float32Array | null = null
   private inputReadPos = 0
   private inputWritePos = 0
   private readonly maxBufferSize: number
@@ -59,7 +59,6 @@ export class ScratchTransformer extends Transform {
     this.channels = options.channels ?? 2
 
     this.maxBufferSize = this.sampleRate * this.channels * 5
-    this.inputBuffer = new Float32Array(this.maxBufferSize)
   }
 
   /**
@@ -70,6 +69,8 @@ export class ScratchTransformer extends Transform {
   public scratchTo(durationMs: number, style: ScratchStyle): void {
     const duration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 500
     this._lastEffectCompleted = false
+
+    if (duration > 0) this._ensureInputBuffer()
 
     if (style === 'start' && this.inputWritePos > 0) {
       const latencySamples = 1024 * this.channels
@@ -121,6 +122,16 @@ export class ScratchTransformer extends Transform {
 
   public getRate(): number {
     return this.currentRate
+  }
+
+  private _ensureInputBuffer(): Float32Array {
+    if (!this.inputBuffer) {
+      this.inputBuffer = new Float32Array(this.maxBufferSize)
+      this.inputReadPos = 0
+      this.inputWritePos = 0
+    }
+
+    return this.inputBuffer
   }
 
   /**
@@ -186,9 +197,17 @@ export class ScratchTransformer extends Transform {
    */
   public process(chunk: Buffer): Buffer {
     if (chunk.length === 0) return chunk
+    if (
+      !this.state &&
+      Math.abs(this.currentRate - 1.0) <= 0.001 &&
+      this.inputWritePos <= this.inputReadPos + this.channels
+    ) {
+      return chunk
+    }
 
     const incomingSamples = chunk.length / 2
     const incomingFrames = incomingSamples / this.channels
+    const inputBuffer = this._ensureInputBuffer()
 
     if (this.inputWritePos + incomingSamples > this.maxBufferSize) {
       this._compact()
@@ -201,7 +220,7 @@ export class ScratchTransformer extends Transform {
     }
 
     for (let i = 0; i < incomingSamples; i++) {
-      this.inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767
+      inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767
     }
 
     const outI16 = new Int16Array(incomingSamples)
@@ -240,10 +259,10 @@ export class ScratchTransformer extends Transform {
       const frac = (this.inputReadPos - iPos) / this.channels
 
       for (let c = 0; c < this.channels; c++) {
-        const p0 = this.inputBuffer[safeIPos - this.channels + c] || 0
-        const p1 = this.inputBuffer[safeIPos + c] || 0
-        const p2 = this.inputBuffer[safeIPos + this.channels + c] || 0
-        const p3 = this.inputBuffer[safeIPos + this.channels * 2 + c] || 0
+        const p0 = inputBuffer[safeIPos - this.channels + c] || 0
+        const p1 = inputBuffer[safeIPos + c] || 0
+        const p2 = inputBuffer[safeIPos + this.channels + c] || 0
+        const p3 = inputBuffer[safeIPos + this.channels * 2 + c] || 0
 
         const val =
           0.5 *
@@ -273,6 +292,8 @@ export class ScratchTransformer extends Transform {
    * This allows the "disk" to be pulled backwards immediately even at the start of a chunk.
    */
   private _compact(): void {
+    if (!this.inputBuffer) return
+
     const historyFrames = this.sampleRate * 1
     const keepSamples = historyFrames * this.channels
 
@@ -287,5 +308,14 @@ export class ScratchTransformer extends Transform {
 
     this.inputReadPos -= copyStart
     this.inputWritePos = remaining
+  }
+
+  override _destroy(
+    _err: Error | null,
+    cb: (error?: Error | null) => void
+  ): void {
+    this.inputBuffer = null
+    this.state = null
+    cb(null)
   }
 }

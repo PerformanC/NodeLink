@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
 // biome-ignore lint/style/useExponentiationOperator: <Math.pow is more readable here>
 const dbToGain = (db) => Math.pow(10, db / 20);
@@ -34,7 +34,8 @@ export default class Compressor extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : 1.0;
         super.applyAnimatedUpdate({
             compressor: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: comp.transition
             }
         }, 'compressor', { alpha: 0.0 });
     }

@@ -3,8 +3,8 @@ import dns from 'node:dns';
 import os from 'node:os';
 import { performance } from 'node:perf_hooks';
 import { promisify } from 'node:util';
-import { GatewayEvents } from "../constants.js";
-import { http1makeRequest, logger } from "../utils.js";
+import { GatewayEvents } from '../constants.js';
+import { http1makeRequest, logger } from '../utils.js';
 const execAsync = promisify(exec);
 const dnsLookup = promisify(dns.lookup);
 const DEFAULT_TEST_ENDPOINTS = [
@@ -54,7 +54,8 @@ export default class ConnectionManager {
     _lastPingMs;
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = nodelink.options.connection || {};
+        this.config =
+            nodelink.options.network?.connection || nodelink.options.connection || {};
         this.interval = null;
         this.status = 'unknown';
         this.metrics = { timestamp: Date.now() };
@@ -63,15 +64,15 @@ export default class ConnectionManager {
         this._lastSpeedTestTime = 0;
         this._lastPingMs = undefined;
     }
-    /**
-     * Starts the periodic connection monitor.
-     */
     start() {
         const checkInterval = Math.max(1, this.config.interval || 300000);
         if (checkInterval > 0) {
             logger('info', 'ConnectionManager', `Starting connection checks every ${checkInterval}ms.`);
-            this.checkConnection();
-            this.interval = setInterval(() => this.checkConnection(), checkInterval);
+            // Delay the first check so it doesn't feel like part of the startup latency
+            setTimeout(() => {
+                this.checkConnection().catch(() => { });
+            }, 5000);
+            this.interval = setInterval(() => this.checkConnection().catch(() => { }), checkInterval);
         }
     }
     /**
@@ -82,6 +83,12 @@ export default class ConnectionManager {
             clearInterval(this.interval);
             this.interval = null;
         }
+    }
+    /**
+     * Stops the monitor and releases resources.
+     */
+    destroy() {
+        this.stop();
     }
     /**
      * Runs a full connectivity check and updates metrics.
@@ -192,13 +199,17 @@ export default class ConnectionManager {
         const payload = {
             op: 'event',
             type: GatewayEvents.CONNECTION_STATUS,
+            guildId: '',
             status: this.status,
             metrics: this.metrics
         };
-        const payloadStr = JSON.stringify(payload);
         if (this.nodelink.sessions?.values) {
             for (const session of this.nodelink.sessions.values()) {
-                session.socket?.send(payloadStr);
+                const player = session.players.players.values().next().value;
+                if (!player)
+                    continue;
+                payload.guildId = player.guildId;
+                session.socket?.send(JSON.stringify(payload));
             }
         }
     }

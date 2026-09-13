@@ -389,7 +389,7 @@ export default class TwitchSource implements SourceInstance {
       const res = (await this._gqlRequest(payload)) as TwitchGraphQLResponse
       const stream = res.data?.user?.stream
 
-      if (!stream || stream.type !== 'live') {
+      if (stream?.type !== 'live') {
         return {
           loadType: 'error',
           exception: {

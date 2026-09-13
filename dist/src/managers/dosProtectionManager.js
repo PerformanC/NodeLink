@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const DEFAULT_CONFIG = {
     enabled: true,
     thresholds: {
@@ -40,7 +40,9 @@ export default class DosProtectionManager {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = this._resolveConfig(nodelink.options?.dosProtection);
+        this.config = this._resolveConfig(nodelink.options?.api?.dosProtection ??
+            nodelink.options?.security?.dosProtection ??
+            nodelink.options?.dosProtection);
         this.ipRequestCounts = new Map();
         this.cleanupInterval = setInterval(() => this._cleanup(), this._resolveCleanupInterval());
         this.cleanupInterval.unref?.();

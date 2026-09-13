@@ -1,3 +1,5 @@
+import type { NodelinkConfig } from '../config/config.types.ts'
+
 /**
  * Minimal track info used by meaning providers.
  * @public
@@ -110,9 +112,7 @@ export interface MeaningSourceInstance {
  * @public
  */
 export interface MeaningManagerContext {
-  options: Record<string, unknown> & {
-    meanings?: Record<string, { enabled?: boolean } | undefined>
-  }
+  options: NodelinkConfig
 }
 
 /**

@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const NETEASE_TRACK_PATTERN = /^https?:\/\/(?:www\.)?music\.163\.com\/?#?\/song\?id=(\d+)/;
 const NETEASE_ALBUM_PATTERN = /^https?:\/\/(?:www\.)?music\.163\.com\/?#?\/album\?id=(\d+)/;
 const NETEASE_PLAYLIST_PATTERN = /^https?:\/\/(?:www\.)?music\.163\.com\/?#?\/playlist\?id=(\d+)/;
@@ -60,7 +60,7 @@ export default class NeteaseSource {
         ];
         this.priority = 45;
         this.searchTerms = ['ntsearch'];
-        this.maxSearchResults = nodelink.options.maxSearchResults || 10;
+        this.maxSearchResults = nodelink.options.search.maxResults || 10;
     }
     /**
      * Initializes Netease source.

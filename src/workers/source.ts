@@ -17,7 +17,12 @@ import {
 
 import type PluginManager from '../managers/pluginManager.ts'
 import type { PluginManagerContext } from '../managers/pluginManager.ts'
+import { migrateConfig } from '../modules/config/configMigration.ts'
 
+import type {
+  JsonValue,
+  NodelinkConfig
+} from '../typings/config/config.types.ts'
 import type { NodeLink } from '../typings/playback/player.types.ts'
 import type {
   FrameType,
@@ -46,10 +51,7 @@ import {
 const __filename = fileURLToPath(import.meta.url)
 
 const getActiveResourcesBreakdown = (): Record<string, number> => {
-  const list =
-    typeof process.getActiveResourcesInfo === 'function'
-      ? process.getActiveResourcesInfo()
-      : []
+  const list = process.getActiveResourcesInfo?.() ?? []
   const counters: Record<string, number> = {}
   for (const item of list) {
     counters[item] = (counters[item] || 0) + 1
@@ -100,11 +102,65 @@ if (isMainThread) {
    * @internal
    */
   async function loadConfig(): Promise<Record<string, unknown>> {
-    try {
-      return (await import(resolveRootConfigUrl('config.js'))).default
-    } catch {
-      return (await import(resolveRootConfigUrl('config.default.js'))).default
+    const resolveConfigExport = (
+      importedModule: Record<string, unknown>,
+      fileName: string
+    ): Record<string, unknown> => {
+      const candidate =
+        (
+          importedModule as {
+            default?: unknown
+            config?: unknown
+          }
+        ).default ??
+        (
+          importedModule as {
+            default?: unknown
+            config?: unknown
+          }
+        ).config
+
+      if (
+        candidate &&
+        typeof candidate === 'object' &&
+        Object.keys(candidate as Record<string, unknown>).length > 0
+      ) {
+        return candidate as Record<string, unknown>
+      }
+
+      throw new Error(
+        `[ERROR] Config: ${fileName} must export a non-empty configuration object (default export or named "config").`
+      )
     }
+
+    const candidates = [
+      'config.ts',
+      'config.js',
+      'config.default.ts',
+      'config.default.js'
+    ]
+    for (const fileName of candidates) {
+      try {
+        const module = await import(resolveRootConfigUrl(fileName))
+        const raw = resolveConfigExport(
+          module as Record<string, unknown>,
+          fileName
+        )
+        return migrateConfig(raw as Record<string, JsonValue>)
+      } catch (error) {
+        const err = error as { code?: string; message?: string }
+        const isNotFound =
+          err.code === 'ERR_MODULE_NOT_FOUND' ||
+          err.code === 'ENOENT' ||
+          err.message?.includes('Cannot find module')
+        if (isNotFound) continue
+        throw error
+      }
+    }
+
+    throw new Error(
+      '[ERROR] Config: Failed to load configuration (config.ts/config.js/config.default.ts/config.default.js).'
+    )
   }
 
   const config = await loadConfig()
@@ -120,7 +176,7 @@ if (isMainThread) {
 
   const nodelink: Pick<WorkerNodeLink, 'options' | 'logger' | 'pluginManager'> =
     {
-      options: config,
+      options: config as unknown as NodelinkConfig,
       logger: utils.logger,
       pluginManager: null as unknown as PluginManager
     }

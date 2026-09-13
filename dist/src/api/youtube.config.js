@@ -1,5 +1,5 @@
-import OAuth from "../sources/youtube/OAuth.js";
-import { logger, sendErrorResponse } from "../utils.js";
+import OAuth from '../sources/youtube/OAuth.js';
+import { logger, sendErrorResponse } from '../utils.js';
 /**
  * Returns whether the provided body value is a plain object record.
  *

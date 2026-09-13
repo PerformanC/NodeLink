@@ -3,7 +3,7 @@
  * Provides search, playlist, station, artist, and podcast resolution.
  * @module sources/pandora
  */
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Default credential cache TTL (24 hours).
  * @internal
@@ -270,7 +270,7 @@ export default class PandoraSource {
             types: ['TR'],
             listener: null,
             start: 0,
-            count: this.options.maxSearchResults ?? 10,
+            count: this.options.search.maxResults ?? 10,
             annotate: true,
             searchTime: 0,
             annotationRecipe: 'CLASS_OF_2019'
@@ -424,7 +424,7 @@ export default class PandoraSource {
      * @internal
      */
     getMaxPlaylistLength() {
-        return this.options.maxAlbumPlaylistLength ?? 100;
+        return (this.options.playback.maxPlaylistLength ?? 100);
     }
     /**
      * Resolves an artist, album, or track by ID.
@@ -831,8 +831,7 @@ export default class PandoraSource {
         }
         try {
             let searchResult = await sources.searchWithDefault(decodedTrack.isrc ? `"${decodedTrack.isrc}"` : query);
-            if (!searchResult ||
-                searchResult.loadType !== 'search' ||
+            if (searchResult?.loadType !== 'search' ||
                 !Array.isArray(searchResult.data) ||
                 searchResult.data.length === 0) {
                 searchResult = await sources.searchWithDefault(query);

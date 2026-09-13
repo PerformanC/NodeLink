@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { encodeTrack, logger } from "../utils.js";
+import { encodeTrack, logger } from '../utils.js';
 /**
  * Mapping between file extensions and the stream types returned by the local
  * source.
@@ -39,6 +39,10 @@ export default class LocalSource {
      * Sanitized local-source configuration.
      */
     config;
+    /**
+     * Cached canonical path of the configured base directory.
+     */
+    cachedRealBasePath = null;
     /**
      * Creates a new local source wrapper.
      *
@@ -277,9 +281,56 @@ export default class LocalSource {
      */
     isPathInsideBase(basePath, filePath) {
         const relativePath = path.relative(basePath, filePath);
-        return (relativePath !== '..' &&
+        return (relativePath !== '' &&
+            relativePath !== '..' &&
             !relativePath.startsWith(`..${path.sep}`) &&
             !path.isAbsolute(relativePath));
+    }
+    /**
+     * Resolves and verifies that a local path stays strictly within the configured
+     * base directory, preventing directory traversal and symlink escapes.
+     *
+     * @param targetPath - Absolute or relative file path.
+     * @returns Object containing the resolved path and whether it attempted path traversal.
+     */
+    async resolveValidPath(targetPath) {
+        try {
+            const basePath = path.resolve(this.config.basePath ?? './');
+            const absolutePath = path.isAbsolute(targetPath)
+                ? path.resolve(targetPath)
+                : path.resolve(basePath, targetPath);
+            if (!this.isPathInsideBase(basePath, absolutePath)) {
+                return { filePath: absolutePath, isTraversal: true };
+            }
+            let realBasePath = this.cachedRealBasePath;
+            if (!realBasePath) {
+                try {
+                    realBasePath = await fs.promises.realpath(basePath);
+                    this.cachedRealBasePath = realBasePath;
+                }
+                catch {
+                    return { filePath: absolutePath, isTraversal: false };
+                }
+            }
+            let realFilePath;
+            try {
+                realFilePath = await fs.promises.realpath(absolutePath);
+            }
+            catch (error) {
+                const code = error.code;
+                if (code === 'ENOENT' || code === 'ENOTDIR') {
+                    return { filePath: absolutePath, isTraversal: false };
+                }
+                return { filePath: absolutePath, isTraversal: true };
+            }
+            if (!this.isPathInsideBase(realBasePath, realFilePath)) {
+                return { filePath: realFilePath, isTraversal: true };
+            }
+            return { filePath: realFilePath, isTraversal: false };
+        }
+        catch {
+            return { filePath: '', isTraversal: true };
+        }
     }
     /**
      * Builds the encoded track payload for a local file.
@@ -341,13 +392,9 @@ export default class LocalSource {
      * exception payload when a relative path attempts to escape the base path.
      */
     async search(query) {
-        const isAbsolute = path.isAbsolute(query);
-        const basePath = path.resolve(this.config.basePath ?? './');
-        const filePath = isAbsolute
-            ? path.resolve(query)
-            : path.resolve(basePath, query);
+        const { filePath, isTraversal } = await this.resolveValidPath(query);
         logger('debug', 'Sources', `Searching local file: ${filePath}`);
-        if (!isAbsolute && !this.isPathInsideBase(basePath, filePath)) {
+        if (isTraversal) {
             logger('warn', 'Sources', `Path traversal attempt blocked for local source: "${query}"`);
             return {
                 loadType: 'error',
@@ -358,6 +405,11 @@ export default class LocalSource {
             };
         }
         try {
+            const stats = await fs.promises.stat(filePath);
+            if (!stats.isFile()) {
+                logger('warn', 'Sources', `Local path is not a regular file: ${filePath}`);
+                return { loadType: 'empty', data: {} };
+            }
             await fs.promises.access(filePath, fs.constants.R_OK);
             const metadata = this.readFileInfo(filePath);
             const track = this.buildTrack(filePath, metadata);
@@ -412,24 +464,25 @@ export default class LocalSource {
      * @returns Playable file stream payload.
      */
     async loadStream(decodedTrack, _url, _protocol, additionalData) {
-        const extension = path
-            .extname(decodedTrack.uri || '')
-            .slice(1)
-            .toLowerCase();
+        const { filePath, isTraversal } = await this.resolveValidPath(decodedTrack.uri || '');
+        if (isTraversal) {
+            logger('warn', 'Sources', `Path traversal attempt blocked in loadStream: "${decodedTrack.uri}"`);
+            throw new Error('Path traversal is not allowed.');
+        }
+        const extension = path.extname(filePath).slice(1).toLowerCase();
         const metadata = this.getTrackMetadata(decodedTrack);
-        const streamType = metadata?.streamType ??
-            this.detectLocalAudioType(decodedTrack.uri, extension);
+        const streamType = metadata?.streamType ?? this.detectLocalAudioType(filePath, extension);
         if ((additionalData?.startTime ?? 0) > 0 && decodedTrack.isSeekable) {
-            const info = this.readFileInfo(decodedTrack.uri);
+            const info = this.readFileInfo(filePath);
             const bitsPerSecond = (typeof info.bitrateKbps === 'number' ? info.bitrateKbps : 128) * 1000;
             const offset = info.durationMs > 0
                 ? Math.floor((bitsPerSecond * (additionalData?.startTime ?? 0)) / 8000)
                 : 0;
-            const stream = fs.createReadStream(decodedTrack.uri, { start: offset });
+            const stream = fs.createReadStream(filePath, { start: offset });
             stream.once('close', () => stream.emit('finishBuffering'));
             return { stream, type: streamType };
         }
-        const stream = fs.createReadStream(decodedTrack.uri);
+        const stream = fs.createReadStream(filePath);
         stream.once('close', () => stream.emit('finishBuffering'));
         stream.on('error', (error) => {
             logger('error', 'Sources', `Local stream error: ${error.message}`);

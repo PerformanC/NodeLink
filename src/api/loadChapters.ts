@@ -147,7 +147,7 @@ function getLoadChaptersRuntime(
   if (
     runtime.sourceWorkerManager === undefined ||
     runtime.workerManager === undefined ||
-    !runtime.sources
+    runtime.sources === undefined
   ) {
     return null
   }

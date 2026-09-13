@@ -1,5 +1,5 @@
-import { PassThrough } from 'node:stream';
-import { encodeTrack, logger, makeRequest } from "../utils.js";
+import { PassThrough, pipeline } from 'node:stream';
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 /**
  * Google TTS source implementation.
  */
@@ -37,7 +37,7 @@ export default class GoogleTTSSource {
         this.nodelink = nodelink;
         this.config = this.getConfig();
         this.language = this.config.language ?? 'en-US';
-        this.searchTerms = ['gtts', 'speak'];
+        this.searchTerms = ['gtts', 'speak', 'tts'];
         this.baseUrl = 'https://translate.google.com';
         this.priority = 50;
     }
@@ -246,15 +246,18 @@ export default class GoogleTTSSource {
                 throw new Error(`Google TTS returned status ${response.statusCode}`);
             }
             const stream = new PassThrough();
-            response.stream.pipe(stream);
-            response.stream.on('end', () => {
-                stream.emit('finishBuffering');
+            stream.once('close', () => {
+                ;
+                response.stream.destroy?.();
             });
-            response.stream.on('error', (error) => {
-                logger('error', 'Sources', `Google TTS stream error: ${error.message}`);
-                if (!stream.destroyed) {
-                    stream.destroy(error);
+            pipeline(response.stream, stream, (error) => {
+                if (error) {
+                    if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                        logger('error', 'Sources', `Google TTS stream error: ${error.message}`);
+                    }
+                    return;
                 }
+                stream.emit('finishBuffering');
             });
             return { stream };
         }

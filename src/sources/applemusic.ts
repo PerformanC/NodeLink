@@ -373,7 +373,7 @@ export default class AppleMusicSource implements SourceInstance {
     searchType = 'track'
   ): Promise<SourceResult> {
     try {
-      const limit = (this.nodelink.options.maxSearchResults as number) || 10
+      const limit = (this.nodelink.options.search.maxResults as number) || 10
       const typeMap: Record<string, string> = {
         track: 'songs',
         album: 'albums',

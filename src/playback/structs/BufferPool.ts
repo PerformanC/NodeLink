@@ -13,7 +13,7 @@ const MAX_POOL_SIZE_BYTES = parsePositiveIntEnv(
 )
 const MAX_BUCKET_ENTRIES = parsePositiveIntEnv(
   'NODELINK_BUFFER_POOL_MAX_BUCKET_ENTRIES',
-  4 // reduced from 8
+  16 // hot frame sizes (3840/4000 -> 4096) need depth under many players; total still capped by MAX_POOL_SIZE_BYTES
 )
 const IDLE_CLEAR_MS = parsePositiveIntEnv(
   'NODELINK_BUFFER_POOL_IDLE_CLEAR_MS',

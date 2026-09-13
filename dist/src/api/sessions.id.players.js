@@ -1,4 +1,4 @@
-import { decodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Validates that a value is a non-array object.
  *
@@ -57,10 +57,10 @@ function getQueryParams(parsedUrl) {
     if (noReplaceRaw === null) {
         return {};
     }
-    if (noReplaceRaw === 'true') {
+    if (noReplaceRaw.toLowerCase() === 'true') {
         return { noReplace: true };
     }
-    if (noReplaceRaw === 'false') {
+    if (noReplaceRaw.toLowerCase() === 'false') {
         return { noReplace: false };
     }
     return null;
@@ -206,6 +206,10 @@ function getPlayerPatchPayload(body) {
         typeof loudnessNormalizer !== 'boolean') {
         return null;
     }
+    const ducking = payload.ducking;
+    if (ducking !== undefined && typeof ducking !== 'boolean') {
+        return null;
+    }
     const filtersValue = payload.filters;
     if (filtersValue !== undefined &&
         (!filtersValue ||
@@ -216,6 +220,11 @@ function getPlayerPatchPayload(body) {
     const fading = payload.fading;
     if (fading !== undefined &&
         (!fading || typeof fading !== 'object' || Array.isArray(fading))) {
+        return null;
+    }
+    const crossfade = payload.crossfade;
+    if (crossfade !== undefined &&
+        (!crossfade || typeof crossfade !== 'object' || Array.isArray(crossfade))) {
         return null;
     }
     const voice = payload.voice === undefined ? undefined : getVoicePayload(payload.voice);
@@ -243,8 +252,10 @@ function getPlayerPatchPayload(body) {
         volume,
         paused,
         loudnessNormalizer,
+        ducking,
         filters: filtersValue,
         fading,
+        crossfade,
         voice: voice ?? undefined
     };
 }
@@ -296,7 +307,52 @@ function sanitizeFadingConfig(raw) {
     updateSection('seek');
     updateSection('pause');
     updateSection('resume');
+    if (isObjectRecord(payload.ducking)) {
+        const duckingInput = payload.ducking;
+        safe.ducking = {
+            enabled: duckingInput.enabled === true,
+            duration: typeof duckingInput.duration === 'number' &&
+                Number.isFinite(duckingInput.duration)
+                ? Math.max(0, duckingInput.duration)
+                : 500,
+            targetVolume: typeof duckingInput.targetVolume === 'number' &&
+                Number.isFinite(duckingInput.targetVolume)
+                ? Math.max(0, Math.min(1, duckingInput.targetVolume))
+                : 0.3,
+            curve: typeof duckingInput.curve === 'string' ? duckingInput.curve : 'linear'
+        };
+    }
     return safe;
+}
+/**
+ * Sanitizes crossfade settings and bounds their per-player resource usage.
+ * @param raw - Raw crossfade payload.
+ * @returns Safe crossfade configuration.
+ */
+function sanitizeCrossfadeConfig(raw) {
+    if (!isObjectRecord(raw))
+        return { enabled: false };
+    const duration = Number(raw.duration);
+    const minBufferMs = Number(raw.minBufferMs);
+    const bufferMs = Number(raw.bufferMs);
+    const curve = raw.curve;
+    const mode = raw.mode;
+    return {
+        enabled: raw.enabled === true,
+        duration: Number.isFinite(duration)
+            ? Math.max(0, Math.min(30000, Math.round(duration)))
+            : 5000,
+        curve: curve === 'linear' || curve === 'sine' || curve === 'sinusoidal'
+            ? curve
+            : 'sinusoidal',
+        mode: mode === 'stream' ? 'stream' : 'preload',
+        minBufferMs: Number.isFinite(minBufferMs)
+            ? Math.max(20, Math.min(30000, Math.round(minBufferMs)))
+            : 250,
+        bufferMs: Number.isFinite(bufferMs)
+            ? Math.max(0, Math.min(30000, Math.round(bufferMs)))
+            : 0
+    };
 }
 /**
  * Normalizes decoded track info into the stricter `TrackInfoExtended` shape
@@ -457,15 +513,6 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
     const trackToPlay = await resolvePlayPayload(runtime, payload.track);
     const stopPlayer = trackToPlay === null;
     const shouldClearNextTrack = payload.nextTrack === null || payload.nextTrack?.encoded === null;
-    if (shouldClearNextTrack) {
-        await session.players.clearNextTrack(guildId);
-    }
-    else if (payload.nextTrack) {
-        const trackToPreload = await resolvePreloadPayload(runtime, payload.nextTrack);
-        if (trackToPreload) {
-            await session.players.preload(guildId, trackToPreload);
-        }
-    }
     if (stopPlayer) {
         await session.players.stop(guildId);
     }
@@ -478,6 +525,15 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
             endTime: payload.endTime ?? undefined
         });
     }
+    if (shouldClearNextTrack) {
+        await session.players.clearNextTrack(guildId);
+    }
+    else if (payload.nextTrack) {
+        const trackToPreload = await resolvePreloadPayload(runtime, payload.nextTrack);
+        if (trackToPreload) {
+            await session.players.preload(guildId, trackToPreload);
+        }
+    }
     if (payload.volume !== undefined) {
         await session.players.volume(guildId, payload.volume);
     }
@@ -488,8 +544,8 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
         await session.players.seek(guildId, payload.position);
     }
     if (payload.endTime !== undefined) {
-        const playerState = await session.players.toJSON(guildId);
-        await session.players.seek(guildId, playerState.state.position, payload.endTime ?? undefined);
+        const playerState = await session.players.toJSON(guildId, true);
+        await session.players.seek(guildId, playerState.state.position, payload.endTime);
     }
     if (payload.filters !== undefined) {
         await session.players.setFilters(guildId, payload.filters);
@@ -497,10 +553,16 @@ async function applyPlayerPatch(runtime, session, guildId, payload, query) {
     if (payload.fading !== undefined) {
         await session.players.setFading(guildId, sanitizeFadingConfig(payload.fading));
     }
+    if (payload.crossfade !== undefined) {
+        await session.players.setCrossfade(guildId, sanitizeCrossfadeConfig(payload.crossfade));
+    }
     if (payload.loudnessNormalizer !== undefined) {
         await session.players.setLoudnessNormalizer(guildId, payload.loudnessNormalizer);
     }
-    return await session.players.toJSON(guildId);
+    if (payload.ducking !== undefined) {
+        await session.players.setDucking(guildId, payload.ducking);
+    }
+    return await session.players.toJSON(guildId, true);
 }
 /**
  * Handles requests for the players route.
@@ -546,7 +608,6 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
     }
     try {
         if (req.method === 'GET') {
-            await session.players.create(pathParams.guildId);
             sendResponse(req, res, await session.players.toJSON(pathParams.guildId), 200);
             return;
         }

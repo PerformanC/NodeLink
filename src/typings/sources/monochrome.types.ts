@@ -9,8 +9,12 @@ export interface MonochromeSourceConfig {
   instances?: string[]
   /** List of streaming instances used for manifest resolution. */
   streamingInstances?: string[]
+  /** List of Qobuz proxy instances used as fallback for stream resolution. */
+  qobuzInstances?: string[]
   /** Preferred audio quality. */
   quality?: 'HI_RES_LOSSLESS' | 'LOSSLESS' | 'HIGH' | 'LOW'
+  /** Quality level for Qobuz proxy downloads (5 = MP3 320kbps, 6 = Default FLAC, 7 = FLAC 24bit, 27 = HiRes FLAC 24bit). */
+  qobuzQuality?: number
 }
 
 /**

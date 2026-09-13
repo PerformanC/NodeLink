@@ -12,6 +12,14 @@ import { logger } from '../utils.ts'
 type RateLimitContext = {
   options?: {
     rateLimit?: Partial<RateLimitConfig>
+    api?: {
+      rateLimit?: Partial<RateLimitConfig>
+      [key: string]: unknown
+    }
+    security?: {
+      rateLimit?: Partial<RateLimitConfig>
+      [key: string]: unknown
+    }
   }
 }
 
@@ -69,7 +77,11 @@ export default class RateLimitManager {
    */
   constructor(nodelink: RateLimitContext) {
     this.nodelink = nodelink
-    this.config = this._resolveConfig(nodelink.options?.rateLimit)
+    this.config = this._resolveConfig(
+      nodelink.options?.api?.rateLimit ??
+        nodelink.options?.security?.rateLimit ??
+        nodelink.options?.rateLimit
+    )
     this.store = new Map()
     this.cleanupInterval = setInterval(
       () => this._cleanup(),
@@ -482,15 +494,37 @@ export default class RateLimitManager {
   }
 
   /**
+   * Resolves the configured time window for a specific rate limit key.
+   * @param key - Storage key.
+   * @internal
+   */
+  private _getWindowForKey(key: string): number {
+    if (key.startsWith('global:')) {
+      return this.config.global.timeWindowMs
+    }
+    if (key.startsWith('ip:')) {
+      return this.config.perIp.timeWindowMs
+    }
+    if (key.startsWith('userId:')) {
+      return this.config.perUserId?.timeWindowMs ?? MIN_WINDOW_MS
+    }
+    if (key.startsWith('guildId:')) {
+      return this.config.perGuildId?.timeWindowMs ?? MIN_WINDOW_MS
+    }
+    return MIN_WINDOW_MS
+  }
+
+  /**
    * Cleans up stale keys and enforces storage limits.
    * @internal
    */
   private _cleanup(): void {
     const now = Date.now()
-    const windowMs = this._resolveShortestWindow()
-    const pruneAfterMs = windowMs * 3
 
     for (const [key, entry] of this.store.entries()) {
+      const windowMs = this._getWindowForKey(key)
+      const pruneAfterMs = windowMs * 3
+
       const activeCount = this._pruneEntry(entry, windowMs, now)
       if (activeCount === 0 && now - entry.lastSeen > pruneAfterMs) {
         this.store.delete(key)

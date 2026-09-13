@@ -1,4 +1,4 @@
-import { logger, makeRequest } from "../utils.js";
+import { logger, makeRequest } from '../utils.js';
 /**
  * Decodes common HTML entities found in YouTube caption segments.
  * @param text - Raw caption text.

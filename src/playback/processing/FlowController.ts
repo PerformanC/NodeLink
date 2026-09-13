@@ -21,7 +21,7 @@ export class FlowController extends Transform {
   private readonly tape: ITapeTransformer
   private readonly scratch: IScratchTransformer
   private readonly audioMixer: AudioMixer | null
-  private pendingBuffer: Buffer
+  private pendingBuffer: Buffer | null
   private pendingLength: number
 
   /**
@@ -136,6 +136,14 @@ export class FlowController extends Transform {
     return this.scratch.checkEffectCompleted()
   }
 
+  public setLoudnessNormalizer(enabled: boolean): void {
+    if ('setAGCEnabled' in this.volume) {
+      ;(
+        this.volume as unknown as { setAGCEnabled?: (enabled: boolean) => void }
+      ).setAGCEnabled?.(enabled)
+    }
+  }
+
   /**
    * Updates filters in the pipeline via the FlowController.
    * Note: FlowController currently doesn't manage filters itself,
@@ -153,6 +161,11 @@ export class FlowController extends Transform {
     _encoding: BufferEncoding,
     callback: TransformCallback
   ): void {
+    if (!this.pendingBuffer) {
+      callback()
+      return
+    }
+
     let offset = 0
 
     if (this.pendingLength > 0) {
@@ -187,7 +200,7 @@ export class FlowController extends Transform {
   public override _flush(callback: TransformCallback): void {
     let remaining =
       this.pendingLength > 0
-        ? this.pendingBuffer.subarray(0, this.pendingLength)
+        ? (this.pendingBuffer?.subarray(0, this.pendingLength) ?? EMPTY_BUFFER)
         : EMPTY_BUFFER
     this.pendingLength = 0
 
@@ -226,5 +239,13 @@ export class FlowController extends Transform {
     }
 
     callback()
+  }
+
+  override _destroy(
+    _err: Error | null,
+    cb: (error?: Error | null) => void
+  ): void {
+    this.pendingBuffer = null
+    cb(null)
   }
 }

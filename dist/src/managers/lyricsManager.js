@@ -9,8 +9,8 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { alignLyrics } from "../modules/lyricsAligner.js";
-import { logger } from "../utils.js";
+import { alignLyrics } from '../modules/lyricsAligner.js';
+import { logger } from '../utils.js';
 const getErrorMessage = (error) => error instanceof Error ? error.message : String(error);
 const isTrackInfoLike = (value) => typeof value === 'object' && value !== null;
 const getTrackInfoFromResolve = (result, fallback) => {
@@ -135,8 +135,13 @@ export default class LyricsManager {
                 }
             }
         }
-        for (const [name, source] of this.lyricsSources) {
-            if (name === sourceName)
+        const sources = new Set([
+            ...(this.nodelink.options.lyrics?.preferredSources ?? []),
+            ...this.lyricsSources.keys()
+        ]);
+        for (const name of sources) {
+            const source = this.lyricsSources.get(name);
+            if (!source || name === sourceName)
                 continue;
             logger('debug', 'Lyrics', `Trying lyrics source ${name} for ${trackInfo?.title || 'Unknown Title'}.`);
             const lyrics = await source.getLyrics(trackInfo, language);

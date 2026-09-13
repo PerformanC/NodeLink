@@ -2,6 +2,7 @@ import { createDecipheriv } from 'node:crypto'
 import { PassThrough } from 'node:stream'
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import { parse as parsePlaylist } from '../playback/hls/PlaylistParser.ts'
+import type { GaanaSourceConfig } from '../typings/config/config.types.ts'
 import type { HLSSegment } from '../typings/playback/hls.types.ts'
 import type {
   SourceResult,
@@ -26,7 +27,6 @@ const USER_AGENT =
 const API_URL = 'https://gaana.com/apiv2'
 const STREAM_URL_API = 'https://gaana.com/api/stream-url'
 const CRYPTO_KEY = Buffer.from('gy1t#b@jl(b$wtme', 'utf8')
-const CRYPTO_IV = Buffer.from('xC4dmVJAq14BfntX', 'utf8')
 const HLS_BASE_URL = 'https://vodhlsgaana-ebw.akamaized.net/'
 
 /**
@@ -42,7 +42,7 @@ export default class GaanaSource {
   /**
    * Gaana source configuration block.
    */
-  public readonly config: Record<string, unknown>
+  public readonly config: GaanaSourceConfig
 
   /**
    * Search aliases handled by this source.
@@ -91,8 +91,8 @@ export default class GaanaSource {
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
 
-    const sourceConfig = this.asRecord(this.nodelink.options.sources?.gaana)
-    this.config = sourceConfig || {}
+    const sourceConfig = this.nodelink.options.sources.gaana
+    this.config = sourceConfig
     this.searchTerms = ['gnsearch', 'gaanasearch']
     this.patterns = [
       /^@?(?:https?:\/\/)?(?:www\.)?gaana\.com\/(?<type>song|album|playlist|artist)\/(?<seokey>[\w-]+)(?:[?#].*)?$/
@@ -100,9 +100,9 @@ export default class GaanaSource {
     this.priority = 70
 
     this.maxSearchResults =
-      this.asNumber(this.nodelink.options.maxSearchResults) ?? 10
+      this.asNumber(this.nodelink.options.search.maxResults) ?? 10
     const maxAlbumPlaylistLength =
-      this.asNumber(this.nodelink.options.maxAlbumPlaylistLength) ?? 100
+      this.asNumber(this.nodelink.options.playback.maxPlaylistLength) ?? 100
     this.playlistLoadLimit =
       this.asNumber(this.config.playlistLoadLimit) ?? maxAlbumPlaylistLength
     this.albumLoadLimit =
@@ -825,9 +825,13 @@ export default class GaanaSource {
       const offset = Number.parseInt(encryptedData[0] || '', 10)
       if (Number.isNaN(offset)) return ''
 
+      const iv = Buffer.from(
+        encryptedData.substring(offset, offset + 16),
+        'utf8'
+      )
       const ciphertextB64 = encryptedData.substring(offset + 16)
       const ciphertext = Buffer.from(`${ciphertextB64}==`, 'base64')
-      const decipher = createDecipheriv('aes-128-cbc', CRYPTO_KEY, CRYPTO_IV)
+      const decipher = createDecipheriv('aes-128-cbc', CRYPTO_KEY, iv)
       decipher.setAutoPadding(false)
 
       let decrypted = decipher.update(ciphertext)
@@ -1013,7 +1017,10 @@ export default class GaanaSource {
     query = ''
   ): Promise<Record<string, unknown> | null> {
     const url = `${API_URL}?${new URLSearchParams(
-      Object.entries(params).map(([key, value]) => [key, String(value)])
+      Object.entries(params).map(([key, value]) => [key, String(value)]) as [
+        string,
+        string
+      ][]
     ).toString()}`
 
     const proxy = this.getProxyConfig()
@@ -1072,7 +1079,7 @@ export default class GaanaSource {
         password?: string
       }
     | undefined {
-    const proxy = this.asRecord(this.config.proxy)
+    const proxy = this.asRecord(this.config.network?.proxy)
     const url = this.asString(proxy?.url)
     if (!url) return undefined
 

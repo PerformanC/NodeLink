@@ -75,10 +75,10 @@ export default class Web extends BaseClient {
     return {
       client: {
         clientName: 'WEB',
-        clientVersion: '2.20260114.01.00',
+        clientVersion: '2.20260706.00.00',
         platform: 'DESKTOP',
         userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
         hl: context.client.hl,
         gl: context.client.gl
       },
@@ -174,7 +174,7 @@ export default class Web extends BaseClient {
     }
 
     const maxResults =
-      (this.config.maxSearchResults as number | undefined) || 10
+      (this.config.search.maxResults as number | undefined) || 10
     if (videos.length > maxResults) {
       let count = 0
       videos = videos.filter((video) => {
@@ -193,7 +193,7 @@ export default class Web extends BaseClient {
         sourceName,
         null,
         null,
-        this.config.enableHoloTracks as boolean | undefined
+        this.config.experimental.enableHoloTracks as boolean | undefined
       )
       if (track) {
         tracks.push(track)

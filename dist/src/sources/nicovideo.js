@@ -1,5 +1,5 @@
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
  * NicoVideo source implementation.
  */
@@ -122,20 +122,27 @@ export default class NicoVideoSource {
         return headers;
     }
     /**
-     * Converts the limited NicoVideo duration string into milliseconds.
+     * Converts a NicoVideo ISO-8601 duration string into milliseconds.
      *
-     * This preserves the source's current behavior, which only reads the final
-     * seconds segment from NicoVideo's duration string.
+     * Handles all duration components (hours, minutes and seconds), e.g. a
+     * "PT4M05S" string correctly resolves to 245000 ms instead of only the
+     * trailing seconds value.
      *
      * @param duration - NicoVideo ISO-8601 duration string.
-     * @returns Duration in milliseconds based on the parsed seconds component.
+     * @returns Duration in milliseconds.
      */
     parseDurationMillis(duration) {
         if (!duration) {
             return 0;
         }
-        const seconds = duration.match(/(\d+)S/)?.[1];
-        return Number.parseInt(seconds ?? '0', 10) * 1000;
+        const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?/);
+        if (!match) {
+            return 0;
+        }
+        const hours = Number.parseInt(match[1] ?? '0', 10);
+        const minutes = Number.parseInt(match[2] ?? '0', 10);
+        const seconds = Number.parseFloat(match[3] ?? '0');
+        return Math.round((hours * 3600 + minutes * 60 + seconds) * 1000);
     }
     /**
      * Formats a request failure message from the utility HTTP client output.

@@ -1,6 +1,9 @@
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const SHAZAM_PATTERN = /^https?:\/\/(?:www\.)?shazam\.com\/song\/\d+(?:\/[^/?#]+)?\/?(?:[?#].*)?$/;
 const SHAZAM_SEARCH_BASE = 'https://www.shazam.com/services/amapi/v1/catalog/US/search';
+const APPLE_CATALOG_SEARCH_BASE = 'https://api.music.apple.com/v1/catalog/US/search';
+const APPLE_CATALOG_SONG_BASE = 'https://api.music.apple.com/v1/catalog/US/songs';
+const APPLE_MUSIC_BROWSE_URL = 'https://music.apple.com/us/browse';
 /**
  * Shazam source implementation.
  */
@@ -25,6 +28,10 @@ export default class ShazamSource {
      * Whether explicit tracks are allowed during best-match selection.
      */
     allowExplicit;
+    /**
+     * Cached Apple Music media API token scraped from the web player.
+     */
+    mediaApiToken = null;
     /**
      * Creates a new Shazam source wrapper.
      *
@@ -58,7 +65,7 @@ export default class ShazamSource {
      */
     getMaxSearchResults() {
         const options = this.nodelink.options;
-        const limit = options.maxSearchResults;
+        const limit = options.search?.maxResults;
         return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
             ? limit
             : 10;
@@ -114,8 +121,8 @@ export default class ShazamSource {
         }
     }
     /**
-     * Resolves a Shazam track page into a metadata-only track that later falls
-     * back to a playable source.
+     * Resolves a Shazam track URL via the Apple Music catalog API, falling
+     * back to a slug-based catalog search when the ID lookup has no match.
      *
      * @param url Public Shazam song URL.
      * @returns A track, an empty payload, or a structured exception.
@@ -125,67 +132,141 @@ export default class ShazamSource {
             if (!this.patterns.some((pattern) => pattern.test(url))) {
                 return { loadType: 'empty', data: {} };
             }
-            const { body, statusCode, error } = await http1makeRequest(url);
-            if (error || statusCode !== 200) {
-                return { loadType: 'empty', data: {} };
-            }
-            const html = this.getTextBody({ body });
-            if (!html) {
-                return { loadType: 'empty', data: {} };
-            }
-            const appleMusicUrl = this.extractHrefStartingAt(html, 'href="https://www.shazam.com/applemusic/song/');
-            const durationMs = this.extractDurationMs(html);
-            const isrc = this.extractIsrcFromHtml(html);
-            let title = this.extractTextAfterClass(html, 'NewTrackPageHeader_trackTitle__');
-            let artist = this.extractTextAfterClass(html, 'TrackPageArtistLink_artistNameText__');
-            let artworkUrl = this.extractArtworkFromImgAlt(html);
-            if (!title || title === 'Unknown') {
-                const ogTitle = this.extractMetaContent(html, 'og:title');
-                if (ogTitle) {
-                    const titleMatch = ogTitle.match(/^(.+?) - (.+?):/);
-                    if (titleMatch?.[1] && titleMatch?.[2]) {
-                        title = titleMatch[1];
-                        artist = titleMatch[2];
-                    }
-                    else {
-                        title = ogTitle;
-                    }
-                }
-            }
-            if (!title)
-                title = 'Unknown';
-            if (!artist)
-                artist = 'Unknown';
-            if (!artworkUrl) {
-                artworkUrl = this.extractMetaContent(html, 'og:image');
-            }
-            if (title === 'Unknown' && !appleMusicUrl) {
-                return { loadType: 'empty', data: {} };
-            }
             const cleanUrl = url.replace(/[?#].*$/, '').replace(/\/$/, '');
-            const identifierMatch = cleanUrl.match(/\/song\/(\d+)(?:\/[^/?#]+)?$/);
-            if (!identifierMatch) {
-                return { loadType: 'empty', data: {} };
-            }
-            const identifier = identifierMatch[1];
+            const match = cleanUrl.match(/\/song\/(\d+)(?:\/[^/?#]+)?$/);
+            const identifier = match?.[1];
             if (!identifier) {
                 return { loadType: 'empty', data: {} };
             }
-            const track = this.createTrack({
-                identifier,
-                author: artist,
-                length: durationMs || 0,
-                title,
-                uri: cleanUrl,
-                artworkUrl,
-                isrc
-            }, appleMusicUrl ? { appleMusicUrl } : {});
-            return { loadType: 'track', data: track };
+            const appleSong = await this.fetchAppleSongById(identifier);
+            if (appleSong) {
+                const appleMusicUrl = appleSong.attributes?.url;
+                const track = this.buildTrack(appleSong, cleanUrl, appleMusicUrl ? { appleMusicUrl } : {});
+                if (track) {
+                    return { loadType: 'track', data: track };
+                }
+            }
+            return ((await this.resolveViaSlugSearch(url)) ?? {
+                loadType: 'empty',
+                data: {}
+            });
         }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
             logger('error', 'Shazam', `Failed to resolve ${url}: ${message}`);
             return { loadType: 'error', exception: { message, severity: 'fault' } };
+        }
+    }
+    /**
+     * Returns a cached Apple Music media API token, scraping a fresh one from
+     * the web player when needed.
+     *
+     * @returns The media API token or `null` when scraping fails.
+     */
+    async getMediaApiToken() {
+        if (this.mediaApiToken) {
+            return this.mediaApiToken;
+        }
+        try {
+            const { body: html, statusCode } = await http1makeRequest(APPLE_MUSIC_BROWSE_URL);
+            if (statusCode !== 200 || typeof html !== 'string') {
+                return null;
+            }
+            const scriptMatch = html.match(/<script\s+type="module"\s+crossorigin\s+src="([^"]+)"/);
+            if (!scriptMatch?.[1]) {
+                return null;
+            }
+            const { body: jsData, statusCode: jsStatus } = await http1makeRequest(`https://music.apple.com${scriptMatch[1]}`);
+            if (jsStatus !== 200 || typeof jsData !== 'string') {
+                return null;
+            }
+            const tokenMatch = jsData.match(/(?<token>(ey[\w-]+)\.([\w-]+)\.([\w-]+))/);
+            const token = tokenMatch?.groups?.token;
+            if (!token) {
+                return null;
+            }
+            this.mediaApiToken = token;
+            return token;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * Fetches a single song from the Apple Music catalog API.
+     *
+     * @param identifier Apple Music / Shazam song identifier.
+     * @returns A narrowed song item or `null` when unavailable.
+     */
+    async fetchAppleSongById(identifier) {
+        const token = await this.getMediaApiToken();
+        if (!token) {
+            return null;
+        }
+        const { body, statusCode, error } = await http1makeRequest(`${APPLE_CATALOG_SONG_BASE}/${encodeURIComponent(identifier)}?l=en-us`, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/json',
+                Origin: 'https://music.apple.com'
+            }
+        });
+        if (statusCode === 401) {
+            this.mediaApiToken = null;
+            return null;
+        }
+        if (error || statusCode !== 200) {
+            return null;
+        }
+        const payload = this.parseJsonBody(body);
+        const items = payload ? this.getArray(payload, 'data') : [];
+        for (const item of items) {
+            const song = this.toSongItem(item);
+            if (song?.id === identifier && song.attributes) {
+                return song;
+            }
+        }
+        return null;
+    }
+    /**
+     * Falls back to a slug-based Apple Music catalog search when the ID
+     * lookup has no match.
+     *
+     * @param url Public Shazam song URL.
+     * @returns A track or `null` when no song matches the URL identifier.
+     */
+    async resolveViaSlugSearch(url) {
+        try {
+            const token = await this.getMediaApiToken();
+            if (!token) {
+                return null;
+            }
+            const pathParts = new URL(url).pathname.split('/').filter(Boolean);
+            const identifier = pathParts[1];
+            const slug = pathParts[2];
+            if (!identifier || !slug)
+                return null;
+            const searchTerm = decodeURIComponent(slug).replace(/[-_]+/g, ' ');
+            const searchUrl = `${APPLE_CATALOG_SEARCH_BASE}?limit=5&types=songs&term=` +
+                encodeURIComponent(searchTerm);
+            const searchRes = await http1makeRequest(searchUrl, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'application/json',
+                    Origin: 'https://music.apple.com'
+                }
+            });
+            if (!searchRes.error && searchRes.statusCode === 200) {
+                const song = this.extractSearchSongs(searchRes.body).find((s) => s.id === identifier);
+                if (song) {
+                    const track = this.buildTrack(song);
+                    if (track)
+                        return { loadType: 'track', data: track };
+                }
+            }
+            return null;
+        }
+        catch {
+            return null;
         }
     }
     /**
@@ -246,17 +327,20 @@ export default class ShazamSource {
      * Converts a Shazam search-song entry into an encoded track payload.
      *
      * @param item Raw song item returned by the Shazam search API.
+     * @param uri Optional canonical URI override (e.g. the Shazam page URL
+     * when resolving, used verbatim instead of the API URL).
+     * @param pluginInfo Optional Shazam-specific metadata.
      * @returns An encoded track entry or `null` when the song is incomplete.
      */
-    buildTrack(item) {
+    buildTrack(item, uri, pluginInfo = {}) {
         if (!item.id || !item.attributes) {
             return null;
         }
         const attributes = item.attributes;
         const artwork = this.parseArtwork(attributes.artwork);
         const isExplicit = attributes.contentRating === 'explicit';
-        let trackUri = attributes.url || '';
-        if (trackUri) {
+        let trackUri = uri ?? attributes.url ?? '';
+        if (!uri && trackUri) {
             trackUri += `${trackUri.includes('?') ? '&' : '?'}explicit=${String(isExplicit)}`;
         }
         return this.createTrack({
@@ -267,7 +351,7 @@ export default class ShazamSource {
             uri: trackUri,
             artworkUrl: artwork,
             isrc: attributes.isrc
-        });
+        }, pluginInfo);
     }
     /**
      * Creates an encoded Shazam track payload.
@@ -389,245 +473,6 @@ export default class ShazamSource {
         return artworkData.url
             .replace('{w}', String(artworkData.width))
             .replace('{h}', String(artworkData.height));
-    }
-    /**
-     * Extracts human-readable text that appears immediately after an element
-     * containing the provided class fragment.
-     *
-     * @param html Raw Shazam page HTML.
-     * @param classPart Class fragment to locate.
-     * @returns Extracted text or `null` when not found.
-     */
-    extractTextAfterClass(html, classPart) {
-        let from = 0;
-        while (true) {
-            const classIndex = html.indexOf('class="', from);
-            if (classIndex === -1)
-                return null;
-            const quoteIndex = html.indexOf('"', classIndex + 7);
-            if (quoteIndex === -1)
-                return null;
-            const classValue = html.slice(classIndex + 7, quoteIndex);
-            if (classValue.includes(classPart)) {
-                const start = html.indexOf('>', quoteIndex);
-                if (start === -1)
-                    return null;
-                const end = html.indexOf('<', start + 1);
-                if (end === -1)
-                    return null;
-                const text = html.slice(start + 1, end).trim();
-                return text || null;
-            }
-            from = quoteIndex + 1;
-        }
-    }
-    /**
-     * Extracts the first href value starting with the provided prefix.
-     *
-     * @param html Raw Shazam page HTML.
-     * @param hrefPrefix Prefix used to locate the href.
-     * @returns The href value or `null`.
-     */
-    extractHrefStartingAt(html, hrefPrefix) {
-        const index = html.indexOf(hrefPrefix);
-        if (index === -1)
-            return null;
-        const start = index + 6;
-        const end = html.indexOf('"', start);
-        return end > start ? html.slice(start, end) : null;
-    }
-    /**
-     * Extracts artwork from either the Open Graph image meta tag or the cover
-     * image srcset used by the Shazam page.
-     *
-     * @param html Raw Shazam page HTML.
-     * @returns The best artwork URL or `null`.
-     */
-    extractArtworkFromImgAlt(html) {
-        const ogImage = this.extractMetaContent(html, 'og:image');
-        if (ogImage) {
-            return ogImage;
-        }
-        let altIndex = html.indexOf('alt="album cover"');
-        if (altIndex === -1) {
-            altIndex = html.indexOf('alt="song thumbnail"');
-        }
-        if (altIndex === -1) {
-            return null;
-        }
-        const imageStart = html.lastIndexOf('<img', altIndex);
-        if (imageStart === -1) {
-            return null;
-        }
-        const imageEnd = html.indexOf('>', altIndex);
-        if (imageEnd === -1) {
-            return null;
-        }
-        const tag = html.slice(imageStart, imageEnd + 1);
-        const srcsetIndex = tag.indexOf('srcset="');
-        if (srcsetIndex === -1) {
-            return null;
-        }
-        const valueStart = srcsetIndex + 8;
-        const valueEnd = tag.indexOf('"', valueStart);
-        if (valueEnd === -1) {
-            return null;
-        }
-        const srcset = tag.slice(valueStart, valueEnd);
-        const spaceIndex = srcset.indexOf(' ');
-        return (spaceIndex === -1 ? srcset : srcset.slice(0, spaceIndex)) || null;
-    }
-    /**
-     * Extracts an ISRC from the Shazam page HTML.
-     *
-     * @param html Raw Shazam page HTML.
-     * @returns The extracted ISRC or `null`.
-     */
-    extractIsrcFromHtml(html) {
-        const tokens = ['"isrc"', '\\"isrc\\"'];
-        for (const token of tokens) {
-            let from = 0;
-            while (true) {
-                const tokenIndex = html.indexOf(token, from);
-                if (tokenIndex === -1)
-                    break;
-                from = tokenIndex + token.length;
-                let index = html.indexOf(':', from);
-                if (index === -1)
-                    break;
-                index++;
-                while (index < html.length) {
-                    const code = html.charCodeAt(index);
-                    if (code !== 32 && code !== 9 && code !== 10 && code !== 13)
-                        break;
-                    index++;
-                }
-                while (html.charCodeAt(index) === 92)
-                    index++;
-                if (html.charCodeAt(index) !== 34)
-                    continue;
-                index++;
-                if (index + 12 > html.length)
-                    continue;
-                if (!this.isUppercaseCode(html.charCodeAt(index)) ||
-                    !this.isUppercaseCode(html.charCodeAt(index + 1))) {
-                    continue;
-                }
-                if (!this.isUppercaseOrDigitCode(html.charCodeAt(index + 2)) ||
-                    !this.isUppercaseOrDigitCode(html.charCodeAt(index + 3)) ||
-                    !this.isUppercaseOrDigitCode(html.charCodeAt(index + 4))) {
-                    continue;
-                }
-                let valid = true;
-                for (let offset = 5; offset < 12; offset++) {
-                    if (!this.isDigitCode(html.charCodeAt(index + offset))) {
-                        valid = false;
-                        break;
-                    }
-                }
-                if (valid) {
-                    return html.slice(index, index + 12);
-                }
-            }
-        }
-        return null;
-    }
-    /**
-     * Extracts and parses an ISO-8601 duration from the Shazam page.
-     *
-     * @param html Raw Shazam page HTML.
-     * @returns Duration in milliseconds.
-     */
-    extractDurationMs(html) {
-        const needles = [
-            '"duration":"PT',
-            '"duration": "PT',
-            '\\"duration\\":\\"PT'
-        ];
-        let isoDuration = null;
-        for (const needle of needles) {
-            const index = html.indexOf(needle);
-            if (index === -1) {
-                continue;
-            }
-            const start = index + needle.length - 2;
-            const end = needle.startsWith('\\')
-                ? html.indexOf('\\"', start)
-                : html.indexOf('"', start);
-            isoDuration = end === -1 ? null : html.slice(start, end);
-            break;
-        }
-        if (!isoDuration) {
-            return 0;
-        }
-        const separatorIndex = isoDuration.indexOf('T');
-        if (separatorIndex === -1) {
-            return 0;
-        }
-        let milliseconds = 0;
-        let numberValue = 0;
-        let fractionValue = 0;
-        let fractionDivisor = 1;
-        let inFraction = false;
-        for (let index = separatorIndex + 1; index < isoDuration.length; index++) {
-            const code = isoDuration.charCodeAt(index);
-            if (code >= 48 && code <= 57) {
-                const digit = code - 48;
-                if (inFraction) {
-                    fractionValue = fractionValue * 10 + digit;
-                    fractionDivisor *= 10;
-                }
-                else {
-                    numberValue = numberValue * 10 + digit;
-                }
-                continue;
-            }
-            if (code === 46) {
-                inFraction = true;
-                continue;
-            }
-            const value = inFraction
-                ? numberValue + fractionValue / fractionDivisor
-                : numberValue;
-            if (code === 72) {
-                milliseconds += value * 3600000;
-            }
-            else if (code === 77) {
-                milliseconds += value * 60000;
-            }
-            else if (code === 83) {
-                milliseconds += value * 1000;
-            }
-            else {
-                break;
-            }
-            numberValue = 0;
-            fractionValue = 0;
-            fractionDivisor = 1;
-            inFraction = false;
-        }
-        return milliseconds ? Math.round(milliseconds) : 0;
-    }
-    /**
-     * Extracts a meta-property content value from the Shazam page.
-     *
-     * @param html Raw page HTML.
-     * @param property Open Graph property name.
-     * @returns The meta content or `null`.
-     */
-    extractMetaContent(html, property) {
-        const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const patterns = [
-            new RegExp(`<meta\\s+[^>]*(?:property|name)=["']${escaped}["'][^>]*content=["']([^"']+)["'][^>]*>`, 'i'),
-            new RegExp(`<meta\\s+[^>]*content=["']([^"']+)["'][^>]*(?:property|name)=["']${escaped}["'][^>]*>`, 'i')
-        ];
-        for (const pattern of patterns) {
-            const match = pattern.exec(html);
-            if (match?.[1]) {
-                return match[1];
-            }
-        }
-        return null;
     }
     /**
      * Extracts a text body from an HTTP response payload.
@@ -812,32 +657,5 @@ export default class ShazamSource {
         return (tracks.find((track) => track.info.title === candidate.info.title &&
             track.info.author === candidate.info.author &&
             track.info.uri === candidate.info.uri) ?? null);
-    }
-    /**
-     * Checks whether a character code is an uppercase ASCII letter.
-     *
-     * @param code Character code.
-     * @returns `true` when the code is an uppercase ASCII letter.
-     */
-    isUppercaseCode(code) {
-        return code >= 65 && code <= 90;
-    }
-    /**
-     * Checks whether a character code is an ASCII digit.
-     *
-     * @param code Character code.
-     * @returns `true` when the code is an ASCII digit.
-     */
-    isDigitCode(code) {
-        return code >= 48 && code <= 57;
-    }
-    /**
-     * Checks whether a character code is an uppercase ASCII letter or digit.
-     *
-     * @param code Character code.
-     * @returns `true` when the code is an uppercase letter or digit.
-     */
-    isUppercaseOrDigitCode(code) {
-        return this.isUppercaseCode(code) || this.isDigitCode(code);
     }
 }

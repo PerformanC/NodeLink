@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { http1makeRequest, logger } from "../utils.js";
+import { http1makeRequest, logger } from '../utils.js';
 /**
  * Built-in encoded TOTP secrets used as primary/fallback bootstrap.
  * @internal
@@ -119,7 +119,9 @@ async function getServerTime(spDc) {
         const data = typeof res.body === 'string'
             ? JSON.parse(res.body)
             : res.body;
-        return typeof data.serverTime === 'number' ? data.serverTime : Date.now();
+        return typeof data.serverTime === 'number'
+            ? data.serverTime * 1000
+            : Date.now();
     }
     catch {
         return Date.now();
@@ -159,9 +161,8 @@ function generateTOTP(secretHex, timestampMs, step = 30) {
  */
 async function performTokenRequest(secret, version, spDc, productType) {
     const isWebPlayer = productType === 'web-player';
-    const serverTimeMs = isWebPlayer ? Date.now() : await getServerTime(spDc);
-    const localTimeMs = Date.now();
-    const totpLocal = generateTOTP(secret, localTimeMs, 30);
+    const serverTimeMs = await getServerTime(spDc);
+    const totpLocal = generateTOTP(secret, serverTimeMs, 30);
     const totpServer = generateTOTP(secret, serverTimeMs, 900);
     const url = new URL('https://open.spotify.com/api/token');
     url.searchParams.append('reason', 'init');

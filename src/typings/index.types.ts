@@ -46,7 +46,28 @@ export interface BunSocketData {
    * Socket wrapper instance for event handling
    * @internal
    */
-  wrapper?: BunSocketWrapper
+  wrapper?: IBunSocketWrapper
+
+  /**
+   * Pre-parsed pathname from the upgrade request URL
+   * @internal
+   */
+  pathname?: string
+
+  /**
+   * Pre-resolved event name to emit on the internal socket bus
+   * (`/v4/websocket`, `/v4/websocket/voice`, `/v4/websocket/youtube/live`,
+   * or `/v4/profiler/socket`)
+   * @internal
+   */
+  eventName?: string
+
+  /**
+   * Pre-extracted route identifier (guildId for voice, videoId/encoded track
+   * for live chat); null when not applicable
+   * @internal
+   */
+  routeId?: string | null
 }
 
 /**
@@ -524,6 +545,11 @@ export interface Player {
   connection: VoiceConnection | null
 
   /**
+   * Current Discord voice connection status
+   */
+  connStatus: 'connecting' | 'connected' | 'disconnected' | 'destroyed'
+
+  /**
    * Last time stream data was received
    * @internal
    */
@@ -878,6 +904,11 @@ export interface Session {
   players: PlayerManagerInstance
 
   /**
+   * Group manager for multi-guild player synchronization
+   */
+  groups: import('../managers/groupManager.ts').default
+
+  /**
    * Event queue for reconnection
    */
   eventQueue: string[]
@@ -1230,6 +1261,9 @@ export interface ConnectionManagerContext {
    */
   options: {
     connection?: import('./voice/connection.types.ts').ConnectionConfig
+    network?: {
+      connection?: import('./voice/connection.types.ts').ConnectionConfig
+    }
   }
 
   /**
@@ -1243,6 +1277,9 @@ export interface ConnectionManagerContext {
       socket: {
         send: (data: string | Buffer) => boolean
       } | null
+      players: {
+        players: Map<string, { guildId: string }>
+      }
     }>
   }
 }
@@ -1336,20 +1373,4 @@ export interface NodelinkServer {
    * Extension system
    */
   extensions?: NodelinkExtensions
-}
-
-/**
- * BunSocketWrapper class declaration for type exports
- * @public
- */
-export class BunSocketWrapper {
-  ws!: ServerWebSocket<BunSocketData>
-  remoteAddress!: string
-
-  send!: (data: string | Buffer) => boolean
-  ping!: (data?: string | Buffer) => boolean
-  close!: (code?: number, reason?: string) => void
-  terminate!: () => void
-  _handleMessage!: (message: string | Buffer) => void
-  _handleClose!: (code: number, reason: string) => void
 }

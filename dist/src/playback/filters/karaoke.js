@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
 const MAX_OUTPUT_GAIN = 0.98;
 const SCALE_16 = 32768;
 const INV_16 = 1 / SCALE_16;
@@ -135,7 +135,8 @@ export default class Karaoke extends AnimatableFilter {
         const targetAlpha = isDisabled ? 0.0 : 1.0;
         super.applyAnimatedUpdate({
             karaoke: {
-                alpha: targetAlpha
+                alpha: targetAlpha,
+                transition: k.transition
             }
         }, 'karaoke', { alpha: 0.0 });
     }
@@ -294,5 +295,9 @@ export default class Karaoke extends AnimatableFilter {
         this._resetFilterState();
         this._prevGain = MAX_OUTPUT_GAIN;
         return Buffer.alloc(0);
+    }
+    destroy() {
+        this._bufL = null;
+        this._bufR = null;
     }
 }

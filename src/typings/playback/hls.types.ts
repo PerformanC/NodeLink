@@ -38,6 +38,8 @@ export interface HLSSegmentKey {
 export interface HLSSegmentMap {
   /** URI of the initialization segment */
   uri?: string
+  /** Byte range when the initialization segment shares a media file */
+  byteRange?: HLSByteRange | null
 }
 
 /**
@@ -241,6 +243,14 @@ export interface HLSHandlerOptions {
     username?: string
     password?: string
   } | null
+  /** Backward-compatible network block used by some callers. */
+  network?: {
+    proxy?: {
+      url: string
+      username?: string
+      password?: string
+    } | null
+  }
   /** Callback for URL resolution (e.g., signature decryption) */
   onResolveUrl?: ((url: string) => Promise<string | null>) | null
   /** Fetch strategy: 'segmented' | 'streaming' | 'sequential' */
@@ -282,6 +292,14 @@ export interface SegmentFetcherOptions {
     username?: string
     password?: string
   } | null
+  /** Backward-compatible network block used by some callers. */
+  network?: {
+    proxy?: {
+      url: string
+      username?: string
+      password?: string
+    } | null
+  }
   /** URL resolution callback */
   onResolveUrl?: ((url: string) => Promise<string | null>) | null
 }

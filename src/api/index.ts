@@ -97,6 +97,7 @@ async function loadRoutes(): Promise<ApiRouteCollection> {
       if (
         file !== 'index.js' &&
         file !== 'index.ts' &&
+        !file.endsWith('.d.ts') &&
         (file.endsWith('.js') || file.endsWith('.ts'))
       ) {
         const filePath = join(__dirname, file)
@@ -111,10 +112,10 @@ async function loadRoutes(): Promise<ApiRouteCollection> {
         } else if (routeName.includes('.')) {
           const parts = routeName.split('.')
           const basePattern = parts
-            .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9]+)' : part))
+            .map((part) => (part === 'id' ? '(?:id|[A-Za-z0-9_-]+)' : part))
             .join('/')
           pathname = new RegExp(
-            `^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9]+)?/?$`
+            `^/${PATH_VERSION}/${basePattern}(?:/[A-Za-z0-9_-]+)?/?$`
           )
         } else {
           pathname = `/${PATH_VERSION}/${routeName}`
@@ -125,7 +126,11 @@ async function loadRoutes(): Promise<ApiRouteCollection> {
           methods: module.methods ?? defaultMethods
         }
 
-        if (pathname instanceof RegExp) {
+        if (module.paths && module.paths.length > 0) {
+          for (const explicitPath of module.paths) {
+            staticRoutes.set(explicitPath, routeData)
+          }
+        } else if (pathname instanceof RegExp) {
           dynamicRoutes.push([pathname, routeData])
         } else {
           staticRoutes.set(pathname, routeData)
@@ -160,12 +165,49 @@ async function requestHandler(
   req: ApiRequest,
   res: ApiResponse
 ): Promise<void> {
+  const corsEnabled = nodelink.options.server.cors === true
+  const requestedHeaders = corsEnabled
+    ? getHeaderValue(
+        (req.headers as Record<string, string | string[] | undefined>)[
+          'access-control-request-headers'
+        ]
+      )
+    : undefined
+  const allowHeaders =
+    requestedHeaders ||
+    'Authorization, Content-Type, Accept, Origin, User-Agent, Client-Name, User-Id, Session-Id, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers'
+
   const originalWriteHead = res.writeHead
   res.writeHead = (status, headers) => {
+    if (corsEnabled) {
+      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader(
+        'Access-Control-Allow-Methods',
+        'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
+      )
+      res.setHeader('Access-Control-Allow-Headers', allowHeaders)
+      res.setHeader('Access-Control-Max-Age', '86400')
+    }
     res.setHeader('Nodelink-Api-Version', '4')
     res.setHeader('IamNodelink', 'true')
 
     return originalWriteHead.call(res, status, headers)
+  }
+
+  if (corsEnabled) {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader(
+      'Access-Control-Allow-Methods',
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD'
+    )
+    res.setHeader('Access-Control-Allow-Headers', allowHeaders)
+    res.setHeader('Access-Control-Max-Age', '86400')
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204)
+      res.end()
+      return
+    }
   }
 
   const startTime = Date.now()
@@ -224,7 +266,7 @@ async function requestHandler(
     parsedUrl.pathname === `/${PATH_VERSION}/profiler/ui` ||
     parsedUrl.pathname === `/${PATH_VERSION}/profiler/file`
   if (isMetricsEndpoint) {
-    const metricsConfig = nodelink.options.metrics || {}
+    const metricsConfig = nodelink.options.api.metrics || {}
     if (!metricsConfig.enabled) {
       logger(
         'warn',
@@ -407,16 +449,65 @@ async function requestHandler(
       return
     }
 
-    await new Promise<void>((resolve) => {
+    const bodyReadSuccess = await new Promise<boolean>((resolve) => {
       if (typeof req.on !== 'function') {
-        resolve()
+        resolve(true)
         return
       }
 
       let receivedSize = 0
+      const chunks: Buffer[] = []
+      let isSettled = false
+
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
+        req.removeListener?.('data', onData)
+        req.removeListener?.('end', onEnd)
+        req.removeListener?.('error', onError)
+      }
+
+      const settle = (success: boolean) => {
+        if (isSettled) return
+        isSettled = true
+        cleanup()
+        resolve(success)
+      }
+
+      const timeoutMs = nodelink.options.server?.bodyTimeout ?? 30_000
+      const timeoutId =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              logger(
+                'warn',
+                'Server',
+                `Request body read timed out after ${timeoutMs}ms: ${parsedUrl.pathname}`
+              )
+              ;(res as unknown as { __traceReason?: string }).__traceReason =
+                'body_timeout'
+              if (!res.headersSent) {
+                sendErrorResponse(
+                  req,
+                  res,
+                  408,
+                  'Request Timeout',
+                  'Request body read timed out.',
+                  parsedUrl.pathname,
+                  trace
+                )
+              }
+              try {
+                req.destroy?.()
+              } catch {}
+              settle(false)
+            }, timeoutMs)
+          : null
+      timeoutId?.unref?.()
 
       const onData = (chunk: Buffer) => {
-        receivedSize += chunk.length
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        receivedSize += buf.length
         if (receivedSize > MAX_BODY_SIZE) {
           logger(
             'warn',
@@ -425,8 +516,6 @@ async function requestHandler(
           )
           ;(res as unknown as { __traceReason?: string }).__traceReason =
             'payload_too_large'
-          req.removeListener?.('data', onData)
-          req.removeListener?.('end', onEnd)
           sendErrorResponse(
             req,
             res,
@@ -436,56 +525,93 @@ async function requestHandler(
             parsedUrl.pathname,
             trace
           )
-          req.destroy?.()
-          resolve()
+          try {
+            req.destroy?.()
+          } catch {}
+          settle(false)
+          return
         }
-        body += chunk.toString()
+        chunks.push(buf)
       }
 
-      const onEnd = () => {
-        try {
-          const contentType = getHeaderValue(headerAccess['content-type'])
-          if (contentType?.includes('application/json') && body) {
-            parsedBody = JSON.parse(body)
-          }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error)
-          logger(
-            'error',
-            'Server',
-            `Failed to parse JSON body: ${errorMessage}. Path: ${
-              parsedUrl.pathname
-            }, Content-Type: ${
-              getHeaderValue(headerAccess['content-type']) || 'N/A'
-            }, Raw Body: '${body}', Headers: ${JSON.stringify(req.headers)}`
-          )
-          pushTrace('events', {
-            ts: Date.now(),
-            type: 'json_parse_error',
-            path: parsedUrl.pathname,
-            method: req.method ?? 'UNKNOWN',
-            message: errorMessage
-          })
-          ;(res as unknown as { __traceReason?: string }).__traceReason =
-            'invalid_json'
+      const onError = (error: Error) => {
+        logger(
+          'error',
+          'Server',
+          `Error reading request body: ${error?.message || error}. Path: ${parsedUrl.pathname}`
+        )
+        ;(res as unknown as { __traceReason?: string }).__traceReason =
+          'socket_error'
+        if (!res.headersSent) {
           sendErrorResponse(
             req,
             res,
-            400,
-            'Invalid JSON',
-            errorMessage || 'Failed to parse JSON body',
+            500,
+            'Internal Server Error',
+            'Failed to read request body',
             parsedUrl.pathname,
             trace
           )
-          return
         }
-        resolve()
+        try {
+          req.destroy?.()
+        } catch {}
+        settle(false)
+      }
+
+      const onEnd = () => {
+        const rawBody = Buffer.concat(chunks).toString('utf8')
+        body = rawBody
+        parsedBody = rawBody
+        const contentType = getHeaderValue(headerAccess['content-type'])
+        if (contentType?.includes('application/json') && rawBody.length > 0) {
+          try {
+            parsedBody = JSON.parse(rawBody)
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error)
+            logger(
+              'error',
+              'Server',
+              `Failed to parse JSON body: ${errorMessage}. Path: ${
+                parsedUrl.pathname
+              }, Content-Type: ${
+                getHeaderValue(headerAccess['content-type']) || 'N/A'
+              }, Raw Body: '${rawBody}', Headers: ${JSON.stringify(req.headers)}`
+            )
+            pushTrace('events', {
+              ts: Date.now(),
+              type: 'json_parse_error',
+              path: parsedUrl.pathname,
+              method: req.method ?? 'UNKNOWN',
+              message: errorMessage
+            })
+            ;(res as unknown as { __traceReason?: string }).__traceReason =
+              'invalid_json'
+            sendErrorResponse(
+              req,
+              res,
+              400,
+              'Invalid JSON',
+              errorMessage || 'Failed to parse JSON body',
+              parsedUrl.pathname,
+              trace
+            )
+            settle(false)
+            return
+          }
+        }
+        settle(true)
       }
 
       req.on('data', onData)
       req.on('end', onEnd)
+      req.on('error', onError)
     })
+
+    if (!bodyReadSuccess) {
+      return
+    }
   }
   req.body = parsedBody
 

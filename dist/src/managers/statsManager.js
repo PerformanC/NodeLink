@@ -1,4 +1,4 @@
-import { logger } from "../utils.js";
+import { logger } from '../utils.js';
 const MAX_ENDPOINT_ENTRIES = 500;
 const MAX_ENDPOINT_LENGTH = 200;
 const safeNumber = (value) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -103,7 +103,7 @@ export default class StatsManager {
     async initialize() {
         if (this.initialized)
             return;
-        const metricsEnabled = this.nodelink.options.metrics?.enabled ?? false;
+        const metricsEnabled = this.nodelink.options.api.metrics?.enabled ?? false;
         if (!metricsEnabled) {
             this.initialized = true;
             return;
@@ -440,6 +440,13 @@ export default class StatsManager {
         });
         this.initialized = true;
         logger('info', 'StatsManager', 'Prometheus metrics initialized.');
+    }
+    /**
+     * Returns the Prometheus registry for custom metric registration.
+     * @public
+     */
+    getRegistry() {
+        return this.promRegister;
     }
     /**
      * Returns a deep-copied snapshot of internal counters.

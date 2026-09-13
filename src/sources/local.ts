@@ -173,6 +173,11 @@ export default class LocalSource {
   public readonly config: LocalSourceConfig
 
   /**
+   * Cached canonical path of the configured base directory.
+   */
+  private cachedRealBasePath: string | null = null
+
+  /**
    * Creates a new local source wrapper.
    *
    * @param nodelink - Worker runtime used by the source implementation.
@@ -464,10 +469,63 @@ export default class LocalSource {
   private isPathInsideBase(basePath: string, filePath: string): boolean {
     const relativePath = path.relative(basePath, filePath)
     return (
+      relativePath !== '' &&
       relativePath !== '..' &&
       !relativePath.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relativePath)
     )
+  }
+
+  /**
+   * Resolves and verifies that a local path stays strictly within the configured
+   * base directory, preventing directory traversal and symlink escapes.
+   *
+   * @param targetPath - Absolute or relative file path.
+   * @returns Object containing the resolved path and whether it attempted path traversal.
+   */
+  private async resolveValidPath(targetPath: string): Promise<{
+    filePath: string
+    isTraversal: boolean
+  }> {
+    try {
+      const basePath = path.resolve(this.config.basePath ?? './')
+      const absolutePath = path.isAbsolute(targetPath)
+        ? path.resolve(targetPath)
+        : path.resolve(basePath, targetPath)
+
+      if (!this.isPathInsideBase(basePath, absolutePath)) {
+        return { filePath: absolutePath, isTraversal: true }
+      }
+
+      let realBasePath = this.cachedRealBasePath
+      if (!realBasePath) {
+        try {
+          realBasePath = await fs.promises.realpath(basePath)
+          this.cachedRealBasePath = realBasePath
+        } catch {
+          return { filePath: absolutePath, isTraversal: false }
+        }
+      }
+
+      let realFilePath: string
+      try {
+        realFilePath = await fs.promises.realpath(absolutePath)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT' || code === 'ENOTDIR') {
+          return { filePath: absolutePath, isTraversal: false }
+        }
+        return { filePath: absolutePath, isTraversal: true }
+      }
+
+      if (!this.isPathInsideBase(realBasePath, realFilePath)) {
+        return { filePath: realFilePath, isTraversal: true }
+      }
+
+      return { filePath: realFilePath, isTraversal: false }
+    } catch {
+      return { filePath: '', isTraversal: true }
+    }
   }
 
   /**
@@ -539,15 +597,11 @@ export default class LocalSource {
    * exception payload when a relative path attempts to escape the base path.
    */
   public async search(query: string): Promise<SourceResult> {
-    const isAbsolute = path.isAbsolute(query)
-    const basePath = path.resolve(this.config.basePath ?? './')
-    const filePath = isAbsolute
-      ? path.resolve(query)
-      : path.resolve(basePath, query)
+    const { filePath, isTraversal } = await this.resolveValidPath(query)
 
     logger('debug', 'Sources', `Searching local file: ${filePath}`)
 
-    if (!isAbsolute && !this.isPathInsideBase(basePath, filePath)) {
+    if (isTraversal) {
       logger(
         'warn',
         'Sources',
@@ -563,6 +617,16 @@ export default class LocalSource {
     }
 
     try {
+      const stats = await fs.promises.stat(filePath)
+      if (!stats.isFile()) {
+        logger(
+          'warn',
+          'Sources',
+          `Local path is not a regular file: ${filePath}`
+        )
+        return { loadType: 'empty', data: {} }
+      }
+
       await fs.promises.access(filePath, fs.constants.R_OK)
 
       const metadata = this.readFileInfo(filePath)
@@ -639,17 +703,25 @@ export default class LocalSource {
     _protocol?: string,
     additionalData?: LocalAdditionalData
   ): Promise<TrackStreamResult> {
-    const extension = path
-      .extname(decodedTrack.uri || '')
-      .slice(1)
-      .toLowerCase()
+    const { filePath, isTraversal } = await this.resolveValidPath(
+      decodedTrack.uri || ''
+    )
+    if (isTraversal) {
+      logger(
+        'warn',
+        'Sources',
+        `Path traversal attempt blocked in loadStream: "${decodedTrack.uri}"`
+      )
+      throw new Error('Path traversal is not allowed.')
+    }
+
+    const extension = path.extname(filePath).slice(1).toLowerCase()
     const metadata = this.getTrackMetadata(decodedTrack)
     const streamType =
-      metadata?.streamType ??
-      this.detectLocalAudioType(decodedTrack.uri, extension)
+      metadata?.streamType ?? this.detectLocalAudioType(filePath, extension)
 
     if ((additionalData?.startTime ?? 0) > 0 && decodedTrack.isSeekable) {
-      const info = this.readFileInfo(decodedTrack.uri)
+      const info = this.readFileInfo(filePath)
       const bitsPerSecond =
         (typeof info.bitrateKbps === 'number' ? info.bitrateKbps : 128) * 1000
       const offset =
@@ -659,12 +731,12 @@ export default class LocalSource {
             )
           : 0
 
-      const stream = fs.createReadStream(decodedTrack.uri, { start: offset })
+      const stream = fs.createReadStream(filePath, { start: offset })
       stream.once('close', () => stream.emit('finishBuffering'))
       return { stream, type: streamType }
     }
 
-    const stream = fs.createReadStream(decodedTrack.uri)
+    const stream = fs.createReadStream(filePath)
     stream.once('close', () => stream.emit('finishBuffering'))
     stream.on('error', (error) => {
       logger('error', 'Sources', `Local stream error: ${error.message}`)

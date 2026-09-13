@@ -1,4 +1,4 @@
-import { logger, makeRequest } from "../../utils.js";
+import { logger, makeRequest } from '../../utils.js';
 const CLIENT_ID = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com';
 const CLIENT_SECRET = 'SboVhoG9s0rNafixCSGGKXAT';
 const SCOPES = 'http://gdata.youtube.com https://www.googleapis.com/auth/youtube';

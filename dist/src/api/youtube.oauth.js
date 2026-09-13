@@ -1,4 +1,4 @@
-import { logger, makeRequest, sendErrorResponse } from "../utils.js";
+import { logger, makeRequest, sendErrorResponse } from '../utils.js';
 /**
  * Google OAuth client identifier used by the YouTube refresh flow.
  *

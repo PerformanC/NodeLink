@@ -1,5 +1,5 @@
 import { PassThrough } from 'node:stream';
-import { encodeTrack, logger, makeRequest } from "../utils.js";
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 const VOICES_URL = 'https://lazypy.ro/tts/assets/js/voices.json';
 const REQUEST_URL = 'https://lazypy.ro/tts/request_tts.php';
 const DEFAULT_SERVICE = 'Cerence';

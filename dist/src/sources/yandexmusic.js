@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from "../utils.js";
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for the Yandex Music API.
  * @internal
@@ -196,7 +196,7 @@ export default class YandexMusicSource {
             });
             if (!data)
                 return { loadType: 'empty', data: {} };
-            const limit = this.nodelink.options.maxSearchResults || 10;
+            const limit = this.nodelink.options.search.maxResults || 10;
             if (searchType === 'album') {
                 const albums = (data.albums?.results || [])
                     .filter((item) => this.allowUnavailable || item.available)
@@ -387,7 +387,7 @@ export default class YandexMusicSource {
                     streamOnly: true,
                     headers,
                     localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy ?? this.config.proxy
                 });
             };
             let response = await requestStream(url);
@@ -416,8 +416,7 @@ export default class YandexMusicSource {
             const wait = async (ms) => {
                 await new Promise((resolve) => {
                     const timeout = setTimeout(resolve, ms);
-                    if (typeof timeout.unref === 'function')
-                        timeout.unref();
+                    timeout.unref?.();
                 });
             };
             const finishStream = () => {
@@ -813,7 +812,7 @@ export default class YandexMusicSource {
                 'X-Yandex-Music-Client': CLIENT_HEADER
             },
             localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy ?? this.config.proxy
         });
         if (res.statusCode !== 200) {
             throw new Error(`Yandex API returned HTTP ${res.statusCode} for ${path}`);
@@ -918,16 +917,13 @@ export default class YandexMusicSource {
             const linksByPlatform = data.linksByPlatform;
             if (!linksByPlatform)
                 return null;
-            const platforms = typeof songlinkSource.getPlatformOrder === 'function'
-                ? songlinkSource.getPlatformOrder(linksByPlatform)
-                : Object.keys(linksByPlatform);
+            const platforms = songlinkSource.getPlatformOrder?.(linksByPlatform) ??
+                Object.keys(linksByPlatform);
             for (const platform of platforms) {
                 const platformLink = linksByPlatform[platform]?.url;
                 if (!platformLink)
                     continue;
-                const sourceName = typeof songlinkSource.getPlatformSourceName === 'function'
-                    ? songlinkSource.getPlatformSourceName(platform)
-                    : null;
+                const sourceName = songlinkSource.getPlatformSourceName?.(platform) ?? null;
                 if (!sourceName || !this._isSourceAvailable(sourceName))
                     continue;
                 const source = sm.getSource(sourceName);
@@ -1020,16 +1016,12 @@ export default class YandexMusicSource {
         if (!sm)
             return;
         const songlinkSource = sm.getSource('songlink');
-        const platforms = typeof songlinkSource?.getPlatformOrder === 'function'
-            ? songlinkSource.getPlatformOrder(links)
-            : Object.keys(links);
+        const platforms = songlinkSource?.getPlatformOrder?.(links) ?? Object.keys(links);
         for (const p of platforms) {
             const url = links[p]?.url;
             if (!url)
                 continue;
-            const sourceName = typeof songlinkSource?.getPlatformSourceName === 'function'
-                ? songlinkSource.getPlatformSourceName(p)
-                : null;
+            const sourceName = songlinkSource?.getPlatformSourceName?.(p) ?? null;
             if (!sourceName || !this._isSourceAvailable(sourceName))
                 continue;
             const source = sm.getSource(sourceName);

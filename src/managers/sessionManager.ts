@@ -8,6 +8,7 @@ import type {
 } from '../typings/index.types.ts'
 import type { ClientInfo } from '../typings/shared.types.ts'
 import { generateRandomLetters, logger } from '../utils.ts'
+import GroupManager from './groupManager.ts'
 
 /**
  * Manages active and resumable WebSocket sessions for NodeLink.
@@ -85,6 +86,7 @@ export default class SessionManager {
       userId: request.headers['user-id'] as string | string[] | undefined,
       socket,
       players,
+      groups: new GroupManager(),
       resuming: false,
       timeout: 60,
       isPaused: false,
@@ -130,7 +132,11 @@ export default class SessionManager {
   public pause(sessionId: string): void {
     // [feat] session-resuming: guard double-pause and clear stale socket
     if (this.resumableSessions.has(sessionId)) {
-      logger('debug', 'SessionManager', `Session ${sessionId} is already paused.`)
+      logger(
+        'debug',
+        'SessionManager',
+        `Session ${sessionId} is already paused.`
+      )
       return
     }
 
@@ -220,10 +226,21 @@ export default class SessionManager {
       }
     } else {
       for (const player of players.players.values()) {
-        player.destroy?.()
+        try {
+          player.destroy?.()
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          logger(
+            'error',
+            'SessionManager',
+            `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`
+          )
+        }
       }
+      players.players.clear()
     }
 
+    session.groups.destroy()
     session.socket?.destroy?.()
   }
 

@@ -61,7 +61,7 @@ cd NodeLink
 npm install
 
 # Copy the default configuration file
-cp config.default.js config.js
+cp config.default.ts config.ts
 
 # Start the server
 npm run start
@@ -96,15 +96,17 @@ However, some clients may not work properly, since NodeLink changes certain beha
 | [Lavalink-Client](https://github.com/lavalink-devs/Lavalink-Client) | JVM          | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
 | [Lavalink.kt](https://github.com/DRSchlaubi/Lavalink.kt)            | Kotlin       | unknown       | No                 | v1                     |                                                                                                                                                                                                                 |
 | [DisGoLink](https://github.com/disgoorg/disgolink)                  | Go           | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
-| [Lavalink.py](https://github.com/devoxin/lavalink.py)               | Python       | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
-| [Mafic](https://github.com/ooliver1/mafic)                          | Python       | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
+| [Lavalink.py](https://github.com/devoxin/lavalink.py)               | Python       | Yes       | No                 | v1, v2, v3              |                                                                                                                                                                                                                 |
+| [Lavaplay.py](https://github.com/HazemMeqdad/lavaplay.py)               | Python       | Yes       | No                 | v3             |                                                                                                                                                                                                                 |
+| [Mafic](https://github.com/ooliver1/mafic)                          | Python       | No       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
 | [Wavelink](https://github.com/PythonistaGuild/Wavelink)             | Python       | Yes           | No                 | v1, v2, v3             |                                                                                                                                                                                                                 |
+| [Sonolink](https://github.com/sonolink/sonolink)             | Python       | Yes           | No                 | v3                       |                                                                                                                                                                                                                 |
 | [Pomice](https://github.com/cloudwithax/pomice)                     | Python       | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
 | [lava-lyra](https://github.com/ParrotXray/lava-lyra)                | Python       | Yes           | Yes                | v3                     |                                                                                                                                                                                                                 |
 | [Hikari-ongaku](https://github.com/MPlatypus/hikari-ongaku)         | Python       | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
 | [Moonlink.js](https://github.com/1Lucas1apk/moonlink.js)            | TypeScript   | Yes           | Yes                | v1, v2, v3             |                                                                                                                                                                                                                 |
-| [Magmastream](https://github.com/Blackfort-Hosting/magmastream)     | TypeScript   | Yes           | Yes                | v1 and v3             |                                                                                                                                                                                                                 |
-| [Lavacord](https://github.com/lavacord/Lavacord)                    | TypeScript   | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
+| [Magmastream](https://github.com/Blackfort-Hosting/magmastream)     | TypeScript   | Yes           | Yes                | v1 and v3              |                                                                                                                                                                                                                 |
+| [Lavacord](https://github.com/lavacord/Lavacord)                    | TypeScript   | No       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
 | [Shoukaku](https://github.com/Deivu/Shoukaku)                       | TypeScript   | Yes           | No                 | v1, v2, v3             |                                                                                                                                                                                                                 |
 | [Hoshimi](https://github.com/Ganyu-Studios/Hoshimi)                 | TypeScript   | Yes           | No                 | v1, v2, v3             | ;P                                                                                                                                                                                                              |
 | [Lavalink-Client](https://github.com/tomato6966/Lavalink-Client)    | TypeScript   | Yes           | Yes                | v1, v3                 |                                                                                                                                                                                                                 |
@@ -121,6 +123,7 @@ However, some clients may not work properly, since NodeLink changes certain beha
 | [CogLink](https://github.com/PerformanC/Coglink)                    | C            | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
 | [Lavalink-rs](https://gitlab.com/vicky5124/lavalink-rs)             | Rust, Python | unknown       | No                 | v1 and v2              |                                                                                                                                                                                                                 |
 | [nyxx_lavalink](https://github.com/nyxx-discord/nyxx_lavalink)      | Dart         | unknown       | No                 | v1                     |                                                                                                                                                                                                                 |
+| [Lavalink.lua](https://github.com/filispeen/lavalink.lua)           | Lua          | Yes           | Yes                | v1, v2, v3             | Mambo                                                                                                                                                                                                           |
 
 > [!IMPORTANT]
 > Lack of explicit NodeLink support *usually* means that the client implements the Lavalink API inconsistently, not following its defined formats and fields. Using such clients may lead to unexpected behavior.
@@ -175,9 +178,10 @@ Internally, NodeLink combines native and WebAssembly modules for precise audio p
 - [`@ecliptia/faad2-wasm`](https://www.npmjs.com/package/@ecliptia/faad2-wasm) 💙
 - [`@ecliptia/seekable-stream`](https://github.com/1Lucas1apk/seekable-stream) 💙
 - [`@toddynnn/symphonia-decoder`](https://www.npmjs.com/package/@toddynnn/symphonia-decoder)
+- [`@toddynnn/voice-opus`](https://www.npmjs.com/package/@toddynnn/voice-opus)
 - [`mp4box`](https://www.npmjs.com/package/mp4box)
-- [`myzod`](https://www.npmjs.com/package/myzod)
-- [`toddy-mediaplex`](https://www.npmjs.com/package/toddy-mediaplex)
+- [`fastest-validator`](https://www.npmjs.com/package/fastest-validator)
+- [`proxy-agent`](https://www.npmjs.com/package/proxy-agent)
 
 **Optional Dependencies:**
 
@@ -255,4 +259,3 @@ The goal is to make audio accessible, transparent, and fun to build.
 </p>
 
 ---
-

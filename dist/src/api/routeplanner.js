@@ -1,4 +1,4 @@
-import { sendErrorResponse, sendResponse } from "../utils.js";
+import { sendErrorResponse, sendResponse } from '../utils.js';
 /**
  * Builds a strongly typed runtime view for the route planner endpoint.
  *
@@ -159,6 +159,11 @@ function handler(nodelink, req, res, _sendResponse, parsedUrl) {
  */
 const routePlannerRoute = {
     handler,
-    methods: ['GET', 'POST']
+    methods: ['GET', 'POST'],
+    paths: [
+        '/v4/routeplanner/status',
+        '/v4/routeplanner/free/address',
+        '/v4/routeplanner/free/all'
+    ]
 };
 export default routePlannerRoute;

@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, http1makeRequest, logger, makeRequest } from "../utils.js";
+import vm from 'node:vm';
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Mixin key encoding table for Bilibili WBI signatures.
  * @internal
@@ -47,7 +48,10 @@ export default class BilibiliSource {
         /https?:\/\/(?:www\.)?bilibili\.com\/audio\/(au|am)(\d+)/,
         /https?:\/\/live\.bilibili\.com\/(\d+)/,
         /https?:\/\/space\.bilibili\.com\/(\d+)/,
-        /^https?:\/\/b23\.tv\/.+/i
+        /^https?:\/\/b23\.tv\/.+/i,
+        /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?video\/(\d+|BV[a-zA-Z0-9]+|av\d+)/,
+        /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?play\/(\d+)(?:\/(\d+))?/,
+        /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?space\/(\d+)/
     ];
     /**
      * Search term prefixes recognized by this source.
@@ -161,7 +165,7 @@ export default class BilibiliSource {
         const res = await makeRequest('https://api.bilibili.com/x/web-interface/nav', {
             method: 'GET',
             headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy
         });
         const body = res.body;
         if (res.error || !body?.data?.wbi_img) {
@@ -227,7 +231,7 @@ export default class BilibiliSource {
                     Cookie: cookie,
                     Referer: 'https://search.bilibili.com/'
                 },
-                proxy: this.config.proxy
+                proxy: this.config.network?.proxy
             });
             body = searchResponse.body;
             if (!body?.data ||
@@ -241,7 +245,7 @@ export default class BilibiliSource {
                         Cookie: cookie,
                         Referer: 'https://search.bilibili.com/'
                     },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 body = allSearchResponse.body;
             }
@@ -263,7 +267,7 @@ export default class BilibiliSource {
                 return { loadType: 'empty', data: {} };
             }
             const tracks = [];
-            const limit = this.nodelink.options.maxSearchResults || 10;
+            const limit = this.nodelink.options.search.maxResults || 10;
             for (const item of videos.slice(0, limit)) {
                 const durationParts = String(item.duration || '0:0')
                     .split(':')
@@ -322,7 +326,7 @@ export default class BilibiliSource {
                 headers: HEADERS,
                 maxRedirects: 3,
                 timeout: 5000,
-                proxy: this.config.proxy
+                proxy: this.config.network?.proxy
             });
             if (typeof res.body === 'string') {
                 const match = res.body.match(/rel=["']canonical["'][^>]+href=["']([^"']+)["']/);
@@ -457,6 +461,38 @@ export default class BilibiliSource {
         };
     }
     /**
+     * Extracts initial state from a Bilibili TV webpage.
+     * @param url - Webpage URL.
+     * @returns Parsed state object or null.
+     * @internal
+     */
+    async _fetchBilibiliTvState(url) {
+        try {
+            const res = await http1makeRequest(url, {
+                method: 'GET',
+                headers: {
+                    ...HEADERS,
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    Referer: 'https://www.bilibili.tv/'
+                },
+                proxy: this.config.network?.proxy
+            });
+            const html = String(res.body || '');
+            const stateMatch = html.match(/<script>\s*window\.__initialState\s*=\s*([\s\S]*?)<\/script>/i);
+            if (stateMatch?.[1]) {
+                const context = { window: {} };
+                vm.createContext(context);
+                vm.runInContext(`window.__initialState = ${stateMatch[1]}`, context);
+                return (context.window
+                    .__initialState ?? null);
+            }
+            return null;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
      * Resolves a Bilibili URL into a track or collection.
      * Supports Videos, Bangumis, Audios, Live rooms, and Space search.
      * @param url - The absolute Bilibili URL.
@@ -466,6 +502,159 @@ export default class BilibiliSource {
     async resolve(url) {
         if (url.includes('b23.tv')) {
             url = await this.resolveShortUrl(url);
+        }
+        const patTvVideo = this.patterns[6];
+        const tvVideoMatch = patTvVideo ? url.match(patTvVideo) : null;
+        if (tvVideoMatch) {
+            try {
+                const state = (await this._fetchBilibiliTvState(url));
+                const archive = state?.ugc?.archive;
+                if (!archive) {
+                    return { loadType: 'empty', data: {} };
+                }
+                const trackInfo = {
+                    identifier: `tv:${archive.aid}`,
+                    isSeekable: true,
+                    author: archive.uploader?.name || 'Unknown',
+                    length: (archive.duration || 0) * 1000,
+                    isStream: false,
+                    position: 0,
+                    title: archive.title || 'Unknown',
+                    uri: `https://www.bilibili.tv/en/video/${archive.aid}`,
+                    artworkUrl: archive.cover || '',
+                    isrc: null,
+                    sourceName: 'bilibili'
+                };
+                return {
+                    loadType: 'track',
+                    data: {
+                        encoded: encodeTrack({ ...trackInfo, details: [] }),
+                        info: trackInfo,
+                        pluginInfo: {
+                            aid: archive.aid,
+                            isBilibiliTv: true
+                        }
+                    }
+                };
+            }
+            catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                return { loadType: 'error', exception: { message, severity: 'fault' } };
+            }
+        }
+        const patTvPlay = this.patterns[7];
+        const tvPlayMatch = patTvPlay ? url.match(patTvPlay) : null;
+        if (tvPlayMatch) {
+            try {
+                const state = (await this._fetchBilibiliTvState(url));
+                const season = state?.ogv?.season;
+                const episodes = state?.ogv?.sectionsList?.[0]?.episodes || [];
+                if (!episodes.length) {
+                    return { loadType: 'empty', data: {} };
+                }
+                const seasonId = season?.season_id || tvPlayMatch[1] || '';
+                const seasonTitle = season?.title || 'Bilibili Season';
+                const tracks = episodes.map((ep) => {
+                    const epTitle = ep.title_display || ep.short_title_display || 'Episode';
+                    const fullTitle = `${seasonTitle} - ${epTitle}`;
+                    const trackInfo = {
+                        identifier: `tv:ep:${ep.episode_id}`,
+                        isSeekable: true,
+                        author: seasonTitle,
+                        length: 0,
+                        isStream: false,
+                        position: 0,
+                        title: fullTitle,
+                        uri: `https://www.bilibili.tv/en/play/${seasonId}/${ep.episode_id}`,
+                        artworkUrl: ep.cover || season?.cover || '',
+                        isrc: null,
+                        sourceName: 'bilibili'
+                    };
+                    return {
+                        encoded: encodeTrack({ ...trackInfo, details: [] }),
+                        info: trackInfo,
+                        pluginInfo: {
+                            ep_id: ep.episode_id,
+                            isBilibiliTv: true,
+                            type: 'ogv'
+                        }
+                    };
+                });
+                return {
+                    loadType: 'playlist',
+                    data: {
+                        info: { name: seasonTitle, selectedTrack: 0 },
+                        tracks,
+                        pluginInfo: {}
+                    }
+                };
+            }
+            catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                return { loadType: 'error', exception: { message, severity: 'fault' } };
+            }
+        }
+        const patTvSpace = this.patterns[8];
+        const tvSpaceMatch = patTvSpace ? url.match(patTvSpace) : null;
+        if (tvSpaceMatch) {
+            try {
+                const state = (await this._fetchBilibiliTvState(url));
+                const videoList = state?.space?.spaceVideo?.videoList || [];
+                if (!videoList.length) {
+                    return { loadType: 'empty', data: {} };
+                }
+                const firstAuthor = videoList[0]?.author?.nickname || 'Unknown';
+                const tracks = videoList.map((item) => {
+                    const durationParts = String(item.duration || '0:0')
+                        .split(':')
+                        .map(Number);
+                    let durationMs = 0;
+                    if (durationParts.length === 2) {
+                        durationMs =
+                            ((durationParts[0] || 0) * 60 + (durationParts[1] || 0)) * 1000;
+                    }
+                    else if (durationParts.length === 3) {
+                        durationMs =
+                            ((durationParts[0] || 0) * 3600 +
+                                (durationParts[1] || 0) * 60 +
+                                (durationParts[2] || 0)) *
+                                1000;
+                    }
+                    const trackInfo = {
+                        identifier: `tv:${item.aid}`,
+                        isSeekable: true,
+                        author: item.author?.nickname || firstAuthor,
+                        length: durationMs,
+                        isStream: false,
+                        position: 0,
+                        title: item.title || 'Unknown',
+                        uri: `https://www.bilibili.tv/en/video/${item.aid}`,
+                        artworkUrl: item.cover || '',
+                        isrc: null,
+                        sourceName: 'bilibili'
+                    };
+                    return {
+                        encoded: encodeTrack({ ...trackInfo, details: [] }),
+                        info: trackInfo,
+                        pluginInfo: {
+                            aid: item.aid,
+                            isBilibiliTv: true
+                        }
+                    };
+                });
+                return {
+                    loadType: 'playlist',
+                    data: {
+                        info: { name: `Uploads by ${firstAuthor}`, selectedTrack: 0 },
+                        tracks,
+                        pluginInfo: {}
+                    }
+                };
+            }
+            catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                return { loadType: 'error', exception: { message, severity: 'fault' } };
+            }
         }
         const pat0 = this.patterns[0];
         const videoMatch = pat0 ? url.match(pat0) : null;
@@ -482,10 +671,10 @@ export default class BilibiliSource {
                 const res = await makeRequest(apiUrl, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0) {
+                if (body?.code !== 0) {
                     throw new Error(`API Error: ${body?.message || 'Video not found'}`);
                 }
                 const data = body.data;
@@ -518,10 +707,10 @@ export default class BilibiliSource {
                 const res = await makeRequest(apiUrl, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0)
+                if (body?.code !== 0)
                     throw new Error(`Bangumi API Error: ${body?.message}`);
                 const result = body.result;
                 if (!result)
@@ -584,10 +773,10 @@ export default class BilibiliSource {
                     const res = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/song/info?sid=${id}`, {
                         method: 'GET',
                         headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                        proxy: this.config.proxy
+                        proxy: this.config.network?.proxy
                     });
                     const body = res.body;
-                    if (!body || body.code !== 0)
+                    if (body?.code !== 0)
                         throw new Error(`Audio API Error: ${body?.msg}`);
                     const data = body.data;
                     if (!data)
@@ -617,10 +806,10 @@ export default class BilibiliSource {
                 const albumResRaw = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/song/of-menu?sid=${id}&pn=1&ps=100`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const albumRes = albumResRaw.body;
-                if (!albumRes || albumRes.code !== 0)
+                if (albumRes?.code !== 0)
                     throw new Error(`Album API Error: ${albumRes?.msg}`);
                 const tracks = (albumRes.data?.data || []).map((song) => {
                     const trackInfo = {
@@ -645,7 +834,7 @@ export default class BilibiliSource {
                 const infoResRaw = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/menu/info?sid=${id}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const infoRes = infoResRaw.body;
                 return {
@@ -675,10 +864,10 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.live.bilibili.com/room/v1/Room/get_info?room_id=${id}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0)
+                if (body?.code !== 0)
                     throw new Error(`Live API Error: ${body?.msg}`);
                 if (body.data?.live_status !== 1)
                     throw new Error('Room is not live.');
@@ -724,10 +913,10 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.bilibili.com/x/space/wbi/arc/search?${queryParams}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0)
+                if (body?.code !== 0)
                     throw new Error(`Space API Error: ${body?.message}`);
                 const list = body.data?.list?.vlist;
                 if (!list?.length)
@@ -796,6 +985,60 @@ export default class BilibiliSource {
         try {
             const pluginInfo = track
                 .pluginInfo;
+            if (pluginInfo?.isBilibiliTv || track.identifier.startsWith('tv:')) {
+                const isEp = pluginInfo?.type === 'ogv' || track.identifier.startsWith('tv:ep:');
+                const epId = pluginInfo?.ep_id ||
+                    (isEp ? track.identifier.replace('tv:ep:', '') : null);
+                const aid = pluginInfo?.aid || track.identifier.replace('tv:', '');
+                const playUrlEndpoint = epId
+                    ? `https://api.bilibili.tv/intl/gateway/web/playurl?ep_id=${epId}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`
+                    : `https://api.bilibili.tv/intl/gateway/web/playurl?aid=${aid}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`;
+                let res = await http1makeRequest(playUrlEndpoint, {
+                    method: 'GET',
+                    headers: {
+                        ...HEADERS,
+                        Referer: 'https://www.bilibili.tv/'
+                    },
+                    proxy: this.config.network?.proxy
+                });
+                const body = res.body;
+                let audioUrl = body?.data?.playurl?.audio_resource?.[0]?.url ||
+                    body?.data?.playurl?.audio_resource?.[0]?.backup_url?.[0] ||
+                    body?.data?.playurl?.video?.[0]?.video_resource?.[0]?.url;
+                if (!audioUrl) {
+                    const mEndpoint = epId
+                        ? `https://api.bilibili.tv/intl/gateway/m/playurl?ep_id=${epId}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`
+                        : `https://api.bilibili.tv/intl/gateway/m/playurl?aid=${aid}&device=wap&platform=web&qn=64&s_locale=en_US&type=0`;
+                    res = await http1makeRequest(mEndpoint, {
+                        method: 'GET',
+                        headers: {
+                            ...HEADERS,
+                            Referer: 'https://www.bilibili.tv/'
+                        },
+                        proxy: this.config.network?.proxy
+                    });
+                    const mBody = res.body;
+                    audioUrl =
+                        mBody?.data?.result?.video_info?.stream_list?.[0]?.durl_video
+                            ?.segment?.[0]?.url;
+                }
+                if (!audioUrl) {
+                    throw new Error(`Failed to get Bilibili TV stream: ${body?.message || 'No stream available'}`);
+                }
+                return {
+                    url: audioUrl,
+                    protocol: 'https',
+                    format: audioUrl.includes('.m4s') || audioUrl.includes('.m4a')
+                        ? 'm4a'
+                        : 'mp4',
+                    additionalData: {
+                        headers: {
+                            ...HEADERS,
+                            Referer: 'https://www.bilibili.tv/'
+                        }
+                    }
+                };
+            }
             const isAudio = pluginInfo?.type === 'audio' || track.identifier.startsWith('au');
             const isLive = pluginInfo?.type === 'live' || track.identifier.startsWith('live');
             if (isAudio) {
@@ -803,10 +1046,10 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://www.bilibili.com/audio/music-service-c/web/url?sid=${sid}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0 || !body.data?.cdns?.[0]) {
+                if (body?.code !== 0 || !body.data?.cdns?.[0]) {
                     throw new Error('Failed to get audio stream.');
                 }
                 return {
@@ -820,11 +1063,10 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id=${roomId}&protocol=0,1&format=0,2&codec=0,1&qn=10000&platform=web&pt=web&no_playurl=0&mask=0`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const body = res.body;
-                if (!body ||
-                    body.code !== 0 ||
+                if (body?.code !== 0 ||
                     !body.data?.playurl_info) {
                     throw new Error('Failed to get live stream info.');
                 }
@@ -882,10 +1124,10 @@ export default class BilibiliSource {
                 const res = await makeRequest(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, {
                     method: 'GET',
                     headers: { ...HEADERS, Cookie: this.buildCookieHeader() },
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy
                 });
                 const body = res.body;
-                if (!body || body.code !== 0 || !body.data) {
+                if (body?.code !== 0 || !body.data) {
                     throw new Error('Failed to fetch video metadata for stream.');
                 }
                 const pMatch = track.identifier.match(/\?p=(\d+)/);
@@ -902,10 +1144,10 @@ export default class BilibiliSource {
                     Referer: 'https://www.bilibili.com/',
                     Cookie: this.buildCookieHeader()
                 },
-                proxy: this.config.proxy
+                proxy: this.config.network?.proxy
             });
             const body = res.body;
-            if (!body || body.code !== 0 || !body.data) {
+            if (body?.code !== 0 || !body.data) {
                 throw new Error(`Playurl API Error: ${body?.message}`);
             }
             const { durl, dash } = body.data;
@@ -968,7 +1210,7 @@ export default class BilibiliSource {
                         type: 'mpegts',
                         localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
                         startTime: additionalData?.startTime || 0,
-                        proxy: this.config.proxy
+                        proxy: this.config.network?.proxy
                     }),
                     type: 'mpegts'
                 };
@@ -977,7 +1219,7 @@ export default class BilibiliSource {
                 method: 'GET',
                 headers,
                 streamOnly: true,
-                proxy: this.config.proxy
+                proxy: this.config.network?.proxy
             });
             if (res.error || !res.stream)
                 throw new Error(res.error || 'Failed to get stream.');

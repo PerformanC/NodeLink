@@ -1,4 +1,4 @@
-import { getStats } from "../utils.js";
+import { getStats } from '../utils.js';
 /**
  * Builds a strongly typed runtime view for the stats endpoint.
  *

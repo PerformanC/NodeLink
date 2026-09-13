@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { getVersion } from "../utils.js";
+import { getVersion } from '../utils.js';
 /**
  * Creates a strongly typed runtime view for the info endpoint.
  *
@@ -137,7 +137,7 @@ async function buildInfoResponse(nodelink) {
         },
         isNodelink: true,
         sourceManagers: await getSourceManagers(nodelink),
-        filters: getEnabledFilterNames(nodelink.options.filters?.enabled),
+        filters: getEnabledFilterNames(nodelink.options.playback.filters?.enabled),
         plugins: getPlugins(nodelink.pluginManager)
     };
 }

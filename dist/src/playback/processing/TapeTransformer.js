@@ -16,7 +16,7 @@ export class TapeTransformer extends Transform {
     currentRate = 1.0;
     tape = null;
     _lastRampCompleted = false;
-    inputBuffer;
+    inputBuffer = null;
     inputReadPos = 0;
     inputWritePos = 0;
     maxBufferSize;
@@ -25,7 +25,6 @@ export class TapeTransformer extends Transform {
         this.sampleRate = options.sampleRate ?? 48000;
         this.channels = options.channels ?? 2;
         this.maxBufferSize = this.sampleRate * this.channels * 10;
-        this.inputBuffer = new Float32Array(this.maxBufferSize);
     }
     setRate(rate) {
         this.currentRate = Math.max(0.01, Math.min(2.0, rate));
@@ -35,6 +34,8 @@ export class TapeTransformer extends Transform {
     tapeTo(durationMs, type, curve = DEFAULT_CURVE) {
         const duration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
         this._lastRampCompleted = false;
+        if (duration > 0)
+            this._ensureInputBuffer();
         if (type === 'start' && this.inputWritePos > 0) {
             const latencySamples = 1024 * this.channels;
             this.inputReadPos = Math.max(0, this.inputWritePos - latencySamples);
@@ -69,6 +70,14 @@ export class TapeTransformer extends Transform {
     getRate() {
         return this.currentRate;
     }
+    _ensureInputBuffer() {
+        if (!this.inputBuffer) {
+            this.inputBuffer = new Float32Array(this.maxBufferSize);
+            this.inputReadPos = 0;
+            this.inputWritePos = 0;
+        }
+        return this.inputBuffer;
+    }
     _getCurveValue(t, curve) {
         switch (curve) {
             case 'linear':
@@ -93,8 +102,14 @@ export class TapeTransformer extends Transform {
     process(chunk) {
         if (chunk.length === 0)
             return chunk;
+        if (!this.tape &&
+            Math.abs(this.currentRate - 1.0) <= 0.001 &&
+            this.inputWritePos <= this.inputReadPos + this.channels) {
+            return chunk;
+        }
         const incomingSamples = chunk.length / 2;
         const incomingFrames = incomingSamples / this.channels;
+        const inputBuffer = this._ensureInputBuffer();
         if (this.inputWritePos + incomingSamples > this.maxBufferSize) {
             this._compact();
             if (this.inputWritePos + incomingSamples > this.maxBufferSize) {
@@ -104,7 +119,7 @@ export class TapeTransformer extends Transform {
             }
         }
         for (let i = 0; i < incomingSamples; i++) {
-            this.inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767;
+            inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767;
         }
         const outI16 = new Int16Array(incomingSamples);
         const sampleDurationMs = 1000 / this.sampleRate;
@@ -127,12 +142,10 @@ export class TapeTransformer extends Transform {
                 break;
             const frac = (this.inputReadPos - iPos) / this.channels;
             for (let c = 0; c < this.channels; c++) {
-                const p0 = this.inputBuffer[iPos - this.channels + c] ??
-                    this.inputBuffer[iPos + c] ??
-                    0;
-                const p1 = this.inputBuffer[iPos + c] ?? 0;
-                const p2 = this.inputBuffer[iPos + this.channels + c] ?? 0;
-                const p3 = this.inputBuffer[iPos + this.channels * 2 + c] ?? 0;
+                const p0 = inputBuffer[iPos - this.channels + c] ?? inputBuffer[iPos + c] ?? 0;
+                const p1 = inputBuffer[iPos + c] ?? 0;
+                const p2 = inputBuffer[iPos + this.channels + c] ?? 0;
+                const p3 = inputBuffer[iPos + this.channels * 2 + c] ?? 0;
                 const val = 0.5 *
                     (2 * p1 +
                         (-p0 + p2) * frac +
@@ -147,7 +160,14 @@ export class TapeTransformer extends Transform {
         }
         return Buffer.from(outI16.buffer, outI16.byteOffset, outI16.byteLength);
     }
+    _destroy(_err, cb) {
+        this.inputBuffer = null;
+        this.tape = null;
+        cb(null);
+    }
     _compact() {
+        if (!this.inputBuffer)
+            return;
         const integralReadPos = Math.floor(this.inputReadPos / this.channels) * this.channels;
         const fractionalReadPos = this.inputReadPos - integralReadPos;
         if (integralReadPos <= 0)

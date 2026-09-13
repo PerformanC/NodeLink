@@ -1,5 +1,5 @@
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Base URL for the VK API.
  * @internal
@@ -161,7 +161,7 @@ export default class VKMusicSource {
             body: 'version=1&app_id=6287487',
             disableBodyCompression: true,
             localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy ?? this.config.proxy
         });
         const body = res.body;
         if (res.error ||
@@ -207,7 +207,7 @@ export default class VKMusicSource {
         try {
             const res = await this._apiRequest('audio.search', {
                 q: query,
-                count: String(this.nodelink.options.maxSearchResults || 10),
+                count: String(this.nodelink.options.search.maxResults || 10),
                 extended: '1'
             });
             if (!res?.items?.length)
@@ -312,7 +312,7 @@ export default class VKMusicSource {
                 const params = {
                     owner_id: ownerId,
                     extended: '1',
-                    count: String(this.nodelink.options.maxAlbumPlaylistLength || 100)
+                    count: String(this.nodelink.options.playback.maxPlaylistLength || 100)
                 };
                 if (playlistId)
                     params.album_id = playlistId;
@@ -344,7 +344,7 @@ export default class VKMusicSource {
         try {
             const res = await http1makeRequest(url, {
                 headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-                proxy: this.config.proxy
+                proxy: this.config.network?.proxy ?? this.config.proxy
             });
             if (res.statusCode !== 200)
                 throw new Error(`HTTP ${res.statusCode}`);
@@ -424,7 +424,7 @@ export default class VKMusicSource {
         try {
             const res = await http1makeRequest(url, {
                 headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-                proxy: this.config.proxy
+                proxy: this.config.network?.proxy ?? this.config.proxy
             });
             if (res.statusCode !== 200)
                 throw new Error(`HTTP ${res.statusCode}`);
@@ -635,7 +635,7 @@ export default class VKMusicSource {
                     type: 'mpegts',
                     localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
                     startTime: additionalData?.startTime || 0,
-                    proxy: this.config.proxy
+                    proxy: this.config.network?.proxy ?? this.config.proxy
                 }),
                 type: 'mpegts'
             };
@@ -644,7 +644,7 @@ export default class VKMusicSource {
             method: 'GET',
             streamOnly: true,
             headers,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy ?? this.config.proxy
         });
         if (res.error || !res.stream)
             throw new Error(res.error || 'Failed to fetch direct stream.');
@@ -672,7 +672,7 @@ export default class VKMusicSource {
                 'User-Agent': 'KateMobileAndroid/56 lite-460 (Android 4.4.2; SDK 19; x86; unknown Android SDK built for x86; en)'
             },
             localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-            proxy: this.config.proxy
+            proxy: this.config.network?.proxy ?? this.config.proxy
         });
         const body = res.body;
         if (res.error || res.statusCode !== 200 || body.error) {

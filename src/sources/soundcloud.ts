@@ -27,9 +27,11 @@ const ASSET_PATTERN = /https:\/\/a-v2\.sndcdn\.com\/assets\/[a-zA-Z0-9-]+\.js/g
 const CLIENT_ID_PATTERN =
   /(?:[?&/]?(?:client_id)[\s:=&]*"?|"data":{"id":")([A-Za-z0-9]{32})"?/
 const TRACK_PATTERN =
-  /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s]+$/
+  /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s?]+(\?.*)?$/
 const SEARCH_URL_PATTERN =
   /^https?:\/\/(?:www\.)?soundcloud\.com\/search(?:\/(sounds|people|albums|sets))?(?:\?|$)/
+const SHORT_URL_PATTERN =
+  /^https?:\/\/(?:www\.)?on\.soundcloud\.com\/[A-Za-z0-9]+\/?(?:\?.*)?$/
 const BATCH_SIZE = 50
 const DEFAULT_PRIORITY = 85
 
@@ -60,12 +62,21 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     this.nodelink = nodelink
     this.baseUrl = BASE_URL
     this.searchTerms = ['scsearch']
-    this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN]
+    this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN, SHORT_URL_PATTERN]
     this.priority = DEFAULT_PRIORITY
     this.clientId = nodelink.options?.sources?.soundcloud?.clientId ?? null
   }
 
   async setup(): Promise<boolean> {
+    if (this.clientId) {
+      logger(
+        'info',
+        'Sources',
+        `Loaded SoundCloud (clientId: ${this.clientId}) from config`
+      )
+      return true
+    }
+
     const cachedId = this.nodelink.credentialManager.get<string>(
       'soundcloud_client_id'
     )
@@ -215,7 +226,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       const params = new URLSearchParams({
         q: searchQuery,
         client_id: this.clientId ?? '',
-        limit: String(this.nodelink.options.maxSearchResults ?? 50),
+        limit: String(this.nodelink.options.search.maxResults ?? 50),
         offset: '0',
         linked_partitioning: '1'
       })
@@ -300,7 +311,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processUsers(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const users: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && users.length < max; i++) {
@@ -341,7 +352,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processAlbums(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const albums: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && albums.length < max; i++) {
@@ -382,7 +393,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processPlaylists(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const playlists: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && playlists.length < max; i++) {
@@ -423,7 +434,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processAll(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const results: SoundCloudTrackDataResult[] = []
 
     for (let i = 0; i < collection.length && results.length < max; i++) {
@@ -493,9 +504,49 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     return results
   }
 
+  async _expandShortUrl(shortUrl: string): Promise<string | null> {
+    const res = await http1makeRequest(shortUrl, {
+      method: 'HEAD'
+    })
+
+    if (res.finalUrl && res.finalUrl !== shortUrl) {
+      return res.finalUrl.split('?')[0] ?? null
+    }
+
+    if (
+      (res.statusCode === 301 ||
+        res.statusCode === 302 ||
+        res.statusCode === 307) &&
+      typeof res.headers?.location === 'string'
+    ) {
+      const location = res.headers.location
+      const absolute = location.startsWith('http')
+        ? location
+        : new URL(location, shortUrl).toString()
+      return absolute.split('?')[0] ?? null
+    }
+
+    return null
+  }
+
   async resolve(url: string): Promise<SourceResult> {
     if (!this._isValidString(url)) {
       return this._buildError('Invalid URL')
+    }
+
+    if (SHORT_URL_PATTERN.test(url)) {
+      try {
+        const expanded = await this._expandShortUrl(url)
+        if (!expanded) {
+          return this._buildError('Failed to expand short URL')
+        }
+        url = expanded
+      } catch (err: unknown) {
+        this._logError('Short URL expansion failed', err)
+        return this._buildError(
+          err instanceof Error ? err.message : 'Unknown error'
+        )
+      }
     }
 
     const searchMatch = url.match(SEARCH_URL_PATTERN)
@@ -585,7 +636,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       }
     }
 
-    const limit = this.nodelink.options.maxAlbumPlaylistLength ?? 100
+    const limit = this.nodelink.options.playback.maxPlaylistLength ?? 100
     const neededIds = ids.slice(0, Math.max(0, limit - complete.length))
 
     if (neededIds.length > 0) {
@@ -638,7 +689,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   _processTracks(
     collection: SoundCloudApiSearchItem[]
   ): SoundCloudTrackDataResult[] {
-    const max = this.nodelink.options.maxSearchResults ?? 50
+    const max = this.nodelink.options.search.maxResults ?? 50
     const tracks: SoundCloudTrackDataResult[] = []
 
     if (!Array.isArray(collection)) return []

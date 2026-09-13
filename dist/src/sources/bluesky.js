@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
-import HLSHandler from "../playback/hls/HLSHandler.js";
-import { parse as parsePlaylist } from "../playback/hls/PlaylistParser.js";
-import { encodeTrack, http1makeRequest, logger, makeRequest } from "../utils.js";
+import HLSHandler from '../playback/hls/HLSHandler.js';
+import { parse as parsePlaylist } from '../playback/hls/PlaylistParser.js';
+import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Bluesky source implementation.
  */
@@ -31,9 +31,8 @@ export default class BlueskySource {
         const options = nodelink.options;
         this.nodelink = nodelink;
         this.config = {
-            maxSearchResults: typeof options.maxSearchResults === 'number'
-                ? options.maxSearchResults
-                : undefined
+            maxSearchResults: options.sources?.bluesky
+                ?.maxSearchResults ?? options.search?.maxResults
         };
         this.searchTerms = ['bksearch'];
         this.patterns = [

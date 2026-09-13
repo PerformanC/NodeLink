@@ -532,21 +532,29 @@ function extractThumbnail(
   renderer: YouTubeRenderer | undefined,
   videoId: string | null
 ): string | null {
-  const thumbnails =
-    renderer?.thumbnail?.thumbnails ||
-    renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+  let resultUrl: string | null = null
 
-  if (Array.isArray(thumbnails) && thumbnails.length > 0) {
-    const lastThumb = thumbnails[thumbnails.length - 1]
+  const musicThumbnails = renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+  const regularThumbnails = renderer?.thumbnail?.thumbnails
+
+  if (Array.isArray(musicThumbnails) && musicThumbnails.length > 0) {
+    const firstThumb = musicThumbnails[0]
+    if (firstThumb?.url) {
+      resultUrl = firstThumb.url.replace(/=.*/, '=w1000-h1000')
+    }
+  } else if (Array.isArray(regularThumbnails) && regularThumbnails.length > 0) {
+    const lastThumb = regularThumbnails[regularThumbnails.length - 1]
     const url = lastThumb?.url
-    return url?.split('?')[0] || null
+    if (url?.includes('maxresdefault')) {
+      resultUrl = url
+    }
   }
 
-  if (videoId) {
-    return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+  if (!resultUrl && videoId) {
+    resultUrl = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`
   }
 
-  return null
+  return resultUrl
 }
 
 /**
@@ -1242,6 +1250,7 @@ function getRendererFromItemData(
     { key: 'compactPlaylistRenderer', type: 'playlist' },
     { key: 'channelRenderer', type: 'channel' },
     { key: 'playlistPanelVideoRenderer', type: 'track' },
+    { key: 'playlistVideoRenderer', type: 'track' },
     { key: 'gridVideoRenderer', type: 'track' }
   ]
 
@@ -1282,6 +1291,11 @@ export interface TrackBuildOptions {
   fetchChannelInfo?: boolean
   maxAlbumPlaylistLength?: number
   enableHoloTracks?: boolean
+  search: {
+    maxResults?: number
+    resolveExternalLinks?: boolean
+    fetchChannelInfo?: boolean
+  }
 }
 
 /**
@@ -1310,7 +1324,7 @@ export async function buildTrack(
   sourceNameOverride: string | null = null,
   fullApiResponse: Record<string, unknown> | null = null,
   enableHolo = false,
-  config: TrackBuildOptions = {},
+  config: TrackBuildOptions = { search: {} },
   makeRequestFn: MakeRequestFn | null = null
 ): Promise<YouTubeTrackData | null> {
   if (!itemData) {
@@ -1580,6 +1594,9 @@ export async function buildTrack(
 
     if (oEmbedData?.thumbnail_url && !artworkUrl) {
       artworkUrl = oEmbedData.thumbnail_url
+      if (artworkUrl.includes('hqdefault.jpg')) {
+        artworkUrl = artworkUrl.replace('hqdefault.jpg', 'mqdefault.jpg')
+      }
     }
 
     const lengthText =
@@ -1683,7 +1700,7 @@ export async function buildHoloTrack(
   itemData: YouTubeRenderer | null,
   itemType: string,
   fullApiResponse: Record<string, unknown> | null = null,
-  config: TrackBuildOptions = {},
+  config: TrackBuildOptions = { search: {} },
   makeRequestFn: MakeRequestFn | null = null
 ): Promise<YouTubeTrackData> {
   const duration = formatDuration(trackInfo.length)
@@ -1872,7 +1889,7 @@ export async function buildHoloTrack(
     accessibilityLabel ||
     `${trackInfo.title} by ${(channelData.name as string | undefined) || trackInfo.author}`
 
-  if (config.fetchChannelInfo && channelData.id && makeRequestFn) {
+  if (config.search.fetchChannelInfo && channelData.id && makeRequestFn) {
     try {
       const channelInfo = await fetchChannelInfo(
         channelData.id as string,
@@ -1906,7 +1923,7 @@ export async function buildHoloTrack(
 
   let externalLinks = extractExternalLinks(description)
 
-  if (config.resolveExternalLinks && externalLinks && makeRequestFn) {
+  if (config.search.resolveExternalLinks && externalLinks && makeRequestFn) {
     try {
       externalLinks = await resolveExternalLinks(externalLinks, makeRequestFn)
     } catch (e: unknown) {
@@ -2078,7 +2095,7 @@ export async function fetchEncryptedHostFlags(
  */
 export abstract class BaseClient {
   nodelink: WorkerNodeLink
-  config: Record<string, unknown>
+  config: WorkerNodeLink['options']
   name: string
   oauth: IOAuth | null
 
@@ -2173,6 +2190,7 @@ export abstract class BaseClient {
       context: this.getClient(context),
       videoId: videoId,
       contentCheckOk: true,
+      attestationRequest: { omitBotguardData: true },
       racyCheckOk: true
     }
 
@@ -2342,6 +2360,31 @@ export abstract class BaseClient {
     }
 
     const videoDetails = playerResponse.videoDetails
+    const playabilityStatus = playerResponse.playabilityStatus?.status
+
+    if (
+      playabilityStatus &&
+      playabilityStatus !== 'OK' &&
+      playerResponse.microformat?.microformatDataRenderer.appName !==
+        'YouTube Music'
+    ) {
+      const message =
+        playerResponse.playabilityStatus?.reason || 'Video not playable.'
+      logger(
+        'warn',
+        `youtube-${this.name}`,
+        `Video/short ${videoId} not playable: ${message}`
+      )
+      return {
+        loadType: 'error',
+        exception: {
+          message,
+          severity: 'common',
+          cause: 'UpstreamPlayability'
+        }
+      }
+    }
+
     if (!videoDetails?.videoId) {
       logger(
         'error',
@@ -2358,27 +2401,16 @@ export abstract class BaseClient {
       }
     }
 
-    if (playerResponse.playabilityStatus?.status !== 'OK') {
-      const message =
-        playerResponse.playabilityStatus?.reason || 'Video not playable.'
-      if (this.name !== 'WEB_REMIX') {
-        logger(
-          'warn',
-          `youtube-${this.name}`,
-          `Video/short ${videoId} not playable: ${message}. Still returning metadata.`
-        )
-      }
-    }
-
     const track = await buildTrack(
       videoDetails as YouTubeRenderer,
       sourceName,
       null,
       playerResponse as Record<string, unknown>,
-      !!this.config.enableHoloTracks,
+      !!this.config.experimental.enableHoloTracks,
       {
-        resolveExternalLinks: !!this.config.resolveExternalLinks,
-        fetchChannelInfo: !!this.config.fetchChannelInfo
+        resolveExternalLinks: !!this.config.search.resolveExternalLinks,
+        fetchChannelInfo: !!this.config.search.fetchChannelInfo,
+        search: {}
       }
     )
 
@@ -2495,7 +2527,58 @@ export abstract class BaseClient {
     const tracks: YouTubeTrackData[] = []
     let selectedTrack = 0
     const maxLength =
-      (this.config.maxAlbumPlaylistLength as number | undefined) || 100
+      (this.config.playback?.maxPlaylistLength as number | undefined) || 100
+
+    if (sourceName === 'ytmusic') {
+      playlistContent = playlistContent.filter((item) =>
+        getItemValue(item, ['playlistPanelVideoRenderer.videoId'])
+      )
+    }
+
+    let continuation = getItemValue<string>(playlistResponse, [
+      'contents.singleColumnMusicWatchNextResultsRenderer.tabbedRenderer.watchNextTabbedResultsRenderer.tabs.0.tabRenderer.content.musicQueueRenderer.content.playlistPanelRenderer.continuations.0.nextContinuationData.continuation'
+    ])
+    const seenContinuations = new Set<string>()
+
+    while (
+      sourceName === 'ytmusic' &&
+      _context &&
+      continuation &&
+      !seenContinuations.has(continuation) &&
+      playlistContent.length < maxLength
+    ) {
+      seenContinuations.add(continuation)
+      const client = this.getClient(_context)
+      const { body, statusCode } = await makeRequest(
+        'https://music.youtube.com/youtubei/v1/next',
+        {
+          method: 'POST',
+          headers: {
+            'User-Agent': client.client.userAgent,
+            'X-Goog-Api-Format-Version': '2'
+          },
+          body: { context: client, continuation },
+          disableBodyCompression: true,
+          proxy: this.getProxy()
+        }
+      )
+      if (statusCode !== 200 || !body) break
+
+      const page = getItemValue<Record<string, unknown>>(body, [
+        'continuationContents.playlistPanelContinuation'
+      ])
+      const items = (page?.contents as unknown[] | undefined)?.filter((item) =>
+        getItemValue(item, ['playlistPanelVideoRenderer.videoId'])
+      )
+      if (!items?.length) break
+
+      playlistContent.push(
+        ...items.slice(0, maxLength - playlistContent.length)
+      )
+      continuation = getItemValue<string>(page, [
+        'continuations.0.nextContinuationData.continuation'
+      ])
+    }
 
     for (let i = 0; i < Math.min(playlistContent.length, maxLength); i++) {
       const item = playlistContent[i] as YouTubeRenderer
@@ -2505,10 +2588,11 @@ export abstract class BaseClient {
           sourceName || 'youtube',
           null,
           null,
-          !!this.config.enableHoloTracks,
+          !!this.config.experimental.enableHoloTracks,
           {
             fetchChannelInfo: false,
-            resolveExternalLinks: false
+            resolveExternalLinks: false,
+            search: {}
           }
         )
         if (track) {
@@ -2628,9 +2712,14 @@ export abstract class BaseClient {
     const sectionContents = sectionList?.contents as
       | Record<string, unknown>[]
       | undefined
-    const shelf = sectionContents?.[0]?.musicPlaylistShelfRenderer as
-      | Record<string, unknown>
-      | undefined
+    const section = sectionContents?.[0]
+    const shelf =
+      (section?.musicPlaylistShelfRenderer as
+        | Record<string, unknown>
+        | undefined) ||
+      (section?.playlistVideoListRenderer as
+        | Record<string, unknown>
+        | undefined)
 
     const shelfContentsCheck = shelf?.contents as unknown[] | undefined
     if (!shelf || !shelfContentsCheck || shelfContentsCheck.length === 0) {
@@ -2642,10 +2731,54 @@ export abstract class BaseClient {
       return { loadType: 'empty', data: {} }
     }
 
-    const tracks: YouTubeTrackData[] = []
     const maxLength =
-      (this.config.maxAlbumPlaylistLength as number | undefined) || 100
-    const shelfContents = shelf.contents as unknown[]
+      (this.config.playback?.maxPlaylistLength as number | undefined) || 100
+    const shelfContents = shelfContentsCheck.filter(
+      (item) => !getItemValue(item, ['messageRenderer'])
+    )
+    let continuation = getItemValue<string>(shelf, [
+      'continuations.0.nextContinuationData.continuation'
+    ])
+    const seenContinuations = new Set<string>()
+
+    while (
+      this.name === 'ANDROID' &&
+      _context &&
+      continuation &&
+      !seenContinuations.has(continuation) &&
+      shelfContents.length < maxLength
+    ) {
+      seenContinuations.add(continuation)
+      const client = this.getClient(_context)
+      const { body, statusCode } = await makeRequest(
+        `${this.getApiEndpoint()}/youtubei/v1/browse`,
+        {
+          method: 'POST',
+          headers: {
+            'User-Agent': client.client.userAgent,
+            'X-YouTube-Client-Name': '3',
+            'X-YouTube-Client-Version': client.client.clientVersion ?? ''
+          },
+          body: { context: client, continuation },
+          disableBodyCompression: true,
+          proxy: this.getProxy()
+        }
+      )
+      if (statusCode !== 200 || !body) break
+
+      const page = getItemValue<Record<string, unknown>>(body, [
+        'continuationContents.playlistVideoListContinuation'
+      ])
+      const items = page?.contents as unknown[] | undefined
+      if (!items?.length) break
+
+      shelfContents.push(...items.slice(0, maxLength - shelfContents.length))
+      continuation = getItemValue<string>(page, [
+        'continuations.0.nextContinuationData.continuation'
+      ])
+    }
+
+    const tracks: YouTubeTrackData[] = []
 
     for (let i = 0; i < Math.min(shelfContents.length, maxLength); i++) {
       const item = shelfContents[i] as YouTubeRenderer
@@ -2655,10 +2788,11 @@ export abstract class BaseClient {
           sourceName || 'ytmusic',
           sourceName,
           browseResponse,
-          !!this.config.enableHoloTracks,
+          !!this.config.experimental.enableHoloTracks,
           {
             fetchChannelInfo: false,
-            resolveExternalLinks: false
+            resolveExternalLinks: false,
+            search: {}
           }
         )
         if (track) {
@@ -2686,12 +2820,17 @@ export abstract class BaseClient {
     const headerRoot = browseResponse.header as
       | Record<string, unknown>
       | undefined
+    const pageHeader = headerRoot?.pageHeaderRenderer as
+      | Record<string, unknown>
+      | undefined
     const musicDetail = headerRoot?.musicDetailHeaderRenderer as
       | Record<string, unknown>
       | undefined
     const musicTitle = musicDetail?.title as YouTubeText | undefined
 
-    if (musicTitle?.runs?.[0]?.text) {
+    if (typeof pageHeader?.pageTitle === 'string') {
+      playlistTitle = pageHeader.pageTitle
+    } else if (musicTitle?.runs?.[0]?.text) {
       playlistTitle = musicTitle.runs[0].text
     } else {
       const editableHeaderRoot =
@@ -2768,7 +2907,7 @@ export abstract class BaseClient {
       targetItags = [Number(targetItag)]
     } else {
       const qualityPriority = this._getQualityPriority()
-      const audioConfig = this.config.audio as
+      const audioConfig = this.config.playback?.audio as
         | Record<string, unknown>
         | undefined
       const audioQuality =
@@ -3100,6 +3239,8 @@ export abstract class BaseClient {
 
       format: resolveFormatStr(resolvedFormat?.mimeType as string | undefined),
 
+      itag: resolvedFormat?.itag,
+
       hlsUrl: (streamingData.hlsManifestUrl as string | undefined) || null,
 
       formats
@@ -3306,5 +3447,51 @@ export abstract class BaseClient {
       cipherManager,
       itag
     )
+  }
+
+  /**
+   * Fetches the initial visitor data by making a GET request to YouTube.
+   * This is used to initialize the session context.
+   *
+   * @returns The extracted visitor data string, or null if it could not be found.
+   */
+  async getVisitorData(): Promise<string | null> {
+    try {
+      const response = await makeRequest('https://www.youtube.com', {
+        method: 'GET',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        proxy: this.getProxy()
+      })
+
+      if (response.statusCode !== 200 || !response.body) {
+        return null
+      }
+
+      const body = response.body as string
+      const match = body.match(/ytcfg\.set\((\{.*?\})\);/)
+      if (match?.[1]) {
+        try {
+          const ytcfg = JSON.parse(match[1])
+          if (ytcfg.VISITOR_DATA) {
+            return ytcfg.VISITOR_DATA as string
+          }
+        } catch {
+          // Fallback to regex if JSON parse fails
+        }
+      }
+
+      const visitorDataMatch = body.match(/"visitorData":"([^"]+)"/)
+      return visitorDataMatch?.[1] || null
+    } catch (err) {
+      logger(
+        'debug',
+        `youtube-${this.name}`,
+        `Failed to fetch visitor data: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return null
+    }
   }
 }

@@ -8,8 +8,8 @@
  * @packageDocumentation
  * @module YouTubeIOSClient
  */
-import { logger, makeRequest } from "../../../utils.js";
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
+import { logger, makeRequest } from '../../../utils.js';
+import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube IOS innertube client.
  *
@@ -52,6 +52,14 @@ export default class IOS extends BaseClient {
             user: { lockedSafetyMode: false },
             request: { useSsl: true }
         };
+    }
+    /**
+     * Returns player parameters for IOS playback.
+     *
+     * @returns Base64-encoded player parameters string
+     */
+    getPlayerParams() {
+        return '2AMB';
     }
     /**
      * IOS client does not require a player script.

@@ -1,4 +1,4 @@
-import { decodeTrack, logger, sendErrorResponse } from "../utils.js";
+import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
 /**
  * Default validation message used when the `encodedTrack` query parameter is
  * missing or empty.
@@ -29,7 +29,7 @@ function getLoadChaptersRuntime(nodelink) {
     const runtime = nodelink;
     if (runtime.sourceWorkerManager === undefined ||
         runtime.workerManager === undefined ||
-        !runtime.sources) {
+        runtime.sources === undefined) {
         return null;
     }
     return runtime;

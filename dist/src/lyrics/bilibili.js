@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { logger, makeRequest } from "../utils.js";
+import { logger, makeRequest } from '../utils.js';
 /**
  * WBI mixin index table used for signing.
  * @internal

@@ -100,6 +100,12 @@ export class FlowController extends Transform {
     checkScratchEffectCompleted() {
         return this.scratch.checkEffectCompleted();
     }
+    setLoudnessNormalizer(enabled) {
+        if ('setAGCEnabled' in this.volume) {
+            ;
+            this.volume.setAGCEnabled?.(enabled);
+        }
+    }
     /**
      * Updates filters in the pipeline via the FlowController.
      * Note: FlowController currently doesn't manage filters itself,
@@ -110,6 +116,10 @@ export class FlowController extends Transform {
         // This exists to satisfy streamProcessor's type check and avoid 'as any'
     }
     _transform(chunk, _encoding, callback) {
+        if (!this.pendingBuffer) {
+            callback();
+            return;
+        }
         let offset = 0;
         if (this.pendingLength > 0) {
             const needed = FRAME_SIZE - this.pendingLength;
@@ -136,7 +146,7 @@ export class FlowController extends Transform {
     }
     _flush(callback) {
         let remaining = this.pendingLength > 0
-            ? this.pendingBuffer.subarray(0, this.pendingLength)
+            ? (this.pendingBuffer?.subarray(0, this.pendingLength) ?? EMPTY_BUFFER)
             : EMPTY_BUFFER;
         this.pendingLength = 0;
         if (remaining.length > 0) {
@@ -167,5 +177,9 @@ export class FlowController extends Transform {
             this._processFrame(silence);
         }
         callback();
+    }
+    _destroy(_err, cb) {
+        this.pendingBuffer = null;
+        cb(null);
     }
 }

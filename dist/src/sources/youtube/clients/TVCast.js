@@ -8,8 +8,8 @@
  * @packageDocumentation
  * @module YouTubeTVCastClient
  */
-import { logger, makeRequest } from "../../../utils.js";
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from "../common.js";
+import { logger, makeRequest } from '../../../utils.js';
+import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube TVHTML5_CAST innertube client.
  *
@@ -47,6 +47,14 @@ export default class TVCast extends BaseClient {
             user: { lockedSafetyMode: false },
             request: { useSsl: true }
         };
+    }
+    /**
+     * Returns player parameters for TVHTML5_CAST playback.
+     *
+     * @returns Base64-encoded player parameters string
+     */
+    getPlayerParams() {
+        return '2AMB';
     }
     /**
      * TV Cast client requires a player script for signature deciphering.

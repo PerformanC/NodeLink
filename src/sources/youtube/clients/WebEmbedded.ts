@@ -48,18 +48,32 @@ export default class WebEmbedded extends BaseClient {
     return {
       client: {
         clientName: 'WEB_EMBEDDED_PLAYER',
-        clientVersion: '1.20260128.01.00',
+        clientVersion: '2.20260630.09.00',
         platform: 'DESKTOP',
         userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36,gzip(gfe)',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36,gzip(gfe)',
         hl: context.client.hl,
         gl: context.client.gl,
         visitorData: context.client.visitorData
       },
       user: { lockedSafetyMode: false },
       request: { useSsl: true },
-      thirdParty: { embedUrl: 'https://www.google.com/' }
+      thirdParty: {
+        embedUrl: 'https://www.google.com/search?q=youtube',
+        embeddedPlayerContext: {
+          ancestorOrigins: ['https://www.google.com']
+        }
+      }
     }
+  }
+
+  /**
+   * Returns player parameters for WEB_EMBEDDED_PLAYER playback.
+   *
+   * @returns Base64-encoded player parameters string
+   */
+  override getPlayerParams(): string | null {
+    return '2AMB'
   }
 
   /**
@@ -158,7 +172,7 @@ export default class WebEmbedded extends BaseClient {
     }
 
     const maxResults =
-      (this.config.maxSearchResults as number | undefined) || 10
+      (this.config.search.maxResults as number | undefined) || 10
     if (videos.length > maxResults) {
       let count = 0
       videos = videos.filter((video) => {
@@ -177,7 +191,7 @@ export default class WebEmbedded extends BaseClient {
         sourceName,
         null,
         null,
-        this.config.enableHoloTracks as boolean | undefined
+        this.config.experimental.enableHoloTracks as boolean | undefined
       )
       if (track) {
         tracks.push(track)

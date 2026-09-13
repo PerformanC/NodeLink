@@ -30,7 +30,7 @@ export class TapeTransformer extends Transform {
   private tape: TapeState | null = null
   private _lastRampCompleted = false
 
-  private inputBuffer: Float32Array
+  private inputBuffer: Float32Array | null = null
   private inputReadPos = 0
   private inputWritePos = 0
   private readonly maxBufferSize: number
@@ -41,7 +41,6 @@ export class TapeTransformer extends Transform {
     this.channels = options.channels ?? 2
 
     this.maxBufferSize = this.sampleRate * this.channels * 10
-    this.inputBuffer = new Float32Array(this.maxBufferSize)
   }
 
   public setRate(rate: number): void {
@@ -57,6 +56,8 @@ export class TapeTransformer extends Transform {
   ): void {
     const duration = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0
     this._lastRampCompleted = false
+
+    if (duration > 0) this._ensureInputBuffer()
 
     if (type === 'start' && this.inputWritePos > 0) {
       const latencySamples = 1024 * this.channels
@@ -100,6 +101,16 @@ export class TapeTransformer extends Transform {
     return this.currentRate
   }
 
+  private _ensureInputBuffer(): Float32Array {
+    if (!this.inputBuffer) {
+      this.inputBuffer = new Float32Array(this.maxBufferSize)
+      this.inputReadPos = 0
+      this.inputWritePos = 0
+    }
+
+    return this.inputBuffer
+  }
+
   private _getCurveValue(t: number, curve: FadeCurve): number {
     switch (curve) {
       case 'linear':
@@ -130,9 +141,17 @@ export class TapeTransformer extends Transform {
 
   public process(chunk: Buffer): Buffer {
     if (chunk.length === 0) return chunk
+    if (
+      !this.tape &&
+      Math.abs(this.currentRate - 1.0) <= 0.001 &&
+      this.inputWritePos <= this.inputReadPos + this.channels
+    ) {
+      return chunk
+    }
 
     const incomingSamples = chunk.length / 2
     const incomingFrames = incomingSamples / this.channels
+    const inputBuffer = this._ensureInputBuffer()
 
     if (this.inputWritePos + incomingSamples > this.maxBufferSize) {
       this._compact()
@@ -145,7 +164,7 @@ export class TapeTransformer extends Transform {
     }
 
     for (let i = 0; i < incomingSamples; i++) {
-      this.inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767
+      inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767
     }
 
     const outI16 = new Int16Array(incomingSamples)
@@ -174,12 +193,10 @@ export class TapeTransformer extends Transform {
 
       for (let c = 0; c < this.channels; c++) {
         const p0 =
-          this.inputBuffer[iPos - this.channels + c] ??
-          this.inputBuffer[iPos + c] ??
-          0
-        const p1 = this.inputBuffer[iPos + c] ?? 0
-        const p2 = this.inputBuffer[iPos + this.channels + c] ?? 0
-        const p3 = this.inputBuffer[iPos + this.channels * 2 + c] ?? 0
+          inputBuffer[iPos - this.channels + c] ?? inputBuffer[iPos + c] ?? 0
+        const p1 = inputBuffer[iPos + c] ?? 0
+        const p2 = inputBuffer[iPos + this.channels + c] ?? 0
+        const p3 = inputBuffer[iPos + this.channels * 2 + c] ?? 0
 
         const val =
           0.5 *
@@ -204,7 +221,18 @@ export class TapeTransformer extends Transform {
     return Buffer.from(outI16.buffer, outI16.byteOffset, outI16.byteLength)
   }
 
+  override _destroy(
+    _err: Error | null,
+    cb: (error?: Error | null) => void
+  ): void {
+    this.inputBuffer = null
+    this.tape = null
+    cb(null)
+  }
+
   private _compact(): void {
+    if (!this.inputBuffer) return
+
     const integralReadPos =
       Math.floor(this.inputReadPos / this.channels) * this.channels
     const fractionalReadPos = this.inputReadPos - integralReadPos

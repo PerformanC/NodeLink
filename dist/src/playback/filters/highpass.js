@@ -1,6 +1,6 @@
-import { SAMPLE_RATE } from "../../constants.js";
-import { AnimatableFilter } from "./AnimatableFilter.js";
-import { clamp16Bit } from "./dsp/clamp16Bit.js";
+import { SAMPLE_RATE } from '../../constants.js';
+import { AnimatableFilter } from './AnimatableFilter.js';
+import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
 const BUTTERWORTH_Q = Math.SQRT1_2;
 const SUB_BLOCK_FRAMES = 64;
@@ -25,7 +25,8 @@ export default class Highpass extends AnimatableFilter {
             : 0.0;
         super.applyAnimatedUpdate({
             highpass: {
-                targetAlpha: targetAlpha
+                targetAlpha: targetAlpha,
+                transition: rawConfig.transition
             }
         }, 'highpass', { targetAlpha: 0.0 });
     }

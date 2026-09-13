@@ -1,4 +1,4 @@
-import { logger, makeRequest } from "../utils.js";
+import { logger, makeRequest } from '../utils.js';
 /**
  * Meaning provider backed by Wikipedia.
  *

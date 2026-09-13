@@ -99,6 +99,13 @@ function parseIdentifier(
     if (groups.source === 'search') {
       return { kind: 'unifiedSearch', query: groups.query }
     }
+    if (groups.source.toLowerCase() === 'isrc') {
+      return {
+        kind: 'search',
+        source: normalizeDefaultSearchSource(defaultSearchSource),
+        query: groups.query
+      }
+    }
     return { kind: 'search', source: groups.source, query: groups.query }
   }
 
@@ -190,7 +197,7 @@ async function handler(
 
   const target = parseIdentifier(
     identifier,
-    nodelink.options.defaultSearchSource
+    nodelink.options.search.defaultSource
   )
   const workerRequest = buildWorkerRequest(target)
   const runtime = nodelink as LoadTracksRuntime

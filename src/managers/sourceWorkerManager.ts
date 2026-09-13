@@ -107,7 +107,7 @@ type ExecuteAllResultEntry =
 const hasSocketSend = (
   res: ServerResponse | DelegatedResponse
 ): res is DelegatedResponse & { send: (chunk: Buffer) => void } =>
-  typeof (res as DelegatedResponse).send === 'function'
+  !!(res as DelegatedResponse).send
 
 type InternalResponse = {
   headersSent: boolean
@@ -171,7 +171,8 @@ const buildSourceWorkerExecArgv = (
   const env = process.env as NodeJS.ProcessEnv & SourceWorkerEnv
 
   for (const arg of Array.from(args)) {
-    if (arg.startsWith('--max-old-space-size=')) args.delete(arg)
+    if (arg.startsWith('--max-old-space-size=') || arg === '--expose-gc')
+      args.delete(arg)
   }
 
   const maxOldSpaceMb = parsePositiveInt(
@@ -444,6 +445,7 @@ class SourceWorkerManager {
         `Source worker manager ${worker.process.pid} exited. Respawning...`
       )
       const index = this.workers.indexOf(worker)
+      if (index === -1) return
       this.workers.splice(index, 1)
       this.workerLoads.delete(worker.id)
 
@@ -645,13 +647,17 @@ class SourceWorkerManager {
     request.timeout = setTimeout(() => {
       const activeRequest = this.requests.get(id)
       if (activeRequest) {
-        res.writeHead(504, { 'Content-Type': 'application/json' })
-        res.end(
-          JSON.stringify({
-            error: 'Gateway Timeout',
-            message: 'Source worker timed out'
-          })
-        )
+        if (!res.headersSent) {
+          res.writeHead(504, { 'Content-Type': 'application/json' })
+          res.end(
+            JSON.stringify({
+              error: 'Gateway Timeout',
+              message: 'Source worker timed out'
+            })
+          )
+        } else {
+          res.end()
+        }
         this._cleanupRequest(id, activeRequest)
       }
     }, 60000)

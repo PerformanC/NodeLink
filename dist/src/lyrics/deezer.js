@@ -1,4 +1,4 @@
-import { getBestMatch, logger, makeRequest } from "../utils.js";
+import { getBestMatch, logger, makeRequest } from '../utils.js';
 /**
  * Deezer lyrics provider utilizing the Deezer GraphQL internal API.
  * Supports word-by-word and line-level synchronization.

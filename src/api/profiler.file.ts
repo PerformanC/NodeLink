@@ -193,23 +193,60 @@ function getSuppliedCode(req: ApiRequest, parsedUrl: URL): string | null {
  * @returns Normalized absolute path inside the project root, or `null` when
  * the path escapes the workspace.
  */
-function resolveWorkspacePath(rawPath: string): string | null {
-  const cwd = process.cwd()
-  const parsedPath = rawPath.startsWith('file://')
-    ? fileURLToPath(rawPath)
-    : rawPath
-  const absolutePath = path.resolve(cwd, parsedPath)
-  const normalizedCwd = `${cwd}${path.sep}`
+export async function resolveWorkspacePath(
+  rawPath: string,
+  cwd = process.cwd()
+): Promise<string | null> {
+  let parsedPath: string
+  try {
+    parsedPath = rawPath.startsWith('file://')
+      ? fileURLToPath(rawPath)
+      : rawPath
+  } catch {
+    return null
+  }
 
+  const absolutePath = path.resolve(cwd, parsedPath)
+  const lexicalRelativePath = path.relative(cwd, absolutePath)
   if (
-    absolutePath !== cwd &&
-    !absolutePath.startsWith(normalizedCwd) &&
-    !parsedPath.startsWith(normalizedCwd)
+    lexicalRelativePath === '..' ||
+    lexicalRelativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(lexicalRelativePath)
   ) {
     return null
   }
 
-  return absolutePath
+  let realCwd: string
+  try {
+    realCwd = await fsPromises.realpath(cwd)
+  } catch {
+    return null
+  }
+
+  let realPath: string
+  try {
+    realPath = await fsPromises.realpath(absolutePath)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'ENOTDIR') {
+      // Keep the lexical path so missing files continue to return the route's
+      // existing 404 response instead of being treated as path escapes.
+      return absolutePath
+    }
+
+    return null
+  }
+
+  const realRelativePath = path.relative(realCwd, realPath)
+  if (
+    realRelativePath === '..' ||
+    realRelativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(realRelativePath)
+  ) {
+    return null
+  }
+
+  return realPath
 }
 
 /**
@@ -366,7 +403,7 @@ async function handler(
     return
   }
 
-  const absolutePath = resolveWorkspacePath(rawPath)
+  const absolutePath = await resolveWorkspacePath(rawPath)
   if (absolutePath === null) {
     sendErrorResponse(
       req,
@@ -389,10 +426,23 @@ async function handler(
     const resolvedPath = await resolveReadablePath(
       getPathCandidates(absolutePath)
     )
+    const safePath = await resolveWorkspacePath(resolvedPath)
+    if (safePath === null) {
+      sendErrorResponse(
+        req,
+        res,
+        403,
+        'Forbidden',
+        'Path is outside the project root.',
+        parsedUrl.pathname
+      )
+      return
+    }
+
     sendResponse(
       req,
       res,
-      await buildSnippetResponse(resolvedPath, line, context),
+      await buildSnippetResponse(safePath, line, context),
       200
     )
   } catch (error) {

@@ -10,6 +10,7 @@ import type {
   StatsSnapshot,
   WorkerMetricsPayload
 } from '../api/stats.types.ts'
+import type { NodelinkConfig } from '../config/config.types.ts'
 import type {
   CredentialEntry,
   CredentialManagerStats
@@ -419,6 +420,8 @@ export interface TrackData {
   info: TrackInfo
   /** Source-specific metadata. */
   pluginInfo: Record<string, unknown>
+  /** User-defined data, defaulted to an empty object in public responses. */
+  userData?: unknown
 }
 
 /**
@@ -544,16 +547,7 @@ export interface SourceInstance {
  */
 export interface WorkerNodeLink {
   /** Configuration options */
-  options: Record<string, unknown> & {
-    sources?: Record<string, { enabled?: boolean } | undefined>
-    audio?: {
-      loudnessNormalizer?: boolean
-      resamplingQuality?: string
-    }
-    metrics?: {
-      enabled?: boolean
-    }
-  }
+  options: NodelinkConfig
   /** Logger function */
   logger: LoggerFn
   /** Source manager instance */
@@ -568,6 +562,8 @@ export interface WorkerNodeLink {
   trackCacheManager?: TrackCacheManager
   /** Route planner manager instance */
   routePlanner?: RoutePlannerManager
+  /** Proxy manager instance */
+  proxyManager?: import('../../managers/proxyManager.ts').default
   /** Stats manager instance */
   statsManager?: StatsManager
   /** Global plugin manager for hook execution. */
@@ -720,6 +716,8 @@ export interface TrackCacheManager {
     source: string,
     identifier: string
   ) => TrackCacheEntry<unknown> | null
+  /** Delete a cached entry; returns whether it existed */
+  delete?: (source: string, identifier: string) => boolean
   /** Persist the cache to disk immediately */
   forceSave?: () => Promise<void>
 }
@@ -819,7 +817,7 @@ export interface RoutePlannerManager {
   /** Initialize route planner */
   initialize?: () => Promise<void>
   /** Dispose route planner */
-  dispose?: () => Promise<void>
+  dispose?: () => void | Promise<void>
   /** Get an IP address */
   getIP?: () => string | null | undefined
 }

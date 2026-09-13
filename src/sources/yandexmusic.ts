@@ -270,7 +270,7 @@ export default class YandexMusicSource implements SourceInstance {
 
       if (!data) return { loadType: 'empty', data: {} }
 
-      const limit = (this.nodelink.options.maxSearchResults as number) || 10
+      const limit = (this.nodelink.options.search.maxResults as number) || 10
 
       if (searchType === 'album') {
         const albums = (data.albums?.results || [])
@@ -494,7 +494,7 @@ export default class YandexMusicSource implements SourceInstance {
           streamOnly: true,
           headers,
           localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-          proxy: this.config.proxy
+          proxy: this.config.network?.proxy ?? this.config.proxy
         })
       }
 
@@ -531,7 +531,7 @@ export default class YandexMusicSource implements SourceInstance {
       const wait = async (ms: number): Promise<void> => {
         await new Promise<void>((resolve) => {
           const timeout = setTimeout(resolve, ms)
-          if (typeof timeout.unref === 'function') timeout.unref()
+          timeout.unref?.()
         })
       }
 
@@ -1068,7 +1068,7 @@ export default class YandexMusicSource implements SourceInstance {
         'X-Yandex-Music-Client': CLIENT_HEADER
       },
       localAddress: this.nodelink.routePlanner?.getIP?.() || undefined,
-      proxy: this.config.proxy
+      proxy: this.config.network?.proxy ?? this.config.proxy
     })
 
     if (res.statusCode !== 200) {
@@ -1207,18 +1207,15 @@ export default class YandexMusicSource implements SourceInstance {
       if (!linksByPlatform) return null
 
       const platforms =
-        typeof songlinkSource.getPlatformOrder === 'function'
-          ? songlinkSource.getPlatformOrder(linksByPlatform)
-          : Object.keys(linksByPlatform)
+        songlinkSource.getPlatformOrder?.(linksByPlatform) ??
+        Object.keys(linksByPlatform)
 
       for (const platform of platforms) {
         const platformLink = linksByPlatform[platform]?.url
         if (!platformLink) continue
 
         const sourceName =
-          typeof songlinkSource.getPlatformSourceName === 'function'
-            ? songlinkSource.getPlatformSourceName(platform)
-            : null
+          songlinkSource.getPlatformSourceName?.(platform) ?? null
 
         if (!sourceName || !this._isSourceAvailable(sourceName)) continue
 
@@ -1344,18 +1341,13 @@ export default class YandexMusicSource implements SourceInstance {
         })
       | undefined
     const platforms =
-      typeof songlinkSource?.getPlatformOrder === 'function'
-        ? songlinkSource.getPlatformOrder(links)
-        : Object.keys(links)
+      songlinkSource?.getPlatformOrder?.(links) ?? Object.keys(links)
 
     for (const p of platforms) {
       const url = links[p]?.url
       if (!url) continue
 
-      const sourceName =
-        typeof songlinkSource?.getPlatformSourceName === 'function'
-          ? songlinkSource.getPlatformSourceName(p)
-          : null
+      const sourceName = songlinkSource?.getPlatformSourceName?.(p) ?? null
 
       if (!sourceName || !this._isSourceAvailable(sourceName)) continue
       const source = sm.getSource(sourceName)
@@ -1404,7 +1396,7 @@ export default class YandexMusicSource implements SourceInstance {
     const sm = this.nodelink.sources
     if (!sm) return false
     const config = (
-      this.nodelink.options.sources as
+      this.nodelink.options.sources as unknown as
         | Record<string, { enabled?: boolean }>
         | undefined
     )?.[name]

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Transform } from 'node:stream';
-import { http1makeRequest, logger } from "../../utils.js";
+import { http1makeRequest, logger } from '../../utils.js';
 /**
  * A Transform stream that decrypts HLS segments on the fly.
  *
@@ -53,7 +53,7 @@ export default class SegmentFetcher {
     constructor(options = {}) {
         this.headers = options.headers || {};
         this.localAddress = options.localAddress || null;
-        this.proxy = options.proxy || null;
+        this.proxy = options.network?.proxy || options.proxy || null;
         this.onResolveUrl = options.onResolveUrl || null;
         this.keyMap = new Map();
     }
@@ -104,13 +104,20 @@ export default class SegmentFetcher {
     async fetchMap(mapInfo, keyInfo = null) {
         if (!mapInfo?.uri)
             return null;
+        const headers = {
+            ...this.headers
+        };
+        if (mapInfo.byteRange) {
+            const end = mapInfo.byteRange.offset + mapInfo.byteRange.length - 1;
+            headers.Range = `bytes=${mapInfo.byteRange.offset}-${end}`;
+        }
         const { body, error, statusCode } = await http1makeRequest(mapInfo.uri, {
-            headers: this.headers,
+            headers,
             responseType: 'buffer',
             localAddress: this.localAddress ?? undefined,
             proxy: this.proxy ?? undefined
         });
-        if (error || statusCode !== 200) {
+        if (error || (statusCode !== 200 && statusCode !== 206)) {
             throw new Error(`Map fetch failed: ${statusCode}`);
         }
         const buffer = body;

@@ -10,8 +10,7 @@ import { URL } from 'node:url';
 import util from 'node:util';
 import zlib from 'node:zlib';
 import packageJson from '../package.json' with { type: 'json' };
-import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from "./constants.js";
-const isBun = typeof process !== "undefined" && process.versions?.bun;
+import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from './constants.js';
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
  *
@@ -41,7 +40,7 @@ const getProxyAgent = async () => {
             mod.default?.ProxyAgent ||
             mod.default;
         ProxyAgent =
-            typeof candidate === 'function'
+            candidate instanceof Function
                 ? candidate
                 : null;
     }
@@ -124,7 +123,7 @@ function getLogFileName() {
  * Failures are reported to stderr but do not crash the process.
  * @internal
  */
-function cleanOldLogs() {
+async function cleanOldLogs() {
     if (!loggingConfig.file?.enabled)
         return;
     const logDir = loggingConfig.file.path || 'logs';
@@ -132,18 +131,23 @@ function cleanOldLogs() {
     const ttlMs = ttlDays * 24 * 60 * 60 * 1000;
     const now = Date.now();
     try {
-        if (!fs.existsSync(logDir))
+        const fsPromises = await import('node:fs/promises');
+        try {
+            await fsPromises.access(logDir);
+        }
+        catch {
             return;
-        const files = fs.readdirSync(logDir);
+        }
+        const files = await fsPromises.readdir(logDir);
         let cleanedCount = 0;
         for (const file of files) {
             if (!file.startsWith('nodelink-') || !file.endsWith('.log'))
                 continue;
             const filePath = path.join(logDir, file);
-            const stats = fs.statSync(filePath);
+            const stats = await fsPromises.stat(filePath);
             const fileAge = now - stats.mtimeMs;
             if (fileAge > ttlMs) {
-                fs.unlinkSync(filePath);
+                await fsPromises.unlink(filePath);
                 cleanedCount++;
             }
         }
@@ -174,9 +178,7 @@ function rotateLogFile() {
         logStream.end();
         logStream = null;
     }
-    if (!fs.existsSync(logDir)) {
-        fs.mkdirSync(logDir, { recursive: true });
-    }
+    fs.mkdirSync(logDir, { recursive: true });
     currentLogFile = newLogFilePath;
     logStream = fs.createWriteStream(currentLogFile, { flags: 'a' });
     const gitInfo = getGitInfo();
@@ -428,7 +430,17 @@ function modifyPayload(nodelink, data) {
  * @public
  */
 function sendResponse(req, res, data, status, trace = false) {
+    const nodelink = runtime.nodelink;
+    const corsEnabled = nodelink?.options?.server?.cors === true;
     const headers = {
+        ...(corsEnabled
+            ? {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD',
+                'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, Origin, User-Agent, Client-Name, User-Id, Session-Id, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers',
+                'Access-Control-Max-Age': '86400'
+            }
+            : {}),
         'Nodelink-Api-Version': '4',
         IamNodelink: 'true'
     };
@@ -437,7 +449,6 @@ function sendResponse(req, res, data, status, trace = false) {
         res.end();
         return;
     }
-    const nodelink = runtime.nodelink;
     let finalData = nodelink ? modifyPayload(nodelink, data) : data;
     if (finalData &&
         typeof finalData === 'object' &&
@@ -498,13 +509,26 @@ function getGitInfo() {
     if (gitInfoCache)
         return gitInfoCache;
     try {
-        const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+        const output = execSync('git log -1 --format=%D%n%h%n%ct', {
             encoding: 'utf8'
         }).trim();
-        const commit = execSync('git rev-parse --short HEAD', {
-            encoding: 'utf8'
-        }).trim();
-        const commitTime = Number.parseInt(execSync('git log -1 --format=%ct', { encoding: 'utf8' }).trim(), 10) * 1000;
+        const lines = output.split('\n');
+        const refsLine = lines[0] || '';
+        const commit = (lines[1] || 'unknown').trim();
+        const commitTime = Number.parseInt((lines[2] || '0').trim(), 10) * 1000;
+        let branch = 'unknown';
+        const headMatch = refsLine.match(/HEAD -> ([^,]+)/);
+        if (headMatch) {
+            branch = headMatch[1]?.trim() ?? 'unknown';
+        }
+        else {
+            try {
+                branch = execSync('git rev-parse --abbrev-ref HEAD', {
+                    encoding: 'utf8'
+                }).trim();
+            }
+            catch { }
+        }
         gitInfoCache = {
             branch,
             commit,
@@ -1124,7 +1148,19 @@ async function _internalHttp1Request(urlString, options = {}) {
         localAddress: actualLocalAddress
     };
     return new Promise((resolve, reject) => {
-        const req = lib.request(reqOptions, (res) => {
+        let req;
+        const reqErrorHandler = (err) => {
+            cleanupReq();
+            reject(err);
+        };
+        const reqTimeoutHandler = () => {
+            req.destroy(new Error(`Request timed out after ${timeout}ms for ${urlString}`));
+        };
+        const cleanupReq = () => {
+            req.removeListener('error', reqErrorHandler);
+            req.removeListener('timeout', reqTimeoutHandler);
+        };
+        req = lib.request(reqOptions, (res) => {
             const { statusCode, headers: respHeaders } = res;
             const responseStatus = statusCode ?? 0;
             const locationHeader = respHeaders.location;
@@ -1166,6 +1202,30 @@ async function _internalHttp1Request(urlString, options = {}) {
                 resolve(http1makeRequest(nextUrl, nextOptions));
                 return;
             }
+            const isNoBodyResponse = method === 'HEAD' ||
+                responseStatus === 204 ||
+                responseStatus === 304 ||
+                (responseStatus >= 100 && responseStatus < 200);
+            if (isNoBodyResponse) {
+                if (streamOnly) {
+                    resolve({
+                        statusCode,
+                        headers: respHeaders,
+                        stream: res,
+                        finalUrl: urlString
+                    });
+                    return;
+                }
+                res.resume();
+                cleanupReq();
+                resolve({
+                    statusCode,
+                    headers: respHeaders,
+                    body: options.responseType === 'buffer' ? Buffer.alloc(0) : '',
+                    finalUrl: urlString
+                });
+                return;
+            }
             let finalStream = res;
             const encodingHeader = respHeaders['content-encoding'];
             const encoding = Array.isArray(encodingHeader)
@@ -1183,9 +1243,18 @@ async function _internalHttp1Request(urlString, options = {}) {
             else if (encoding === 'deflate') {
                 finalStream = res.pipe(zlib.createInflate());
             }
-            res.on('error', (err) => reject(new Error(`Response error for ${urlString}: ${err.message}`)));
+            let cleanupBody;
+            res.on('error', (err) => {
+                cleanupBody?.();
+                cleanupReq();
+                reject(new Error(`Response error for ${urlString}: ${err.message}`));
+            });
             if (finalStream !== res) {
-                finalStream.on('error', (err) => reject(new Error(`Decompression error for ${urlString}: ${err.message}`)));
+                finalStream.on('error', (err) => {
+                    cleanupBody?.();
+                    cleanupReq();
+                    reject(new Error(`Decompression error for ${urlString}: ${err.message}`));
+                });
             }
             if (streamOnly) {
                 resolve({
@@ -1198,7 +1267,7 @@ async function _internalHttp1Request(urlString, options = {}) {
             }
             const chunks = [];
             let bufferedBytes = 0;
-            finalStream.on('data', (chunk) => {
+            const onData = (chunk) => {
                 bufferedBytes += chunk.length;
                 if (bufferedBytes > maxResponseBodyBytes) {
                     ;
@@ -1206,10 +1275,11 @@ async function _internalHttp1Request(urlString, options = {}) {
                     return;
                 }
                 chunks.push(chunk);
-            });
-            finalStream.on('end', () => {
+            };
+            const onEnd = () => {
                 try {
                     const responseBuffer = Buffer.concat(chunks);
+                    cleanupBody?.();
                     if (options.responseType === 'buffer') {
                         resolve({
                             statusCode,
@@ -1238,12 +1308,22 @@ async function _internalHttp1Request(urlString, options = {}) {
                 catch (err) {
                     reject(new Error(`Error processing response body for ${urlString}: ${err instanceof Error ? err.message : String(err)}`));
                 }
-            });
+                finally {
+                    cleanupBody?.();
+                    cleanupReq();
+                }
+            };
+            cleanupBody = () => {
+                finalStream.removeListener('data', onData);
+                finalStream.removeListener('end', onEnd);
+                chunks.length = 0;
+                cleanupBody = undefined;
+            };
+            finalStream.on('data', onData);
+            finalStream.once('end', onEnd);
         });
-        req.on('error', (err) => reject(err));
-        req.on('timeout', () => {
-            req.destroy(new Error(`Request timed out after ${timeout}ms for ${urlString}`));
-        });
+        req.on('error', reqErrorHandler);
+        req.on('timeout', reqTimeoutHandler);
         if (payloadBuffer) {
             req.end(payloadBuffer);
         }
@@ -1361,17 +1441,56 @@ async function makeRequest(urlString, options, nodelink) {
     if (_redirectsFollowed >= maxRedirects) {
         return Promise.reject(new Error(`Too many redirects (${maxRedirects}) for ${urlString}`));
     }
-    // fall back to HTTP/1 for Bun requests
-    // Note: bun v1.3.12, crashes with "authority" argument must be a type of string, object or URL. received type Number (825110816)
-    // Crashes the source worker ^^, could be related to monochrome's request or anything else that uses http/2
-    // UPDATE: Bun v1.3.13 has fixed this crash, since it was released today as this commit, i will be checking the version but can be removed later.
-    if (isBun && process.versions.bun.localeCompare('1.3.13', undefined, { numeric: true }) < 0) {
-        return http1makeRequest(urlString, options);
-    }
-    if (options.proxy) {
+    if (options.network?.proxy) {
         return http1makeRequest(urlString, options);
     }
     const localAddress = finalNodeLink?.routePlanner?.getIP?.() ?? undefined;
+    if (typeof Bun !== 'undefined' &&
+        !streamOnly &&
+        !body &&
+        !localAddress &&
+        !options.network?.proxy &&
+        (method === 'GET' || method === 'HEAD')) {
+        let t = null;
+        try {
+            const ac = new AbortController();
+            t = timeout ? setTimeout(() => ac.abort(), timeout) : null;
+            const res = await fetch(urlString, {
+                method,
+                headers: customHeaders,
+                signal: ac.signal
+            });
+            if (t) {
+                clearTimeout(t);
+                t = null;
+            }
+            if (method === 'HEAD' || res.status === 204 || res.status === 304) {
+                return {
+                    statusCode: res.status,
+                    headers: Object.fromEntries(res.headers),
+                    body: ''
+                };
+            }
+            const buf = await res.arrayBuffer();
+            if (buf.byteLength > maxResponseBodyBytes)
+                throw new Error('body too large');
+            const text = Buffer.from(buf).toString();
+            const ct = res.headers.get('content-type') ?? '';
+            const out = ct.includes('application/json') && text ? JSON.parse(text) : text;
+            return {
+                statusCode: res.status,
+                headers: Object.fromEntries(res.headers),
+                body: out
+            };
+        }
+        catch (e) {
+            if (t)
+                clearTimeout(t);
+            const msg = e.message;
+            if (msg === 'body too large' || e instanceof SyntaxError)
+                throw e;
+        }
+    }
     try {
         const url = new URL(urlString);
         if (http2FailedHosts.has(url.host)) {
@@ -1497,6 +1616,24 @@ async function makeRequest(urlString, options, nodelink) {
                             : undefined
                     }, finalNodeLink));
                 }
+                const isNoBodyResponse = method === 'HEAD' ||
+                    statusCode === 204 ||
+                    statusCode === 304 ||
+                    (statusCode !== undefined && statusCode >= 100 && statusCode < 200);
+                if (isNoBodyResponse) {
+                    if (streamOnly) {
+                        req.on('end', closeSessionGracefully);
+                        req.on('error', closeSessionGracefully);
+                        req.on('close', closeSessionGracefully);
+                        return resolve({ statusCode, headers, stream: req });
+                    }
+                    closeSessionGracefully();
+                    return resolve({
+                        statusCode,
+                        headers,
+                        body: options.responseType === 'buffer' ? Buffer.alloc(0) : ''
+                    });
+                }
                 let responseStream = req;
                 const encodingHeader = headers['content-encoding'];
                 const encoding = Array.isArray(encodingHeader)
@@ -1510,10 +1647,6 @@ async function makeRequest(urlString, options, nodelink) {
                     responseStream = req.pipe(zlib.createGunzip());
                 else if (encoding === 'deflate')
                     responseStream = req.pipe(zlib.createInflate());
-                if (method === 'HEAD') {
-                    closeSessionGracefully();
-                    return resolve({ statusCode, headers });
-                }
                 if (streamOnly) {
                     responseStream.on('end', closeSessionGracefully);
                     responseStream.on('error', closeSessionGracefully);
@@ -1600,6 +1733,195 @@ async function makeRequest(urlString, options, nodelink) {
     });
 }
 /**
+ * Checks for updates of core dependencies against the NPM registry.
+ *
+ * Logs a warning if an update is available for critical packages.
+ * @public
+ */
+/**
+ * Checks for updates of core dependencies against the NPM registry and GitHub.
+ *
+ * Logs a warning if an update is available for critical packages.
+ * @param credentialManager - Persistence manager to rate-limit checks.
+ * @public
+ */
+async function checkDependencyUpdates(credentialManager) {
+    const coreDeps = [
+        '@performanc/voice',
+        '@performanc/pwsl-server',
+        '@toddynnn/symphonia-decoder',
+        '@toddynnn/voice-opus',
+        '@ecliptia/faad2-wasm',
+        '@alexanderolsen/libsamplerate-js',
+        '@ecliptia/seekable-stream',
+        'mp4box'
+    ];
+    const localVersions = [];
+    for (const dep of coreDeps) {
+        try {
+            const depPath = path.join(process.cwd(), 'node_modules', dep, 'package.json');
+            const version = JSON.parse(fs.readFileSync(depPath, 'utf8')).version;
+            localVersions.push({ name: dep, version });
+        }
+        catch {
+            // Ignore if package not found
+        }
+    }
+    if (localVersions.length > 0) {
+        logger('info', 'Server', `Installed core packages: ${localVersions.map((v) => `${v.name}@${v.version}`).join(', ')}`);
+    }
+    const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+    const now = Date.now();
+    let latestVersions = {};
+    let isCacheValid = false;
+    if (credentialManager) {
+        const cache = credentialManager.get('runtime.dependencies.latest');
+        if (cache && now - cache.ts < CHECK_INTERVAL_MS) {
+            latestVersions = cache.versions;
+            isCacheValid = true;
+        }
+    }
+    if (!isCacheValid) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        try {
+            const deps = packageJson
+                .dependencies || {};
+            await Promise.all(coreDeps.map(async (dep) => {
+                try {
+                    const declaredVersion = deps[dep] || '';
+                    let latestVersionStr = '';
+                    let source = 'NPM';
+                    if (declaredVersion.startsWith('github:') ||
+                        (declaredVersion.includes('/') && !declaredVersion.includes(':'))) {
+                        source = 'GitHub';
+                        const repo = declaredVersion.replace('github:', '').split('#')[0];
+                        const branch = declaredVersion.split('#')[1] || 'main';
+                        const response = await fetch(`https://raw.githubusercontent.com/${repo}/${branch}/package.json`, { signal: controller.signal });
+                        if (response.ok) {
+                            const data = (await response.json());
+                            latestVersionStr = data.version;
+                        }
+                    }
+                    else if (!declaredVersion.includes(':') &&
+                        !declaredVersion.includes('/')) {
+                        const response = await fetch(`https://registry.npmjs.org/${dep}/latest`, {
+                            signal: controller.signal
+                        });
+                        if (response.ok) {
+                            const data = (await response.json());
+                            latestVersionStr = data.version;
+                        }
+                    }
+                    if (latestVersionStr) {
+                        latestVersions[dep] = { version: latestVersionStr, source };
+                    }
+                }
+                catch {
+                    // Ignore individual failures
+                }
+            }));
+            if (credentialManager && Object.keys(latestVersions).length > 0) {
+                credentialManager.set('runtime.dependencies.latest', { ts: now, versions: latestVersions }, 24 * 60 * 60 * 1000);
+            }
+        }
+        catch (error) {
+            logger('debug', 'Server', `Failed to check dependency updates: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        finally {
+            clearTimeout(timeout);
+        }
+    }
+    const updates = [];
+    for (const local of localVersions) {
+        const latest = latestVersions[local.name];
+        if (!latest || local.version === latest.version)
+            continue;
+        const currentSemver = parseSemver(local.version);
+        const latestSemver = parseSemver(latest.version);
+        if (currentSemver && latestSemver) {
+            const isNewer = latestSemver.major > currentSemver.major ||
+                (latestSemver.major === currentSemver.major &&
+                    latestSemver.minor > currentSemver.minor) ||
+                (latestSemver.major === currentSemver.major &&
+                    latestSemver.minor === currentSemver.minor &&
+                    latestSemver.patch > currentSemver.patch);
+            if (isNewer) {
+                updates.push({
+                    name: local.name,
+                    current: local.version,
+                    latest: latest.version,
+                    source: latest.source
+                });
+            }
+        }
+    }
+    if (updates.length > 0) {
+        logger('warn', 'Server', 'The following core dependencies have updates available and will be automatically updated:');
+        for (const update of updates) {
+            logger('warn', 'Server', ` - ${update.name}: ${update.current} -> \x1b[1m\x1b[32m${update.latest}\x1b[0m (${update.source})`);
+        }
+        try {
+            logger('info', 'Server', `Running automatic update for core packages...`);
+            // pnpm and bun can be on the same path, so we check both
+            // (referring to myself, im lazy to delete the pnpm lock file)
+            const isBun = process.versions.bun &&
+                fs.existsSync(path.resolve(process.cwd(), 'bun.lock'));
+            const isPnpm = fs.existsSync(path.resolve(process.cwd(), 'pnpm-lock.yaml')) && !isBun;
+            const deps = packageJson
+                .dependencies || {};
+            const pkgTargets = updates
+                .map((u) => {
+                if (u.source === 'GitHub') {
+                    const spec = deps[u.name];
+                    if (spec)
+                        return `"${u.name}@${spec}"`;
+                }
+                return `"${u.name}@^${u.latest}"`;
+            })
+                .join(' ');
+            const cmd = isPnpm
+                ? `pnpm add ${pkgTargets}`
+                : isBun
+                    ? `bun add ${pkgTargets}`
+                    : `npm install ${pkgTargets} --save`;
+            execSync(cmd, { stdio: 'inherit' });
+            // Verify that installed version actually changed to prevent infinite reboot loops
+            const versionChanged = updates.some((update) => {
+                try {
+                    const depPath = path.join(process.cwd(), 'node_modules', update.name, 'package.json');
+                    const newVer = JSON.parse(fs.readFileSync(depPath, 'utf8')).version;
+                    return newVer !== update.current;
+                }
+                catch {
+                    return false;
+                }
+            });
+            if (!versionChanged) {
+                logger('warn', 'Server', 'Dependency update did not change installed version. Skipping automatic restart to prevent boot loop.');
+                return;
+            }
+            logger('info', 'Server', 'Dependencies updated successfully. Restarting process to apply changes...');
+            const { spawn } = await import('node:child_process');
+            const child = spawn(process.argv[0], process.argv.slice(1), {
+                stdio: 'inherit',
+                env: process.env
+            });
+            child.on('exit', (code) => {
+                process.exit(code ?? 0);
+            });
+            // Halt execution of the parent process forever while the child runs
+            await new Promise(() => { });
+        }
+        catch (error) {
+            logger('error', 'Server', `Failed to auto-update dependencies: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+    else if (Object.keys(latestVersions).length > 0) {
+        logger('info', 'Server', 'All core packages are up to date.');
+    }
+}
+/**
  * Checks for git updates against the upstream branch.
  *
  * Logs messages to the console without altering the working tree.
@@ -1608,16 +1930,25 @@ async function makeRequest(urlString, options, nodelink) {
 async function checkForUpdates() {
     logger('info', 'Git', 'Checking for updates...');
     try {
-        execSync('git fetch', { stdio: 'ignore' });
-        const local = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
-        const remote = execSync('git rev-parse @{u}', { encoding: 'utf8' }).trim();
-        if (local !== remote) {
-            const behind = execSync('git rev-list --right-only --count HEAD...@{u}', {
+        const { exec } = await import('node:child_process');
+        const util = await import('node:util');
+        const execAsync = util.promisify(exec);
+        await execAsync('git fetch', {
+            stdio: 'ignore'
+        });
+        const { stdout: local } = await execAsync('git rev-parse HEAD', {
+            encoding: 'utf8'
+        });
+        const { stdout: remote } = await execAsync('git rev-parse @{u}', {
+            encoding: 'utf8'
+        });
+        if (local.trim() !== remote.trim()) {
+            const { stdout: behind } = await execAsync('git rev-list --right-only --count HEAD...@{u}', {
                 encoding: 'utf8'
-            }).trim();
-            const remoteCommit = execSync('git log -1 --pretty=format:"%h - %s (%cr)" @{u}', { encoding: 'utf8' }).trim();
-            logger('warn', 'Git', `Your version is ${behind} commits behind the remote.`);
-            logger('warn', 'Git', `Latest commit: ${remoteCommit}`);
+            });
+            const { stdout: remoteCommit } = await execAsync('git log -1 --pretty=format:"%h - %s (%cr)" @{u}', { encoding: 'utf8' });
+            logger('warn', 'Git', `Your version is ${behind.trim()} commits behind the remote.`);
+            logger('warn', 'Git', `Latest commit: ${remoteCommit.trim()}`);
             logger('warn', 'Git', 'Please run "git pull" to update.');
         }
         else {
@@ -1744,7 +2075,7 @@ function applyEnvOverrides(config, prefix = 'NODELINK') {
  * @returns Best matching candidate or null.
  * @public
  */
-function getBestMatch(list, original, options = {}) {
+export function getBestMatch(list, original, options = {}) {
     const { durationTolerance = 0.15, allowExplicit = true } = options;
     const normalize = (str) => {
         if (!str)
@@ -1904,13 +2235,13 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         }
         logger('debug', 'SponsorBlock', `Successfully loaded ${videoMatch.segments.length} segments for video ${videoId} in ${duration}ms`);
         return videoMatch.segments.map((s) => ({
-            uuid: s.UUID,
-            start: Math.round(s.segment[0] * 1000),
-            end: Math.round(s.segment[1] * 1000),
+            uuid: s.uuid,
+            start: Math.round(s.start * 1000),
+            end: Math.round(s.end * 1000),
             category: s.category,
             actionType: s.actionType,
             votes: s.votes,
-            locked: s.locked === 1,
+            locked: s.locked,
             videoDuration: Math.round(s.videoDuration * 1000),
             description: s.description || ''
         }));
@@ -1920,4 +2251,4 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         return [];
     }
 }
-export { applyEnvOverrides, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getBestMatch, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
+export { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
