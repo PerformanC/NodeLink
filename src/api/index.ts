@@ -97,6 +97,7 @@ async function loadRoutes(): Promise<ApiRouteCollection> {
       if (
         file !== 'index.js' &&
         file !== 'index.ts' &&
+        !file.endsWith('.d.ts') &&
         (file.endsWith('.js') || file.endsWith('.ts'))
       ) {
         const filePath = join(__dirname, file)
@@ -448,16 +449,65 @@ async function requestHandler(
       return
     }
 
-    await new Promise<void>((resolve) => {
+    const bodyReadSuccess = await new Promise<boolean>((resolve) => {
       if (typeof req.on !== 'function') {
-        resolve()
+        resolve(true)
         return
       }
 
       let receivedSize = 0
+      const chunks: Buffer[] = []
+      let isSettled = false
+
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+        }
+        req.removeListener?.('data', onData)
+        req.removeListener?.('end', onEnd)
+        req.removeListener?.('error', onError)
+      }
+
+      const settle = (success: boolean) => {
+        if (isSettled) return
+        isSettled = true
+        cleanup()
+        resolve(success)
+      }
+
+      const timeoutMs = nodelink.options.server?.bodyTimeout ?? 30_000
+      const timeoutId =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              logger(
+                'warn',
+                'Server',
+                `Request body read timed out after ${timeoutMs}ms: ${parsedUrl.pathname}`
+              )
+              ;(res as unknown as { __traceReason?: string }).__traceReason =
+                'body_timeout'
+              if (!res.headersSent) {
+                sendErrorResponse(
+                  req,
+                  res,
+                  408,
+                  'Request Timeout',
+                  'Request body read timed out.',
+                  parsedUrl.pathname,
+                  trace
+                )
+              }
+              try {
+                req.destroy?.()
+              } catch {}
+              settle(false)
+            }, timeoutMs)
+          : null
+      timeoutId?.unref?.()
 
       const onData = (chunk: Buffer) => {
-        receivedSize += chunk.length
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        receivedSize += buf.length
         if (receivedSize > MAX_BODY_SIZE) {
           logger(
             'warn',
@@ -466,8 +516,6 @@ async function requestHandler(
           )
           ;(res as unknown as { __traceReason?: string }).__traceReason =
             'payload_too_large'
-          req.removeListener?.('data', onData)
-          req.removeListener?.('end', onEnd)
           sendErrorResponse(
             req,
             res,
@@ -477,56 +525,93 @@ async function requestHandler(
             parsedUrl.pathname,
             trace
           )
-          req.destroy?.()
-          resolve()
+          try {
+            req.destroy?.()
+          } catch {}
+          settle(false)
+          return
         }
-        body += chunk.toString()
+        chunks.push(buf)
       }
 
-      const onEnd = () => {
-        try {
-          const contentType = getHeaderValue(headerAccess['content-type'])
-          if (contentType?.includes('application/json') && body) {
-            parsedBody = JSON.parse(body)
-          }
-        } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error)
-          logger(
-            'error',
-            'Server',
-            `Failed to parse JSON body: ${errorMessage}. Path: ${
-              parsedUrl.pathname
-            }, Content-Type: ${
-              getHeaderValue(headerAccess['content-type']) || 'N/A'
-            }, Raw Body: '${body}', Headers: ${JSON.stringify(req.headers)}`
-          )
-          pushTrace('events', {
-            ts: Date.now(),
-            type: 'json_parse_error',
-            path: parsedUrl.pathname,
-            method: req.method ?? 'UNKNOWN',
-            message: errorMessage
-          })
-          ;(res as unknown as { __traceReason?: string }).__traceReason =
-            'invalid_json'
+      const onError = (error: Error) => {
+        logger(
+          'error',
+          'Server',
+          `Error reading request body: ${error?.message || error}. Path: ${parsedUrl.pathname}`
+        )
+        ;(res as unknown as { __traceReason?: string }).__traceReason =
+          'socket_error'
+        if (!res.headersSent) {
           sendErrorResponse(
             req,
             res,
-            400,
-            'Invalid JSON',
-            errorMessage || 'Failed to parse JSON body',
+            500,
+            'Internal Server Error',
+            'Failed to read request body',
             parsedUrl.pathname,
             trace
           )
-          return
         }
-        resolve()
+        try {
+          req.destroy?.()
+        } catch {}
+        settle(false)
+      }
+
+      const onEnd = () => {
+        const rawBody = Buffer.concat(chunks).toString('utf8')
+        body = rawBody
+        parsedBody = rawBody
+        const contentType = getHeaderValue(headerAccess['content-type'])
+        if (contentType?.includes('application/json') && rawBody.length > 0) {
+          try {
+            parsedBody = JSON.parse(rawBody)
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : String(error)
+            logger(
+              'error',
+              'Server',
+              `Failed to parse JSON body: ${errorMessage}. Path: ${
+                parsedUrl.pathname
+              }, Content-Type: ${
+                getHeaderValue(headerAccess['content-type']) || 'N/A'
+              }, Raw Body: '${rawBody}', Headers: ${JSON.stringify(req.headers)}`
+            )
+            pushTrace('events', {
+              ts: Date.now(),
+              type: 'json_parse_error',
+              path: parsedUrl.pathname,
+              method: req.method ?? 'UNKNOWN',
+              message: errorMessage
+            })
+            ;(res as unknown as { __traceReason?: string }).__traceReason =
+              'invalid_json'
+            sendErrorResponse(
+              req,
+              res,
+              400,
+              'Invalid JSON',
+              errorMessage || 'Failed to parse JSON body',
+              parsedUrl.pathname,
+              trace
+            )
+            settle(false)
+            return
+          }
+        }
+        settle(true)
       }
 
       req.on('data', onData)
       req.on('end', onEnd)
+      req.on('error', onError)
     })
+
+    if (!bodyReadSuccess) {
+      return
+    }
   }
   req.body = parsedBody
 

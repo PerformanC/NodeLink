@@ -84,12 +84,14 @@ export interface ApiRequest {
   /**
    * Event listener registration (data/end).
    */
-  on?: (event: string, listener: (chunk: Buffer) => void) => void
+  // biome-ignore lint/suspicious/noExplicitAny: event emitter listener parameters vary by event
+  on?: (event: string, listener: (...args: any[]) => void) => void
 
   /**
    * Removes a registered event listener.
    */
-  removeListener?: (event: string, listener: (chunk: Buffer) => void) => void
+  // biome-ignore lint/suspicious/noExplicitAny: event emitter listener parameters vary by event
+  removeListener?: (event: string, listener: (...args: any[]) => void) => void
 
   /**
    * Destroys the underlying request stream.
@@ -112,6 +114,11 @@ export interface ApiResponse {
    * HTTP status code when available.
    */
   statusCode?: number
+
+  /**
+   * Indicates whether HTTP headers have been sent.
+   */
+  headersSent?: boolean
 
   /**
    * Writes response status and headers.
@@ -447,7 +454,10 @@ export interface ApiNodelinkServer {
    * Loaded configuration.
    */
   options: NodelinkConfig & {
-    server: NodelinkConfig['server'] & { maxBodySize?: number }
+    server: NodelinkConfig['server'] & {
+      maxBodySize?: number
+      bodyTimeout?: number
+    }
   }
 
   /**

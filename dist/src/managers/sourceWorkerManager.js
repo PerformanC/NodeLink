@@ -296,6 +296,8 @@ class SourceWorkerManager {
                 return;
             logger('warn', 'SourceCluster', `Source worker manager ${worker.process.pid} exited. Respawning...`);
             const index = this.workers.indexOf(worker);
+            if (index === -1)
+                return;
             this.workers.splice(index, 1);
             this.workerLoads.delete(worker.id);
             // Keep at least one source worker alive.
@@ -467,11 +469,16 @@ class SourceWorkerManager {
         request.timeout = setTimeout(() => {
             const activeRequest = this.requests.get(id);
             if (activeRequest) {
-                res.writeHead(504, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    error: 'Gateway Timeout',
-                    message: 'Source worker timed out'
-                }));
+                if (!res.headersSent) {
+                    res.writeHead(504, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        error: 'Gateway Timeout',
+                        message: 'Source worker timed out'
+                    }));
+                }
+                else {
+                    res.end();
+                }
                 this._cleanupRequest(id, activeRequest);
             }
         }, 60000);
