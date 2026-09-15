@@ -8,6 +8,14 @@ import type {
 import { sendErrorResponse, sendResponse } from '../utils.ts'
 
 /**
+ * Configured IP block entry accepted by the route planner.
+ *
+ * The canonical config type allows both raw CIDR strings and `{ cidr }`
+ * objects, so the endpoint must accept both shapes here as well.
+ */
+type RoutePlannerIpBlockEntry = string | { cidr: string }
+
+/**
  * Minimal route planner configuration required by the endpoint.
  */
 interface RoutePlannerConfigRuntime {
@@ -19,7 +27,7 @@ interface RoutePlannerConfigRuntime {
   /**
    * Configured IP blocks in CIDR format.
    */
-  ipBlocks: string[]
+  ipBlocks?: RoutePlannerIpBlockEntry[]
 
   /**
    * Active routing strategy name.
@@ -225,6 +233,23 @@ function getFreeAddressPayload(
 }
 
 /**
+ * Resolves the CIDR string of the first configured IP block.
+ *
+ * @param ipBlocks - Configured blocks, either as raw strings or objects.
+ * @returns First CIDR string, or `null` when none is configured.
+ */
+function getFirstBlockCidr(
+  ipBlocks: RoutePlannerIpBlockEntry[] | undefined
+): string | null {
+  const first = ipBlocks?.[0]
+  if (typeof first === 'string') return first
+  if (first && typeof first === 'object' && typeof first.cidr === 'string') {
+    return first.cidr
+  }
+  return null
+}
+
+/**
  * Builds the route planner status payload.
  *
  * @param nodelink - Route planner runtime.
@@ -253,7 +278,7 @@ function buildStatusResponse(
     class: 'BalancingIpRoutePlanner',
     details: {
       ipBlock: {
-        type: routePlanner.config.ipBlocks[0]?.includes(':')
+        type: getFirstBlockCidr(routePlanner.config.ipBlocks)?.includes(':')
           ? 'Inet6Address'
           : 'Inet4Address',
         size: routePlanner.ipBlocks.length
