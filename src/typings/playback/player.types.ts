@@ -9,6 +9,7 @@ import type {
   TrackStreamResult,
   TrackUrlResult
 } from '../sources/source.types.ts'
+import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 
 /**
  * Runtime filter settings applied to an audio stream.
@@ -392,7 +393,7 @@ export interface NodeLinkOptions {
     routePlanner?: {
       strategy?: string
       bannedIpCooldown?: number
-      ipBlocks?: Array<string | { cidr: string }>
+      ipBlocks?: RoutePlannerIpBlockEntry[]
       [key: string]: unknown
     }
     [key: string]: unknown

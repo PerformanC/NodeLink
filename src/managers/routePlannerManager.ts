@@ -1,4 +1,5 @@
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
+import type { RoutePlannerIpBlockEntry } from '../typings/api/routeplanner.types.ts'
 import { logger } from '../utils.ts'
 
 /**
@@ -22,7 +23,7 @@ interface RoutePlannerIpBlockConfig {
 interface RoutePlannerConfig {
   strategy?: RoutePlannerStrategy | string
   bannedIpCooldown?: number
-  ipBlocks?: Array<RoutePlannerIpBlockConfig | string>
+  ipBlocks?: RoutePlannerIpBlockEntry[]
 }
 
 /**
@@ -46,7 +47,7 @@ export type RoutePlannerManagerContext = {
 }
 
 const normalizeIpBlocks = (
-  blocks: Array<RoutePlannerIpBlockConfig | string> | undefined
+  blocks: RoutePlannerIpBlockEntry[] | undefined
 ): RoutePlannerIpBlockConfig[] => {
   if (!Array.isArray(blocks)) return []
   return blocks
