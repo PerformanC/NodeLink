@@ -1,3 +1,5 @@
+import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
+
 /**
  * Selection of the internal engine used for networking and protocol handling.
  */
@@ -1143,7 +1145,7 @@ export interface NetworkSection {
   routePlanner: {
     strategy: string
     bannedIpCooldown: number
-    ipBlocks: Array<string | { cidr: string }>
+    ipBlocks: RoutePlannerIpBlockEntry[]
   }
 }
 
