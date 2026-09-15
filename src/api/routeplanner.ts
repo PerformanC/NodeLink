@@ -5,15 +5,8 @@ import type {
   ApiRouteModule,
   ApiSendResponse
 } from '../typings/api/api.types.ts'
+import type { RoutePlannerIpBlockEntry } from '../typings/api/routeplanner.types.ts'
 import { sendErrorResponse, sendResponse } from '../utils.ts'
-
-/**
- * Configured IP block entry accepted by the route planner.
- *
- * The canonical config type allows both raw CIDR strings and `{ cidr }`
- * objects, so the endpoint must accept both shapes here as well.
- */
-type RoutePlannerIpBlockEntry = string | { cidr: string }
 
 /**
  * Minimal route planner configuration required by the endpoint.
