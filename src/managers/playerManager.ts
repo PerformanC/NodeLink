@@ -814,6 +814,21 @@ export default class PlayerManager {
   }
 
   /**
+   * Enables or disables auto-ducking.
+   */
+  async setDucking(
+    guildId: string,
+    enabled: boolean
+  ): Promise<boolean | PlayerCommandResponse> {
+    if (this.isCluster) {
+      return this.runClusterMutation(guildId, 'setDucking', [enabled])
+    }
+
+    const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
+    return player.setDucking(enabled)
+  }
+
+  /**
    * Applies voice state updates to the player.
    */
   async updateVoice(

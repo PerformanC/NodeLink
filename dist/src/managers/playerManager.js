@@ -446,6 +446,16 @@ export default class PlayerManager {
         return player.setLoudnessNormalizer(enabled);
     }
     /**
+     * Enables or disables auto-ducking.
+     */
+    async setDucking(guildId, enabled) {
+        if (this.isCluster) {
+            return this.runClusterMutation(guildId, 'setDucking', [enabled]);
+        }
+        const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
+        return player.setDucking(enabled);
+    }
+    /**
      * Applies voice state updates to the player.
      */
     async updateVoice(guildId, voicePayload) {
