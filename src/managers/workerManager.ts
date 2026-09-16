@@ -323,12 +323,12 @@ const buildWorkerExecArgv = (
 export default class WorkerManager {
   private config: NodelinkConfig
   workers: PlaybackWorker[]
-  private workersById: Map<number, PlaybackWorker>
-  private guildToWorker: Map<string, number>
-  private workerToGuilds: Map<number, Set<string>>
+  workersById: Map<number, PlaybackWorker>
+  guildToWorker: Map<string, number>
+  workerToGuilds: Map<number, Set<string>>
   private nextStatelessWorkerIndex: number
-  private pendingRequests: Map<string, PendingCommandRequest>
-  private streamRequests: Map<string, StreamRequestEntry>
+  pendingRequests: Map<string, PendingCommandRequest>
+  streamRequests: Map<string, StreamRequestEntry>
   private maxWorkers: number
   private minWorkers: number
   workerLoad: Map<number, number>
@@ -341,7 +341,7 @@ export default class WorkerManager {
   private statsUpdateTimer: NodeJS.Timeout | null
   private workerHealth: Map<number, number>
   private workerStartTime: Map<number, number>
-  private workerUniqueId: Map<number, number>
+  workerUniqueId: Map<number, number>
   private workerReady: Set<number>
   private nextWorkerId: number
   private liveYoutubeConfig: LiveYoutubeConfig

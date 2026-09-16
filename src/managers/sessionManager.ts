@@ -227,7 +227,7 @@ export default class SessionManager {
     } else {
       for (const player of players.players.values()) {
         try {
-          player.destroy?.()
+          player.destroy()
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logger(

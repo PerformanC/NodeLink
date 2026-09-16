@@ -61,7 +61,6 @@ export interface SourcesManagerContext {
   sourceWorkerManager?: unknown
   /** Global plugin manager for hook execution. */
   pluginManager?: import('./pluginManager.ts').default | null
-  [key: string]: unknown
 }
 
 /**

@@ -342,8 +342,9 @@ export function createBunServer(context, getRequestHandler) {
                             end.push(cb);
                             trigger();
                         }
-                        else if (ev === 'error')
+                        else if (ev === 'error') {
                             err.push(cb);
+                        }
                     }
                 };
                 const resShim = {

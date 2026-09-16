@@ -56,7 +56,7 @@ export default class TV extends BaseClient {
      */
     getPlayerParams() {
         // around D8 03 01 w field 59? or 27? makes me confused.
-        // will appear betwenn 0AMB ... xxxxxxMIw (-5/6 letters that always updates)
+        // will appear between 0AMB ... xxxxxxMIw (-5/6 letters that always updates)
         return '2AMB';
     }
     /**

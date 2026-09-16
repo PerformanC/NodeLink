@@ -39,7 +39,7 @@ export interface AudioTransition {
   curve: string
 
   /** The technical logic type applied during the transition. */
-  type: string
+  type: 'volume' | 'tape' | 'scratch' | 'both'
 }
 
 /**
@@ -944,6 +944,12 @@ export interface ServerSection {
 
   /** Allow browser web players from any origin (permissive CORS). */
   cors: boolean
+
+  /** Maximum request body size in bytes. */
+  maxBodySize?: number
+
+  /** Request body timeout in milliseconds. */
+  bodyTimeout?: number
 }
 
 /**
@@ -1120,6 +1126,7 @@ export interface LoggingSection {
  * Connectivity health and multi-IP rotation.
  */
 export interface NetworkSection {
+  [key: string]: unknown
   /** Shared outbound proxy for sources and internals. */
   proxy: {
     enabled: boolean
@@ -1192,6 +1199,7 @@ export interface FilterConfig {
  * The consolidated NodeLink configuration schema.
  */
 export interface NodelinkConfig {
+  [key: string]: unknown
   server: ServerSection
   cluster: ClusterSection
   logging: LoggingSection

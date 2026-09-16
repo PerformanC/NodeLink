@@ -71,7 +71,7 @@ export default class PlayerManager {
      * @internal
      */
     isClusterPlayerSnapshot(player) {
-        return typeof player.play !== 'function';
+        return !('play' in player);
     }
     /**
      * Resolves a local playback player or throws when unavailable.
@@ -210,7 +210,15 @@ export default class PlayerManager {
                     this.players.set(playerKey, {
                         guildId,
                         userId: this.getSessionUserId(session),
-                        sessionId: this.sessionId
+                        sessionId: this.sessionId,
+                        track: null,
+                        isPaused: false,
+                        connection: null,
+                        connStatus: 'disconnected',
+                        _lastStreamDataTime: 0,
+                        _sendUpdate: () => true,
+                        emitEvent: () => { },
+                        destroy: () => { }
                     });
                 }
                 workerManager.assignGuildToWorker(playerKey, worker);

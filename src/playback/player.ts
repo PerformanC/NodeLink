@@ -92,7 +92,7 @@ export class Player {
   private readonly session: Session
   public readonly guildId: string
 
-  private track: PlayerTrack | null = null
+  public track: PlayerTrack | null = null
   private holoTrack: PlayerTrack | null = null
   private nextTrack: PlayerTrack | null = null
   private nextResource: AudioResource | null = null
@@ -162,7 +162,7 @@ export class Player {
 
   private _lastPosition = 0
   private _stuckTime = 0
-  private _lastStreamDataTime = 0
+  public _lastStreamDataTime = 0
   private _isRecovering = false
   public destroying = false
   public isUpdatingTrack = false
@@ -1411,7 +1411,7 @@ export class Player {
   /**
    * Sends player state updates to the client.
    */
-  private _sendUpdate(): boolean {
+  public _sendUpdate(): boolean {
     if (
       !this.connection ||
       (this.isPaused && !this._fadeTimers.pause) ||

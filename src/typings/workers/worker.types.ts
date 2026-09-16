@@ -67,7 +67,8 @@ export interface WorkerExtensions extends Record<string, unknown> {
 /**
  * Runtime context shared across worker components.
  */
-export interface WorkerNodeLink extends Omit<NodeLink, 'extensions'> {
+export interface WorkerNodeLink
+  extends Omit<NodeLink, 'extensions' | 'trackCacheManager'> {
   options: NodeLinkConfig & NodeLink['options']
   logger: LoggerFn
   voiceRelay?: NodeLink['voiceRelay']

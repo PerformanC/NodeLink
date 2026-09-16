@@ -324,8 +324,8 @@ export interface PlayerSponsorBlockState {
 export interface NodeLinkOptions {
   defaultVolume?: number
   eventTimeoutMs?: number
-  trackStuckThresholdMs: number
-  playerUpdateInterval: number
+  trackStuckThresholdMs?: number
+  playerUpdateInterval?: number
   enableHoloTracks?: boolean
   fetchChannelInfo?: boolean
   resolveExternalLinks?: boolean
@@ -473,16 +473,13 @@ export type LoggerFn = (level: string, ...args: unknown[]) => void
  * NodeLink runtime context required by the player.
  */
 export interface NodeLink {
-  options: NodeLinkOptions & {
-    trackStuckThresholdMs: number
-    playerUpdateInterval: number
-  }
+  options: NodeLinkOptions
   logger: LoggerFn
   statsManager: StatsManagerLike
   voiceRelay?: {
     attach?: (connection: VoiceConnection, guildId: string) => void
     detach?: (connection: VoiceConnection) => void
-  }
+  } | null
   sources: SourceManagerLike
   lyrics: LyricsManagerLike | null
   statistics?: { players?: number }
@@ -494,7 +491,6 @@ export interface NodeLink {
     | import('../../managers/trackCacheManager.ts').default
     | null
   getLyricsManager?: () => Promise<LyricsManagerLike>
-  [key: string]: unknown
 }
 
 /**

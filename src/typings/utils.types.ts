@@ -314,7 +314,7 @@ export interface PlayerConnectionRuntime {
  */
 export interface PlayerRuntime {
   /** Voice connection for the player. */
-  connection: PlayerConnectionRuntime | null
+  connection?: PlayerConnectionRuntime | null
 }
 
 /**

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { ServerWebSocket } from 'bun'
-import type { NodelinkConfig } from '../typings/config/config.types.ts'
+import type { ApiNodelinkServer } from '../typings/api/api.types.ts'
 import type {
   BunSocketData,
   IBunSocketWrapper,
@@ -16,7 +16,7 @@ const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/
 
 type RequestHandler = (
-  nodelink: import('../typings/api/api.types.ts').ApiNodelinkServer,
+  nodelink: ApiNodelinkServer,
   req: RequestShim,
   res: ResponseShim
 ) => Promise<void>
@@ -26,8 +26,7 @@ type RequestHandler = (
  * Subset of NodelinkServer properties that the Bun code reads.
  * @internal
  */
-export interface BunServerContext {
-  options: NodelinkConfig
+export interface BunServerContext extends ApiNodelinkServer {
   sessions: {
     resumableSessions: Map<string, unknown>
     activeSessions: Map<string, { id: string; socket: SessionSocket | null }>
@@ -417,15 +416,19 @@ export function createBunServer(
           url: url.pathname + url.search,
           headers: Object.fromEntries(req.headers),
           socket: { remoteAddress: server.requestIP(req)?.address },
-          on: (ev: string, cb: (c: Buffer) => void) => {
+          on: (
+            ev: string,
+            cb: ((c: Buffer) => void) | (() => void) | ((e: Error) => void)
+          ) => {
             if (ev === 'data') {
-              data.push(cb)
+              data.push(cb as (c: Buffer) => void)
               trigger()
             } else if (ev === 'end') {
-              end.push(cb as unknown as () => void)
+              end.push(cb as () => void)
               trigger()
-            } else if (ev === 'error')
-              err.push(cb as unknown as (e: Error) => void)
+            } else if (ev === 'error') {
+              err.push(cb as (e: Error) => void)
+            }
           }
         }
 
@@ -485,13 +488,7 @@ export function createBunServer(
         }
 
         void getRequestHandler()
-          .then((handler) =>
-            handler(
-              context as unknown as import('../typings/api/api.types.ts').ApiNodelinkServer,
-              reqShim as unknown as RequestShim,
-              resShim
-            )
-          )
+          .then((handler) => handler(context, reqShim, resShim))
           .catch((error: Error) => {
             logger(
               'error',

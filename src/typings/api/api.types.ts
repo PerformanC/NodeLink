@@ -453,12 +453,7 @@ export interface ApiNodelinkServer {
   /**
    * Loaded configuration.
    */
-  options: NodelinkConfig & {
-    server: NodelinkConfig['server'] & {
-      maxBodySize?: number
-      bodyTimeout?: number
-    }
-  }
+  options: NodelinkConfig
 
   /**
    * Extension hooks.

@@ -15,36 +15,13 @@ import type {
 } from '../typings/playback/player.types.ts'
 import { logger } from '../utils.ts'
 
-/**
- * Minimal worker shape required by player manager cluster operations.
- * @public
- */
-interface ClusterWorkerLike {
-  id: number
-}
-
-/**
- * Minimal worker manager contract consumed by player manager.
- * @public
- */
-interface WorkerManagerLike {
-  getWorkerForGuild: (playerKey: string) => ClusterWorkerLike | null
-  execute: <T = unknown>(
-    worker: ClusterWorkerLike,
-    type: string,
-    payload: Record<string, unknown>,
-    options?: { fast?: boolean; timeoutMs?: number }
-  ) => Promise<T>
-  assignGuildToWorker: (playerKey: string, worker: ClusterWorkerLike) => void
-  unassignGuild: (playerKey: string) => void
-  isGuildAssigned: (playerKey: string) => boolean
-}
+type WorkerManagerLike = import('./workerManager.ts').default
 
 /**
  * Action names used by player interceptors.
  * @public
  */
-type PlayerInterceptorAction =
+export type PlayerInterceptorAction =
   | 'play'
   | 'preload'
   | 'clearNextTrack'
@@ -61,7 +38,7 @@ type PlayerInterceptorAction =
  * Interceptor signature for player command hooks.
  * @public
  */
-type PlayerInterceptor = (
+export type PlayerInterceptor = (
   action: PlayerInterceptorAction,
   guildId: string,
   args: readonly unknown[]
@@ -71,7 +48,12 @@ type PlayerInterceptor = (
  * Minimal NodeLink runtime context consumed by player manager.
  * @public
  */
-interface PlayerManagerNodelinkContext extends PlaybackNodeLink {
+interface PlayerManagerNodelinkContext {
+  options: import('../typings/config/config.types.ts').NodelinkConfig
+  logger: typeof import('../utils.ts').logger
+  statsManager: import('./statsManager.ts').default
+  sources: import('./sourceManager.ts').default | null
+  lyrics: import('./lyricsManager.ts').default | null
   sessions: {
     get: (id: string) => Session | undefined
   }
@@ -79,8 +61,8 @@ interface PlayerManagerNodelinkContext extends PlaybackNodeLink {
     players: number
   }
   workerManager: WorkerManagerLike | null
-  pluginManager: import('./pluginManager.ts').default | null
-  extensions?: PlaybackNodeLink['extensions'] & {
+  pluginManager?: import('./pluginManager.ts').default | null
+  extensions?: {
     playerInterceptors?: PlayerInterceptor[]
   }
 }
@@ -93,6 +75,14 @@ interface ClusterPlayerSnapshot {
   guildId: string
   userId: string | undefined
   sessionId: string
+  track: null
+  isPaused: false
+  connection: null
+  connStatus: 'disconnected'
+  _lastStreamDataTime: number
+  _sendUpdate: () => boolean
+  emitEvent: (event: string, data?: Record<string, unknown>) => void
+  destroy: () => void
 }
 
 /**
@@ -151,7 +141,7 @@ interface MixState {
  * Internal union for locally managed players and cluster snapshots.
  * @public
  */
-type ManagedPlayer = PlaybackPlayer | ClusterPlayerSnapshot
+export type ManagedPlayer = PlaybackPlayer | ClusterPlayerSnapshot
 
 /**
  * Session-scoped manager that controls player lifecycle and player commands.
@@ -235,7 +225,7 @@ export default class PlayerManager {
   private isClusterPlayerSnapshot(
     player: ManagedPlayer
   ): player is ClusterPlayerSnapshot {
-    return typeof (player as Partial<PlaybackPlayer>).play !== 'function'
+    return !('play' in player)
   }
 
   /**
@@ -450,7 +440,15 @@ export default class PlayerManager {
           this.players.set(playerKey, {
             guildId,
             userId: this.getSessionUserId(session),
-            sessionId: this.sessionId
+            sessionId: this.sessionId,
+            track: null,
+            isPaused: false,
+            connection: null,
+            connStatus: 'disconnected',
+            _lastStreamDataTime: 0,
+            _sendUpdate: () => true,
+            emitEvent: () => {},
+            destroy: () => {}
           })
         }
 
@@ -503,7 +501,7 @@ export default class PlayerManager {
     )
 
     const player = new Player({
-      nodelink: this.nodelink,
+      nodelink: this.nodelink as PlaybackNodeLink,
       session: localSession,
       guildId
     })

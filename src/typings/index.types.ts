@@ -6,9 +6,7 @@ import type {
   ApiMiddlewareExtension,
   ApiRouteExtension
 } from './api/api.types.ts'
-import type { WorkerMetricsEntry } from './api/stats.types.ts'
 import type { NodelinkConfig } from './config/config.types.ts'
-import type { PlayerVoiceState } from './playback/player.types.ts'
 import type { ClientInfo } from './shared.types.ts'
 
 /**
@@ -247,6 +245,11 @@ export interface NodelinkExtensions {
    * @remarks Called when players are created
    */
   playerInterceptors: PlayerInterceptorExtension[]
+
+  /**
+   * Additional custom extension maps or arrays
+   */
+  [key: string]: unknown
 }
 
 /**
@@ -507,70 +510,23 @@ export type WebSocketInterceptorExtension = (
  * Audio data interceptor function
  * @param pcm - PCM audio buffer
  * @param sampleRate - Audio sample rate in Hz
- * @param channels - Number of audio channels
- * @param format - Audio format identifier
- * @returns Modified PCM audio buffer
+ * Audio interceptor factory extension producing Transform streams
+ * @returns Audio transform stream
  * @public
  */
-export type AudioInterceptorExtension = (
-  pcm: Buffer,
-  sampleRate: number,
-  channels: number,
-  format: string
-) => Promise<Buffer>
+export type AudioInterceptorExtension = () => import('node:stream').Transform
 
 /**
- * Player instance interface
+ * Player instance (either active local playback player or cluster snapshot)
  * @public
  */
-export interface Player {
-  /**
-   * Guild ID this player belongs to
-   */
-  guildId: string
+export type Player = import('../managers/playerManager.ts').ManagedPlayer
 
-  /**
-   * Current track being played
-   */
-  track: TrackData | null
-
-  /**
-   * Whether the player is paused
-   */
-  isPaused: boolean
-
-  /**
-   * Voice connection instance
-   */
-  connection: VoiceConnection | null
-
-  /**
-   * Current Discord voice connection status
-   */
-  connStatus: 'connecting' | 'connected' | 'disconnected' | 'destroyed'
-
-  /**
-   * Last time stream data was received
-   * @internal
-   */
-  _lastStreamDataTime: number
-
-  /**
-   * Sends a player update event
-   * @internal
-   */
-  _sendUpdate: () => void
-
-  /**
-   * Emits an event to the client
-   */
-  emitEvent: (event: string, data: EventData) => void
-
-  /**
-   * Destroys the player instance
-   */
-  destroy?: () => void
-}
+/**
+ * Managed player type alias
+ * @public
+ */
+export type ManagedPlayer = import('../managers/playerManager.ts').ManagedPlayer
 
 /**
  * Event data sent to clients
@@ -595,10 +551,10 @@ export interface EventData {
 
 /**
  * Player interceptor function
- * @param player - Player instance
  * @public
  */
-export type PlayerInterceptorExtension = (player: Player) => void
+export type PlayerInterceptorExtension =
+  import('../managers/playerManager.ts').PlayerInterceptor
 
 /**
  * Track metadata
@@ -855,28 +811,8 @@ export interface SessionSocket {
  * Player manager instance
  * @public
  */
-export interface PlayerManagerInstance {
-  /**
-   * Map of players by guild ID
-   */
-  players: Map<string, Player>
-
-  /**
-   * Gets a player for a guild
-   */
-  get: (guildId: string) => Player | undefined
-
-  /**
-   * Creates a player for a guild
-   */
-  create: (guildId: string, voice: PlayerVoiceState) => Promise<Player>
-
-  /**
-   * Destroys a player
-   * @returns A promise that resolves when the player is destroyed
-   */
-  destroy: (guildId: string) => Promise<void>
-}
+export type PlayerManagerInstance =
+  import('../managers/playerManager.ts').default
 
 /**
  * Session instance
@@ -1122,10 +1058,8 @@ export interface VoiceRelay {
  * Player manager class type
  * @public
  */
-export type PlayerManagerConstructor = new (
-  nodelink: NodelinkServer,
-  sessionId: string
-) => PlayerManagerInstance
+export type PlayerManagerConstructor =
+  typeof import('../managers/playerManager.ts').default
 
 /**
  * Worker instance
@@ -1295,69 +1229,49 @@ export interface NodelinkServer {
   options: NodelinkConfig
 
   /**
+   * Server logger
+   */
+  logger: typeof import('../utils.ts').logger
+
+  /**
+   * Statistics manager
+   */
+  statsManager: import('../managers/statsManager.ts').default
+
+  /**
+   * Source manager
+   */
+  sources: import('../managers/sourceManager.ts').default | null
+
+  /**
+   * Lyrics manager
+   */
+  lyrics: import('../managers/lyricsManager.ts').default | null
+
+  /**
+   * Meanings manager
+   */
+  meanings?: import('../managers/meaningManager.ts').default | null
+
+  /**
+   * Voice relay instance
+   */
+  voiceRelay?: import('./voice/voice.types.ts').VoiceRelay | null
+
+  /**
    * Session manager
    */
-  sessions: {
-    /**
-     * Active sessions map
-     */
-    activeSessions: Map<string, Session>
+  sessions: import('../managers/sessionManager.ts').default
 
-    /**
-     * Resumable sessions map
-     */
-    resumableSessions: Map<string, Session>
-
-    /**
-     * Gets all session values
-     */
-    values: () => IterableIterator<Session>
-
-    /**
-     * Gets a session by ID
-     */
-    get: (id: string) => Session | undefined
-
-    /**
-     * Checks if a session exists
-     */
-    has: (id: string) => boolean
-  }
+  /**
+   * Plugin manager
+   */
+  pluginManager?: import('../managers/pluginManager.ts').default | null
 
   /**
    * Worker manager
    */
-  workerManager: {
-    /**
-     * List of workers
-     */
-    workers: Worker[]
-
-    /**
-     * Map of worker statistics
-     */
-    workerStats: Map<number, WorkerMetrics>
-
-    /**
-     * Worker load map
-     */
-    workerLoad: Map<number, number>
-
-    /**
-     * Gets worker for a guild
-     */
-    getWorkerForGuild: (guildId: string) => Worker | null
-
-    /**
-     * Executes a command on a worker
-     */
-    execute: (worker: Worker, type: string, payload: WorkerMessage) => void
-
-    /**
-     * Gets worker metrics
-     */
-    getWorkerMetrics: () => Record<string, WorkerMetricsEntry>
-  } | null
+  workerManager: import('../managers/workerManager.ts').default | null
 
   /**
    * Global server statistics
@@ -1373,4 +1287,20 @@ export interface NodelinkServer {
    * Extension system
    */
   extensions?: NodelinkExtensions
+}
+
+/**
+ * Options for starting the Nodelink server lifecycle
+ * @public
+ */
+export interface StartOptions {
+  /**
+   * Whether this instance is running as the cluster primary (master)
+   */
+  isClusterPrimary?: boolean
+
+  /**
+   * Whether this instance is running as a cluster worker
+   */
+  isClusterWorker?: boolean
 }
