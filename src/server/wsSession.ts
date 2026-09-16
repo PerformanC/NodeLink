@@ -8,7 +8,7 @@ import type {
   SessionSocket
 } from '../typings/index.types.ts'
 import type { ClientInfo } from '../typings/shared.types.ts'
-import { logger } from '../utils.ts'
+import { clearSessionEventQueue, logger } from '../utils.ts'
 
 /* INFO: Formats human-readable client name and version tag for logs */
 function _formatClientTag(clientInfo: ClientInfo): string {
@@ -165,7 +165,7 @@ function _resumeSession(
   for (const event of session.eventQueue) {
     socket.send(event)
   }
-  session.eventQueue.length = 0
+  clearSessionEventQueue(session)
 
   _syncResumedPlayers(context, session)
   return true

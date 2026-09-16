@@ -81,7 +81,12 @@ import type {
 import type { IPCMessage } from './typings/shared.types.ts'
 import type { SourceInstance } from './typings/sources/source.types.ts'
 import type { VoiceRelay } from './typings/voice/voice.types.ts'
-import { getGitInfo, getVersion, logger } from './utils.ts'
+import {
+  getGitInfo,
+  getVersion,
+  logger,
+  queueSessionEvent
+} from './utils.ts'
 import { parseVoiceFrameHeader } from './voice/voiceFrames.ts'
 import { createVoiceRelay } from './voice/voiceRelay.ts'
 
@@ -402,12 +407,10 @@ class NodelinkServer extends EventEmitter {
     const session = this.sessions.get(sessionId)
     if (!session) return
 
-    if (session.isPaused && session.resuming) {
-      session.eventQueue.push(data)
-      return
+    const queued = queueSessionEvent(session, data)
+    if (!queued && !session.socket?.destroyed) {
+      session.socket?.send(data)
     }
-
-    session.socket?.send(data)
   }
 
   private _handleWorkerStats(

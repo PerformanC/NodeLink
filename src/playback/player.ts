@@ -40,7 +40,7 @@ import type {
   TrackInfoExtended
 } from '../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
-import { logger } from '../utils.ts'
+import { logger, queueSessionEvent } from '../utils.ts'
 import { AutoMixRegistry } from './processing/AutoMixRegistry.ts'
 import { DuckingController } from './processing/DuckingController.ts'
 
@@ -249,12 +249,20 @@ export class Player {
       })
 
       if (this.session.isPaused) {
-        this.session.eventQueue.push(eventData)
-        logger(
-          'debug',
-          'Player',
-          `Queued event ${type} for paused session ${this.session.id}`
-        )
+        const queued = queueSessionEvent(this.session, eventData)
+        if (queued) {
+          logger(
+            'debug',
+            'Player',
+            `Queued event ${type} for paused session ${this.session.id}`
+          )
+        } else {
+          logger(
+            'debug',
+            'Player',
+            `Dropped event ${type} for paused session ${this.session.id} (not resumable)`
+          )
+        }
         return
       }
 
