@@ -501,6 +501,12 @@ export interface Session {
   userId: string
   socket: { send: (data: string) => void }
   isPaused: boolean
+  /**
+   * Whether the session is resumable while paused. When true, events are
+   * buffered into `eventQueue` for replay on resume; when false or
+   * undefined, they are dropped while paused.
+   */
+  resuming?: boolean
   eventQueue: string[]
 }
 

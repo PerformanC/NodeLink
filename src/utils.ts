@@ -24,6 +24,7 @@ import type {
   ApiResponse
 } from './typings/api/api.types.ts'
 import type { ClientInfo } from './typings/shared.types.ts'
+import type { Session } from './typings/index.types.ts'
 import type {
   BestMatchCandidate,
   BestMatchOptions,
@@ -1216,6 +1217,78 @@ const generateRandomLetters = (length: number): string =>
     String.fromCharCode((b % 52) + (b % 52 < 26 ? 65 : 71))
   ).join('')
 
+/**
+ * Maximum number of events kept in a resumable session's event queue.
+ *
+ * While a session is paused, every player event is buffered so it can be
+ * replayed on resume. Without a cap, a client that never returns while its
+ * players keep playing would grow this queue without bound (memory leak).
+ */
+const MAX_SESSION_EVENT_QUEUE_SIZE = 500
+
+/**
+ * Buffers a player event for a paused, resumable session with a hard cap.
+ *
+ * Events are only queued when the session is actually paused for resumption.
+ * When the queue is full, the oldest event is dropped to make room
+ * (drop-oldest keeps the newest state, which matters most on resume).
+ *
+ * @param session - Session that should buffer the event.
+ * @param data - Serialized event payload (JSON string).
+ * @returns True when the event was queued, false when it was sent live.
+ * @public
+ */
+function queueSessionEvent(
+  session: Pick<Session, 'id' | 'isPaused' | 'resuming' | 'eventQueue'>,
+  data: string
+): boolean {
+  if (!session.isPaused || !session.resuming) return false
+
+  const queue = session.eventQueue
+  if (queue.length >= MAX_SESSION_EVENT_QUEUE_SIZE) {
+    queue.shift()
+    logger(
+      'warn',
+      'SessionManager',
+      `Event queue full for paused session ${session.id} (cap ${MAX_SESSION_EVENT_QUEUE_SIZE}), dropping oldest events`
+    )
+  } else if (
+    queue.length === Math.floor(MAX_SESSION_EVENT_QUEUE_SIZE / 2) ||
+    queue.length === MAX_SESSION_EVENT_QUEUE_SIZE - 1
+  ) {
+    logger(
+      'warn',
+      'SessionManager',
+      `Event queue for paused session ${session.id} at ${queue.length + 1}/${MAX_SESSION_EVENT_QUEUE_SIZE} events`
+    )
+  }
+
+  queue.push(data)
+  return true
+}
+
+/**
+ * Clears a session's event queue, logging how many events were discarded.
+ *
+ * @param session - Session whose queue should be cleared.
+ * @public
+ */
+function clearSessionEventQueue(
+  session: Pick<Session, 'id' | 'eventQueue'>
+): void {
+  const drained = session.eventQueue.length
+  if (!drained) return
+
+  session.eventQueue.length = 0
+  logger(
+    'debug',
+    'SessionManager',
+    `Cleared ${drained} queued event(s) for session ${session.id}`
+  )
+}
+
+/**
+ * Parses the `Client-Name` header into a structured object.
 /**
  * Parses the `Client-Name` header into a structured object.
  *
@@ -2825,6 +2898,8 @@ export {
   encodeTrack,
   fetchSponsorBlockSegments,
   generateRandomLetters,
+  queueSessionEvent,
+  clearSessionEventQueue,
   getGitInfo,
   getStats,
   getVersion,

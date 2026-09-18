@@ -7,7 +7,11 @@ import type {
   SessionSocket
 } from '../typings/index.types.ts'
 import type { ClientInfo } from '../typings/shared.types.ts'
-import { generateRandomLetters, logger } from '../utils.ts'
+import {
+  clearSessionEventQueue,
+  generateRandomLetters,
+  logger
+} from '../utils.ts'
 import GroupManager from './groupManager.ts'
 
 /**
@@ -154,6 +158,13 @@ export default class SessionManager {
     session.socket = null
     this.resumableSessions.set(sessionId, session)
 
+    // [feat] session-resuming: clear any stale resume timer before scheduling
+    // a new one, so a leftover timeout from a previous pause cannot destroy
+    // the session early or leak the handle.
+    if (session.timeoutFuture) {
+      clearTimeout(session.timeoutFuture)
+    }
+
     session.timeoutFuture = setTimeout(() => {
       logger(
         'info',
@@ -241,6 +252,7 @@ export default class SessionManager {
     }
 
     session.groups.destroy()
+    clearSessionEventQueue(session)
     session.socket?.destroy?.()
   }
 

@@ -490,7 +490,8 @@ export default class PlayerManager {
       userId,
       socket: session.socket,
       eventQueue: session.eventQueue,
-      isPaused: session.isPaused
+      isPaused: session.isPaused,
+      resuming: session.resuming
     }
 
     const { Player } = await import('../playback/player.ts')
