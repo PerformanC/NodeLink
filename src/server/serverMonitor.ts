@@ -58,7 +58,10 @@ function _checkSessionPlayers(
   const players = session.players?.players
   if (!players) return
 
-  for (const player of players.values()) {
+  const playerList = Array.from(players.values())
+  const updates: Array<{ player: (typeof playerList)[number] }> = []
+
+  for (const player of playerList) {
     const isPlaying = Boolean(
       player.track && !player.isPaused && player.connection
     )
@@ -83,6 +86,14 @@ function _checkSessionPlayers(
       })
     }
 
+    updates.push({ player })
+  }
+
+  // Single pass per tick: zombie checks first, then the coalesced frame.
+  // `_sendUpdate` keeps only the newest payload per player and the trailing
+  // timer (scaled from playerUpdateInterval) flushes it, so N players produce
+  // at most N frames per tick instead of one frame per state transition.
+  for (const { player } of updates) {
     player._sendUpdate()
   }
 }

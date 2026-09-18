@@ -64,6 +64,34 @@ export interface PlayerEventState {
 }
 
 /**
+ * Latest playerUpdate frame delivered (or queued) for a player.
+ */
+export interface CoalescedPlayerUpdateFrame {
+  /** Serialized websocket payload. */
+  payload: string
+  /** Delivery state of this frame. */
+  state: 'sent' | 'queued'
+  /** Monotonic position (ms) captured when the frame was built. */
+  position: number
+  /** Wall-clock time (ms) when the frame was built. */
+  sentAt: number
+}
+
+/**
+ * Bookkeeping for coalesced playerUpdate delivery on a Player instance.
+ */
+export interface PlayerUpdateCoalescer {
+  /** Timer handle for the trailing flush, or null when idle/force-sent. */
+  timer: NodeJS.Timeout | null
+  /** Latest pending frame awaiting delivery. */
+  pending: CoalescedPlayerUpdateFrame | null
+  /** Last frame delivered (or queued) to the client. */
+  last: CoalescedPlayerUpdateFrame | null
+  /** How many playerUpdate frames were coalesced (dropped in favor of a newer frame). */
+  coalesced: number
+}
+
+/**
  * Timestamped lyric line with optional per-word metadata.
  */
 export interface LyricsLine {
@@ -501,6 +529,12 @@ export interface Session {
   userId: string
   socket: { send: (data: string) => void }
   isPaused: boolean
+  /**
+   * Whether the session is resumable while paused. When true, frames are
+   * buffered into `eventQueue` for replay on resume; when false or
+   * undefined, they are dropped while paused.
+   */
+  resuming?: boolean
   eventQueue: string[]
 }
 

@@ -13,6 +13,7 @@ import type {
   AudioMixer,
   AudioOptionsWithTransitions,
   AudioResource,
+  CoalescedPlayerUpdateFrame,
   CreateAudioResource,
   CreateSeekeableAudioResource,
   CrossfadeConfig,
@@ -31,6 +32,7 @@ import type {
   PlayerSponsorBlockState,
   PlayerStateJSON,
   PlayerTrack,
+  PlayerUpdateCoalescer,
   PlayerVoiceState,
   PlayPayload,
   Session,
@@ -40,7 +42,7 @@ import type {
   TrackInfoExtended
 } from '../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
-import { logger } from '../utils.ts'
+import { logger, queuePlayerUpdate } from '../utils.ts'
 import { AutoMixRegistry } from './processing/AutoMixRegistry.ts'
 import { DuckingController } from './processing/DuckingController.ts'
 
@@ -173,6 +175,18 @@ export class Player {
   public stuckRecoveryCount = 0
   private _positionAtRecoveryStart = 0
   private static MAX_STUCK_RECOVERY_ATTEMPTS = 3
+  /**
+   * Coalescing state for playerUpdate frames. Consecutive `_sendUpdate`
+   * calls within one tick collapse into a single websocket frame: the first
+   * call sends immediately, later calls replace the pending payload and are
+   * flushed on a trailing timer (see `_flushPlayerUpdate`).
+   */
+  private _playerUpdateCoalescer: PlayerUpdateCoalescer = {
+    timer: null,
+    pending: null,
+    last: null,
+    coalesced: 0
+  }
 
   private _connStateHandler: (
     _: VoiceConnectionState | null,
@@ -605,7 +619,7 @@ export class Player {
         `Voice connection destroyed for guild ${this.guildId}`
       )
     }
-    this._sendUpdate()
+    this._sendUpdate({ reason: 'connection' })
     if (crossedConnectedBoundary) this._stuckTime = 0
   }
 
@@ -649,7 +663,7 @@ export class Player {
       )
       this._stuckTime =
         (this.nodelink.options.playback.trackStuckThresholdMs ?? 0) + 1
-      this._sendUpdate()
+      this._sendUpdate({ reason: 'recover' })
       return
     }
 
@@ -1108,6 +1122,8 @@ export class Player {
     if (this.isLyricsSubscribed) {
       await this._loadLyrics()
     }
+
+    this._sendUpdate({ force: true, reason: 'track' })
   }
 
   /**
@@ -1134,6 +1150,8 @@ export class Player {
     if (this.audioMixer?.autoCleanup) {
       this.audioMixer.clearLayers('MAIN_ENDED')
     }
+
+    this.flushPlayerUpdate()
   }
 
   /**
@@ -1410,8 +1428,24 @@ export class Player {
 
   /**
    * Sends player state updates to the client.
+   *
+   * Consecutive calls within a single tick are coalesced into one websocket
+   * frame: the newest payload replaces any pending one, and identical frames
+   * (same position/connected/ping as the last delivered frame) are skipped
+   * entirely. Significant transitions (pause/unpause, seek, track change,
+   * connection change) bypass the debounce timer and send immediately.
+   *
+   * @param options - Delivery hints for this update.
+   * @param options.force - Send immediately, flushing any pending coalesced
+   * frame first instead of debouncing.
+   * @param options.reason - Why this update was requested. Frames published
+   * for `seek`, `pause`, `track`, or `connection` reasons bypass the trailing
+   * timer and send immediately, since clients rely on them for state sync.
+   * @returns True when a frame was (or will be) delivered to the client.
    */
-  public _sendUpdate(): boolean {
+  public _sendUpdate(
+    options: { force?: boolean; reason?: string } = {}
+  ): boolean {
     if (
       !this.connection ||
       (this.isPaused && !this._fadeTimers.pause) ||
@@ -1699,22 +1733,233 @@ export class Player {
 
     if (this._isSeeking) return true
 
-    this.session.socket.send(
-      JSON.stringify({
-        op: GatewayEvents.PLAYER_UPDATE,
-        guildId: this.guildId,
-        state: {
-          time: Date.now(),
-          position,
-          connected: this.connStatus === 'connected',
-          ping:
-            this.connection && this.connection.ping >= 0
-              ? this.connection.ping
-              : 0
-        }
-      })
-    )
+    const connected = this.connStatus === 'connected'
+    const ping =
+      this.connection && this.connection.ping >= 0
+        ? this.connection.ping
+        : 0
+    return this._publishPlayerUpdate({
+      position,
+      connected,
+      ping,
+      force: options.force,
+      immediate: this._isImmediatePlayerUpdateReason(options.reason)
+    })
+  }
+
+  /**
+   * Builds, coalesces, and delivers a playerUpdate frame.
+   *
+   * @param frame - Fresh position/connection snapshot plus delivery hints.
+   * @returns True when a frame was (or will be) delivered.
+   */
+  private _publishPlayerUpdate(frame: {
+    position: number
+    connected: boolean
+    ping: number
+    force?: boolean
+    immediate?: boolean
+  }): boolean {
+    const coalescer = this._playerUpdateCoalescer
+
+    const payload = JSON.stringify({
+      op: GatewayEvents.PLAYER_UPDATE,
+      guildId: this.guildId,
+      state: {
+        time: Date.now(),
+        position: frame.position,
+        connected: frame.connected,
+        ping: frame.ping
+      }
+    })
+
+    const pending: CoalescedPlayerUpdateFrame = {
+      payload,
+      state: 'sent',
+      position: frame.position,
+      sentAt: Date.now()
+    }
+
+    if (
+      !frame.force &&
+      !frame.immediate &&
+      this._isDuplicatePlayerUpdate(pending)
+    ) {
+      coalescer.coalesced += 1
+      return true
+    }
+
+    if (frame.force || frame.immediate) {
+      if (coalescer.timer) {
+        clearTimeout(coalescer.timer)
+        coalescer.timer = null
+      }
+      if (coalescer.pending) {
+        coalescer.coalesced += 1
+        coalescer.pending = null
+      }
+      return this._deliverPlayerUpdate(pending)
+    }
+
+    // Leading edge: first frame in an idle window sends immediately so the
+    // client gets a fresh baseline; later frames in the same window replace
+    // the pending payload and flush on the trailing timer.
+    if (!coalescer.timer && !coalescer.last) {
+      return this._deliverPlayerUpdate(pending)
+    }
+
+    if (coalescer.pending) {
+      coalescer.coalesced += 1
+    }
+    coalescer.pending = pending
+
+    if (!coalescer.timer) {
+      const interval = this._getPlayerUpdateFlushIntervalMs()
+      coalescer.timer = setTimeout(() => {
+        coalescer.timer = null
+        this.flushPlayerUpdate()
+      }, interval)
+      coalescer.timer.unref?.()
+    }
+
     return true
+  }
+
+  /**
+   * Last delivered position/connection/ping snapshot, used for duplicate
+   * suppression without re-parsing the previous payload.
+   */
+  private _lastPlayerUpdateSnapshot: {
+    position: number
+    connected: boolean
+    ping: number
+  } | null = null
+
+  /**
+   * Reports whether a freshly built frame duplicates the last frame the
+   * client received, in which case sending it would be pure websocket spam.
+   *
+   * @param frame - Candidate frame to compare.
+   * @returns True when the frame can be skipped without losing information.
+   */
+  private _isDuplicatePlayerUpdate(frame: CoalescedPlayerUpdateFrame): boolean {
+    const last = this._playerUpdateCoalescer.last
+    if (!last) return false
+    const snapshot = this._lastPlayerUpdateSnapshot
+    if (!snapshot) return false
+    const parsed = JSON.parse(frame.payload) as {
+      state: { connected: boolean; ping: number }
+    }
+    return (
+      snapshot.position === frame.position &&
+      snapshot.connected === parsed.state.connected &&
+      snapshot.ping === parsed.state.ping
+    )
+  }
+
+  /**
+   * Resolves the trailing-flush delay for coalesced playerUpdate frames.
+   *
+   * Uses a fraction of the configured `playerUpdateInterval` so behavior
+   * scales with operator tuning, clamped to sane bounds (50-500ms).
+   *
+   * @returns Debounce delay in milliseconds.
+   */
+  private _getPlayerUpdateFlushIntervalMs(): number {
+    const configured =
+      this.nodelink.options.playback.playerUpdateInterval ?? 2000
+    return Math.min(500, Math.max(50, Math.floor(configured / 4)))
+  }
+
+  /**
+   * Decides whether an update reason requires immediate delivery.
+   *
+   * @param reason - Caller-supplied reason hint.
+   * @returns True for state transitions clients must observe without delay.
+   */
+  private _isImmediatePlayerUpdateReason(reason?: string): boolean {
+    return (
+      reason === 'seek' ||
+      reason === 'pause' ||
+      reason === 'track' ||
+      reason === 'connection' ||
+      reason === 'recover'
+    )
+  }
+
+  /**
+   * Delivers one playerUpdate frame over the gateway socket (or the resume
+   * queue when the session is paused for resumption).
+   *
+   * @param frame - Frame to deliver.
+   * @returns True when the frame reached the socket or the resume queue.
+   */
+  private _deliverPlayerUpdate(frame: CoalescedPlayerUpdateFrame): boolean {
+    if (this.destroying || !this.session.socket) return false
+
+    try {
+      if (this.session.isPaused) {
+        const queued = queuePlayerUpdate(this.session, frame.payload)
+        if (!queued) return false
+        frame.state = 'queued'
+      } else {
+        this.session.socket.send(frame.payload)
+        frame.state = 'sent'
+      }
+    } catch {
+      return false
+    }
+
+    const parsed = JSON.parse(frame.payload) as {
+      state: { position: number; connected: boolean; ping: number }
+    }
+    this._lastPlayerUpdateSnapshot = { ...parsed.state }
+    this._playerUpdateCoalescer.last = frame
+    return true
+  }
+
+  /**
+   * Flushes the pending coalesced playerUpdate frame, if any.
+   *
+   * Called by the trailing debounce timer and by lifecycle transitions that
+   * need the client to converge immediately (pause, seek, track change,
+   * connection change, destroy). The timer handle is released before delivery
+   * so a re-entrant `_sendUpdate` from inside delivery starts a fresh window
+   * instead of resurrecting a stale timer.
+   *
+   * @returns True when a frame was delivered or nothing was pending.
+   */
+  public flushPlayerUpdate(): boolean {
+    const coalescer = this._playerUpdateCoalescer
+    const pending = coalescer.pending
+    coalescer.pending = null
+    if (coalescer.timer) {
+      clearTimeout(coalescer.timer)
+      coalescer.timer = null
+    }
+    if (!pending) return true
+
+    if (this._isDuplicatePlayerUpdate(pending)) {
+      coalescer.coalesced += 1
+      return true
+    }
+
+    return this._deliverPlayerUpdate(pending)
+  }
+
+  /**
+   * Clears pending coalesced playerUpdate state without delivering.
+   *
+   * Used on destroy so a dead player can never flush a stale frame after its
+   * socket or session is gone.
+   */
+  private _clearPlayerUpdateCoalescer(): void {
+    const coalescer = this._playerUpdateCoalescer
+    if (coalescer.timer) {
+      clearTimeout(coalescer.timer)
+      coalescer.timer = null
+    }
+    coalescer.pending = null
   }
 
   /**
@@ -1989,7 +2234,7 @@ export class Player {
               })
 
               // Immediate check after load
-              this._sendUpdate()
+              this._sendUpdate({ reason: 'track' })
             }
           })
           .catch((err) => {
@@ -2271,6 +2516,7 @@ export class Player {
           position: this.position,
           duration: this.position - startPosition
         })
+        this._sendUpdate({ force: true, reason: 'seek' })
         if (this._lyricsMarkerTimer) {
           clearTimeout(this._lyricsMarkerTimer)
           this._lyricsMarkerTimer = null
@@ -2961,6 +3207,7 @@ export class Player {
       if (this._fading('pause')) {
         this.isPaused = true
         this.emitEvent(GatewayEvents.PAUSE, { paused: true })
+        this._sendUpdate({ force: true, reason: 'pause' })
         return true
       }
 
@@ -2976,6 +3223,7 @@ export class Player {
     }
 
     this.emitEvent(GatewayEvents.PAUSE, { paused: this.isPaused })
+    this._sendUpdate({ force: true, reason: 'pause' })
     return true
   }
 
@@ -3485,6 +3733,8 @@ export class Player {
       ).sources.get('youtube')
       yt?.abortGuildStreams(this.guildId)
     } catch {}
+
+    this._clearPlayerUpdateCoalescer()
 
     if (this._currentResource) {
       try {
