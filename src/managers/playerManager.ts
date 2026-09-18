@@ -81,6 +81,7 @@ interface ClusterPlayerSnapshot {
   connStatus: 'disconnected'
   _lastStreamDataTime: number
   _sendUpdate: () => boolean
+  flushPlayerUpdate?: () => boolean
   emitEvent: (event: string, data?: Record<string, unknown>) => void
   destroy: () => void
 }
@@ -447,6 +448,7 @@ export default class PlayerManager {
             connStatus: 'disconnected',
             _lastStreamDataTime: 0,
             _sendUpdate: () => true,
+            flushPlayerUpdate: () => true,
             emitEvent: () => {},
             destroy: () => {}
           })

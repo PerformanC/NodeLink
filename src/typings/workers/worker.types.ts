@@ -130,6 +130,7 @@ export type WorkerPlayer = {
   }
   emitEvent: (type: string, payload?: Record<string, unknown>) => void
   _sendUpdate: () => boolean
+  flushPlayerUpdate?: () => boolean
   _lastStreamDataTime?: number
   _isRestoring?: boolean
   updateVoice: (voice: PlayerVoiceState) => void

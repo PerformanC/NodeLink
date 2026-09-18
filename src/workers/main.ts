@@ -1654,6 +1654,8 @@ function startTimers(hibernating = false): void {
   playerUpdateTimer = setInterval(() => {
     if (!process.connected) return
 
+    const pending: WorkerPlayer[] = []
+
     for (const player of players.values()) {
       if (player?.track && !player.isPaused && player.connection) {
         if (
@@ -1674,16 +1676,23 @@ function startTimers(hibernating = false): void {
             thresholdMs: zombieThreshold
           })
         }
-        try {
-          player._sendUpdate()
-        } catch (updateError: unknown) {
-          logger(
-            'error',
-            'Worker',
-            `Error during player update for guild ${player.guildId}: ${getErrorMessage(updateError)}`,
-            updateError
-          )
-        }
+        pending.push(player)
+      }
+    }
+
+    // One `_sendUpdate` per player per tick. Player-side coalescing keeps
+    // only the newest payload and flushes it on its trailing timer, so
+    // concurrent transitions inside a tick collapse into a single frame.
+    for (const player of pending) {
+      try {
+        player._sendUpdate()
+      } catch (updateError: unknown) {
+        logger(
+          'error',
+          'Worker',
+          `Error during player update for guild ${player.guildId}: ${getErrorMessage(updateError)}`,
+          updateError
+        )
       }
     }
   }, updateInterval)

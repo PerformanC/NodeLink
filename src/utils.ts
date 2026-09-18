@@ -1215,6 +1215,53 @@ const generateRandomLetters = (length: number): string =>
   Array.from(crypto.randomBytes(length), (b) =>
     String.fromCharCode((b % 52) + (b % 52 < 26 ? 65 : 71))
   ).join('')
+/**
+ * Maximum number of playerUpdate frames kept in a resumable session's queue.
+ */
+const MAX_SESSION_PLAYER_UPDATE_QUEUE_SIZE = 5
+
+/**
+ * Buffers a playerUpdate frame for a paused, resumable session.
+ *
+ * Unlike generic gateway events (which replay the full history on resume),
+ * position updates are only useful at their newest value: a client that
+ * resumes cares where playback is *now*, not every intermediate position.
+ * This helper therefore keeps only the newest playerUpdate frame per burst
+ * and drops older ones, bounding resume-replay spam after long disconnects.
+ *
+ * @param session - Session that should buffer the frame.
+ * @param data - Serialized playerUpdate payload (JSON string).
+ * @returns True when the frame was queued, false otherwise.
+ * @public
+ */
+function queuePlayerUpdate(
+  session: Pick<
+    import('./typings/index.types.ts').Session,
+    'id' | 'isPaused' | 'resuming' | 'eventQueue'
+  >,
+  data: string
+): boolean {
+  if (!session.isPaused || !session.resuming) return false
+
+  const queue = session.eventQueue
+  let removed = 0
+  for (let i = queue.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(queue[i] as string) as { op?: string }
+      if (parsed?.op === 'playerUpdate') {
+        queue.splice(i, 1)
+        removed++
+        if (removed >= MAX_SESSION_PLAYER_UPDATE_QUEUE_SIZE) break
+      }
+    } catch {
+      continue
+    }
+  }
+
+  queue.push(data)
+  return true
+}
+
 
 /**
  * Parses the `Client-Name` header into a structured object.
@@ -2834,6 +2881,7 @@ export {
   makeRequest,
   parseClient,
   parseSemver,
+  queuePlayerUpdate,
   sendErrorResponse,
   sendResponse,
   validateProperty,
