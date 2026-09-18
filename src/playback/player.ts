@@ -2969,9 +2969,10 @@ export class Player {
     } else {
       this.isPaused = false
       this._isResuming = true
-      this._getAudioStream()?.setCrossfadePaused?.(false)
+      const audioStream = this._getAudioStream()
+      audioStream?.setCrossfadePaused?.(false)
       this._fading('resume')
-      this.connection?.unpause?.('requested')
+      if (audioStream) this.connection?.unpause?.('requested')
       this._rescheduleCrossfade(this._pausedAtPosition)
     }
 
