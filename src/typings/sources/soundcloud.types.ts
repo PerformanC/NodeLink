@@ -945,6 +945,11 @@ export interface SoundCloudSourceOptions {
   clientId?: string
 
   /**
+   * Sources used when SoundCloud exposes only preview/SNIP playback.
+   */
+  fallbackSources?: string[]
+
+  /**
    * Maximum number of search results to return.
    *
    * @default 50
