@@ -847,7 +847,7 @@ export interface SourcesRegistry {
     clientId: string
 
     /** Sources used when SoundCloud exposes only a preview/SNIP stream. */
-    fallbackSources: string[]
+    fallbackSources?: string[]
   }
 
   /** Local filesystem. */
