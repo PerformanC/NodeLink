@@ -9,6 +9,7 @@ import {
   type SoundCloudApiTranscoding,
   type SoundCloudCachedUrlResult,
   type SoundCloudNodeLinkContext,
+  type SoundCloudOfficialStreamsResponse,
   type SoundCloudParsedSearch,
   type SoundCloudSearchType,
   type SoundCloudStreamUrlResult
@@ -22,6 +23,8 @@ import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
 
 const BASE_URL = 'https://api-v2.soundcloud.com'
+const OFFICIAL_API_URL = 'https://api.soundcloud.com'
+const OAUTH_URL = 'https://secure.soundcloud.com/oauth/token'
 const SOUNDCLOUD_URL = 'https://soundcloud.com'
 const ASSET_PATTERN = /https:\/\/a-v2\.sndcdn\.com\/assets\/[a-zA-Z0-9-]+\.js/g
 const CLIENT_ID_PATTERN =
@@ -42,6 +45,9 @@ interface SoundCloudSourceState {
   patterns: RegExp[]
   priority: number
   clientId: string | null
+  clientSecret: string | null
+  accessToken: string | null
+  accessTokenExpiry: number
 }
 
 interface SoundCloudTrackDataResult {
@@ -57,6 +63,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   declare patterns: RegExp[]
   declare priority: number
   declare clientId: string | null
+  declare clientSecret: string | null
+  declare accessToken: string | null
+  declare accessTokenExpiry: number
 
   constructor(nodelink: SoundCloudNodeLinkContext) {
     this.nodelink = nodelink
@@ -65,6 +74,10 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN, SHORT_URL_PATTERN]
     this.priority = DEFAULT_PRIORITY
     this.clientId = nodelink.options?.sources?.soundcloud?.clientId ?? null
+    this.clientSecret =
+      nodelink.options?.sources?.soundcloud?.clientSecret ?? null
+    this.accessToken = null
+    this.accessTokenExpiry = 0
   }
 
   async setup(): Promise<boolean> {
@@ -162,6 +175,287 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
   }
 
+  private async _refreshOfficialAccessToken(): Promise<boolean> {
+    if (!this.clientId || !this.clientSecret) return false
+
+    try {
+      const auth = Buffer.from(
+        `${this.clientId}:${this.clientSecret}`
+      ).toString('base64')
+
+      const response = await http1makeRequest(OAUTH_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${auth}`,
+          Accept: 'application/json; charset=utf-8',
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: 'grant_type=client_credentials',
+        disableBodyCompression: true
+      })
+
+      const body = response.body as {
+        access_token?: string
+        expires_in?: number
+      }
+
+      if (response.statusCode !== 200 || !body.access_token) {
+        logger(
+          'warn',
+          'Sources',
+          `Failed to obtain SoundCloud OAuth token (status: ${response.statusCode})`
+        )
+        return false
+      }
+
+      this.accessToken = body.access_token
+      const expiresIn = body.expires_in ?? 3600
+      const ttl = Math.max(expiresIn * 1000 - 60_000, 60_000)
+      this.accessTokenExpiry = Date.now() + ttl
+
+      this.nodelink.credentialManager.set(
+        'soundcloud_access_token',
+        this.accessToken,
+        ttl
+      )
+
+      logger('info', 'Sources', 'SoundCloud official OAuth token obtained')
+      return true
+    } catch (err: unknown) {
+      this._logError('Failed to obtain SoundCloud OAuth token', err)
+      return false
+    }
+  }
+
+  private async _ensureOfficialAccessToken(
+    forceRefresh = false
+  ): Promise<boolean> {
+    if (!this.clientId || !this.clientSecret) return false
+
+    if (
+      !forceRefresh &&
+      this.accessToken &&
+      this.accessTokenExpiry > Date.now()
+    ) {
+      return true
+    }
+
+    if (this.clientId && this.clientSecret) {
+      const officialResult = await this._getOfficialTrackUrl(info)
+
+      if (officialResult) {
+        if (
+          'url' in officialResult &&
+          typeof officialResult.url === 'string' &&
+          officialResult.url.length > 0
+        ) {
+          this.nodelink.trackCacheManager.set(
+            'soundcloud',
+            info.identifier,
+            officialResult as SoundCloudCachedUrlResult,
+            1000 * 60 * 15
+          )
+        }
+
+        return officialResult
+      }
+
+      logger(
+        'debug',
+        'Sources',
+        `Official SoundCloud resolution failed for ${info.identifier}; falling back to api-v2`
+      )
+    }
+
+    if (!forceRefresh) {
+      const cached =
+        this.nodelink.credentialManager.get<string>('soundcloud_access_token')
+
+      if (cached) {
+        this.accessToken = cached
+        this.accessTokenExpiry = Date.now() + 30 * 60 * 1000
+        return true
+      }
+    }
+
+    return await this._refreshOfficialAccessToken()
+  }
+
+  private _officialHeaders(): Record<string, string> {
+    return {
+      Accept: 'application/json; charset=utf-8',
+      ...(this.accessToken
+        ? { Authorization: `OAuth ${this.accessToken}` }
+        : {})
+    }
+  }
+
+  private async _getOfficialTrackUrl(
+    info: TrackInfo
+  ): Promise<TrackUrlResult | null> {
+    if (!this.clientId || !this.clientSecret) return null
+
+    const authenticated = await this._ensureOfficialAccessToken()
+    if (!authenticated || !this.accessToken) return null
+
+    const trackUrn = info.identifier.startsWith('soundcloud:tracks:')
+      ? info.identifier
+      : `soundcloud:tracks:${info.identifier}`
+
+    const requestTrack = async () =>
+      http1makeRequest(
+        `${OFFICIAL_API_URL}/tracks/${encodeURIComponent(trackUrn)}`,
+        {
+          method: 'GET',
+          headers: this._officialHeaders()
+        }
+      )
+
+    const requestStreams = async () =>
+      http1makeRequest(
+        `${OFFICIAL_API_URL}/tracks/${encodeURIComponent(trackUrn)}/streams`,
+        {
+          method: 'GET',
+          headers: this._officialHeaders()
+        }
+      )
+
+    try {
+      let trackResponse = await requestTrack()
+
+      if (trackResponse.statusCode === 401) {
+        if (!(await this._ensureOfficialAccessToken(true))) return null
+        trackResponse = await requestTrack()
+      }
+
+      if (trackResponse.error || trackResponse.statusCode !== 200) {
+        logger(
+          'debug',
+          'Sources',
+          `Official SoundCloud track lookup failed for ${info.identifier} (status: ${trackResponse.statusCode})`
+        )
+        return null
+      }
+
+      const track = trackResponse.body as SoundCloudApiTrack
+
+      logger(
+        'debug',
+        'Sources',
+        `Official SoundCloud track ${info.identifier}: access=${track.access ?? 'unknown'}, duration=${track.duration ?? 'unknown'}, snippet=${track.snippet ?? 'unknown'}`
+      )
+
+      if (track.access === 'blocked') {
+        return this._buildException(
+          'SoundCloud track is blocked for off-platform playback'
+        )
+      }
+
+      if (track.access === 'preview' || track.snippet === true) {
+        return this._buildException(
+          'SoundCloud only provides a preview for this track'
+        )
+      }
+
+      if (track.access && track.access !== 'playable') {
+        return this._buildException(
+          `SoundCloud track cannot be fully streamed (access: ${track.access})`
+        )
+      }
+
+      let streamsResponse = await requestStreams()
+
+      if (streamsResponse.statusCode === 401) {
+        if (!(await this._ensureOfficialAccessToken(true))) return null
+        streamsResponse = await requestStreams()
+      }
+
+      if (streamsResponse.error || streamsResponse.statusCode !== 200) {
+        logger(
+          'debug',
+          'Sources',
+          `Official SoundCloud stream lookup failed for ${info.identifier} (status: ${streamsResponse.statusCode})`
+        )
+        return null
+      }
+
+      const streams =
+        streamsResponse.body as SoundCloudOfficialStreamsResponse
+
+      logger(
+        'debug',
+        'Sources',
+        `Official SoundCloud streams for ${info.identifier}: ${JSON.stringify({
+          hls_aac_160_url: Boolean(streams.hls_aac_160_url),
+          hls_aac_96_url: Boolean(streams.hls_aac_96_url),
+          hls_mp3_128_url: Boolean(streams.hls_mp3_128_url),
+          hls_opus_64_url: Boolean(streams.hls_opus_64_url),
+          http_mp3_128_url: Boolean(streams.http_mp3_128_url),
+          preview_mp3_128_url: Boolean(streams.preview_mp3_128_url)
+        })}`
+      )
+
+      if (streams.hls_aac_160_url) {
+        return {
+          url: streams.hls_aac_160_url,
+          protocol: 'hls',
+          format: 'aac_hls',
+          additionalData: { format: 'aac_hls' }
+        }
+      }
+
+      if (streams.hls_aac_96_url) {
+        return {
+          url: streams.hls_aac_96_url,
+          protocol: 'hls',
+          format: 'aac_hls',
+          additionalData: { format: 'aac_hls' }
+        }
+      }
+
+      if (streams.hls_mp3_128_url) {
+        return {
+          url: streams.hls_mp3_128_url,
+          protocol: 'hls',
+          format: 'mp3',
+          additionalData: { format: 'mp3' }
+        }
+      }
+
+      if (streams.hls_opus_64_url) {
+        return {
+          url: streams.hls_opus_64_url,
+          protocol: 'hls',
+          format: 'opus',
+          additionalData: { format: 'opus' }
+        }
+      }
+
+      const progressiveMp3 =
+        streams.http_mp3_128_url ?? streams.http_mp3_128_url_legacy
+
+      if (progressiveMp3) {
+        return {
+          url: progressiveMp3,
+          protocol: 'progressive',
+          format: 'mp3',
+          additionalData: { format: 'mp3' }
+        }
+      }
+
+      if (streams.preview_mp3_128_url) {
+        return this._buildException(
+          'SoundCloud only returned a 30-second preview stream'
+        )
+      }
+
+      return this._buildException('SoundCloud returned no playable streams')
+    } catch (err: unknown) {
+      this._logError('Official SoundCloud playback resolution failed', err)
+      return null
+    }
+  }
+
   match(url: string): boolean {
     return this.patterns.some((p) => p.test(url))
   }
@@ -228,7 +522,8 @@ export default class SoundCloudSource implements SoundCloudSourceState {
         client_id: this.clientId ?? '',
         limit: String(this.nodelink.options.search.maxResults ?? 50),
         offset: '0',
-        linked_partitioning: '1'
+        linked_partitioning: '1',
+        access: 'playable'
       })
 
       if (searchType === 'all') {
@@ -923,10 +1218,15 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       return this._buildException('Failed to resolve stream URL')
     }
 
-    if (
-      finalUrl.includes('cf-preview-media.sndcdn.com') ||
-      finalUrl.includes('/preview/')
-    ) {
+    const normalizedUrl = finalUrl.toLowerCase()
+    const isPreview =
+      normalizedUrl.includes('cf-preview-media.sndcdn.com') ||
+      normalizedUrl.includes('/preview/') ||
+      normalizedUrl.includes('preview_mp3') ||
+      normalizedUrl.includes('/playlist/0/30/') ||
+      normalizedUrl.includes('/0/30/')
+
+    if (isPreview) {
       return this._buildException('Track only has preview URL')
     }
 
