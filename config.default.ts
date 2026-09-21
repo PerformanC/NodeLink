@@ -637,7 +637,7 @@ export const config: NodelinkConfig = {
 
     soundcloud: {
       enabled: true,
-      clientId: '',
+      clientId: '', // Optional SoundCloud API Client ID
       fallbackSources: ['youtube', 'deezer', 'jiosaavn', 'audiomack']
     },
 
