@@ -63,7 +63,14 @@ export default class SessionManager {
             timeout: 60,
             isPaused: false,
             eventQueue: [],
-            timeoutFuture: null
+            timeoutFuture: null,
+            queueOrSend(data) {
+                if (this.isPaused && this.resuming) {
+                    this.eventQueue.push(data);
+                    return;
+                }
+                this.socket?.send(data);
+            }
         };
         this.activeSessions.set(sessionId, session);
         return sessionId;

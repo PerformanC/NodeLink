@@ -13,25 +13,8 @@ function setupGracefulShutdown(nserver) {
         nserver.emit('shutdown');
         printShutdownMessage();
         logger('info', 'Server', 'Shutdown signal received. Releasing resources...');
-        nserver._stopHeartbeat();
-        await nserver.credentialManager?.forceSave();
-        await nserver.trackCacheManager?.forceSave();
-        nserver.sourceWorkerManager?.destroy();
-        nserver.workerManager?.destroy();
-        nserver.connectionManager?.destroy();
-        nserver.proxyManager?.destroy();
-        nserver.routePlanner?.dispose();
-        nserver.credentialManager?.destroy();
-        nserver.trackCacheManager?.destroy();
-        await nserver._cleanupWebSocketServer();
-        const httpServer = nserver.server;
-        if (httpServer?.listening) {
-            await new Promise((resolve) => httpServer.close(() => resolve()));
-            logger('info', 'Server', 'HTTP server closed.');
-        }
+        await nserver.stop();
         cleanupHttpAgents();
-        nserver.rateLimitManager.destroy();
-        nserver.dosProtectionManager.destroy();
         cleanupLogger();
         process.exit(0);
     };

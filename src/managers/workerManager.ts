@@ -439,6 +439,7 @@ export default class WorkerManager {
         const index = this.workers.indexOf(playbackWorker)
         if (index !== -1) this.workers.splice(index, 1)
         this.workersById.delete(playbackWorker.id)
+        this.cachedSources = null
         return
       }
 
@@ -1310,6 +1311,7 @@ export default class WorkerManager {
     this.workers.push(worker)
     this.workersById.set(worker.id, worker)
     this.workerLoad.set(worker.id, 0)
+    this.cachedSources = null
 
     this.workerStats.set(worker.id, { players: 0, playingPlayers: 0 })
 
@@ -1351,6 +1353,7 @@ export default class WorkerManager {
     if (index !== -1) this.workers.splice(index, 1)
 
     this.workersById.delete(workerId)
+    this.cachedSources = null
     this.workerReady.delete(workerId)
     this.workerLoad.delete(workerId)
     this.workerStats.delete(workerId)
@@ -1743,6 +1746,27 @@ export default class WorkerManager {
     return workerMetrics
   }
 
+  private cachedSources: string[] | null = null
+
+  async getSources(): Promise<string[]> {
+    if (this.cachedSources) return this.cachedSources
+
+    const worker = this.getBestWorker()
+    if (!worker) {
+      logger('warn', 'Cluster', 'No worker available to get sources from.')
+      return []
+    }
+    const sources = (await this.execute(worker, 'getSources', {})) as string[]
+    this.cachedSources = sources
+    return sources
+  }
+
+  updateWorkerLoad(pid: number, players: number): void {
+    const worker = this.workers.find(({ process }) => process.pid === pid)
+    if (!worker) return
+    this.workerLoad.set(worker.id, players)
+  }
+
   destroy(): void {
     this.isDestroying = true
     this._stopScalingCheck()
@@ -1760,6 +1784,7 @@ export default class WorkerManager {
     this.workerStartTime.clear()
     this.workerUniqueId.clear()
     this.idleWorkers.clear()
+    this.cachedSources = null
 
     for (const worker of this.workers) {
       if (worker.isConnected()) {

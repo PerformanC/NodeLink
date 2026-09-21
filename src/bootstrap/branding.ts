@@ -52,7 +52,7 @@ function printShutdownMessage(): void {
     '',
     '  \x1b[37mIssues or suggestions? Report or contribute:\x1b[0m',
     '  \x1b[34m•\x1b[0m \x1b[37mReport issues:\x1b[0m  \x1b[36mhttps://github.com/PerformanC/NodeLink/issues\x1b[0m',
-    '  \x1b[34m•\x1b[0m \x1b[37mContribute:\x1b[0m     \x1b[36mhttps://github.com/PerformanC/NodeLink/blob/main/CONTRIBUTING.md\x1b[0m',
+    '  \x1b[34m•\x1b[0m \x1b[37mContribute:\x1b[0m     \x1b[36mhttps://github.com/PerformanC/contributing\x1b[0m',
     '  \x1b[34m•\x1b[0m \x1b[37mDiscord:\x1b[0m        \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m',
     '',
     ''

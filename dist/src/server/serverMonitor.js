@@ -66,8 +66,22 @@ function _updateAndBroadcastStats(server, lastBroadcastAt, intervalMs) {
     }
     return lastBroadcastAt;
 }
+const monitorStates = new WeakMap();
+function _getMonitorState(server) {
+    let state = monitorStates.get(server);
+    if (!state) {
+        state = {
+            globalUpdater: null,
+            statsUpdater: null,
+            heartbeatInterval: null
+        };
+        monitorStates.set(server, state);
+    }
+    return state;
+}
 function startServerMonitor(server, isClusterPrimary = false) {
-    if (server._globalUpdater)
+    const state = _getMonitorState(server);
+    if (state.globalUpdater)
         return;
     const playbackConfig = server.options.playback;
     const playerUpdateInterval = Math.max(1, playbackConfig.playerUpdateInterval ?? 5000);
@@ -78,20 +92,20 @@ function startServerMonitor(server, isClusterPrimary = false) {
     const zombieThresholdMs = playbackConfig.zombieThresholdMs ?? 60000;
     if (isClusterPrimary) {
         let lastBroadcastAt = 0;
-        server._globalUpdater = setInterval(() => {
+        state.globalUpdater = setInterval(() => {
             server.statsManager.setWebsocketConnections(server.sessions.activeSessions.size);
             lastBroadcastAt = _updateAndBroadcastStats(server, lastBroadcastAt, statsSendInterval);
         }, metricsInterval);
         return;
     }
-    server._globalUpdater = setInterval(() => {
+    state.globalUpdater = setInterval(() => {
         const now = Date.now();
         for (const session of server.sessions.values()) {
             _checkSessionPlayers(session, now, zombieThresholdMs);
         }
     }, playerUpdateInterval);
     let lastBroadcastAt = 0;
-    server._statsUpdater = setInterval(() => {
+    state.statsUpdater = setInterval(() => {
         const { totalPlayers, playingPlayers, voiceConnections } = _countActiveMetrics(server.sessions.values());
         server.statsManager.setVoiceConnections(voiceConnections);
         if (cluster.isWorker) {
@@ -111,19 +125,21 @@ function startServerMonitor(server, isClusterPrimary = false) {
     }, metricsInterval);
 }
 function stopServerMonitor(server) {
-    if (server._globalUpdater) {
-        clearInterval(server._globalUpdater);
-        server._globalUpdater = null;
+    const state = _getMonitorState(server);
+    if (state.globalUpdater) {
+        clearInterval(state.globalUpdater);
+        state.globalUpdater = null;
     }
-    if (server._statsUpdater) {
-        clearInterval(server._statsUpdater);
-        server._statsUpdater = null;
+    if (state.statsUpdater) {
+        clearInterval(state.statsUpdater);
+        state.statsUpdater = null;
     }
 }
 function startHeartbeat(server) {
-    if (server._heartbeatInterval || server._usingBunServer)
+    const state = _getMonitorState(server);
+    if (state.heartbeatInterval || server.usingBunServer)
         return;
-    server._heartbeatInterval = setInterval(() => {
+    state.heartbeatInterval = setInterval(() => {
         for (const session of server.sessions.activeSessions.values()) {
             if (session.socket && !session.isPaused) {
                 try {
@@ -146,9 +162,10 @@ function startHeartbeat(server) {
     }, 45000);
 }
 function stopHeartbeat(server) {
-    if (server._heartbeatInterval) {
-        clearInterval(server._heartbeatInterval);
-        server._heartbeatInterval = null;
+    const state = _getMonitorState(server);
+    if (state.heartbeatInterval) {
+        clearInterval(state.heartbeatInterval);
+        state.heartbeatInterval = null;
     }
 }
 export { startHeartbeat, startServerMonitor, stopHeartbeat, stopServerMonitor };

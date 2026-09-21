@@ -1,4 +1,3 @@
-import type http from 'node:http'
 import process from 'node:process'
 
 import type NodelinkServer from '../index.ts'
@@ -21,30 +20,9 @@ function setupGracefulShutdown(nserver: NodelinkServer): void {
 
     logger('info', 'Server', 'Shutdown signal received. Releasing resources...')
 
-    nserver._stopHeartbeat()
-
-    await nserver.credentialManager?.forceSave()
-    await nserver.trackCacheManager?.forceSave()
-
-    nserver.sourceWorkerManager?.destroy()
-    nserver.workerManager?.destroy()
-    nserver.connectionManager?.destroy()
-    nserver.proxyManager?.destroy()
-    nserver.routePlanner?.dispose()
-    nserver.credentialManager?.destroy()
-    nserver.trackCacheManager?.destroy()
-
-    await nserver._cleanupWebSocketServer()
-
-    const httpServer = nserver.server as http.Server | undefined
-    if (httpServer?.listening) {
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()))
-      logger('info', 'Server', 'HTTP server closed.')
-    }
+    await nserver.stop()
 
     cleanupHttpAgents()
-    nserver.rateLimitManager.destroy()
-    nserver.dosProtectionManager.destroy()
     cleanupLogger()
 
     process.exit(0)

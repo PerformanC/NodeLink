@@ -109,11 +109,33 @@ function _updateAndBroadcastStats(
   return lastBroadcastAt
 }
 
+interface MonitorState {
+  globalUpdater: NodeJS.Timeout | null
+  statsUpdater: NodeJS.Timeout | null
+  heartbeatInterval: NodeJS.Timeout | null
+}
+
+const monitorStates = new WeakMap<NodelinkServer, MonitorState>()
+
+function _getMonitorState(server: NodelinkServer): MonitorState {
+  let state = monitorStates.get(server)
+  if (!state) {
+    state = {
+      globalUpdater: null,
+      statsUpdater: null,
+      heartbeatInterval: null
+    }
+    monitorStates.set(server, state)
+  }
+  return state
+}
+
 function startServerMonitor(
   server: NodelinkServer,
   isClusterPrimary = false
 ): void {
-  if (server._globalUpdater) return
+  const state = _getMonitorState(server)
+  if (state.globalUpdater) return
 
   const playbackConfig = server.options.playback
   const playerUpdateInterval = Math.max(
@@ -132,7 +154,7 @@ function startServerMonitor(
   if (isClusterPrimary) {
     let lastBroadcastAt = 0
 
-    server._globalUpdater = setInterval(() => {
+    state.globalUpdater = setInterval(() => {
       server.statsManager.setWebsocketConnections(
         server.sessions.activeSessions.size
       )
@@ -146,7 +168,7 @@ function startServerMonitor(
     return
   }
 
-  server._globalUpdater = setInterval(() => {
+  state.globalUpdater = setInterval(() => {
     const now = Date.now()
     for (const session of server.sessions.values()) {
       _checkSessionPlayers(session, now, zombieThresholdMs)
@@ -155,7 +177,7 @@ function startServerMonitor(
 
   let lastBroadcastAt = 0
 
-  server._statsUpdater = setInterval(() => {
+  state.statsUpdater = setInterval(() => {
     const { totalPlayers, playingPlayers, voiceConnections } =
       _countActiveMetrics(server.sessions.values())
 
@@ -183,21 +205,24 @@ function startServerMonitor(
 }
 
 function stopServerMonitor(server: NodelinkServer): void {
-  if (server._globalUpdater) {
-    clearInterval(server._globalUpdater)
-    server._globalUpdater = null
+  const state = _getMonitorState(server)
+
+  if (state.globalUpdater) {
+    clearInterval(state.globalUpdater)
+    state.globalUpdater = null
   }
 
-  if (server._statsUpdater) {
-    clearInterval(server._statsUpdater)
-    server._statsUpdater = null
+  if (state.statsUpdater) {
+    clearInterval(state.statsUpdater)
+    state.statsUpdater = null
   }
 }
 
 function startHeartbeat(server: NodelinkServer): void {
-  if (server._heartbeatInterval || server._usingBunServer) return
+  const state = _getMonitorState(server)
+  if (state.heartbeatInterval || server.usingBunServer) return
 
-  server._heartbeatInterval = setInterval(() => {
+  state.heartbeatInterval = setInterval(() => {
     for (const session of server.sessions.activeSessions.values()) {
       if (session.socket && !session.isPaused) {
         try {
@@ -223,9 +248,11 @@ function startHeartbeat(server: NodelinkServer): void {
 }
 
 function stopHeartbeat(server: NodelinkServer): void {
-  if (server._heartbeatInterval) {
-    clearInterval(server._heartbeatInterval)
-    server._heartbeatInterval = null
+  const state = _getMonitorState(server)
+
+  if (state.heartbeatInterval) {
+    clearInterval(state.heartbeatInterval)
+    state.heartbeatInterval = null
   }
 }
 

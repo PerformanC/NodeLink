@@ -873,6 +873,7 @@ export interface Session {
    * Timeout handle for session destruction
    */
   timeoutFuture: NodeJS.Timeout | null
+  queueOrSend: (data: string) => void
 }
 
 /**

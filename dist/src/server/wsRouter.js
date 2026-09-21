@@ -212,7 +212,7 @@ function setupWebSocketEvents(context) {
     });
     context.socket.on('/v4/websocket/voice', (socket, _request, _client, _sessionId, guildId) => {
         logger('info', 'Voice', `Voice socket linked for guild ${guildId}`);
-        context.registerVoiceSocket(guildId, socket);
+        context.voiceRouter.registerSocket(guildId, socket);
     });
     context.socket.on('/v4/websocket/youtube/live', (socket, request, _client, _sessionId, id) => {
         const videoId = _resolveYouTubeVideoId(context, id);

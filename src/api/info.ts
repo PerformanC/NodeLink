@@ -92,11 +92,6 @@ interface InfoRouteRuntime extends ApiNodelinkServer {
   gitInfo: GitInfo
 
   /**
-   * In-memory cache of enabled source manager names.
-   */
-  supportedSourcesCache: string[] | null
-
-  /**
    * Retrieves enabled source names from a worker process when cluster mode is
    * active.
    *
@@ -230,43 +225,8 @@ interface InfoResponse {
  * @returns A strongly typed info runtime when all required fields are present;
  * otherwise `null`.
  */
-function getInfoRuntime(nodelink: ApiNodelinkServer): InfoRouteRuntime | null {
-  const runtime = nodelink as Partial<InfoRouteRuntime>
-
-  if (typeof runtime.version !== 'string') {
-    return null
-  }
-
-  if (
-    !runtime.gitInfo ||
-    typeof runtime.gitInfo.branch !== 'string' ||
-    typeof runtime.gitInfo.commit !== 'string' ||
-    typeof runtime.gitInfo.commitTime !== 'number'
-  ) {
-    return null
-  }
-
-  if (typeof runtime.getSourcesFromWorker !== 'function') {
-    return null
-  }
-
-  if (!('supportedSourcesCache' in runtime)) {
-    return null
-  }
-
-  if (!('workerManager' in runtime)) {
-    return null
-  }
-
-  if (!('sources' in runtime)) {
-    return null
-  }
-
-  if (!('pluginManager' in runtime)) {
-    return null
-  }
-
-  return runtime as InfoRouteRuntime
+function getInfoRuntime(nodelink: ApiNodelinkServer): InfoRouteRuntime {
+  return nodelink as InfoRouteRuntime
 }
 
 /**
@@ -328,13 +288,7 @@ async function getSourceManagers(
   nodelink: InfoRouteRuntime
 ): Promise<string[]> {
   if (nodelink.workerManager) {
-    if (nodelink.supportedSourcesCache) {
-      return nodelink.supportedSourcesCache
-    }
-
-    const sourceManagers = await nodelink.getSourcesFromWorker()
-    nodelink.supportedSourcesCache = sourceManagers
-    return sourceManagers
+    return nodelink.getSourcesFromWorker()
   }
 
   if (!nodelink.sources) {
@@ -412,23 +366,6 @@ async function handler(
   sendResponse: ApiSendResponse
 ): Promise<void> {
   const runtime = getInfoRuntime(nodelink)
-
-  if (!runtime) {
-    sendResponse(
-      req,
-      res,
-      {
-        timestamp: Date.now(),
-        status: 500,
-        error: 'Internal Server Error',
-        message: 'Info runtime contract is incomplete.',
-        path: req.url ?? '/v4/info'
-      },
-      500
-    )
-    return
-  }
-
   const response = await buildInfoResponse(runtime)
   sendResponse(req, res, response, 200)
 }

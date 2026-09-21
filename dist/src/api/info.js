@@ -12,32 +12,7 @@ import { getVersion } from '../utils.js';
  * otherwise `null`.
  */
 function getInfoRuntime(nodelink) {
-    const runtime = nodelink;
-    if (typeof runtime.version !== 'string') {
-        return null;
-    }
-    if (!runtime.gitInfo ||
-        typeof runtime.gitInfo.branch !== 'string' ||
-        typeof runtime.gitInfo.commit !== 'string' ||
-        typeof runtime.gitInfo.commitTime !== 'number') {
-        return null;
-    }
-    if (typeof runtime.getSourcesFromWorker !== 'function') {
-        return null;
-    }
-    if (!('supportedSourcesCache' in runtime)) {
-        return null;
-    }
-    if (!('workerManager' in runtime)) {
-        return null;
-    }
-    if (!('sources' in runtime)) {
-        return null;
-    }
-    if (!('pluginManager' in runtime)) {
-        return null;
-    }
-    return runtime;
+    return nodelink;
 }
 /**
  * Normalizes the parsed semantic version object returned by `getVersion`.
@@ -87,12 +62,7 @@ function getEnabledFilterNames(enabledFilters) {
  */
 async function getSourceManagers(nodelink) {
     if (nodelink.workerManager) {
-        if (nodelink.supportedSourcesCache) {
-            return nodelink.supportedSourcesCache;
-        }
-        const sourceManagers = await nodelink.getSourcesFromWorker();
-        nodelink.supportedSourcesCache = sourceManagers;
-        return sourceManagers;
+        return nodelink.getSourcesFromWorker();
     }
     if (!nodelink.sources) {
         return [];
@@ -155,16 +125,6 @@ async function buildInfoResponse(nodelink) {
  */
 async function handler(nodelink, req, res, sendResponse) {
     const runtime = getInfoRuntime(nodelink);
-    if (!runtime) {
-        sendResponse(req, res, {
-            timestamp: Date.now(),
-            status: 500,
-            error: 'Internal Server Error',
-            message: 'Info runtime contract is incomplete.',
-            path: req.url ?? '/v4/info'
-        }, 500);
-        return;
-    }
     const response = await buildInfoResponse(runtime);
     sendResponse(req, res, response, 200);
 }

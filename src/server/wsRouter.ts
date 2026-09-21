@@ -347,7 +347,7 @@ function setupWebSocketEvents(context: NodelinkServer): void {
       guildId: string
     ) => {
       logger('info', 'Voice', `Voice socket linked for guild ${guildId}`)
-      context.registerVoiceSocket(guildId, socket)
+      context.voiceRouter.registerSocket(guildId, socket)
     }
   )
 

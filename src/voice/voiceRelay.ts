@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer'
 import type { Readable } from 'node:stream'
 
 import type { VoiceConnection } from '@performanc/voice'
+import type { SessionSocket } from '../typings/index.types.ts'
 import type {
   ActiveStreamEntry,
   ExtendedVoiceConnection,
@@ -10,6 +11,7 @@ import type {
 } from '../typings/voice/voice.types.ts'
 import {
   buildVoiceFrame,
+  parseVoiceFrameHeader,
   resolveVoiceFormat,
   VOICE_FORMATS,
   VOICE_FRAME_OPS
@@ -250,4 +252,43 @@ export function createVoiceRelay({
   }
 
   return { attach, detach }
+}
+
+export class VoiceRouter {
+  public readonly sockets: Map<string, Set<SessionSocket>> = new Map()
+
+  registerSocket(guildId: string, socket: SessionSocket): void {
+    if (!guildId || !socket) return
+
+    let set = this.sockets.get(guildId)
+    if (!set) {
+      set = new Set()
+      this.sockets.set(guildId, set)
+    }
+    set.add(socket)
+
+    const cleanup = (): void => {
+      const current = this.sockets.get(guildId)
+      if (!current) return
+      current.delete(socket)
+      if (current.size === 0) this.sockets.delete(guildId)
+    }
+
+    socket.on('close', cleanup)
+    socket.on('error', cleanup)
+  }
+
+  handleFrame(frame: Buffer): void {
+    const header = parseVoiceFrameHeader(frame)
+    if (!header?.guildId) return
+
+    const targets = this.sockets.get(header.guildId)
+    if (!targets || targets.size === 0) return
+
+    for (const socket of targets) {
+      try {
+        socket.send(frame)
+      } catch {}
+    }
+  }
 }
