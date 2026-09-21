@@ -23,9 +23,12 @@ import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
 
 const BASE_URL = 'https://api-v2.soundcloud.com'
 const SOUNDCLOUD_URL = 'https://soundcloud.com'
-const ASSET_PATTERN = /https:\/\/a-v2\.sndcdn\.com\/assets\/[a-zA-Z0-9-]+\.js/g
+const ASSET_PATTERN =
+  /https:\/\/[A-Za-z0-9.-]+\/assets\/[a-zA-Z0-9-]+\.js/g
 const CLIENT_ID_PATTERN =
-  /(?:[?&/]?(?:client_id)[\s:=&]*"?|"data":{"id":")([A-Za-z0-9]{32})"?/
+  /(?:[?&/]?(?:client_id)[\s:=&]*"?|"data":{"id":")([A-Za-z0-9_-]{16,})"?/
+const SOUNDCLOUD_USER_AGENT =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36'
 const TRACK_PATTERN =
   /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s?]+(\?.*)?$/
 const SEARCH_URL_PATTERN =
@@ -91,7 +94,10 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
 
     try {
-      const mainPage = await makeRequest(SOUNDCLOUD_URL, { method: 'GET' })
+      const mainPage = await makeRequest(SOUNDCLOUD_URL, {
+        method: 'GET',
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (!mainPage || mainPage.error) {
         this._logError('Failed to load SoundCloud main page', mainPage?.error)
@@ -124,7 +130,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
           clientId = await Promise.any(
             assetMatches.map(async (match) => {
               const assetUrl = match[0]
-              const asset = await http1makeRequest(assetUrl)
+              const asset = await http1makeRequest(assetUrl, {
+                headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+              })
 
               if (asset && !asset.error && typeof asset.body === 'string') {
                 const idMatch = asset.body.match(CLIENT_ID_PATTERN)
@@ -142,7 +150,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
           this.nodelink.credentialManager.set(
             'soundcloud_client_id',
             clientId,
-            7 * 24 * 60 * 60 * 1000
+            60 * 60 * 1000
           )
           logger(
             'info',
@@ -181,7 +189,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
 
         clientId = await Promise.any(
           assetMatches.map(async (match) => {
-            const asset = await http1makeRequest(match[0])
+            const asset = await http1makeRequest(match[0], {
+              headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+            })
 
             if (asset && !asset.error && typeof asset.body === 'string') {
               const idMatch = asset.body.match(CLIENT_ID_PATTERN)
@@ -288,7 +298,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
         params.append('facet', 'model')
       }
 
-      const req = await http1makeRequest(`${BASE_URL}${endpoint}?${params}`)
+      const req = await http1makeRequest(`${BASE_URL}${endpoint}?${params}`, {
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (req.error || req.statusCode !== 200) {
         return this._buildError(
@@ -612,7 +624,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
 
     try {
       const reqUrl = `${BASE_URL}/resolve?${new URLSearchParams({ url, client_id: this.clientId ?? '' })}`
-      const req = await http1makeRequest(reqUrl)
+      const req = await http1makeRequest(reqUrl, {
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (req.statusCode === 404) return { loadType: 'empty', data: {} }
 
@@ -851,14 +865,18 @@ export default class SoundCloudSource implements SoundCloudSourceState {
         `Resolving SoundCloud track URL: ${trackUrl}`
       )
 
-      let req = await http1makeRequest(reqUrl)
+      let req = await http1makeRequest(reqUrl, {
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (req.statusCode === 401 && (await this._refreshClientId())) {
         const retryUrl = `${BASE_URL}/resolve?${new URLSearchParams({
           url: trackUrl,
           client_id: this.clientId ?? ''
         })}`
-        req = await http1makeRequest(retryUrl)
+        req = await http1makeRequest(retryUrl, {
+          headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+        })
       }
 
       if (req.error || req.statusCode !== 200) {
@@ -998,7 +1016,8 @@ export default class SoundCloudSource implements SoundCloudSourceState {
 
       try {
         let urlReq = await http1makeRequest(streamAuthUrl, {
-          method: 'GET'
+          method: 'GET',
+          headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
         })
 
         if (urlReq.statusCode === 401 && (await this._refreshClientId())) {
@@ -1007,7 +1026,8 @@ export default class SoundCloudSource implements SoundCloudSourceState {
             `${candidate.url}${retrySeparator}client_id=${this.clientId ?? ''}`
 
           urlReq = await http1makeRequest(retryUrl, {
-            method: 'GET'
+            method: 'GET',
+            headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
           })
         }
 
