@@ -172,7 +172,10 @@ export default class SoundCloudSource implements SoundCloudSourceState {
 
   private async _refreshClientId(): Promise<boolean> {
     try {
-      const mainPage = await makeRequest(SOUNDCLOUD_URL, { method: 'GET' })
+      const mainPage = await makeRequest(SOUNDCLOUD_URL, {
+        method: 'GET',
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (!mainPage || mainPage.error || typeof mainPage.body !== 'string') {
         return false
