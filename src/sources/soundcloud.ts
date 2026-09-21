@@ -1138,7 +1138,8 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       sawPreview
     ) {
       return this._buildException(
-        'SoundCloud only provides a preview for this track'
+        'SoundCloud only provides a preview for this track',
+        'SOUNDCLOUD_PREVIEW_ONLY'
       )
     }
 
@@ -1264,12 +1265,15 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
   }
 
-  _buildException(message: string): TrackUrlResult {
+  _buildException(
+    message: string,
+    cause: string = 'Unknown'
+  ): TrackUrlResult {
     return {
       exception: {
         message,
         severity: 'fault',
-        cause: 'Unknown'
+        cause
       }
     }
   }
