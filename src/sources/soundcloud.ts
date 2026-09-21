@@ -162,6 +162,59 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
   }
 
+  private async _refreshClientId(): Promise<boolean> {
+    try {
+      const mainPage = await makeRequest(SOUNDCLOUD_URL, { method: 'GET' })
+
+      if (!mainPage || mainPage.error || typeof mainPage.body !== 'string') {
+        return false
+      }
+
+      let clientId = mainPage.body.match(CLIENT_ID_PATTERN)?.[1]
+
+      if (!clientId) {
+        const assetMatches = [...mainPage.body.matchAll(ASSET_PATTERN)]
+
+        if (assetMatches.length === 0) {
+          return false
+        }
+
+        clientId = await Promise.any(
+          assetMatches.map(async (match) => {
+            const asset = await http1makeRequest(match[0])
+
+            if (asset && !asset.error && typeof asset.body === 'string') {
+              const idMatch = asset.body.match(CLIENT_ID_PATTERN)
+              if (idMatch?.[1]) return idMatch[1]
+            }
+
+            throw new Error('No client_id found in asset')
+          })
+        )
+      }
+
+      if (!clientId) return false
+
+      this.clientId = clientId
+      this.nodelink.credentialManager.set(
+        'soundcloud_client_id',
+        clientId,
+        60 * 60 * 1000
+      )
+
+      logger(
+        'info',
+        'Sources',
+        `Refreshed SoundCloud client_id (${clientId})`
+      )
+
+      return true
+    } catch (err: unknown) {
+      this._logError('SoundCloud client_id refresh failed', err)
+      return false
+    }
+  }
+
   match(url: string): boolean {
     return this.patterns.some((p) => p.test(url))
   }
@@ -798,7 +851,15 @@ export default class SoundCloudSource implements SoundCloudSourceState {
         `Resolving SoundCloud track URL: ${trackUrl}`
       )
 
-      const req = await http1makeRequest(reqUrl)
+      let req = await http1makeRequest(reqUrl)
+
+      if (req.statusCode === 401 && (await this._refreshClientId())) {
+        const retryUrl = `${BASE_URL}/resolve?${new URLSearchParams({
+          url: trackUrl,
+          client_id: this.clientId ?? ''
+        })}`
+        req = await http1makeRequest(retryUrl)
+      }
 
       if (req.error || req.statusCode !== 200) {
         this._logError('getTrackUrl failed', req.error)
@@ -936,9 +997,19 @@ export default class SoundCloudSource implements SoundCloudSourceState {
         `${candidate.url}${separator}client_id=${this.clientId ?? ''}`
 
       try {
-        const urlReq = await http1makeRequest(streamAuthUrl, {
+        let urlReq = await http1makeRequest(streamAuthUrl, {
           method: 'GET'
         })
+
+        if (urlReq.statusCode === 401 && (await this._refreshClientId())) {
+          const retrySeparator = candidate.url.includes('?') ? '&' : '?'
+          const retryUrl =
+            `${candidate.url}${retrySeparator}client_id=${this.clientId ?? ''}`
+
+          urlReq = await http1makeRequest(retryUrl, {
+            method: 'GET'
+          })
+        }
 
         let finalUrl: string | null = null
 
