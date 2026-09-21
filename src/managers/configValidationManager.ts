@@ -305,8 +305,7 @@ export default class ConfigValidationManager {
             optional: true,
             props: {
               enabled: { type: 'boolean', default: false },
-              clientId: { type: 'string', optional: true },
-              clientSecret: { type: 'string', optional: true }
+              clientId: { type: 'string', optional: true }
             }
           },
           local: {
