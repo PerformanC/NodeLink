@@ -843,8 +843,11 @@ export interface SourcesRegistry {
 
   /** SoundCloud resolution. */
   soundcloud: FeatureToggle & {
-    /** Optional SoundCloud API Client ID. */
+    /** SoundCloud API Client ID. */
     clientId: string
+
+    /** SoundCloud API Client Secret for official OAuth access. */
+    clientSecret: string
   }
 
   /** Local filesystem. */
