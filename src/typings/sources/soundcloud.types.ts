@@ -448,6 +448,11 @@ export interface SoundCloudApiTrack {
   hls_aac_96_url?: string
 
   /**
+   * Playback access granted by SoundCloud.
+   */
+  access?: 'playable' | 'preview' | 'blocked'
+
+  /**
    * Preview URL for restricted tracks.
    */
   preview_url?: string
@@ -895,6 +900,22 @@ export interface SoundCloudStreamResult extends TrackStreamResult {
 }
 
 /**
+ * Official SoundCloud stream response.
+ *
+ * Returned by the authenticated /tracks/{track_urn}/streams endpoint.
+ */
+export interface SoundCloudOfficialStreamsResponse {
+  hls_aac_160_url?: string
+  hls_aac_96_url?: string
+  hls_mp3_128_url?: string
+  hls_opus_64_url?: string
+  http_mp3_128_url?: string
+  http_mp3_128_url_legacy?: string
+  preview_mp3_128_url?: string
+  [key: string]: unknown
+}
+
+/**
  * Source-level configuration options for SoundCloud.
  *
  * Pulled from `nodelink.options.sources.soundcloud`.
@@ -917,6 +938,11 @@ export interface SoundCloudSourceOptions {
    * If provided, skips the client ID extraction from SoundCloud pages.
    */
   clientId?: string
+
+  /**
+   * SoundCloud API client secret for official OAuth access.
+   */
+  clientSecret?: string
 
   /**
    * Maximum number of search results to return.
