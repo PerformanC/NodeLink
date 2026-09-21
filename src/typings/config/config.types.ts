@@ -845,6 +845,9 @@ export interface SourcesRegistry {
   soundcloud: FeatureToggle & {
     /** Optional SoundCloud API Client ID. */
     clientId: string
+
+    /** Sources used when SoundCloud exposes only a preview/SNIP stream. */
+    fallbackSources: string[]
   }
 
   /** Local filesystem. */
