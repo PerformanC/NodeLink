@@ -637,8 +637,7 @@ export const config: NodelinkConfig = {
 
     soundcloud: {
       enabled: true,
-      clientId: '',
-      clientSecret: ''
+      clientId: ''
     },
 
     local: {
