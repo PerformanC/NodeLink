@@ -616,7 +616,7 @@ export default class SourcesManager implements SourceManagerLike {
         }
       }
 
-      return (await sourceGetTrackUrl.call(
+      const primaryResult = (await sourceGetTrackUrl.call(
         instance,
         track,
         itag,
@@ -627,6 +627,120 @@ export default class SourcesManager implements SourceManagerLike {
         trackInfo?: TrackInfoExtended
         additionalData?: Record<string, unknown>
       }
+
+      if (
+        track.sourceName === 'soundcloud' &&
+        primaryResult.exception?.cause === 'SOUNDCLOUD_PREVIEW_ONLY'
+      ) {
+        const soundcloudConfig = this.nodelink.options.sources.soundcloud
+        const fallbackSources =
+          soundcloudConfig?.fallbackSources ?? [
+            'youtube',
+            'deezer',
+            'jiosaavn',
+            'audiomack'
+          ]
+
+        const queries = Array.from(
+          new Set(
+            [
+              track.isrc,
+              `${track.author} ${track.title}`.trim()
+            ].filter((query): query is string => Boolean(query))
+          )
+        )
+
+        logger(
+          'info',
+          'Sources',
+          `SoundCloud preview-only track detected: "${track.author} - ${track.title}". Trying fallback sources [${fallbackSources.join(', ')}]`
+        )
+
+        for (const fallbackSourceName of fallbackSources) {
+          if (
+            fallbackSourceName === 'soundcloud' ||
+            fallbackSourceName === track.sourceName
+          ) {
+            continue
+          }
+
+          const fallbackSource = this.sourceMap.get(fallbackSourceName)
+          if (!fallbackSource || nextActiveSources.has(fallbackSource)) {
+            continue
+          }
+
+          for (const query of queries) {
+            try {
+              const searchResult = await this.search(
+                fallbackSourceName,
+                query
+              )
+
+              if (
+                searchResult.loadType !== 'search' ||
+                !Array.isArray(searchResult.data) ||
+                searchResult.data.length === 0
+              ) {
+                continue
+              }
+
+              const match = getBestMatch(searchResult.data, track)
+              if (!match) continue
+
+              logger(
+                'info',
+                'Sources',
+                `SoundCloud fallback matched "${track.author} - ${track.title}" on ${fallbackSourceName}: "${match.info.author} - ${match.info.title}"`
+              )
+
+              const fallbackResult = await this.getTrackUrl(
+                match.info,
+                undefined,
+                false,
+                isUpscaling
+              )
+
+              if (!fallbackResult.exception && fallbackResult.url) {
+                const mirroredInfo =
+                  fallbackResult.newTrack?.info ?? match.info
+
+                logger(
+                  'info',
+                  'Sources',
+                  `SoundCloud preview fallback succeeded using ${mirroredInfo.sourceName}`
+                )
+
+                return {
+                  ...fallbackResult,
+                  newTrack: fallbackResult.newTrack ?? {
+                    info: match.info
+                  }
+                }
+              }
+
+              logger(
+                'debug',
+                'Sources',
+                `SoundCloud fallback URL resolution failed on ${fallbackSourceName}: ${fallbackResult.exception?.message ?? 'No playable URL'}`
+              )
+            } catch (e) {
+              logger(
+                'debug',
+                'Sources',
+                `SoundCloud fallback attempt failed for ${fallbackSourceName}: ${(e as Error).message}`
+              )
+            }
+          }
+        }
+
+        logger(
+          'warn',
+          'Sources',
+          `No fallback source could resolve SoundCloud preview-only track "${track.author} - ${track.title}"`
+        )
+      }
+
+      return primaryResult
     })
   }
 
