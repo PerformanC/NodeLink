@@ -45,56 +45,23 @@ function _rejectUpgrade(socket, status, statusText, body) {
         catch { }
     });
 }
-class WebSocketStreamAdapter {
-    headersSent = false;
-    socket;
-    constructor(socket) {
-        this.socket = socket;
+function handleHttpUpgrade(context, request, socket, head) {
+    socket.on('error', (err) => {
+        if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET')
+            return;
+        logger('debug', 'Server', `Upgrade socket error: ${err.message}`);
+    });
+    const remoteAddress = request.socket.remoteAddress || 'unknown';
+    const remotePort = request.socket.remotePort || 0;
+    const isInternal = INTERNAL_IPS.has(remoteAddress);
+    const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort})`;
+    const url = new URL(request.url || '/', 'http://localhost');
+    const pathname = url.pathname;
+    if (pathname === '/v4/profiler/socket') {
+        _handleProfilerUpgrade(context, request, socket, head, clientAddress, isInternal);
+        return;
     }
-    writeHead(status) {
-        if (status !== 200) {
-            this.socket.close(1011, 'Worker stream failed');
-        }
-    }
-    write(data) {
-        this._sendFrame(data);
-    }
-    send(data) {
-        this._sendFrame(data);
-    }
-    end() {
-        this.socket.close(1000, 'Stream finished');
-    }
-    on(event, cb) {
-        this.socket.on(event, cb);
-    }
-    _sendFrame(data) {
-        const isBinary = Buffer.isBuffer(data);
-        const payload = isBinary ? data : Buffer.from(String(data));
-        this.socket.sendFrame?.(payload, {
-            len: payload.length,
-            fin: true,
-            opcode: isBinary ? 0x02 : 0x01
-        });
-    }
-}
-function _resolveYouTubeVideoId(context, rawIdentifier) {
-    if (DISCORD_SNOWFLAKE_RE.test(rawIdentifier)) {
-        const player = context.sessions.getPlayer(rawIdentifier);
-        if (player?.track?.info?.sourceName?.includes('youtube')) {
-            return player.track.info.identifier;
-        }
-    }
-    else if (rawIdentifier.length > 50) {
-        try {
-            const decoded = decodeTrack(rawIdentifier);
-            if (decoded?.info?.sourceName?.includes('youtube')) {
-                return decoded.info.identifier;
-            }
-        }
-        catch { }
-    }
-    return rawIdentifier;
+    _handleGatewayUpgrade(context, request, socket, head, pathname, clientAddress);
 }
 function _handleProfilerUpgrade(context, request, socket, head, clientAddress, isInternal) {
     const reject = (reason) => {
@@ -180,24 +147,6 @@ function _handleGatewayUpgrade(context, request, socket, head, pathname, clientA
         context.socket?.emit(eventName, ws, request, clientInfo, sessionId, routeId);
     });
 }
-function handleHttpUpgrade(context, request, socket, head) {
-    socket.on('error', (err) => {
-        if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET')
-            return;
-        logger('debug', 'Server', `Upgrade socket error: ${err.message}`);
-    });
-    const remoteAddress = request.socket.remoteAddress || 'unknown';
-    const remotePort = request.socket.remotePort || 0;
-    const isInternal = INTERNAL_IPS.has(remoteAddress);
-    const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort})`;
-    const url = new URL(request.url || '/', 'http://localhost');
-    const pathname = url.pathname;
-    if (pathname === '/v4/profiler/socket') {
-        _handleProfilerUpgrade(context, request, socket, head, clientAddress, isInternal);
-        return;
-    }
-    _handleGatewayUpgrade(context, request, socket, head, pathname, clientAddress);
-}
 function setupWebSocketEvents(context) {
     if (!context.socket)
         return;
@@ -231,6 +180,57 @@ function setupWebSocketEvents(context) {
         const streamAdapter = new WebSocketStreamAdapter(socket);
         context.sourceWorkerManager.delegate(request, streamAdapter, 'loadLiveChat', { videoId }, { isWebSocket: true });
     });
+}
+function _resolveYouTubeVideoId(context, rawIdentifier) {
+    if (DISCORD_SNOWFLAKE_RE.test(rawIdentifier)) {
+        const player = context.sessions.getPlayer(rawIdentifier);
+        if (player?.track?.info?.sourceName?.includes('youtube')) {
+            return player.track.info.identifier;
+        }
+    }
+    else if (rawIdentifier.length > 50) {
+        try {
+            const decoded = decodeTrack(rawIdentifier);
+            if (decoded?.info?.sourceName?.includes('youtube')) {
+                return decoded.info.identifier;
+            }
+        }
+        catch { }
+    }
+    return rawIdentifier;
+}
+class WebSocketStreamAdapter {
+    headersSent = false;
+    socket;
+    constructor(socket) {
+        this.socket = socket;
+    }
+    writeHead(status) {
+        if (status !== 200) {
+            this.socket.close(1011, 'Worker stream failed');
+        }
+    }
+    write(data) {
+        this._sendFrame(data);
+    }
+    send(data) {
+        this._sendFrame(data);
+    }
+    end() {
+        this.socket.close(1000, 'Stream finished');
+    }
+    on(event, cb) {
+        this.socket.on(event, cb);
+    }
+    _sendFrame(data) {
+        const isBinary = Buffer.isBuffer(data);
+        const payload = isBinary ? data : Buffer.from(String(data));
+        this.socket.sendFrame?.(payload, {
+            len: payload.length,
+            fin: true,
+            opcode: isBinary ? 0x02 : 0x01
+        });
+    }
 }
 async function cleanupWebSocketServer(server) {
     if (!server.socket)

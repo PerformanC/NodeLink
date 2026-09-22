@@ -69,67 +69,38 @@ function _rejectUpgrade(
   })
 }
 
-class WebSocketStreamAdapter {
-  headersSent = false
-  private readonly socket: SessionSocket
-
-  constructor(socket: SessionSocket) {
-    this.socket = socket
-  }
-
-  writeHead(status: number): void {
-    if (status !== 200) {
-      this.socket.close(1011, 'Worker stream failed')
-    }
-  }
-
-  write(data: string | Buffer): void {
-    this._sendFrame(data)
-  }
-
-  send(data: string | Buffer): void {
-    this._sendFrame(data)
-  }
-
-  end(): void {
-    this.socket.close(1000, 'Stream finished')
-  }
-
-  on(event: string, cb: (...args: (string | Buffer | number)[]) => void): void {
-    this.socket.on(event, cb)
-  }
-
-  private _sendFrame(data: string | Buffer): void {
-    const isBinary = Buffer.isBuffer(data)
-    const payload = isBinary ? data : Buffer.from(String(data))
-
-    this.socket.sendFrame?.(payload, {
-      len: payload.length,
-      fin: true,
-      opcode: isBinary ? 0x02 : 0x01
-    })
-  }
-}
-
-function _resolveYouTubeVideoId(
+function handleHttpUpgrade(
   context: NodelinkServer,
-  rawIdentifier: string
-): string {
-  if (DISCORD_SNOWFLAKE_RE.test(rawIdentifier)) {
-    const player = context.sessions.getPlayer(rawIdentifier)
-    if (player?.track?.info?.sourceName?.includes('youtube')) {
-      return player.track.info.identifier
-    }
-  } else if (rawIdentifier.length > 50) {
-    try {
-      const decoded = decodeTrack(rawIdentifier)
-      if (decoded?.info?.sourceName?.includes('youtube')) {
-        return decoded.info.identifier
-      }
-    } catch {}
+  request: http.IncomingMessage,
+  socket: NetSocket,
+  head: Buffer
+): void {
+  socket.on('error', (err: NodeJS.ErrnoException) => {
+    if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') return
+    logger('debug', 'Server', `Upgrade socket error: ${err.message}`)
+  })
+
+  const remoteAddress = request.socket.remoteAddress || 'unknown'
+  const remotePort = request.socket.remotePort || 0
+  const isInternal = INTERNAL_IPS.has(remoteAddress)
+  const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort})`
+
+  const url = new URL(request.url || '/', 'http://localhost')
+  const pathname = url.pathname
+
+  if (pathname === '/v4/profiler/socket') {
+    _handleProfilerUpgrade(
+      context,
+      request,
+      socket,
+      head,
+      clientAddress,
+      isInternal
+    )
+    return
   }
 
-  return rawIdentifier
+  _handleGatewayUpgrade(context, request, socket, head, pathname, clientAddress)
 }
 
 function _handleProfilerUpgrade(
@@ -277,40 +248,6 @@ function _handleGatewayUpgrade(
   })
 }
 
-function handleHttpUpgrade(
-  context: NodelinkServer,
-  request: http.IncomingMessage,
-  socket: NetSocket,
-  head: Buffer
-): void {
-  socket.on('error', (err: NodeJS.ErrnoException) => {
-    if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') return
-    logger('debug', 'Server', `Upgrade socket error: ${err.message}`)
-  })
-
-  const remoteAddress = request.socket.remoteAddress || 'unknown'
-  const remotePort = request.socket.remotePort || 0
-  const isInternal = INTERNAL_IPS.has(remoteAddress)
-  const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort})`
-
-  const url = new URL(request.url || '/', 'http://localhost')
-  const pathname = url.pathname
-
-  if (pathname === '/v4/profiler/socket') {
-    _handleProfilerUpgrade(
-      context,
-      request,
-      socket,
-      head,
-      clientAddress,
-      isInternal
-    )
-    return
-  }
-
-  _handleGatewayUpgrade(context, request, socket, head, pathname, clientAddress)
-}
-
 function setupWebSocketEvents(context: NodelinkServer): void {
   if (!context.socket) return
 
@@ -395,6 +332,69 @@ function setupWebSocketEvents(context: NodelinkServer): void {
       )
     }
   )
+}
+
+function _resolveYouTubeVideoId(
+  context: NodelinkServer,
+  rawIdentifier: string
+): string {
+  if (DISCORD_SNOWFLAKE_RE.test(rawIdentifier)) {
+    const player = context.sessions.getPlayer(rawIdentifier)
+    if (player?.track?.info?.sourceName?.includes('youtube')) {
+      return player.track.info.identifier
+    }
+  } else if (rawIdentifier.length > 50) {
+    try {
+      const decoded = decodeTrack(rawIdentifier)
+      if (decoded?.info?.sourceName?.includes('youtube')) {
+        return decoded.info.identifier
+      }
+    } catch {}
+  }
+
+  return rawIdentifier
+}
+
+class WebSocketStreamAdapter {
+  headersSent = false
+  private readonly socket: SessionSocket
+
+  constructor(socket: SessionSocket) {
+    this.socket = socket
+  }
+
+  writeHead(status: number): void {
+    if (status !== 200) {
+      this.socket.close(1011, 'Worker stream failed')
+    }
+  }
+
+  write(data: string | Buffer): void {
+    this._sendFrame(data)
+  }
+
+  send(data: string | Buffer): void {
+    this._sendFrame(data)
+  }
+
+  end(): void {
+    this.socket.close(1000, 'Stream finished')
+  }
+
+  on(event: string, cb: (...args: (string | Buffer | number)[]) => void): void {
+    this.socket.on(event, cb)
+  }
+
+  private _sendFrame(data: string | Buffer): void {
+    const isBinary = Buffer.isBuffer(data)
+    const payload = isBinary ? data : Buffer.from(String(data))
+
+    this.socket.sendFrame?.(payload, {
+      len: payload.length,
+      fin: true,
+      opcode: isBinary ? 0x02 : 0x01
+    })
+  }
 }
 
 async function cleanupWebSocketServer(server: NodelinkServer): Promise<void> {
