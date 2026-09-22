@@ -32,12 +32,23 @@ function printStartupBanner(version, isCluster) {
 `;
     process.stdout.write(`\x1b[32m${ascii}\x1b[0m\n`);
 }
+const SHUTDOWN_MOTTOES = [
+    '💚 Nascido no Brasil, moldado em código e feito para ir além.',
+    '💚 Feito no Brasil, entre ideias, código e muita vontade de criar.',
+    '💚 De uma ideia a muitas linhas de código — feito no Brasil.',
+    '💚 Onde ideias encontram código. Feito no Brasil. 💚',
+    '💚 Feito por quem acredita que código também pode ser uma forma de criar.',
+    '💚 Um pouco de código, um pouco de caos e muita vontade de construir.',
+    '💚 Criado no Brasil, escrito em código e levado adiante por ideias.',
+    '💚 Da nossa ideia para o mundo. Feito no Brasil.'
+];
 function printShutdownMessage() {
+    const motto = SHUTDOWN_MOTTOES[Math.floor(Math.random() * SHUTDOWN_MOTTOES.length)];
     const message = [
         '',
         SHUTDOWN_LOGO,
         '',
-        '  \x1b[32m💚 Feito com carinho por Brasileiros para todos os usuários do NodeLink!\x1b[0m',
+        `  \x1b[1;32m${motto}\x1b[0m`,
         '',
         '  \x1b[1m\x1b[33m⭐ Enjoying the project? Consider leaving a star on GitHub:\x1b[0m',
         '  \x1b[34m➜\x1b[0m \x1b[36mhttps://github.com/PerformanC/NodeLink\x1b[0m',
@@ -46,6 +57,8 @@ function printShutdownMessage() {
         '  \x1b[34m•\x1b[0m \x1b[37mReport issues:\x1b[0m  \x1b[36mhttps://github.com/PerformanC/NodeLink/issues\x1b[0m',
         '  \x1b[34m•\x1b[0m \x1b[37mContribute:\x1b[0m     \x1b[36mhttps://github.com/PerformanC/contributing\x1b[0m',
         '  \x1b[34m•\x1b[0m \x1b[37mDiscord:\x1b[0m        \x1b[36mhttps://discord.gg/fzjksWS65v\x1b[0m',
+        '',
+        '  \x1b[3m\x1b[90maut viam inveniam aut faciam\x1b[0m',
         '',
         ''
     ].join('\n');
