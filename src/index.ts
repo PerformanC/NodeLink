@@ -88,33 +88,33 @@ const isBun = typeof Bun !== 'undefined'
 class NodelinkServer extends EventEmitter {
   readonly options: NodelinkConfig
   readonly logger: typeof logger
+  readonly version: string
+  readonly gitInfo: GitInfo
+
+  readonly usingBunServer: boolean
   server: NodelinkServerType
   socket: NodelinkSocketType
-  readonly usingBunServer: boolean
+
   readonly sessions: SessionManager
-  sources: SourcesManager | null
-  lyrics: LyricsManager | null
-  meanings: MeaningManager | null
   readonly routePlanner: RoutePlannerManager
-  credentialManager: CredentialManager | null
-  trackCacheManager: TrackCacheManager | null
-  connectionManager: ConnectionManager | null
   readonly statsManager: StatsManager
   readonly rateLimitManager: RateLimitManager
   readonly dosProtectionManager: DosProtectionManager
   readonly pluginManager: PluginManager
-  sourceWorkerManager: SourceWorkerManager | null
-  workerManager: WorkerManager | null
-  readonly version: string
-  readonly gitInfo: GitInfo
-  statistics: NodelinkStatistics
-  readonly extensions: NodelinkExtensions
+
   readonly voiceRouter: VoiceRouter
   voiceRelay: VoiceRelay | null
+  statistics: NodelinkStatistics
+  readonly extensions: NodelinkExtensions
 
-  get voiceSockets(): Map<string, Set<SessionSocket>> {
-    return this.voiceRouter.sockets
-  }
+  credentialManager: CredentialManager | null
+  trackCacheManager: TrackCacheManager | null
+  connectionManager: ConnectionManager | null
+  sourceWorkerManager: SourceWorkerManager | null
+  workerManager: WorkerManager | null
+  sources: SourcesManager | null
+  lyrics: LyricsManager | null
+  meanings: MeaningManager | null
 
   constructor(
     options: NodelinkConfig,
@@ -146,20 +146,17 @@ class NodelinkServer extends EventEmitter {
     this.dosProtectionManager = new DosProtectionManager(this)
     this.pluginManager = new PluginManager(this)
 
-    this.sources = null
-    this.lyrics = null
-    this.meanings = null
-    this.credentialManager = null
-    this.trackCacheManager = null
-    this.connectionManager = null
-    this.sourceWorkerManager = null
-    this.workerManager = null
-
+    this.voiceRouter = new VoiceRouter()
+    this.voiceRelay = createVoiceRelay({
+      enabled: Boolean(options.playback.voiceReceive?.enabled),
+      format: options.playback.voiceReceive?.format || 'pcm',
+      sendFrame: (frame: Buffer) => this.voiceRouter.handleFrame(frame),
+      logger
+    })
     this.statistics = {
       players: 0,
       playingPlayers: 0
     }
-
     this.extensions = {
       sources: new Map(),
       filters: new Map(),
@@ -171,36 +168,165 @@ class NodelinkServer extends EventEmitter {
       playerInterceptors: []
     }
 
-    this.voiceRouter = new VoiceRouter()
-    this.voiceRelay = createVoiceRelay({
-      enabled: options.playback.voiceReceive?.enabled || false,
-      format: options.playback.voiceReceive?.format || 'pcm',
-      sendFrame: (frame: Buffer) => this.voiceRouter.handleFrame(frame),
-      logger
-    })
+    this.credentialManager = null
+    this.trackCacheManager = null
+    this.connectionManager = null
+    this.sourceWorkerManager = null
+    this.workerManager = null
+    this.sources = null
+    this.lyrics = null
+    this.meanings = null
 
     memoryTrace('constructor:end')
   }
 
-  handleVoiceFrame(frame: Buffer): void {
-    this.voiceRouter.handleFrame(frame)
+  async start(options: StartOptions = {}): Promise<this> {
+    await this._initialize(options)
+    this._startServer(options)
+    this._startMonitors(options)
+
+    memoryTrace('start:ready')
+    return this
   }
 
-  registerVoiceSocket(guildId: string, socket: SessionSocket): void {
-    this.voiceRouter.registerSocket(guildId, socket)
+  async stop(): Promise<void> {
+    stopHeartbeat(this)
+    stopServerMonitor(this)
+
+    await this.credentialManager?.forceSave()
+    this.credentialManager?.destroy()
+
+    await this.trackCacheManager?.forceSave()
+    this.trackCacheManager?.destroy()
+
+    this.sourceWorkerManager?.destroy()
+    this.workerManager?.destroy()
+
+    this.connectionManager?.destroy()
+    this.routePlanner.dispose()
+    this.rateLimitManager.destroy()
+    this.dosProtectionManager.destroy()
+
+    await this._cleanupWebSocketServer()
+
+    const httpServer = this.server as http.Server | undefined
+    if (httpServer?.listening) {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()))
+      logger('info', 'Server', 'HTTP server closed.')
+    }
   }
 
-  async getSourcesFromWorker(): Promise<string[]> {
-    return this.workerManager ? this.workerManager.getSources() : []
+  private async _initialize({ isClusterPrimary }: StartOptions): Promise<void> {
+    logger('info', 'Server', `version ${this.version}`)
+    logger(
+      'info',
+      'Server',
+      `git branch: ${this.gitInfo.branch}, commit: ${this.gitInfo.commit}, committed on: ${new Date(this.gitInfo.commitTime).toISOString()}`
+    )
+
+    const [CredentialManagerClass, TrackCacheManagerClass] = await Promise.all([
+      getCredentialManagerClass(),
+      getTrackCacheManagerClass()
+    ])
+
+    const credentialManager = new CredentialManagerClass({
+      options: this.options
+    })
+    const trackCacheManager = new TrackCacheManagerClass({
+      options: this.options
+    })
+
+    this.credentialManager = credentialManager
+    this.trackCacheManager = trackCacheManager
+
+    await credentialManager.load()
+    await validateRuntime(credentialManager)
+
+    memoryTrace('start:enter')
+    new ConfigValidationManager(this.options).validate()
+
+    if (!isClusterPrimary) {
+      await trackCacheManager.load()
+      memoryTrace('start:after-trackcache-load')
+    }
+
+    await this.statsManager.initialize()
+    await this.pluginManager.load('master')
+
+    const shouldStartSpecializedWorker = Boolean(
+      isClusterPrimary && this.options.cluster?.specializedSourceWorker?.enabled
+    )
+    if (shouldStartSpecializedWorker) {
+      const SourceWorkerManagerClass = await getSourceWorkerManagerClass()
+      const sourceWorkerManager = new SourceWorkerManagerClass(this)
+      this.sourceWorkerManager = sourceWorkerManager
+      await sourceWorkerManager.start()
+    }
+
+    const ConnectionManagerClass = await getConnectionManagerClass()
+    this.connectionManager = new ConnectionManagerClass(this)
+
+    if (!shouldStartSpecializedWorker) {
+      if (!isClusterPrimary) {
+        await this.pluginManager.load('worker')
+      }
+
+      const [SourcesManagerClass, LyricsManagerClass, MeaningManagerClass] =
+        await Promise.all([
+          getSourcesManagerClass(),
+          getLyricsManagerClass(),
+          getMeaningManagerClass()
+        ])
+
+      const sources = new SourcesManagerClass(this)
+      const lyrics = new LyricsManagerClass(this)
+      const meanings = new MeaningManagerClass(this)
+
+      this.sources = sources
+      this.lyrics = lyrics
+      this.meanings = meanings
+
+      await sources.loadFolder()
+      await lyrics.loadFolder()
+      await meanings.loadFolder()
+    }
   }
 
-  _createServer(): void {
+  private _startServer(options: StartOptions): void {
+    setupWebSocketEvents(this)
+    this._createServer()
+
+    if (options.isClusterWorker) {
+      setupClusterWorkerSocket(this.server)
+    } else {
+      const port = this.options.server.port
+      const host = this.options.server.host || '0.0.0.0'
+      logger(
+        'info',
+        'Server',
+        `Attempting to listen on host: ${host}, port: ${port}`
+      )
+      listenHttpServer(this.server as http.Server, host, port)
+    }
+
+    this.connectionManager?.start()
+  }
+
+  private _startMonitors(options: StartOptions): void {
+    startServerMonitor(this, Boolean(options.isClusterPrimary))
+
+    if (!options.isClusterPrimary || cluster.isPrimary) {
+      startHeartbeat(this)
+    }
+  }
+
+  private _createServer(): void {
     this.server = this.usingBunServer
       ? createBunServer(this, getRequestHandler)
       : createHttpServer(this, getRequestHandler)
   }
 
-  async _cleanupWebSocketServer(): Promise<void> {
+  private async _cleanupWebSocketServer(): Promise<void> {
     if (this.usingBunServer && this.server) {
       await cleanupBunServer(
         this,
@@ -236,139 +362,6 @@ class NodelinkServer extends EventEmitter {
           message.payload.affectedGuilds
         )
         break
-    }
-  }
-
-  async start(options: StartOptions = {}): Promise<this> {
-    await this._initialize(options)
-    this._startServer(options)
-    this._startMonitors(options)
-
-    memoryTrace('start:ready')
-    return this
-  }
-
-  private async _initialize({ isClusterPrimary }: StartOptions): Promise<void> {
-    logger('info', 'Server', `version ${this.version}`)
-    logger(
-      'info',
-      'Server',
-      `git branch: ${this.gitInfo.branch}, commit: ${this.gitInfo.commit}, committed on: ${new Date(this.gitInfo.commitTime).toISOString()}`
-    )
-
-    const [CredentialManagerClass, TrackCacheManagerClass] = await Promise.all([
-      getCredentialManagerClass(),
-      getTrackCacheManagerClass()
-    ])
-
-    this.credentialManager = new CredentialManagerClass({
-      options: this.options
-    })
-    this.trackCacheManager = new TrackCacheManagerClass({
-      options: this.options
-    })
-
-    await this.credentialManager.load()
-    await validateRuntime(this.credentialManager)
-
-    memoryTrace('start:enter')
-    new ConfigValidationManager(this.options).validate()
-
-    if (!isClusterPrimary) {
-      await this.trackCacheManager.load()
-      memoryTrace('start:after-trackcache-load')
-    }
-
-    await this.statsManager.initialize()
-    await this.pluginManager.load('master')
-
-    if (
-      isClusterPrimary &&
-      this.options.cluster?.specializedSourceWorker?.enabled
-    ) {
-      const SourceWorkerManagerClass = await getSourceWorkerManagerClass()
-      this.sourceWorkerManager = new SourceWorkerManagerClass(this)
-      await this.sourceWorkerManager.start()
-    }
-
-    const ConnectionManagerClass = await getConnectionManagerClass()
-    this.connectionManager = new ConnectionManagerClass(this)
-
-    const specializedSources = Boolean(
-      this.options.cluster?.specializedSourceWorker?.enabled
-    )
-    if (!isClusterPrimary || !specializedSources) {
-      if (!isClusterPrimary) {
-        await this.pluginManager.load('worker')
-      }
-
-      const [SourcesManagerClass, LyricsManagerClass, MeaningManagerClass] =
-        await Promise.all([
-          getSourcesManagerClass(),
-          getLyricsManagerClass(),
-          getMeaningManagerClass()
-        ])
-
-      this.sources = new SourcesManagerClass(this)
-      this.lyrics = new LyricsManagerClass(this)
-      this.meanings = new MeaningManagerClass(this)
-
-      await this.sources.loadFolder()
-      await this.lyrics.loadFolder()
-      await this.meanings.loadFolder()
-    }
-  }
-
-  private _startServer(options: StartOptions): void {
-    setupWebSocketEvents(this)
-    this._createServer()
-
-    if (options.isClusterWorker) {
-      setupClusterWorkerSocket(this.server)
-    } else {
-      const port = this.options.server.port
-      const host = this.options.server.host || '0.0.0.0'
-      logger(
-        'info',
-        'Server',
-        `Attempting to listen on host: ${host}, port: ${port}`
-      )
-      listenHttpServer(this.server as http.Server, host, port)
-    }
-
-    this.connectionManager?.start()
-  }
-
-  private _startMonitors(options: StartOptions): void {
-    startServerMonitor(this, Boolean(options.isClusterPrimary))
-
-    if (!options.isClusterPrimary || cluster.isPrimary) {
-      startHeartbeat(this)
-    }
-  }
-
-  async stop(): Promise<void> {
-    stopHeartbeat(this)
-    stopServerMonitor(this)
-
-    await this.credentialManager?.forceSave()
-    await this.trackCacheManager?.forceSave()
-
-    this.sourceWorkerManager?.destroy()
-    this.workerManager?.destroy()
-    this.connectionManager?.destroy()
-    this.routePlanner.dispose()
-    this.rateLimitManager.destroy()
-    this.dosProtectionManager.destroy()
-    this.credentialManager?.destroy()
-    this.trackCacheManager?.destroy()
-
-    await this._cleanupWebSocketServer()
-
-    const httpServer = this.server as http.Server | undefined
-    if (httpServer?.listening) {
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()))
-      logger('info', 'Server', 'HTTP server closed.')
     }
   }
 
@@ -422,6 +415,22 @@ class NodelinkServer extends EventEmitter {
   registerPlayerInterceptor(interceptor: PlayerInterceptorExtension): void {
     this.extensions.playerInterceptors.push(interceptor)
     logger('info', 'Server', 'Registered custom player interceptor')
+  }
+
+  get voiceSockets(): Map<string, Set<SessionSocket>> {
+    return this.voiceRouter.sockets
+  }
+
+  handleVoiceFrame(frame: Buffer): void {
+    this.voiceRouter.handleFrame(frame)
+  }
+
+  registerVoiceSocket(guildId: string, socket: SessionSocket): void {
+    this.voiceRouter.registerSocket(guildId, socket)
+  }
+
+  async getSourcesFromWorker(): Promise<string[]> {
+    return this.workerManager ? this.workerManager.getSources() : []
   }
 }
 
