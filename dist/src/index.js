@@ -188,7 +188,7 @@ class NodelinkServer extends EventEmitter {
         if (options.isClusterWorker) {
             setupClusterWorkerSocket(this.server);
         }
-        else {
+        else if (!this.usingBunServer) {
             const port = this.options.server.port;
             const host = this.options.server.host || '0.0.0.0';
             logger('info', 'Server', `Attempting to listen on host: ${host}, port: ${port}`);
