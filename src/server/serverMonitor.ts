@@ -8,6 +8,63 @@ import type { WorkerMetricsEntry } from '../typings/api/stats.types.ts'
 import type { Session } from '../typings/index.types.ts'
 import { getStats, logger } from '../utils.ts'
 
+interface MonitorState {
+  playerUpdateTimer: NodeJS.Timeout | null
+  statsBroadcastTimer: NodeJS.Timeout | null
+}
+
+const monitorStates = new WeakMap<NodelinkServer, MonitorState>()
+const heartbeatTimers = new WeakMap<NodelinkServer, NodeJS.Timeout>()
+
+function _getMonitorState(server: NodelinkServer): MonitorState {
+  let state = monitorStates.get(server)
+  if (!state) {
+    state = {
+      playerUpdateTimer: null,
+      statsBroadcastTimer: null
+    }
+    monitorStates.set(server, state)
+  }
+  return state
+}
+
+function _checkSessionPlayers(
+  session: Session,
+  now: number,
+  zombieThresholdMs: number
+): void {
+  const players = session.players?.players
+  if (!players) return
+
+  for (const player of players.values()) {
+    const isPlaying = Boolean(
+      player.track && !player.isPaused && player.connection
+    )
+    if (!isPlaying) continue
+
+    const hasStalledStream =
+      player.connStatus === 'connected' &&
+      player._lastStreamDataTime > 0 &&
+      now - player._lastStreamDataTime >= zombieThresholdMs
+
+    if (hasStalledStream) {
+      logger(
+        'warn',
+        'Player',
+        `Playback for guild ${player.guildId} appears stuck (no audio frames for ${zombieThresholdMs}ms).`
+      )
+      player.emitEvent(GatewayEvents.TRACK_STUCK, {
+        guildId: player.guildId,
+        track: player.track,
+        reason: 'no_stream_data',
+        thresholdMs: zombieThresholdMs
+      })
+    }
+
+    player._sendUpdate()
+  }
+}
+
 interface LocalPlayerMetrics {
   totalPlayers: number
   playingPlayers: number
@@ -50,43 +107,6 @@ function _broadcastStatsPayload(
   }
 }
 
-function _checkSessionPlayers(
-  session: Session,
-  now: number,
-  zombieThresholdMs: number
-): void {
-  const players = session.players?.players
-  if (!players) return
-
-  for (const player of players.values()) {
-    const isPlaying = Boolean(
-      player.track && !player.isPaused && player.connection
-    )
-    if (!isPlaying) continue
-
-    const hasStalledStream =
-      player.connStatus === 'connected' &&
-      player._lastStreamDataTime > 0 &&
-      now - player._lastStreamDataTime >= zombieThresholdMs
-
-    if (hasStalledStream) {
-      logger(
-        'warn',
-        'Player',
-        `Playback for guild ${player.guildId} appears stuck (no audio frames for ${zombieThresholdMs}ms).`
-      )
-      player.emitEvent(GatewayEvents.TRACK_STUCK, {
-        guildId: player.guildId,
-        track: player.track,
-        reason: 'no_stream_data',
-        thresholdMs: zombieThresholdMs
-      })
-    }
-
-    player._sendUpdate()
-  }
-}
-
 function _updateAndBroadcastStats(
   server: NodelinkServer,
   lastBroadcastAt: number,
@@ -109,33 +129,12 @@ function _updateAndBroadcastStats(
   return lastBroadcastAt
 }
 
-interface MonitorState {
-  globalUpdater: NodeJS.Timeout | null
-  statsUpdater: NodeJS.Timeout | null
-  heartbeatInterval: NodeJS.Timeout | null
-}
-
-const monitorStates = new WeakMap<NodelinkServer, MonitorState>()
-
-function _getMonitorState(server: NodelinkServer): MonitorState {
-  let state = monitorStates.get(server)
-  if (!state) {
-    state = {
-      globalUpdater: null,
-      statsUpdater: null,
-      heartbeatInterval: null
-    }
-    monitorStates.set(server, state)
-  }
-  return state
-}
-
 function startServerMonitor(
   server: NodelinkServer,
   isClusterPrimary = false
 ): void {
   const state = _getMonitorState(server)
-  if (state.globalUpdater) return
+  if (state.statsBroadcastTimer || state.playerUpdateTimer) return
 
   const playbackConfig = server.options.playback
   const playerUpdateInterval = Math.max(
@@ -154,7 +153,7 @@ function startServerMonitor(
   if (isClusterPrimary) {
     let lastBroadcastAt = 0
 
-    state.globalUpdater = setInterval(() => {
+    state.statsBroadcastTimer = setInterval(() => {
       server.statsManager.setWebsocketConnections(
         server.sessions.activeSessions.size
       )
@@ -168,7 +167,7 @@ function startServerMonitor(
     return
   }
 
-  state.globalUpdater = setInterval(() => {
+  state.playerUpdateTimer = setInterval(() => {
     const now = Date.now()
     for (const session of server.sessions.values()) {
       _checkSessionPlayers(session, now, zombieThresholdMs)
@@ -177,7 +176,7 @@ function startServerMonitor(
 
   let lastBroadcastAt = 0
 
-  state.statsUpdater = setInterval(() => {
+  state.statsBroadcastTimer = setInterval(() => {
     const { totalPlayers, playingPlayers, voiceConnections } =
       _countActiveMetrics(server.sessions.values())
 
@@ -207,22 +206,21 @@ function startServerMonitor(
 function stopServerMonitor(server: NodelinkServer): void {
   const state = _getMonitorState(server)
 
-  if (state.globalUpdater) {
-    clearInterval(state.globalUpdater)
-    state.globalUpdater = null
+  if (state.playerUpdateTimer) {
+    clearInterval(state.playerUpdateTimer)
+    state.playerUpdateTimer = null
   }
 
-  if (state.statsUpdater) {
-    clearInterval(state.statsUpdater)
-    state.statsUpdater = null
+  if (state.statsBroadcastTimer) {
+    clearInterval(state.statsBroadcastTimer)
+    state.statsBroadcastTimer = null
   }
 }
 
 function startHeartbeat(server: NodelinkServer): void {
-  const state = _getMonitorState(server)
-  if (state.heartbeatInterval || server.usingBunServer) return
+  if (heartbeatTimers.has(server) || server.usingBunServer) return
 
-  state.heartbeatInterval = setInterval(() => {
+  const timer = setInterval(() => {
     for (const session of server.sessions.activeSessions.values()) {
       if (session.socket && !session.isPaused) {
         try {
@@ -245,14 +243,15 @@ function startHeartbeat(server: NodelinkServer): void {
       }
     }
   }, 45000)
+
+  heartbeatTimers.set(server, timer)
 }
 
 function stopHeartbeat(server: NodelinkServer): void {
-  const state = _getMonitorState(server)
-
-  if (state.heartbeatInterval) {
-    clearInterval(state.heartbeatInterval)
-    state.heartbeatInterval = null
+  const timer = heartbeatTimers.get(server)
+  if (timer) {
+    clearInterval(timer)
+    heartbeatTimers.delete(server)
   }
 }
 
