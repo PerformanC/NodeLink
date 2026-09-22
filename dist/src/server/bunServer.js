@@ -253,7 +253,7 @@ export function createBunServer(context, getRequestHandler) {
                     eventName = '/v4/websocket/youtube/live';
                     routeId = liveMatch[1] ?? null;
                 }
-                if (sessionId && !context.sessions.resumableSessions.has(sessionId)) {
+                if (sessionId && !context.sessions.isResumable(sessionId)) {
                     logger('warn', 'Server', `Session-ID provided by ${clientAddress} does not exist or is not resumable: ${sessionId}, creating a new session`);
                     sessionId = null;
                 }
@@ -489,7 +489,7 @@ export async function cleanupBunServer(context, server) {
         // Without this, Bun.stop(true) tears TCP connections down without
         // sending close frames, surfacing as ECONNRESET on the client.
         let closedCount = 0;
-        for (const session of context.sessions.activeSessions.values()) {
+        for (const session of context.sessions.values()) {
             if (!session.socket)
                 continue;
             try {
@@ -506,8 +506,7 @@ export async function cleanupBunServer(context, server) {
                 }
             }
         }
-        context.sessions.activeSessions.clear();
-        context.sessions.resumableSessions.clear();
+        context.sessions.clearSessions();
         logger('info', 'WebSocket', `Signalled close to ${closedCount} WebSocket connection(s)`);
         // Prefer graceful stop so the close frames above flush. If clients
         // don't drain within 1.5s (slow networks, half-open peers), fall

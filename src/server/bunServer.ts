@@ -30,6 +30,9 @@ export interface BunServerContext extends ApiNodelinkServer {
   sessions: {
     resumableSessions: Map<string, unknown>
     activeSessions: Map<string, { id: string; socket: SessionSocket | null }>
+    isResumable: (sessionId: string) => boolean
+    values: () => IterableIterator<{ id: string; socket: SessionSocket | null }>
+    clearSessions: () => void
   }
   socket: NodelinkSocketType
 }
@@ -329,7 +332,7 @@ export function createBunServer(
           routeId = liveMatch[1] ?? null
         }
 
-        if (sessionId && !context.sessions.resumableSessions.has(sessionId)) {
+        if (sessionId && !context.sessions.isResumable(sessionId)) {
           logger(
             'warn',
             'Server',
@@ -640,7 +643,7 @@ export async function cleanupBunServer(
     // Without this, Bun.stop(true) tears TCP connections down without
     // sending close frames, surfacing as ECONNRESET on the client.
     let closedCount = 0
-    for (const session of context.sessions.activeSessions.values()) {
+    for (const session of context.sessions.values()) {
       if (!session.socket) continue
       try {
         session.socket.close(1000, 'Server shutdown')
@@ -657,8 +660,7 @@ export async function cleanupBunServer(
         }
       }
     }
-    context.sessions.activeSessions.clear()
-    context.sessions.resumableSessions.clear()
+    context.sessions.clearSessions()
     logger(
       'info',
       'WebSocket',

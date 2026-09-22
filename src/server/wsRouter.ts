@@ -191,7 +191,7 @@ function _handleGatewayUpgrade(
   }
 
   let sessionId = _getHeader(request.headers, 'session-id')
-  if (sessionId && !context.sessions.resumableSessions.has(sessionId)) {
+  if (sessionId && !context.sessions.isResumable(sessionId)) {
     logger(
       'warn',
       'Server',
@@ -402,7 +402,7 @@ async function cleanupWebSocketServer(server: NodelinkServer): Promise<void> {
 
   try {
     let closedCount = 0
-    for (const session of server.sessions.activeSessions.values()) {
+    for (const session of server.sessions.values()) {
       const socket = session.socket
       if (!socket) continue
 
@@ -422,8 +422,7 @@ async function cleanupWebSocketServer(server: NodelinkServer): Promise<void> {
       }
     }
 
-    server.sessions.activeSessions.clear()
-    server.sessions.resumableSessions.clear()
+    server.sessions.clearSessions()
     logger(
       'info',
       'WebSocket',

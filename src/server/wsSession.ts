@@ -44,9 +44,7 @@ function _attachDisconnectHandler(
       context.sessions.shutdown(sessionId)
     }
 
-    context.statsManager.setWebsocketConnections(
-      context.sessions.activeSessions.size
-    )
+    context.statsManager.setWebsocketConnections(context.sessions.activeCount)
   })
 }
 
@@ -226,9 +224,7 @@ function handleClientWebSocket(
     _createNewSession(context, socket, request, clientInfo)
   }
 
-  context.statsManager.setWebsocketConnections(
-    context.sessions.activeSessions.size
-  )
+  context.statsManager.setWebsocketConnections(context.sessions.activeCount)
 }
 
 export { handleClientWebSocket }

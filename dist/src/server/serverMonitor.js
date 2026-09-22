@@ -93,7 +93,7 @@ function startServerMonitor(server, isClusterPrimary = false) {
     if (isClusterPrimary) {
         let lastBroadcastAt = 0;
         state.statsBroadcastTimer = setInterval(() => {
-            server.statsManager.setWebsocketConnections(server.sessions.activeSessions.size);
+            server.statsManager.setWebsocketConnections(server.sessions.activeCount);
             lastBroadcastAt = _updateAndBroadcastStats(server, lastBroadcastAt, statsSendInterval);
         }, metricsInterval);
         return;
@@ -139,7 +139,7 @@ function startHeartbeat(server) {
     if (heartbeatTimers.has(server) || server.usingBunServer)
         return;
     const timer = setInterval(() => {
-        for (const session of server.sessions.activeSessions.values()) {
+        for (const session of server.sessions.values()) {
             if (session.socket && !session.isPaused) {
                 try {
                     if (session.socket.sendFrame) {

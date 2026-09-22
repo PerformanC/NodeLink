@@ -107,32 +107,6 @@ export default class SessionManager {
   }
 
   /**
-   * Retrieves a session by its ID from either the active or resumable pools.
-   *
-   * @param sessionId - The ID of the session to retrieve.
-   * @returns The session object if found, otherwise undefined.
-   */
-  public get(sessionId: string): Session | undefined {
-    return (
-      this.activeSessions.get(sessionId) ||
-      this.resumableSessions.get(sessionId)
-    )
-  }
-
-  /**
-   * Checks if a session exists in either the active or resumable pools.
-   *
-   * @param sessionId - The ID of the session to check.
-   * @returns True if the session exists, false otherwise.
-   */
-  public has(sessionId: string): boolean {
-    return (
-      this.activeSessions.has(sessionId) ||
-      this.resumableSessions.has(sessionId)
-    )
-  }
-
-  /**
    * Moves a session from the active pool to the resumable pool and starts the destruction timer.
    *
    * @param sessionId - The ID of the session to pause.
@@ -219,33 +193,17 @@ export default class SessionManager {
     )
     const { players } = session
 
-    if (this.nodelink.workerManager) {
-      for (const player of players.players.values()) {
-        try {
-          await players.destroy(player.guildId)
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          logger(
-            'error',
-            'SessionManager',
-            `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`
-          )
-        }
+    for (const player of players.players.values()) {
+      try {
+        await players.destroy(player.guildId)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        logger(
+          'error',
+          'SessionManager',
+          `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`
+        )
       }
-    } else {
-      for (const player of players.players.values()) {
-        try {
-          player.destroy()
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          logger(
-            'error',
-            'SessionManager',
-            `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`
-          )
-        }
-      }
-      players.players.clear()
     }
 
     session.groups.destroy()
@@ -267,12 +225,39 @@ export default class SessionManager {
   }
 
   /**
-   * Returns an iterator over all currently active sessions.
+   * Retrieves a session by its ID from either the active or resumable pools.
    *
-   * @returns An IterableIterator of active Session objects.
+   * @param sessionId - The ID of the session to retrieve.
+   * @returns The session object if found, otherwise undefined.
    */
-  public values(): IterableIterator<Session> {
-    return this.activeSessions.values()
+  public get(sessionId: string): Session | undefined {
+    return (
+      this.activeSessions.get(sessionId) ||
+      this.resumableSessions.get(sessionId)
+    )
+  }
+
+  /**
+   * Checks if a session exists in either the active or resumable pools.
+   *
+   * @param sessionId - The ID of the session to check.
+   * @returns True if the session exists, false otherwise.
+   */
+  public has(sessionId: string): boolean {
+    return (
+      this.activeSessions.has(sessionId) ||
+      this.resumableSessions.has(sessionId)
+    )
+  }
+
+  /**
+   * Checks if a session is in the resumable pool waiting to be resumed.
+   *
+   * @param sessionId - The ID of the session to check.
+   * @returns True if the session is waiting for resumption, false otherwise.
+   */
+  public isResumable(sessionId: string): boolean {
+    return this.resumableSessions.has(sessionId)
   }
 
   /**
@@ -287,5 +272,36 @@ export default class SessionManager {
       if (player) return player
     }
     return null
+  }
+
+  /**
+   * Returns an iterator over all currently active sessions.
+   *
+   * @returns An IterableIterator of active Session objects.
+   */
+  public values(): IterableIterator<Session> {
+    return this.activeSessions.values()
+  }
+
+  /**
+   * Returns the count of currently active sessions.
+   */
+  public get activeCount(): number {
+    return this.activeSessions.size
+  }
+
+  /**
+   * Returns the count of currently resumable sessions.
+   */
+  public get resumableCount(): number {
+    return this.resumableSessions.size
+  }
+
+  /**
+   * Clears all active and resumable sessions from memory.
+   */
+  public clearSessions(): void {
+    this.activeSessions.clear()
+    this.resumableSessions.clear()
   }
 }

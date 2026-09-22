@@ -76,26 +76,6 @@ export default class SessionManager {
         return sessionId;
     }
     /**
-     * Retrieves a session by its ID from either the active or resumable pools.
-     *
-     * @param sessionId - The ID of the session to retrieve.
-     * @returns The session object if found, otherwise undefined.
-     */
-    get(sessionId) {
-        return (this.activeSessions.get(sessionId) ||
-            this.resumableSessions.get(sessionId));
-    }
-    /**
-     * Checks if a session exists in either the active or resumable pools.
-     *
-     * @param sessionId - The ID of the session to check.
-     * @returns True if the session exists, false otherwise.
-     */
-    has(sessionId) {
-        return (this.activeSessions.has(sessionId) ||
-            this.resumableSessions.has(sessionId));
-    }
-    /**
      * Moves a session from the active pool to the resumable pool and starts the destruction timer.
      *
      * @param sessionId - The ID of the session to pause.
@@ -156,28 +136,14 @@ export default class SessionManager {
         }
         logger('debug', 'SessionManager', `Destroying session ${session.id} and its players.`);
         const { players } = session;
-        if (this.nodelink.workerManager) {
-            for (const player of players.players.values()) {
-                try {
-                    await players.destroy(player.guildId);
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    logger('error', 'SessionManager', `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`);
-                }
+        for (const player of players.players.values()) {
+            try {
+                await players.destroy(player.guildId);
             }
-        }
-        else {
-            for (const player of players.players.values()) {
-                try {
-                    player.destroy();
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    logger('error', 'SessionManager', `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`);
-                }
+            catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                logger('error', 'SessionManager', `Failed to destroy player for guild ${player.guildId} during session destruction: ${message}`);
             }
-            players.players.clear();
         }
         session.groups.destroy();
         session.socket?.destroy?.();
@@ -196,12 +162,33 @@ export default class SessionManager {
         }
     }
     /**
-     * Returns an iterator over all currently active sessions.
+     * Retrieves a session by its ID from either the active or resumable pools.
      *
-     * @returns An IterableIterator of active Session objects.
+     * @param sessionId - The ID of the session to retrieve.
+     * @returns The session object if found, otherwise undefined.
      */
-    values() {
-        return this.activeSessions.values();
+    get(sessionId) {
+        return (this.activeSessions.get(sessionId) ||
+            this.resumableSessions.get(sessionId));
+    }
+    /**
+     * Checks if a session exists in either the active or resumable pools.
+     *
+     * @param sessionId - The ID of the session to check.
+     * @returns True if the session exists, false otherwise.
+     */
+    has(sessionId) {
+        return (this.activeSessions.has(sessionId) ||
+            this.resumableSessions.has(sessionId));
+    }
+    /**
+     * Checks if a session is in the resumable pool waiting to be resumed.
+     *
+     * @param sessionId - The ID of the session to check.
+     * @returns True if the session is waiting for resumption, false otherwise.
+     */
+    isResumable(sessionId) {
+        return this.resumableSessions.has(sessionId);
     }
     /**
      * Searches for a specific player by guild ID across all active sessions.
@@ -216,5 +203,32 @@ export default class SessionManager {
                 return player;
         }
         return null;
+    }
+    /**
+     * Returns an iterator over all currently active sessions.
+     *
+     * @returns An IterableIterator of active Session objects.
+     */
+    values() {
+        return this.activeSessions.values();
+    }
+    /**
+     * Returns the count of currently active sessions.
+     */
+    get activeCount() {
+        return this.activeSessions.size;
+    }
+    /**
+     * Returns the count of currently resumable sessions.
+     */
+    get resumableCount() {
+        return this.resumableSessions.size;
+    }
+    /**
+     * Clears all active and resumable sessions from memory.
+     */
+    clearSessions() {
+        this.activeSessions.clear();
+        this.resumableSessions.clear();
     }
 }

@@ -21,7 +21,7 @@ function _attachDisconnectHandler(context, socket, sessionId, clientInfo) {
         else {
             context.sessions.shutdown(sessionId);
         }
-        context.statsManager.setWebsocketConnections(context.sessions.activeSessions.size);
+        context.statsManager.setWebsocketConnections(context.sessions.activeCount);
     });
 }
 /* INFO: Wraps socket message/close listeners with custom interceptors and plugin hooks */
@@ -122,6 +122,6 @@ function handleClientWebSocket(context, socket, request, clientInfo, oldSessionI
         }
         _createNewSession(context, socket, request, clientInfo);
     }
-    context.statsManager.setWebsocketConnections(context.sessions.activeSessions.size);
+    context.statsManager.setWebsocketConnections(context.sessions.activeCount);
 }
 export { handleClientWebSocket };
