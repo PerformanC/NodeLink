@@ -2,47 +2,10 @@ import type http from 'node:http'
 import process from 'node:process'
 
 import { GatewayEvents } from '../constants.ts'
-import type CredentialManager from '../managers/credentialManager.ts'
 import type SessionManager from '../managers/sessionManager.ts'
-import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type { NodelinkServerType } from '../typings/index.types.ts'
 import type { IPCMessage } from '../typings/shared.types.ts'
-import type { YouTubeOAuthRuntime } from '../typings/sources/youtubeClient.types.ts'
 import { logger } from '../utils.ts'
-
-const BENIGN_DISCONNECT_CODES = new Set([
-  'EPIPE',
-  'ECONNRESET',
-  'ERR_STREAM_PREMATURE_CLOSE'
-])
-
-function setupProcessGuards(): void {
-  process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
-    const isBenign =
-      (err?.code && BENIGN_DISCONNECT_CODES.has(err.code)) ||
-      err?.message === 'aborted'
-
-    if (isBenign) {
-      logger(
-        'debug',
-        'Server',
-        `Ignored expected client disconnect: ${err.code ?? err.message}`
-      )
-      return
-    }
-
-    logger('error', 'Server', `Uncaught Exception: ${err.stack || err.message}`)
-    process.stderr.write('', () => process.exit(1))
-  })
-
-  process.on('unhandledRejection', (reason, promise) => {
-    logger(
-      'error',
-      'Server',
-      `Unhandled Promise Rejection at: ${promise}, reason: ${reason}`
-    )
-  })
-}
 
 function setupClusterWorkerSocket(server: NodelinkServerType): void {
   logger(
@@ -135,49 +98,4 @@ function broadcastWorkerFailure(
   }
 }
 
-async function handleYouTubeOAuthCLI(
-  config: NodelinkConfig,
-  getCredentialManagerClass: () => Promise<typeof CredentialManager>
-): Promise<void> {
-  const OAuth = (
-    await import('../sources/youtube/OAuth.ts').catch((e: Error) => {
-      logger(
-        'error',
-        'youtube',
-        `OAuth module could not be loaded: ${e.message}`
-      )
-      process.exit(1)
-    })
-  ).default
-
-  const CredentialManagerClass = await getCredentialManagerClass()
-  const credentialManager = new CredentialManagerClass({ options: config })
-
-  const oauthRuntime: YouTubeOAuthRuntime = {
-    options: config,
-    credentialManager
-  }
-
-  const validator = new OAuth(oauthRuntime)
-  await validator.validateCurrentTokens()
-
-  try {
-    await OAuth.acquireRefreshToken()
-    process.exit(0)
-  } catch (error) {
-    const err = error as Error
-    logger(
-      'error',
-      'OAuth',
-      `YouTube OAuth token acquisition failed: ${err.message}`
-    )
-    process.exit(1)
-  }
-}
-
-export {
-  broadcastWorkerFailure,
-  handleYouTubeOAuthCLI,
-  setupClusterWorkerSocket,
-  setupProcessGuards
-}
+export { broadcastWorkerFailure, setupClusterWorkerSocket }

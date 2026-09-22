@@ -12,12 +12,14 @@ import {
 } from './bootstrap/branding.ts'
 import {
   broadcastWorkerFailure,
-  handleYouTubeOAuthCLI,
-  setupClusterWorkerSocket,
-  setupProcessGuards
+  setupClusterWorkerSocket
 } from './bootstrap/cluster.ts'
 import { loadBootstrapConfig } from './bootstrap/config.ts'
-import { memoryTrace, validateRuntime } from './bootstrap/runtime.ts'
+import {
+  memoryTrace,
+  setupProcessGuards,
+  validateRuntime
+} from './bootstrap/runtime.ts'
 import { setupGracefulShutdown } from './bootstrap/shutdown.ts'
 import ConfigValidationManager from './managers/configValidationManager.ts'
 import type ConnectionManager from './managers/connectionManager.ts'
@@ -58,6 +60,7 @@ import {
   cleanupWebSocketServer,
   setupWebSocketEvents
 } from './server/wsRouter.ts'
+import { handleYouTubeOAuthCLI } from './sources/youtube/OAuth.ts'
 import type { ApiMiddlewareExtension } from './typings/api/api.types.ts'
 import type { NodelinkConfig } from './typings/config/config.types.ts'
 import type {

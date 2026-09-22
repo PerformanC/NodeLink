@@ -4,6 +4,40 @@ import { MINIMUM_NODE_VERSION } from '../constants.ts'
 import type CredentialManager from '../managers/credentialManager.ts'
 import { logger } from '../utils.ts'
 
+const BENIGN_DISCONNECT_CODES = new Set([
+  'EPIPE',
+  'ECONNRESET',
+  'ERR_STREAM_PREMATURE_CLOSE'
+])
+
+function setupProcessGuards(): void {
+  process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+    const isBenign =
+      (err?.code && BENIGN_DISCONNECT_CODES.has(err.code)) ||
+      err?.message === 'aborted'
+
+    if (isBenign) {
+      logger(
+        'debug',
+        'Server',
+        `Ignored expected client disconnect: ${err.code ?? err.message}`
+      )
+      return
+    }
+
+    logger('error', 'Server', `Uncaught Exception: ${err.stack || err.message}`)
+    process.stderr.write('', () => process.exit(1))
+  })
+
+  process.on('unhandledRejection', (reason, promise) => {
+    logger(
+      'error',
+      'Server',
+      `Unhandled Promise Rejection at: ${promise}, reason: ${reason}`
+    )
+  })
+}
+
 interface NodeLtsCacheEntry {
   version: string
   fetchedAt: number
@@ -155,5 +189,6 @@ export {
   _isVersionAtLeast,
   getLatestNodeLtsVersion,
   memoryTrace,
+  setupProcessGuards,
   validateRuntime
 }

@@ -7,6 +7,10 @@
  * @packageDocumentation
  * @module YouTubeOAuth
  */
+import process from 'node:process'
+
+import type CredentialManager from '../../managers/credentialManager.ts'
+import type { NodelinkConfig } from '../../typings/config/config.types.ts'
 import type { IOAuth } from '../../typings/sources/youtube.types.ts'
 import type {
   YouTubeOAuthDeviceCodeResponse,
@@ -481,3 +485,34 @@ export default class OAuth implements IOAuth {
     })
   }
 }
+
+async function handleYouTubeOAuthCLI(
+  config: NodelinkConfig,
+  getCredentialManagerClass: () => Promise<typeof CredentialManager>
+): Promise<void> {
+  const CredentialManagerClass = await getCredentialManagerClass()
+  const credentialManager = new CredentialManagerClass({ options: config })
+
+  const oauthRuntime: YouTubeOAuthRuntime = {
+    options: config,
+    credentialManager
+  }
+
+  const validator = new OAuth(oauthRuntime)
+  await validator.validateCurrentTokens()
+
+  try {
+    await OAuth.acquireRefreshToken()
+    process.exit(0)
+  } catch (error) {
+    const err = error as Error
+    logger(
+      'error',
+      'OAuth',
+      `YouTube OAuth token acquisition failed: ${err.message}`
+    )
+    process.exit(1)
+  }
+}
+
+export { handleYouTubeOAuthCLI }

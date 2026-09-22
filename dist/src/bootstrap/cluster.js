@@ -1,26 +1,6 @@
 import process from 'node:process';
 import { GatewayEvents } from '../constants.js';
 import { logger } from '../utils.js';
-const BENIGN_DISCONNECT_CODES = new Set([
-    'EPIPE',
-    'ECONNRESET',
-    'ERR_STREAM_PREMATURE_CLOSE'
-]);
-function setupProcessGuards() {
-    process.on('uncaughtException', (err) => {
-        const isBenign = (err?.code && BENIGN_DISCONNECT_CODES.has(err.code)) ||
-            err?.message === 'aborted';
-        if (isBenign) {
-            logger('debug', 'Server', `Ignored expected client disconnect: ${err.code ?? err.message}`);
-            return;
-        }
-        logger('error', 'Server', `Uncaught Exception: ${err.stack || err.message}`);
-        process.stderr.write('', () => process.exit(1));
-    });
-    process.on('unhandledRejection', (reason, promise) => {
-        logger('error', 'Server', `Unhandled Promise Rejection at: ${promise}, reason: ${reason}`);
-    });
-}
 function setupClusterWorkerSocket(server) {
     logger('info', 'Server', 'Running as cluster worker — waiting for sockets from master.');
     process.on('message', (msg, handle) => {
@@ -84,27 +64,4 @@ function broadcastWorkerFailure(sessions, workerId, affectedGuilds) {
         }
     }
 }
-async function handleYouTubeOAuthCLI(config, getCredentialManagerClass) {
-    const OAuth = (await import('../sources/youtube/OAuth.js').catch((e) => {
-        logger('error', 'youtube', `OAuth module could not be loaded: ${e.message}`);
-        process.exit(1);
-    })).default;
-    const CredentialManagerClass = await getCredentialManagerClass();
-    const credentialManager = new CredentialManagerClass({ options: config });
-    const oauthRuntime = {
-        options: config,
-        credentialManager
-    };
-    const validator = new OAuth(oauthRuntime);
-    await validator.validateCurrentTokens();
-    try {
-        await OAuth.acquireRefreshToken();
-        process.exit(0);
-    }
-    catch (error) {
-        const err = error;
-        logger('error', 'OAuth', `YouTube OAuth token acquisition failed: ${err.message}`);
-        process.exit(1);
-    }
-}
-export { broadcastWorkerFailure, handleYouTubeOAuthCLI, setupClusterWorkerSocket, setupProcessGuards };
+export { broadcastWorkerFailure, setupClusterWorkerSocket };

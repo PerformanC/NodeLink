@@ -1,6 +1,26 @@
 import process from 'node:process';
 import { MINIMUM_NODE_VERSION } from '../constants.js';
 import { logger } from '../utils.js';
+const BENIGN_DISCONNECT_CODES = new Set([
+    'EPIPE',
+    'ECONNRESET',
+    'ERR_STREAM_PREMATURE_CLOSE'
+]);
+function setupProcessGuards() {
+    process.on('uncaughtException', (err) => {
+        const isBenign = (err?.code && BENIGN_DISCONNECT_CODES.has(err.code)) ||
+            err?.message === 'aborted';
+        if (isBenign) {
+            logger('debug', 'Server', `Ignored expected client disconnect: ${err.code ?? err.message}`);
+            return;
+        }
+        logger('error', 'Server', `Uncaught Exception: ${err.stack || err.message}`);
+        process.stderr.write('', () => process.exit(1));
+    });
+    process.on('unhandledRejection', (reason, promise) => {
+        logger('error', 'Server', `Unhandled Promise Rejection at: ${promise}, reason: ${reason}`);
+    });
+}
 const NODE_LTS_CREDENTIAL_KEY = 'runtime.node.latestLts';
 const NODE_LTS_CREDENTIAL_TTL_MS = 24 * 60 * 60 * 1000;
 const NODE_LTS_MEMORY_TTL_MS = 10 * 60 * 1000;
@@ -98,4 +118,4 @@ async function validateRuntime(credentialManager) {
         logger('info', 'Server', `Runtime ${process.version} is supported, but below latest LTS (${latestLts}). Consider updating.`);
     }
 }
-export { _isVersionAtLeast, getLatestNodeLtsVersion, memoryTrace, validateRuntime };
+export { _isVersionAtLeast, getLatestNodeLtsVersion, memoryTrace, setupProcessGuards, validateRuntime };
