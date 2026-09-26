@@ -77,6 +77,25 @@ const MAX_BUFFER_BYTES = 512 * 1024
  */
 const MIN_REQUEST_INTERVAL_MS = 500
 
+/**
+ * Consecutive status-2 observations without media progress that trigger
+ * a full session recovery as a last resort.
+ * @internal
+ */
+const MAX_LIMITED_PLAYBACK_COUNT = 6
+
+/**
+ * Minimum interval between inline protection token refreshes.
+ * @internal
+ */
+const PROTECTION_REFRESH_COOLDOWN_MS = 30_000
+
+/**
+ * Maximum completed segments retained per itag for duplicate detection.
+ * @internal
+ */
+const MAX_TRACKED_SEGMENTS_PER_ITAG = 64
+
 type RecoveryReason =
   | 'protection'
   | 'reload'
@@ -265,17 +284,49 @@ export class CompositeBuffer {
 
   /**
    * Appends a byte chunk or merges another CompositeBuffer.
+   *
+   * Contiguous views over the same backing store are merged into a
+   * single chunk to keep the chunk list short after repeated splits.
    * @param chunk - Data to append.
    */
   append(chunk: Uint8Array | CompositeBuffer): void {
     if (chunk instanceof Uint8Array) {
-      this.chunks.push(chunk)
+      if (this.canMergeWithLastChunk(chunk)) {
+        const lastChunk = this.chunks[this.chunks.length - 1]
+        if (lastChunk) {
+          this.chunks[this.chunks.length - 1] = new Uint8Array(
+            lastChunk.buffer,
+            lastChunk.byteOffset,
+            lastChunk.length + chunk.length
+          )
+          this.resetFocus()
+        } else {
+          this.chunks.push(chunk)
+        }
+      } else {
+        this.chunks.push(chunk)
+      }
       this.totalLength += chunk.length
     } else if (chunk instanceof CompositeBuffer) {
       for (const c of chunk.chunks) {
         this.append(c)
       }
     }
+  }
+
+  /**
+   * Checks whether a chunk extends the last chunk over the same backing store.
+   * @param chunk - Candidate chunk to merge.
+   * @returns True when the chunk starts exactly where the last chunk ends.
+   */
+  canMergeWithLastChunk(chunk: Uint8Array): boolean {
+    if (this.chunks.length === 0) return false
+    const lastChunk = this.chunks[this.chunks.length - 1]
+    if (!lastChunk) return false
+    return (
+      lastChunk.buffer === chunk.buffer &&
+      lastChunk.byteOffset + lastChunk.length === chunk.byteOffset
+    )
   }
 
   /**
@@ -617,6 +668,12 @@ export class SabrStream extends PassThrough {
   /** Media generation associated with the current status-2 streak. */
   private limitedPlaybackGeneration: number
 
+  /** Timestamp of the last inline protection token refresh. */
+  private lastProtectionRefreshAt: number
+
+  /** Whether an inline protection token refresh is in flight. */
+  private protectionRefreshPending: boolean
+
   /** Recovery requested while the current UMP response is still being read. */
   private pendingRecoveryReason: RecoveryReason | null
 
@@ -774,6 +831,8 @@ export class SabrStream extends PassThrough {
     this.mediaProgressGeneration = 0
     this.limitedPlaybackCount = 0
     this.limitedPlaybackGeneration = 0
+    this.lastProtectionRefreshAt = 0
+    this.protectionRefreshPending = false
     this.pendingRecoveryReason = null
     this.pendingResponseError = null
 
@@ -968,6 +1027,43 @@ export class SabrStream extends PassThrough {
   /** Resumes the existing session when recovery became stale while resolving. */
   cancelRecovery(): void {
     this.recoveryPending = false
+  }
+
+  /**
+   * Refreshes the PO token inline after repeated limited-playback signals.
+   *
+   * Mints a fresh token without tearing down the session, so playback
+   * continues uninterrupted while attestation is renewed.
+   */
+  private refreshProtectionToken(): void {
+    if (this.protectionRefreshPending || this._aborted || this.destroyed) return
+    this.protectionRefreshPending = true
+    void (async () => {
+      try {
+        const tokenData = await poTokenManager.generate(
+          this.videoId,
+          this.visitorData ?? undefined
+        )
+        if (this._aborted || this.destroyed) return
+        if (tokenData.poToken) {
+          this.poToken = base64ToU8(tokenData.poToken)
+          if (tokenData.visitorData && !this.visitorData) {
+            this.visitorData = tokenData.visitorData
+          }
+          logger(
+            'debug',
+            'SABR',
+            'Refreshed PO token after protection status 2 (session kept)'
+          )
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        logger('warn', 'SABR', `Failed to refresh PO token: ${message}`)
+      } finally {
+        this.lastProtectionRefreshAt = Date.now()
+        this.protectionRefreshPending = false
+      }
+    })()
   }
 
   /** Emits one recovery request and records the media generation it protects. */
@@ -1246,6 +1342,8 @@ export class SabrStream extends PassThrough {
     this.pendingResponseError = null
     this.limitedPlaybackCount = 0
     this.limitedPlaybackGeneration = this.mediaProgressGeneration
+    this.lastProtectionRefreshAt = 0
+    this.protectionRefreshPending = false
     this.usingTransferredSession = false
 
     logger(
@@ -1434,8 +1532,17 @@ export class SabrStream extends PassThrough {
       }
 
       if (this.limitedPlaybackCount >= 2) {
-        poTokenManager.reset()
-        this.queueRecovery('protection')
+        const sinceRefresh = now - this.lastProtectionRefreshAt
+        if (
+          !this.protectionRefreshPending &&
+          sinceRefresh > PROTECTION_REFRESH_COOLDOWN_MS
+        ) {
+          this.refreshProtectionToken()
+        }
+        if (this.limitedPlaybackCount >= MAX_LIMITED_PLAYBACK_COUNT) {
+          poTokenManager.reset()
+          this.queueRecovery('protection')
+        }
       }
       return
     }
@@ -1656,11 +1763,14 @@ export class SabrStream extends PassThrough {
           }
           const endMs = startMs + segmentDuration
 
+          if (segMap.size >= MAX_TRACKED_SEGMENTS_PER_ITAG) {
+            const oldest = segMap.keys().next().value
+            if (oldest !== undefined) segMap.delete(oldest)
+          }
           segMap.set(s.segmentNumber, {
             segmentNumber: s.segmentNumber,
             durationMs: segmentDuration,
             byteLength: s.loadedBytes ?? 0,
-            mediaHeader: s.mediaHeader,
             startMs,
             endMs
           })
@@ -1821,8 +1931,8 @@ export class SabrStream extends PassThrough {
       abrState,
       audioFormat,
       videoFormat,
-      selectedFormatIds,
-      preferredAudioFormatIds,
+      initializationFormatIds,
+      selectedAudioFormatIds,
       bufferedRanges,
       contexts,
       unsent
@@ -1856,7 +1966,7 @@ export class SabrStream extends PassThrough {
     logger(
       'debug',
       'SABR',
-      `Req formats audio=${fmt(audioFormat)} video=${fmt(videoFormat)} selected=[${(selectedFormatIds ?? []).map(fmtId).join(',')}] preferredA=[${(preferredAudioFormatIds ?? []).map(fmtId).join(',')}] bufferedRanges=${bufferedRanges?.length ?? 0} ctx=${contexts?.length ?? 0} unsentCtx=${unsent?.length ?? 0} backoff=${this.nextRequestPolicy?.backoffTimeMs ?? 0} cookieLen=${cookieLen}`
+      `Req formats audio=${fmt(audioFormat)} video=${fmt(videoFormat)} init=[${(initializationFormatIds ?? []).map(fmtId).join(',')}] selectedA=[${(selectedAudioFormatIds ?? []).map(fmtId).join(',')}] bufferedRanges=${bufferedRanges?.length ?? 0} ctx=${contexts?.length ?? 0} unsentCtx=${unsent?.length ?? 0} backoff=${this.nextRequestPolicy?.backoffTimeMs ?? 0} cookieLen=${cookieLen}`
     )
 
     if (bufferedRanges?.length) {
@@ -1938,6 +2048,8 @@ export class SabrStream extends PassThrough {
     if (!this.videoPlaybackUstreamerConfig || !this.clientInfo)
       throw new Error('Missing config')
 
+    const collectTrafficDumps = this.enableTrafficLog && this.enableTrafficDump
+
     if (
       this.nextRequestPolicy?.backoffTimeMs &&
       this.nextRequestPolicy.backoffTimeMs > 0
@@ -1962,7 +2074,7 @@ export class SabrStream extends PassThrough {
         > => f !== undefined
       )
 
-    const selectedFormatIds = formatsInitialized ? requestFormatIds : []
+    const initializationFormatIds = formatsInitialized ? requestFormatIds : []
 
     if (!this.cachedBufferedRanges) {
       this.cachedBufferedRanges = this.buildBufferedRanges(
@@ -1982,7 +2094,7 @@ export class SabrStream extends PassThrough {
       }
     }
 
-    const preferredAudioFormatIds = audioFormat
+    const selectedAudioFormatIds = audioFormat
       ? [this.resolveFormatIdForRequest(audioFormat)].filter(
           (
             f
@@ -1991,7 +2103,7 @@ export class SabrStream extends PassThrough {
           > => f !== undefined
         )
       : []
-    const preferredVideoFormatIds = videoFormat
+    const selectedVideoFormatIds = videoFormat
       ? [this.resolveFormatIdForRequest(videoFormat)].filter(
           (
             f
@@ -2006,9 +2118,9 @@ export class SabrStream extends PassThrough {
       abrState,
       audioFormat,
       videoFormat,
-      selectedFormatIds,
-      preferredAudioFormatIds,
-      preferredVideoFormatIds,
+      initializationFormatIds,
+      selectedAudioFormatIds,
+      selectedVideoFormatIds,
       bufferedRanges,
       contexts,
       unsent
@@ -2021,7 +2133,7 @@ export class SabrStream extends PassThrough {
         bandwidthEstimate: BigInt(abrState.bandwidthEstimate ?? 0).toString(),
         timeSinceLastActionMs: 0n
       },
-      selectedFormatIds: selectedFormatIds,
+      initializationFormatIds: initializationFormatIds,
       bufferedRanges: bufferedRanges.map((r) => ({
         formatId: r.formatId,
         startTimeMs: r.startTimeMs ?? '0',
@@ -2040,8 +2152,8 @@ export class SabrStream extends PassThrough {
         typeof this.videoPlaybackUstreamerConfig === 'string'
           ? base64ToU8(this.videoPlaybackUstreamerConfig)
           : this.videoPlaybackUstreamerConfig,
-      preferredAudioFormatIds,
-      preferredVideoFormatIds,
+      selectedAudioFormatIds,
+      selectedVideoFormatIds,
       streamerContext: {
         poToken: this.poToken ?? undefined,
         playbackCookie: this.nextRequestPolicy?.playbackCookie,
@@ -2059,14 +2171,14 @@ export class SabrStream extends PassThrough {
       playerTimeMs: abrState.playerTimeMs,
       requestBodyBytes: requestBody.length,
       requestBodySha256: sha256Hex(requestBody),
-      requestBodyB64: this.enableTrafficDump
+      requestBodyB64: collectTrafficDumps
         ? b64Trunc(requestBody, this.trafficDumpMaxBytes)
         : undefined,
-      requestBodyB64Truncated: this.enableTrafficDump
+      requestBodyB64Truncated: collectTrafficDumps
         ? requestBody.length > this.trafficDumpMaxBytes
         : undefined,
-      preferredAudioItags: preferredAudioFormatIds.map((f) => f.itag),
-      selectedItags: selectedFormatIds.map((f) => f.itag),
+      selectedAudioItags: selectedAudioFormatIds.map((f) => f.itag),
+      initializationItags: initializationFormatIds.map((f) => f.itag),
       bufferedRanges: bufferedRanges.map((r) => ({
         itag: r.formatId?.itag,
         startMs: r.startTimeMs ?? '0',
@@ -2123,7 +2235,7 @@ export class SabrStream extends PassThrough {
       headers.Authorization = `Bearer ${this.config.accessToken}`
     }
 
-    const t0 = Date.now()
+    const fetchStart = Date.now()
     let res: Response
     try {
       res = await fetch(url.toString(), {
@@ -2159,7 +2271,7 @@ export class SabrStream extends PassThrough {
         ok: false,
         statusText: res.statusText,
         url: url.toString(),
-        durationMs: Date.now() - t0,
+        durationMs: Date.now() - fetchStart,
         responseBytes: (errorText ?? '').length,
         errorText: errorText.slice(0, 2000)
       })
@@ -2173,6 +2285,9 @@ export class SabrStream extends PassThrough {
     const signal = this.abortController.signal
 
     if (!res.body) throw new Error('Missing response body')
+
+    // Measure transfer only; excludes connection setup and time to headers.
+    const t0 = Date.now()
     const reader = res.body.getReader()
     let buffer = new CompositeBuffer()
     const ump = new UmpReader(buffer)
@@ -2209,10 +2324,10 @@ export class SabrStream extends PassThrough {
         if (done) break
 
         responseBytes += value.length
-        responseHash.update(value)
+        if (collectTrafficDumps) responseHash.update(value)
 
         if (
-          this.enableTrafficDump &&
+          collectTrafficDumps &&
           this.trafficDumpMaxBytes > 0 &&
           responseDumpBytes < this.trafficDumpMaxBytes
         ) {
@@ -2279,7 +2394,7 @@ export class SabrStream extends PassThrough {
           else if (part.type === UMPPartId.STREAM_PROTECTION_STATUS)
             saw.streamProtectionStatus = true
 
-          if (this.enableTrafficDump && this.trafficDumpMaxBytes > 0) {
+          if (collectTrafficDumps && this.trafficDumpMaxBytes > 0) {
             const shouldDumpPayload =
               part.type !== UMPPartId.MEDIA &&
               part.type !== UMPPartId.MEDIA_HEADER &&
@@ -2391,7 +2506,7 @@ export class SabrStream extends PassThrough {
     }
 
     const responseDump =
-      this.enableTrafficDump && responseDumpChunks.length
+      collectTrafficDumps && responseDumpChunks.length
         ? concatenateChunks(responseDumpChunks)
         : undefined
 
@@ -2404,11 +2519,13 @@ export class SabrStream extends PassThrough {
       url: url.toString(),
       durationMs: Date.now() - t0,
       responseBytes,
-      responseSha256: responseHash.digest('hex'),
+      responseSha256: collectTrafficDumps
+        ? responseHash.digest('hex')
+        : undefined,
       responseBodyB64: responseDump
         ? Buffer.from(responseDump).toString('base64')
         : undefined,
-      responseBodyB64Truncated: this.enableTrafficDump
+      responseBodyB64Truncated: collectTrafficDumps
         ? responseBytes > this.trafficDumpMaxBytes
         : undefined,
       contentType: res.headers.get('content-type') ?? '',
