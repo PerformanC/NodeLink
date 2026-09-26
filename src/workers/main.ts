@@ -2278,9 +2278,10 @@ async function processQueue(queueKey: string): Promise<void> {
       }
 
       case 'loadLyrics': {
-        const { decodedTrackInfo, language } = (payload ?? {}) as {
+        const { decodedTrackInfo, language, source } = (payload ?? {}) as {
           decodedTrackInfo: TrackInfo
           language?: string
+          source?: string
         }
         const trackInfo: TrackInfoExtended = {
           ...decodedTrackInfo,
@@ -2289,7 +2290,12 @@ async function processQueue(queueKey: string): Promise<void> {
           uri: decodedTrackInfo.uri
         }
         const lyrics = await getLyricsManager()
-        result = await lyrics.loadLyrics({ info: trackInfo }, language)
+        result = await lyrics.loadLyrics(
+          { info: trackInfo },
+          language,
+          undefined,
+          source
+        )
         break
       }
       case 'loadMeaning': {
