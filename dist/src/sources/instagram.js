@@ -531,7 +531,9 @@ export default class InstagramSource {
     /**
      * Fetches audio information from the authenticated Instagram audio API.
      *
-     * Supports both original sound info and music info payloads.
+     * Supports both original sound info and music info payloads. When the
+     * initial response carries no usable audio, retries once with the
+     * pagination cursor from `paging_info`, which yields valid items.
      *
      * @param audioId - Instagram audio cluster ID.
      * @returns Fetch result containing audio stream URL and metadata, or an error.
@@ -543,6 +545,50 @@ export default class InstagramSource {
                 exception: { message: 'Audio ID not provided', severity: 'common' }
             };
         }
+        const first = await this._postClipsMusic(audioId);
+        if (first.exception || !first.responseData) {
+            return {
+                data: null,
+                exception: first.exception ?? {
+                    message: 'Invalid data structure in Audio API JSON response',
+                    severity: 'fault'
+                }
+            };
+        }
+        let result = this._parseClipsMusicResponse(first.responseData);
+        if (!result.data) {
+            const maxId = this._extractClipsMusicMaxId(first.responseData);
+            if (maxId) {
+                logger('debug', 'Sources', `Retrying Instagram audio API with paging cursor for ${audioId}`);
+                const second = await this._postClipsMusic(audioId, maxId);
+                if (!second.exception && second.responseData) {
+                    result = this._parseClipsMusicResponse(second.responseData);
+                }
+            }
+        }
+        return result;
+    }
+    /**
+     * Extracts the pagination cursor from a clips music response.
+     *
+     * @param responseData - Parsed clips music response body.
+     * @returns Pagination cursor when present, otherwise `null`.
+     */
+    _extractClipsMusicMaxId(responseData) {
+        const payload = responseData.payload;
+        const pagingInfo = (payload?.paging_info ?? responseData.paging_info);
+        const maxId = pagingInfo?.max_id;
+        return typeof maxId === 'string' && maxId ? maxId : null;
+    }
+    /**
+     * Posts to the Instagram clips music API and parses the response envelope.
+     *
+     * @param audioId - Instagram audio cluster ID.
+     * @param maxId - Optional pagination cursor for follow-up requests.
+     * @returns Parsed response body, or a transport-level exception when the
+     * request or envelope parsing fails.
+     */
+    async _postClipsMusic(audioId, maxId) {
         const headers = {
             Accept: '*/*',
             'Accept-Language': 'en-US,en;q=0.9',
@@ -557,13 +603,18 @@ export default class InstagramSource {
             Origin: 'https://www.instagram.com',
             Referer: `https://www.instagram.com/reels/audio/${audioId}/`
         };
-        const body = new URLSearchParams({
+        const params = {
             audio_cluster_id: audioId,
             lsd: this.apiConfig.fbLsd ?? '',
             jazoest: this.apiConfig.jazoest,
             __user: '0',
             __a: '1'
-        }).toString();
+        };
+        if (maxId) {
+            params.max_id = maxId;
+            params.original_sound_audio_asset_id = audioId;
+        }
+        const body = new URLSearchParams(params).toString();
         let response = null;
         try {
             response = await http1makeRequest(this.apiConfig.audioApiUrl, {
@@ -577,7 +628,7 @@ export default class InstagramSource {
             const message = e instanceof Error ? e.message : String(e);
             logger('error', 'Sources', `Internal error during Instagram Audio API request for audioId ${audioId}: ${message}`);
             return {
-                data: null,
+                responseData: null,
                 exception: {
                     message: `Internal error during Audio API request: ${message}`,
                     severity: 'fault'
@@ -588,7 +639,7 @@ export default class InstagramSource {
             const errorMsg = response.error ||
                 `Audio API request failed with code ${response.statusCode}`;
             return {
-                data: null,
+                responseData: null,
                 exception: {
                     message: String(errorMsg),
                     severity: 'fault',
@@ -607,7 +658,7 @@ export default class InstagramSource {
             }
             catch (_e) {
                 return {
-                    data: null,
+                    responseData: null,
                     exception: {
                         message: 'Invalid JSON response from Audio API',
                         severity: 'fault'
@@ -617,13 +668,27 @@ export default class InstagramSource {
         }
         if (!responseData) {
             return {
-                data: null,
+                responseData: null,
                 exception: {
                     message: 'Invalid data structure in Audio API JSON response',
                     severity: 'fault'
                 }
             };
         }
+        return {
+            responseData: responseData,
+            exception: null
+        };
+    }
+    /**
+     * Parses audio metadata from a clips music response body.
+     *
+     * Supports both original sound info and music info payloads.
+     *
+     * @param responseData - Parsed clips music response body.
+     * @returns Fetch result containing audio stream URL and metadata, or an error.
+     */
+    _parseClipsMusicResponse(responseData) {
         const data = responseData;
         let payload = null;
         if (data.payload) {
