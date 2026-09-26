@@ -311,12 +311,13 @@ export default class PandoraSource {
         const authError = await this.ensureAuth();
         if (authError)
             return authError;
-        const typeMatch = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(url);
+        const cleanUrl = url.split('?')[0]?.split('#')[0] ?? url;
+        const typeMatch = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(cleanUrl);
         if (!typeMatch) {
             return { loadType: 'empty', data: {} };
         }
         const type = typeMatch[2];
-        const lastPart = url.split('/').pop() ?? '';
+        const lastPart = cleanUrl.split('/').pop() ?? '';
         logger('debug', 'Pandora', `Resolving ${type} with ID: ${lastPart}`);
         switch (type) {
             case 'artist':

@@ -427,9 +427,11 @@ export default class PandoraSource implements SourceInstance {
     const authError = await this.ensureAuth()
     if (authError) return authError
 
+    const cleanUrl = url.split('?')[0]?.split('#')[0] ?? url
+
     const typeMatch =
       /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(
-        url
+        cleanUrl
       )
 
     if (!typeMatch) {
@@ -437,7 +439,7 @@ export default class PandoraSource implements SourceInstance {
     }
 
     const type = typeMatch[2]
-    const lastPart = url.split('/').pop() ?? ''
+    const lastPart = cleanUrl.split('/').pop() ?? ''
 
     logger('debug', 'Pandora', `Resolving ${type} with ID: ${lastPart}`)
 
