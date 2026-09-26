@@ -1073,7 +1073,7 @@ else {
                     result = await lyrics.loadLyrics({
                         info: payload
                             .decodedTrackInfo
-                    }, payload.language);
+                    }, payload.language, undefined, payload.source);
                     break;
                 }
                 case 'loadMeaning': {

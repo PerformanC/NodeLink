@@ -76,7 +76,7 @@ export default class LyricsManager {
             await fs.mkdir(lyricsDir, { recursive: true });
         }
     }
-    async loadLyrics(decodedTrack, language, skipTrackSource = false) {
+    async loadLyrics(decodedTrack, language, skipTrackSource = false, requestedSource) {
         if (!decodedTrack?.info?.sourceName || !decodedTrack.info?.uri) {
             logger('warn', 'Lyrics', 'Invalid track object provided to loadLyrics', decodedTrack);
             return {
@@ -107,6 +107,26 @@ export default class LyricsManager {
             };
         }
         const trackInfo = getTrackInfoFromResolve(reliableTrackData, decodedTrack.info);
+        if (requestedSource?.trim()) {
+            const requestedName = requestedSource.trim().toLowerCase();
+            const requestedLyricsSource = this.lyricsSources.get(requestedName);
+            if (!requestedLyricsSource) {
+                logger('warn', 'Lyrics', `Requested lyrics source is not available: ${requestedName}`);
+                return {
+                    loadType: 'error',
+                    data: {
+                        message: `Lyrics source '${requestedName}' is not available.`,
+                        severity: 'common'
+                    }
+                };
+            }
+            logger('debug', 'Lyrics', `Loading lyrics from ${requestedName} for ${trackInfo?.title || 'Unknown Title'}.`);
+            const requestedLyrics = await requestedLyricsSource.getLyrics(trackInfo, language);
+            if (requestedLyrics?.loadType === 'lyrics') {
+                requestedLyrics.data.provider = requestedName;
+            }
+            return requestedLyrics;
+        }
         const sourceName = trackInfo.sourceName;
         const lyricsSource = sourceName
             ? this.lyricsSources.get(sourceName)

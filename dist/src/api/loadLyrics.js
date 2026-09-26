@@ -19,6 +19,16 @@ function getEncodedTrackFromQuery(parsedUrl) {
     return encodedTrack.replace(/ /g, '+');
 }
 /**
+ * Reads the optional `source` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Selected lyrics source name, or `undefined` when absent.
+ */
+function getSourceFromQuery(parsedUrl) {
+    const source = parsedUrl.searchParams.get('source')?.trim();
+    return source ? source : undefined;
+}
+/**
  * Reads the optional `lang` query string parameter.
  *
  * @param parsedUrl - Parsed request URL.
@@ -62,6 +72,7 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
     }
     const encodedTrack = getEncodedTrackFromQuery(parsedUrl);
     const language = getLanguageFromQuery(parsedUrl);
+    const source = getSourceFromQuery(parsedUrl);
     if (!encodedTrack) {
         logger('warn', 'Lyrics', MISSING_ENCODED_TRACK_MESSAGE);
         sendErrorResponse(req, res, 400, 'Bad Request', MISSING_ENCODED_TRACK_MESSAGE, parsedUrl.pathname);
@@ -69,11 +80,12 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
     }
     try {
         const decodedTrack = decodeTrack(encodedTrack);
-        logger('debug', 'Lyrics', `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}`);
+        logger('debug', 'Lyrics', `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}${source ? ` (Source: ${source})` : ''}`);
         if (runtime.sourceWorkerManager) {
             const delegated = runtime.sourceWorkerManager.delegate(req, res, 'loadLyrics', {
                 decodedTrackInfo: decodedTrack.info,
-                language
+                language,
+                source
             });
             if (delegated) {
                 return;
@@ -84,11 +96,12 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
             const worker = runtime.workerManager.getBestWorker();
             lyricsData = await runtime.workerManager.execute(worker, 'loadLyrics', {
                 decodedTrackInfo: decodedTrack.info,
-                language
+                language,
+                source
             });
         }
         else {
-            lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language);
+            lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language, undefined, source);
         }
         sendResponse(req, res, lyricsData, 200);
     }
