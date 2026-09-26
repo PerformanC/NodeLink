@@ -2,11 +2,12 @@ import cluster from 'node:cluster';
 import { EventEmitter } from 'node:events';
 import process from 'node:process';
 import WebSocketServer from '@performanc/pwsl-server';
-import { checkUpdates, printStartupBanner, printSupportGuidelines } from './bootstrap/branding.js';
+import { checkPostUpdateNotice, checkUpdates, printStartupBanner, printSupportGuidelines } from './bootstrap/branding.js';
 import { broadcastWorkerFailure, setupClusterWorkerSocket } from './bootstrap/cluster.js';
 import { loadBootstrapConfig } from './bootstrap/config.js';
 import { memoryTrace, setupProcessGuards, validateRuntime } from './bootstrap/runtime.js';
 import { setupGracefulShutdown } from './bootstrap/shutdown.js';
+import { setupPeriodicUpdateCheck } from './bootstrap/updater/scheduler.js';
 import ConfigValidationManager from './managers/configValidationManager.js';
 import DosProtectionManager from './managers/dosProtectionManager.js';
 import PluginManager from './managers/pluginManager.js';
@@ -284,7 +285,8 @@ const { config, clusterEnabled } = await loadBootstrapConfig();
 if (!cluster.isWorker) {
     printSupportGuidelines();
     printStartupBanner(String(getVersion()), clusterEnabled);
-    await checkUpdates();
+    await checkPostUpdateNotice();
+    await checkUpdates(config);
 }
 await startNodeLink({ config, clusterEnabled });
 async function startNodeLink({ config, clusterEnabled }) {
@@ -311,6 +313,7 @@ async function startNodeLink({ config, clusterEnabled }) {
     globalThis.nodelink =
         nserver;
     setupGracefulShutdown(nserver);
+    setupPeriodicUpdateCheck(nserver, config);
 }
 export default NodelinkServer;
 export { NodelinkServer };

@@ -950,6 +950,32 @@ export interface ServerSection {
 
   /** Request body timeout in milliseconds. */
   bodyTimeout?: number
+
+  /** Automatic server self-update settings. */
+  autoUpdate?: AutoUpdateSection
+}
+
+export interface AutoUpdateSection {
+  /** Enable automatic self-updating of the server code. */
+  enabled?: boolean
+
+  /** Target update channel: 'dev' or 'stable'. Defaults to 'dev'. */
+  channel?: 'dev' | 'stable'
+
+  /** Whether to check for updates on server boot. Defaults to true. */
+  checkOnBoot?: boolean
+
+  /** Interval in milliseconds to check for updates in background (e.g. 3600000 = 1 hour). Set 0 to disable. */
+  checkInterval?: number
+
+  /** Automatically restart the server to apply the update. Defaults to true. */
+  autoRestart?: boolean
+
+  /** If false, waits for active players to drop to 0 before restarting. If true, disconnects players with code 5002. Defaults to false. */
+  forceRestart?: boolean
+
+  /** Timeout in milliseconds to wait for WebSockets to disconnect gracefully after sending code 5002. Defaults to 2000. */
+  drainTimeout?: number
 }
 
 /**

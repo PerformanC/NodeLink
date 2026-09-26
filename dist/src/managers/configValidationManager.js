@@ -34,7 +34,25 @@ export default class ConfigValidationManager {
                     },
                     password: { type: 'string', min: 1, optional: true },
                     useBunServer: { type: 'boolean', default: true, optional: true },
-                    cors: { type: 'boolean', default: false, optional: true }
+                    cors: { type: 'boolean', default: false, optional: true },
+                    autoUpdate: {
+                        type: 'object',
+                        optional: true,
+                        props: {
+                            enabled: { type: 'boolean', default: false, optional: true },
+                            channel: {
+                                type: 'string',
+                                enum: ['dev', 'stable'],
+                                default: 'dev',
+                                optional: true
+                            },
+                            checkOnBoot: { type: 'boolean', default: true, optional: true },
+                            checkInterval: { type: 'number', optional: true },
+                            autoRestart: { type: 'boolean', default: true, optional: true },
+                            forceRestart: { type: 'boolean', default: false, optional: true },
+                            drainTimeout: { type: 'number', default: 2000, optional: true }
+                        }
+                    }
                 }
             },
             cluster: {

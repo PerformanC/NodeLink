@@ -9,7 +9,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import { resolve as resolvePath } from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
-import { migrateConfig, persistConfig } from '../modules/config/configMigration.js';
+import { deepMerge, findMissingConfigKeys, migrateConfig, persistConfig, reconcileConfigOnDisk } from '../modules/config/configMigration.js';
 import { applyEnvOverrides, logger } from '../utils.js';
 function _resolveConfigPath(fileName) {
     const absolutePath = resolvePath(process.cwd(), fileName);
@@ -24,28 +24,6 @@ function _extractConfigFromModule(module, fileName) {
         return exported;
     }
     throw new Error(`Invalid configuration in "${fileName}": file must export a configuration object.`);
-}
-function _mergeConfigs(base, override) {
-    return {
-        ...base,
-        ...override,
-        sources: {
-            ...base.sources,
-            ...override.sources
-        },
-        lyrics: {
-            ...base.lyrics,
-            ...override.lyrics
-        },
-        meanings: {
-            ...base.meanings,
-            ...override.meanings
-        },
-        pluginConfig: {
-            ...base.pluginConfig,
-            ...override.pluginConfig
-        }
-    };
 }
 async function _tryImportConfigFile(candidates) {
     for (const fileName of candidates) {
@@ -89,15 +67,26 @@ async function _loadDefaultConfig() {
 async function loadBootstrapConfig() {
     const { defaultConfig, defaultFileName } = await _loadDefaultConfig();
     const { userConfig, userFileName } = await _loadUserConfig();
-    const merged = _mergeConfigs(defaultConfig, userConfig);
-    const migrated = migrateConfig(merged);
-    await persistConfig(migrated, userFileName ?? defaultFileName);
-    applyEnvOverrides(migrated);
+    const migratedUser = migrateConfig(userConfig);
+    const missingKeys = userFileName
+        ? findMissingConfigKeys(defaultConfig, migratedUser)
+        : [];
+    const merged = deepMerge(defaultConfig, migratedUser);
+    if (!userFileName) {
+        await persistConfig(merged, defaultFileName);
+    }
+    else if (userFileName.endsWith('.js')) {
+        await persistConfig(merged, userFileName);
+    }
+    else if (missingKeys.length > 0) {
+        await reconcileConfigOnDisk(merged, userFileName, missingKeys);
+    }
+    applyEnvOverrides(merged);
     const clusterEnabled = process.env.CLUSTER_ENABLED?.toLowerCase() === 'true' ||
-        Boolean(migrated.cluster?.enabled);
-    const configuredWorkers = Number(process.env.CLUSTER_WORKERS) || migrated.cluster?.workers || 0;
+        Boolean(merged.cluster?.enabled);
+    const configuredWorkers = Number(process.env.CLUSTER_WORKERS) || merged.cluster?.workers || 0;
     return {
-        config: migrated,
+        config: merged,
         clusterEnabled,
         configuredWorkers
     };

@@ -3,8 +3,11 @@ import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 
 import {
+  deepMerge,
+  findMissingConfigKeys,
   migrateConfig,
-  persistConfig
+  persistConfig,
+  reconcileConfigOnDisk
 } from '../modules/config/configMigration.ts'
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type { ConfigLoadError } from '../typings/index.types.ts'
@@ -43,32 +46,6 @@ function _extractConfigFromModule(
   throw new Error(
     `Invalid configuration in "${fileName}": file must export a configuration object.`
   )
-}
-
-function _mergeConfigs(
-  base: NodelinkConfig,
-  override: Partial<NodelinkConfig>
-): NodelinkConfig {
-  return {
-    ...base,
-    ...override,
-    sources: {
-      ...base.sources,
-      ...override.sources
-    },
-    lyrics: {
-      ...base.lyrics,
-      ...override.lyrics
-    },
-    meanings: {
-      ...base.meanings,
-      ...override.meanings
-    },
-    pluginConfig: {
-      ...base.pluginConfig,
-      ...override.pluginConfig
-    }
-  }
 }
 
 async function _tryImportConfigFile(
@@ -128,21 +105,51 @@ async function loadBootstrapConfig(): Promise<ResolvedBootstrapConfig> {
   const { defaultConfig, defaultFileName } = await _loadDefaultConfig()
   const { userConfig, userFileName } = await _loadUserConfig()
 
-  const merged = _mergeConfigs(defaultConfig, userConfig)
-  const migrated = migrateConfig(merged) as NodelinkConfig
-  await persistConfig(migrated, userFileName ?? defaultFileName)
+  const migratedUser = migrateConfig(
+    userConfig as Record<string, unknown>
+  ) as Partial<NodelinkConfig>
 
-  applyEnvOverrides(migrated)
+  const missingKeys = userFileName
+    ? findMissingConfigKeys(
+        defaultConfig as unknown as Record<string, unknown>,
+        migratedUser as Record<string, unknown>
+      )
+    : []
+
+  const merged = deepMerge(
+    defaultConfig as unknown as Record<string, unknown>,
+    migratedUser as Record<string, unknown>
+  ) as unknown as NodelinkConfig
+
+  if (!userFileName) {
+    await persistConfig(
+      merged as unknown as Record<string, unknown>,
+      defaultFileName
+    )
+  } else if (userFileName.endsWith('.js')) {
+    await persistConfig(
+      merged as unknown as Record<string, unknown>,
+      userFileName
+    )
+  } else if (missingKeys.length > 0) {
+    await reconcileConfigOnDisk(
+      merged as unknown as Record<string, unknown>,
+      userFileName,
+      missingKeys
+    )
+  }
+
+  applyEnvOverrides(merged)
 
   const clusterEnabled =
     process.env.CLUSTER_ENABLED?.toLowerCase() === 'true' ||
-    Boolean(migrated.cluster?.enabled)
+    Boolean(merged.cluster?.enabled)
 
   const configuredWorkers =
-    Number(process.env.CLUSTER_WORKERS) || migrated.cluster?.workers || 0
+    Number(process.env.CLUSTER_WORKERS) || merged.cluster?.workers || 0
 
   return {
-    config: migrated,
+    config: merged,
     clusterEnabled,
     configuredWorkers
   }

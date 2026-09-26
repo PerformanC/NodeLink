@@ -16,6 +16,7 @@
 !package.json
 !README.md
 !config.default.ts 
+!manifest.json
 !biome.json
 !.husky
 !.husky/**

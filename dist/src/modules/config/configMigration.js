@@ -1,5 +1,51 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { logger } from '../../utils.js';
+export function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+/**
+ * Deeply merges a source object into a target object recursively.
+ * User-provided values always take precedence. Missing keys from target
+ * (e.g. new defaults) are populated.
+ */
+export function deepMerge(target, source) {
+    const result = { ...target };
+    for (const [key, sourceVal] of Object.entries(source)) {
+        if (sourceVal === undefined)
+            continue;
+        const targetVal = result[key];
+        if (isRecord(targetVal) &&
+            isRecord(sourceVal) &&
+            !Array.isArray(targetVal) &&
+            !Array.isArray(sourceVal)) {
+            result[key] = deepMerge(targetVal, sourceVal);
+        }
+        else {
+            result[key] = sourceVal;
+        }
+    }
+    return result;
+}
+/**
+ * Compares defaults with user configuration to identify missing property paths.
+ */
+export function findMissingConfigKeys(defaults, user, prefix = '') {
+    const missing = [];
+    for (const [key, defVal] of Object.entries(defaults)) {
+        const fullPath = prefix ? `${prefix}.${key}` : key;
+        if (!(key in user) || user[key] === undefined) {
+            missing.push(fullPath);
+        }
+        else if (isRecord(defVal) &&
+            isRecord(user[key]) &&
+            !Array.isArray(defVal) &&
+            !Array.isArray(user[key])) {
+            missing.push(...findMissingConfigKeys(defVal, user[key], fullPath));
+        }
+    }
+    return missing;
+}
 /**
  * Migrates old flat configuration structures to the new hierarchical NodeLink schema.
  */
@@ -56,27 +102,29 @@ export function migrateConfig(oldConfig) {
         tidalToken: 'sources.tidal.token'
     };
     for (const [oldKey, newPath] of Object.entries(migrationMap)) {
-        if (Object.hasOwn(oldConfig, oldKey)) {
-            const value = oldConfig[oldKey];
+        if (Object.hasOwn(newConfig, oldKey)) {
+            const value = newConfig[oldKey];
             if (value === undefined)
                 continue;
-            // Do not overwrite already-migrated or explicit hierarchical values.
-            if (getDeepValue(newConfig, newPath) !== undefined) {
-                continue;
+            if (getDeepValue(newConfig, newPath) === undefined) {
+                setDeepValue(newConfig, newPath, value);
             }
-            setDeepValue(newConfig, newPath, value);
+            delete newConfig[oldKey];
         }
     }
     const cluster = newConfig.cluster;
     const network = newConfig.network;
     const clusterTimeouts = cluster?.timeouts;
     const connection = getDeepValue(newConfig, 'connection');
-    if (connection) {
+    if (connection &&
+        getDeepValue(newConfig, 'network.connection') === undefined) {
         setDeepValue(newConfig, 'network.connection', connection);
+        delete newConfig.connection;
     }
     const metrics = getDeepValue(newConfig, 'metrics');
-    if (metrics) {
+    if (metrics && getDeepValue(newConfig, 'api.metrics') === undefined) {
         setDeepValue(newConfig, 'api.metrics', metrics);
+        delete newConfig.metrics;
     }
     if (typeof cluster?.commandTimeout === 'number' &&
         typeof clusterTimeouts?.heavyMs !== 'number') {
@@ -148,8 +196,9 @@ export function toTsLiteral(obj, indent = 0) {
     const nextSpaces = ' '.repeat(indent + 2);
     if (obj === null)
         return 'null';
-    if (typeof obj === 'string')
-        return `'${obj.replace(/'/g, "\\'")}'`;
+    if (typeof obj === 'string') {
+        return `'${obj.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'`;
+    }
     if (typeof obj !== 'object')
         return String(obj);
     if (Array.isArray(obj)) {
@@ -193,9 +242,39 @@ export async function persistConfig(config, fileName) {
         const literal = toTsLiteral(config);
         const content = `import type { NodelinkConfig } from './src/typings/config/config.types.ts'\n\nexport const config: NodelinkConfig = ${literal}\n\nexport default config\n`;
         await fs.writeFile(configTsPath, content, 'utf-8');
-        console.log(`[INFO] Config: Automatically updated local config.ts from ${fileName}`);
+        logger('info', 'Config', `Automatically updated local config.ts from ${fileName}`);
     }
     catch (err) {
-        console.warn(`[WARN] Config: Failed to persist updated configuration: ${err instanceof Error ? err.message : String(err)}`);
+        logger('warn', 'Config', `Failed to persist updated configuration: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
+/**
+ * Reconciles an existing config.ts file by merging newly introduced default fields.
+ * Safely creates a backup (config.ts.bak) before modifying the file on disk.
+ */
+export async function reconcileConfigOnDisk(config, fileName, missingKeys) {
+    const configTsPath = path.resolve(process.cwd(), fileName);
+    const backupPath = `${configTsPath}.bak`;
+    try {
+        try {
+            await fs.copyFile(configTsPath, backupPath);
+            logger('info', 'Config', `Created backup of ${fileName} at ${path.basename(backupPath)}`);
+        }
+        catch (backupErr) {
+            logger('warn', 'Config', `Failed to create configuration backup ${backupPath}: ${backupErr instanceof Error ? backupErr.message : String(backupErr)}`);
+        }
+        const literal = toTsLiteral(config);
+        const header = [
+            '// Configuration updated automatically by NodeLink configuration migration.',
+            `// Populated ${missingKeys.length} new/missing field(s) from latest release:`,
+            `// - ${missingKeys.slice(0, 10).join('\n// - ')}${missingKeys.length > 10 ? `\n// - ... and ${missingKeys.length - 10} more` : ''}`,
+            `// A backup of your previous configuration was saved to ${path.basename(backupPath)}`
+        ].join('\n');
+        const content = `${header}\n\nimport type { NodelinkConfig } from './src/typings/config/config.types.ts'\n\nexport const config: NodelinkConfig = ${literal}\n\nexport default config\n`;
+        await fs.writeFile(configTsPath, content, 'utf-8');
+        logger('info', 'Config', `Updated ${fileName} with missing defaults from update: [${missingKeys.slice(0, 5).join(', ')}${missingKeys.length > 5 ? ', ...' : ''}]`);
+    }
+    catch (err) {
+        logger('warn', 'Config', `Failed to reconcile configuration on disk: ${err instanceof Error ? err.message : String(err)}. Server will continue with merged in-memory configuration.`);
     }
 }

@@ -6,7 +6,16 @@ export const config: NodelinkConfig = {
     port: 3000,
     password: 'youshallnotpass',
     useBunServer: true,
-    cors: false
+    cors: false,
+    autoUpdate: {
+      enabled: false,
+      channel: 'dev',
+      checkOnBoot: true,
+      checkInterval: 3600000,
+      autoRestart: true,
+      forceRestart: false,
+      drainTimeout: 2000
+    }
   },
 
   cluster: {

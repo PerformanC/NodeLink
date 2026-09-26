@@ -6,6 +6,7 @@ import process from 'node:process'
 import WebSocketServer from '@performanc/pwsl-server'
 
 import {
+  checkPostUpdateNotice,
   checkUpdates,
   printStartupBanner,
   printSupportGuidelines
@@ -21,6 +22,7 @@ import {
   validateRuntime
 } from './bootstrap/runtime.ts'
 import { setupGracefulShutdown } from './bootstrap/shutdown.ts'
+import { setupPeriodicUpdateCheck } from './bootstrap/updater/scheduler.ts'
 import ConfigValidationManager from './managers/configValidationManager.ts'
 import type ConnectionManager from './managers/connectionManager.ts'
 import type CredentialManager from './managers/credentialManager.ts'
@@ -444,7 +446,8 @@ const { config, clusterEnabled } = await loadBootstrapConfig()
 if (!cluster.isWorker) {
   printSupportGuidelines()
   printStartupBanner(String(getVersion()), clusterEnabled)
-  await checkUpdates()
+  await checkPostUpdateNotice()
+  await checkUpdates(config)
 }
 
 await startNodeLink({ config, clusterEnabled })
@@ -487,6 +490,7 @@ async function startNodeLink({
     nserver
 
   setupGracefulShutdown(nserver)
+  setupPeriodicUpdateCheck(nserver, config)
 }
 
 export default NodelinkServer
