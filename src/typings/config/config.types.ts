@@ -1282,7 +1282,7 @@ export interface NodelinkConfig {
         enabled: boolean
         duration: number
         curve: string
-        mode: 'preload' | 'stream'
+        mode: 'preload' | 'stream' | 'smart'
         minBufferMs: number
         bufferMs: number
       }

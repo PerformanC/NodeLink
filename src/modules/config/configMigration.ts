@@ -205,6 +205,21 @@ export function migrateConfig(
     })
   }
 
+  const crossfade = getDeepValue(newConfig, 'playback.audio.crossfade') as
+    | Record<string, unknown>
+    | undefined
+  if (crossfade && typeof crossfade.mode === 'string') {
+    const validModes = ['preload', 'stream', 'smart']
+    if (!validModes.includes(crossfade.mode)) {
+      logger(
+        'warn',
+        'Config',
+        `Unrecognized playback.audio.crossfade.mode "${crossfade.mode}". Falling back to "preload"`
+      )
+      crossfade.mode = 'preload'
+    }
+  }
+
   return newConfig
 }
 

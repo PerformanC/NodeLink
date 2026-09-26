@@ -4,12 +4,12 @@ import type {
   VoiceConnection,
   VoicePlayerState
 } from '@performanc/voice'
+import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 import type { TrackData } from '../index.types.ts'
 import type {
   TrackStreamResult,
   TrackUrlResult
 } from '../sources/source.types.ts'
-import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 
 /**
  * Runtime filter settings applied to an audio stream.
@@ -158,7 +158,7 @@ export interface TrackEnergy {
 }
 
 /** Supported crossfade buffering modes. */
-export type CrossfadeMode = 'preload' | 'stream'
+export type CrossfadeMode = 'preload' | 'stream' | 'smart'
 
 /** Per-player crossfade configuration. */
 export interface CrossfadeConfig {

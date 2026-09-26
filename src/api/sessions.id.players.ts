@@ -1041,7 +1041,7 @@ function sanitizeCrossfadeConfig(raw: ApiRequest['body']): CrossfadeConfig {
       curve === 'linear' || curve === 'sine' || curve === 'sinusoidal'
         ? curve
         : 'sinusoidal',
-    mode: mode === 'stream' ? 'stream' : 'preload',
+    mode: mode === 'stream' ? 'stream' : mode === 'smart' ? 'smart' : 'preload',
     minBufferMs: Number.isFinite(minBufferMs)
       ? Math.max(20, Math.min(30000, Math.round(minBufferMs)))
       : 250,

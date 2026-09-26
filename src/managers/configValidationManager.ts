@@ -249,7 +249,7 @@ export default class ConfigValidationManager {
                   },
                   mode: {
                     type: 'string',
-                    enum: ['preload', 'stream'],
+                    enum: ['preload', 'stream', 'smart'],
                     optional: true
                   },
                   minBufferMs: {

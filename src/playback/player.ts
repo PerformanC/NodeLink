@@ -4407,7 +4407,12 @@ export class Player {
       20,
       Math.min(boundedDuration, Math.round(Number(config.minBufferMs) || 250))
     )
-    const mode = config.mode === 'stream' ? 'stream' : 'preload'
+    const mode =
+      config.mode === 'stream'
+        ? 'stream'
+        : config.mode === 'smart'
+          ? 'smart'
+          : 'preload'
     const configuredBuffer = Math.round(Number(config.bufferMs) || 0)
     const bufferMs = Math.max(
       minBufferMs,
