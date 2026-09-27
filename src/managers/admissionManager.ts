@@ -103,6 +103,15 @@ export default class AdmissionManager {
   private readonly guildStates: Map<string, GuildAdmissionState>
   private readonly sessionStates: Map<string, SessionAdmissionState>
   private readonly ipStates: Map<string, IpAdmissionState>
+  private readonly globalState: {
+    tokens: number
+    lastRefill: number
+    score: number
+    lastScoreUpdate: number
+    consecutiveViolations: number
+    quarantineUntil: number
+    lastSeen: number
+  }
 
   private readonly cleanupInterval: NodeJS.Timeout
 
@@ -113,6 +122,17 @@ export default class AdmissionManager {
     this.guildStates = new Map()
     this.sessionStates = new Map()
     this.ipStates = new Map()
+
+    const now = performance.now()
+    this.globalState = {
+      tokens: 300,
+      lastRefill: now,
+      score: 0,
+      lastScoreUpdate: now,
+      consecutiveViolations: 0,
+      quarantineUntil: 0,
+      lastSeen: now
+    }
 
     this.cleanupInterval = setInterval(() => {
       this._pruneExpiredStates()
@@ -188,9 +208,13 @@ export default class AdmissionManager {
       lastDecision = ipDecision
     }
 
-    if (context.sessionId) {
+    const effectiveSessionId =
+      context.sessionId ??
+      (context.authenticated ? this._resolveSessionIdForIp(context.ip) : null)
+
+    if (effectiveSessionId) {
       const sessionDecision = this._evaluateSessionLayer(
-        context.sessionId,
+        effectiveSessionId,
         context,
         now
       )
@@ -199,11 +223,18 @@ export default class AdmissionManager {
         return sessionDecision
       }
       lastDecision = sessionDecision
+    } else if (context.cost > 1 && !context.guildId) {
+      const globalDecision = this._evaluateGlobalLayer(context, now)
+      const globalBlocked = !globalDecision.allowed
+      if (globalBlocked) {
+        return globalDecision
+      }
+      lastDecision = globalDecision
     }
 
-    if (context.guildId && context.sessionId) {
+    if (context.guildId && effectiveSessionId) {
       const guildDecision = this._evaluateGuildLayer(
-        context.sessionId,
+        effectiveSessionId,
         context.guildId,
         context,
         now
@@ -1313,6 +1344,87 @@ export default class AdmissionManager {
     if (!session) return false
     const player = session.players?.get?.(guildId)
     return player !== undefined
+  }
+
+  /**
+   * Resolves the active session associated with a remote IP if not explicitly provided in the request.
+   * @param ip - Remote IP address.
+   * @internal
+   */
+  private _resolveSessionIdForIp(ip: string | null): string | null {
+    if (!ip) return null
+    const sessions = this.nodelink.sessions as unknown as {
+      activeSessions?: Map<string, { socket?: { remoteAddress?: string } }>
+    }
+    const activeSessions = sessions?.activeSessions
+    if (!activeSessions || activeSessions.size === 0) return null
+
+    for (const [sessionId, session] of activeSessions.entries()) {
+      const socketIp = this._normalizeIp(session.socket?.remoteAddress)
+      if (socketIp === ip) {
+        return sessionId
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * Evaluates server-wide global admission for heavy operations when no session context is present.
+   * @internal
+   */
+  private _evaluateGlobalLayer(
+    context: AdmissionContext,
+    now: number
+  ): AdmissionDecision {
+    const state = this.globalState
+    const baseCapacity = 300
+    const refillRate = 60
+
+    this._applyScoreDecay(state, now, 15)
+
+    const elapsedSeconds = Math.max(0, (now - state.lastRefill) / 1000)
+    const replenished = state.tokens + elapsedSeconds * refillRate
+    state.tokens = Math.min(baseCapacity, Math.max(0, replenished))
+    state.lastRefill = now
+    state.lastSeen = now
+
+    const cost = context.cost
+    const hasTokens = state.tokens >= cost
+
+    if (!hasTokens) {
+      state.consecutiveViolations += 1
+      state.score += 1
+      const missingTokens = cost - state.tokens
+      const waitSeconds = Math.ceil(missingTokens / refillRate)
+
+      return {
+        allowed: false,
+        action: 'limit',
+        scope: 'operation',
+        status: 429,
+        message: 'Global operation rate limit exceeded. Please retry shortly.',
+        retryAfterSeconds: Math.max(1, waitSeconds),
+        remainingTokens: 0,
+        capacityLimit: baseCapacity,
+        resetTimestamp: Date.now() + waitSeconds * 1000
+      }
+    }
+
+    state.tokens = Math.max(0, state.tokens - cost)
+    const waitSeconds = Math.ceil((baseCapacity - state.tokens) / refillRate)
+
+    return {
+      allowed: true,
+      action: 'allow',
+      scope: 'operation',
+      status: 200,
+      message: 'OK',
+      retryAfterSeconds: 0,
+      remainingTokens: Math.floor(state.tokens),
+      capacityLimit: baseCapacity,
+      resetTimestamp: Date.now() + waitSeconds * 1000
+    }
   }
 
   /**
