@@ -220,6 +220,15 @@ export interface SessionAdmissionState {
 
   /** Dynamic churn allowance granted during the active warmup period. */
   warmupChurnBudget: number
+
+  /** Monotonic timestamp when reconciliation grant window resets. */
+  reconciliationWindowReset: number
+
+  /** Number of reconciliation grants issued in the current window. */
+  reconciliationGrantsInWindow: number
+
+  /** Baseline player count captured prior to churn spikes for capacity dampening. */
+  stablePlayersBaseline: number
 }
 
 /**
@@ -292,6 +301,9 @@ export interface GuildAdmissionConfig {
 
   /** Half-life of strike score decay in seconds. */
   scoreDecayHalfLifeSeconds: number
+
+  /** Maximum distinct guild states retained in memory before triggering safe LRU eviction. */
+  maxGuildStates: number
 }
 
 /**
@@ -337,6 +349,12 @@ export interface SessionAdmissionConfig {
 
   /** Duration in milliseconds of the post-resume warmup period. */
   warmupDurationMs: number
+
+  /** Maximum full reconciliation grants allowed per rolling window to prevent resume loop farming. */
+  maxReconciliationsPerWindow: number
+
+  /** Rolling window duration for tracking reconciliation grants in milliseconds. */
+  reconciliationWindowMs: number
 }
 
 /**

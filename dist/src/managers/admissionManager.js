@@ -10,7 +10,8 @@ const DEFAULT_CONFIG = {
         quarantineScoreThreshold: 10,
         quarantineRecoveryThreshold: 4,
         quarantineDurationMs: 15000,
-        scoreDecayHalfLifeSeconds: 8
+        scoreDecayHalfLifeSeconds: 8,
+        maxGuildStates: 10000
     },
     session: {
         baseCapacity: 150,
@@ -25,7 +26,9 @@ const DEFAULT_CONFIG = {
         organicGrowthFactor: 0.2,
         organicGrowthFloor: 25,
         flappingThresholdMs: 120000,
-        warmupDurationMs: 45000
+        warmupDurationMs: 45000,
+        maxReconciliationsPerWindow: 3,
+        reconciliationWindowMs: 3600000
     },
     ip: {
         baseCapacity: 500,
@@ -141,13 +144,15 @@ export default class AdmissionManager {
         if (isBypassed) {
             return this._buildAllowedDecision('ip', 100, 100);
         }
-        const now = Date.now();
+        const now = performance.now();
+        let lastDecision = null;
         if (context.ip) {
             const ipDecision = this._evaluateIpLayer(context.ip, context, now);
             const ipBlocked = !ipDecision.allowed;
             if (ipBlocked) {
                 return ipDecision;
             }
+            lastDecision = ipDecision;
         }
         if (context.sessionId) {
             const sessionDecision = this._evaluateSessionLayer(context.sessionId, context, now);
@@ -155,6 +160,7 @@ export default class AdmissionManager {
             if (sessionBlocked) {
                 return sessionDecision;
             }
+            lastDecision = sessionDecision;
         }
         if (context.guildId && context.sessionId) {
             const guildDecision = this._evaluateGuildLayer(context.sessionId, context.guildId, context, now);
@@ -163,6 +169,9 @@ export default class AdmissionManager {
                 return guildDecision;
             }
             return guildDecision;
+        }
+        if (lastDecision) {
+            return lastDecision;
         }
         return this._buildAllowedDecision('ip', 100, 100);
     }
@@ -174,7 +183,7 @@ export default class AdmissionManager {
         const ip = this._normalizeIp(rawAddress);
         if (!ip)
             return true;
-        const state = this._getOrCreateIpState(ip, Date.now());
+        const state = this._getOrCreateIpState(ip, performance.now());
         const maxSockets = this.config.ip.maxConcurrentSockets;
         const isExhausted = state.activeSockets >= maxSockets;
         if (isExhausted) {
@@ -209,7 +218,7 @@ export default class AdmissionManager {
         const ip = this._normalizeIp(rawAddress);
         if (!ip)
             return false;
-        const now = Date.now();
+        const now = performance.now();
         const state = this._getOrCreateIpState(ip, now);
         const isWindowExpired = now - state.authWindowReset > authConfig.windowMs;
         if (isWindowExpired) {
@@ -221,6 +230,7 @@ export default class AdmissionManager {
         if (isBreached) {
             state.blockedUntil = now + authConfig.banDurationMs;
             logger('warn', 'AdmissionManager', `IP ${ip} jailed for brute force password attempts (${state.authFailures}/${authConfig.maxFailures}) for ${authConfig.banDurationMs}ms.`);
+            this._broadcastIpBlock(ip, authConfig.banDurationMs);
             return true;
         }
         return false;
@@ -236,7 +246,7 @@ export default class AdmissionManager {
         const state = this.ipStates.get(ip);
         if (!state)
             return false;
-        const now = Date.now();
+        const now = performance.now();
         const isBlocked = now < state.blockedUntil;
         return isBlocked;
     }
@@ -244,14 +254,18 @@ export default class AdmissionManager {
      * Manually blocks an IP for a specified duration.
      * @param rawAddress - Remote IP address.
      * @param durationMs - Duration in milliseconds.
+     * @param broadcast - Whether to sync across cluster workers.
      */
-    blockIp(rawAddress, durationMs) {
+    blockIp(rawAddress, durationMs, broadcast = false) {
         const ip = this._normalizeIp(rawAddress);
         if (!ip)
             return;
-        const now = Date.now();
+        const now = performance.now();
         const state = this._getOrCreateIpState(ip, now);
         state.blockedUntil = now + durationMs;
+        if (broadcast) {
+            this._broadcastIpBlock(ip, durationMs);
+        }
     }
     /**
      * Records player creation in a session for churn tracking.
@@ -282,26 +296,39 @@ export default class AdmissionManager {
      * @param sessionId - Restored session identifier.
      */
     recordSessionResume(sessionId) {
-        const now = Date.now();
+        const now = performance.now();
         const state = this._getOrCreateSessionState(sessionId, now);
         const config = this.config.session;
+        const hasPreviousResume = state.lastResumeTimestamp > 0;
         const elapsedSinceLastResume = now - state.lastResumeTimestamp;
-        const isFlapping = elapsedSinceLastResume < config.flappingThresholdMs;
+        const isFlapping = hasPreviousResume && elapsedSinceLastResume < config.flappingThresholdMs;
         if (isFlapping) {
             state.score += 5;
-            logger('warn', 'AdmissionManager', `Session ${sessionId} flagged for connection flapping (${elapsedSinceLastResume}ms since previous resume). Credit denied.`);
+            logger('warn', 'AdmissionManager', `Session ${sessionId} flagged for connection flapping (${Math.round(elapsedSinceLastResume)}ms since previous resume). Credit denied.`);
             return;
         }
         state.lastResumeTimestamp = now;
         state.resumeCount += 1;
+        const windowElapsed = now - state.reconciliationWindowReset;
+        if (windowElapsed > config.reconciliationWindowMs) {
+            state.reconciliationGrantsInWindow = 0;
+            state.reconciliationWindowReset = now;
+        }
+        const hasQuota = state.reconciliationGrantsInWindow < config.maxReconciliationsPerWindow;
         const existingPlayers = this._resolveSessionPlayersCount(sessionId);
         const organicHeadroom = Math.max(config.organicGrowthFloor, Math.round(existingPlayers * config.organicGrowthFactor));
-        const reconciliationGrant = Math.round(existingPlayers * config.reconciliationMultiplier + organicHeadroom);
-        const adaptiveCapacity = Math.round(config.baseCapacity + existingPlayers * config.tokensPerActivePlayer);
-        state.tokens = Math.min(adaptiveCapacity, state.tokens + reconciliationGrant);
-        state.warmupUntil = now + config.warmupDurationMs;
-        state.warmupChurnBudget = existingPlayers + organicHeadroom;
-        logger('info', 'AdmissionManager', `Session ${sessionId} resumed with ${existingPlayers} active players. Granted ${reconciliationGrant} reconciliation tokens (headroom: ${organicHeadroom}). Warmup active for ${config.warmupDurationMs}ms.`);
+        const adaptiveCapacity = Math.max(config.baseCapacity, Math.round(config.baseCapacity + existingPlayers * config.tokensPerActivePlayer));
+        if (hasQuota) {
+            state.reconciliationGrantsInWindow += 1;
+            const targetTokens = Math.round(existingPlayers * config.reconciliationMultiplier + organicHeadroom);
+            state.tokens = Math.min(adaptiveCapacity, Math.max(state.tokens, targetTokens));
+            state.warmupUntil = now + config.warmupDurationMs;
+            state.warmupChurnBudget = existingPlayers + organicHeadroom;
+            logger('info', 'AdmissionManager', `Session ${sessionId} resumed with ${existingPlayers} active players. Top-up target: ${targetTokens} tokens (headroom: ${organicHeadroom}). Warmup active for ${config.warmupDurationMs}ms.`);
+        }
+        else {
+            logger('warn', 'AdmissionManager', `Session ${sessionId} reached reconciliation grant quota (${state.reconciliationGrantsInWindow}/${config.maxReconciliationsPerWindow}) for current window. Operating with natural refill.`);
+        }
     }
     /**
      * Initializes admission state when a new session connects.
@@ -309,7 +336,7 @@ export default class AdmissionManager {
      * @param sessionId - New session identifier.
      */
     recordSessionConnect(sessionId) {
-        const now = Date.now();
+        const now = performance.now();
         const state = this._getOrCreateSessionState(sessionId, now);
         state.lastSeen = now;
     }
@@ -327,7 +354,14 @@ export default class AdmissionManager {
      * @internal
      */
     _evaluateGuildLayer(sessionId, guildId, context, now) {
+        const isExecutionOperation = context.operation.startsWith('PLAYER_');
+        const isReadOnly = context.operation === 'PLAYER_GET';
+        const isRegistered = this._isGuildPlayerRegistered(sessionId, guildId);
         const key = `${sessionId}:${guildId}`;
+        const existing = this.guildStates.get(key);
+        if (!existing && !isRegistered && isReadOnly) {
+            return this._buildAllowedDecision('guild', this.config.guild.baseCapacity, this.config.guild.baseCapacity);
+        }
         const state = this._getOrCreateGuildState(key, now);
         const config = this.config.guild;
         this._applyScoreDecay(state, now, config.scoreDecayHalfLifeSeconds);
@@ -349,7 +383,6 @@ export default class AdmissionManager {
             state.quarantineUntil = 0;
             state.consecutiveViolations = 0;
         }
-        const isExecutionOperation = context.operation.startsWith('PLAYER_');
         const hasHighConcurrency = isExecutionOperation && state.activeConcurrency >= config.maxConcurrency;
         if (hasHighConcurrency) {
             state.score += 2;
@@ -365,7 +398,7 @@ export default class AdmissionManager {
         const elapsedSeconds = Math.max(0, (now - state.lastRefill) / 1000);
         const replenished = state.tokens + elapsedSeconds * config.refillRatePerSecond;
         const capacity = config.baseCapacity;
-        state.tokens = Math.min(capacity, replenished);
+        state.tokens = Math.min(capacity, Math.max(0, replenished));
         state.lastRefill = now;
         state.lastSeen = now;
         const cost = context.cost;
@@ -397,10 +430,10 @@ export default class AdmissionManager {
                 retryAfterSeconds: Math.max(1, waitSeconds),
                 remainingTokens: 0,
                 capacityLimit: capacity,
-                resetTimestamp: now + waitSeconds * 1000
+                resetTimestamp: Date.now() + waitSeconds * 1000
             };
         }
-        state.tokens -= cost;
+        state.tokens = Math.max(0, state.tokens - cost);
         state.consecutiveViolations = 0;
         if (isExecutionOperation) {
             state.activeConcurrency += 1;
@@ -420,7 +453,7 @@ export default class AdmissionManager {
             retryAfterSeconds: 0,
             remainingTokens: Math.floor(state.tokens),
             capacityLimit: capacity,
-            resetTimestamp: now + waitSeconds * 1000,
+            resetTimestamp: Date.now() + waitSeconds * 1000,
             releaseConcurrency
         };
     }
@@ -448,10 +481,13 @@ export default class AdmissionManager {
         }
         const churnWindowMs = 60000;
         const isChurnWindowExpired = now - state.churnWindowReset > churnWindowMs;
+        const activePlayersCount = this._resolveSessionPlayersCount(sessionId);
+        state.activePlayers = activePlayersCount;
         if (isChurnWindowExpired) {
             state.playerCreates = 0;
             state.playerDestroys = 0;
             state.churnWindowReset = now;
+            state.stablePlayersBaseline = activePlayersCount;
         }
         const isWarmup = now < state.warmupUntil;
         const effectiveChurnLimit = isWarmup
@@ -459,18 +495,22 @@ export default class AdmissionManager {
             : config.maxPlayerChurnPerMinute;
         const totalChurn = state.playerCreates + state.playerDestroys;
         const isChurnAbusive = totalChurn > effectiveChurnLimit;
+        let effectivePlayerCount = activePlayersCount;
         if (isChurnAbusive) {
             state.score += 5;
-            logger('warn', 'AdmissionManager', `Session ${sessionId} exceeded player churn threshold (${totalChurn}/${effectiveChurnLimit}).`);
+            effectivePlayerCount = Math.min(activePlayersCount, state.stablePlayersBaseline);
+            logger('warn', 'AdmissionManager', `Session ${sessionId} exceeded player churn threshold (${totalChurn}/${effectiveChurnLimit}). Capacity expansion dampened.`);
         }
-        const activePlayersCount = this._resolveSessionPlayersCount(sessionId);
-        state.activePlayers = activePlayersCount;
-        const adaptiveCapacity = Math.round(config.baseCapacity + activePlayersCount * config.tokensPerActivePlayer);
-        const adaptiveRefillRate = config.refillRatePerSecond +
-            activePlayersCount * config.refillRatePerPlayerPerSecond;
+        else {
+            state.stablePlayersBaseline = activePlayersCount;
+        }
+        const adaptiveCapacity = Math.max(config.baseCapacity, Math.round(config.baseCapacity +
+            effectivePlayerCount * config.tokensPerActivePlayer));
+        const adaptiveRefillRate = Math.max(config.refillRatePerSecond, config.refillRatePerSecond +
+            effectivePlayerCount * config.refillRatePerPlayerPerSecond);
         const elapsedSeconds = Math.max(0, (now - state.lastRefill) / 1000);
         const replenished = state.tokens + elapsedSeconds * adaptiveRefillRate;
-        state.tokens = Math.min(adaptiveCapacity, replenished);
+        state.tokens = Math.min(adaptiveCapacity, Math.max(0, replenished));
         state.lastRefill = now;
         state.lastSeen = now;
         this._updateSessionEwma(state, now);
@@ -498,10 +538,10 @@ export default class AdmissionManager {
                 retryAfterSeconds: Math.max(1, waitSeconds),
                 remainingTokens: 0,
                 capacityLimit: adaptiveCapacity,
-                resetTimestamp: now + waitSeconds * 1000
+                resetTimestamp: Date.now() + waitSeconds * 1000
             };
         }
-        state.tokens -= cost;
+        state.tokens = Math.max(0, state.tokens - cost);
         const waitSeconds = Math.ceil((adaptiveCapacity - state.tokens) / adaptiveRefillRate);
         return {
             allowed: true,
@@ -512,7 +552,7 @@ export default class AdmissionManager {
             retryAfterSeconds: 0,
             remainingTokens: Math.floor(state.tokens),
             capacityLimit: adaptiveCapacity,
-            resetTimestamp: now + waitSeconds * 1000
+            resetTimestamp: Date.now() + waitSeconds * 1000
         };
     }
     /**
@@ -540,12 +580,10 @@ export default class AdmissionManager {
         const capacity = config.baseCapacity;
         const elapsedSeconds = Math.max(0, (now - state.lastRefill) / 1000);
         const replenished = state.tokens + elapsedSeconds * config.refillRatePerSecond;
-        state.tokens = Math.min(capacity, replenished);
+        state.tokens = Math.min(capacity, Math.max(0, replenished));
         state.lastRefill = now;
         state.lastSeen = now;
-        const effectiveCost = context.authenticated
-            ? Math.max(1, Math.floor(context.cost / 2))
-            : context.cost;
+        const effectiveCost = context.authenticated ? 1 : context.cost;
         const hasTokens = state.tokens >= effectiveCost;
         if (!hasTokens) {
             state.consecutiveViolations += 1;
@@ -554,6 +592,7 @@ export default class AdmissionManager {
             if (shouldBlock) {
                 state.blockedUntil = now + config.blockDurationMs;
                 logger('warn', 'AdmissionManager', `IP ${ip} temporarily blocked for ${config.blockDurationMs}ms (score: ${state.score.toFixed(1)}).`);
+                this._broadcastIpBlock(ip, config.blockDurationMs);
             }
             const missingTokens = effectiveCost - state.tokens;
             const waitSeconds = Math.ceil(missingTokens / config.refillRatePerSecond);
@@ -566,10 +605,10 @@ export default class AdmissionManager {
                 retryAfterSeconds: Math.max(1, waitSeconds),
                 remainingTokens: 0,
                 capacityLimit: capacity,
-                resetTimestamp: now + waitSeconds * 1000
+                resetTimestamp: Date.now() + waitSeconds * 1000
             };
         }
-        state.tokens -= effectiveCost;
+        state.tokens = Math.max(0, state.tokens - effectiveCost);
         const waitSeconds = Math.ceil((capacity - state.tokens) / config.refillRatePerSecond);
         return {
             allowed: true,
@@ -580,7 +619,7 @@ export default class AdmissionManager {
             retryAfterSeconds: 0,
             remainingTokens: Math.floor(state.tokens),
             capacityLimit: capacity,
-            resetTimestamp: now + waitSeconds * 1000
+            resetTimestamp: Date.now() + waitSeconds * 1000
         };
     }
     /**
@@ -667,8 +706,7 @@ export default class AdmissionManager {
      * @internal
      */
     _classifyPlayerPatchOperation(body) {
-        const isObject = Boolean(body) && typeof body === 'object';
-        if (!isObject)
+        if (!body || typeof body !== 'object')
             return 'PLAYER_PLAY';
         const payload = body;
         if (payload.filters !== undefined)
@@ -839,17 +877,13 @@ export default class AdmissionManager {
         const ignore = this.config.ignore;
         if (!ignore)
             return false;
-        const isIpIgnored = Boolean(context.ip && ignore.ips?.includes(context.ip));
-        if (isIpIgnored)
+        if (context.ip && ignore.ips?.includes(context.ip))
             return true;
-        const isUserIgnored = Boolean(context.userId && ignore.userIds?.includes(context.userId));
-        if (isUserIgnored)
+        if (context.userId && ignore.userIds?.includes(context.userId))
             return true;
-        const isGuildIgnored = Boolean(context.guildId && ignore.guildIds?.includes(context.guildId));
-        if (isGuildIgnored)
+        if (context.guildId && ignore.guildIds?.includes(context.guildId))
             return true;
-        const isSessionIgnored = Boolean(context.sessionId && ignore.sessionIds?.includes(context.sessionId));
-        if (isSessionIgnored)
+        if (context.sessionId && ignore.sessionIds?.includes(context.sessionId))
             return true;
         const paths = ignore.paths ?? [];
         const isPathIgnored = paths.some((path) => context.pathname.startsWith(path));
@@ -891,7 +925,12 @@ export default class AdmissionManager {
     _getOrCreateGuildState(key, now) {
         const existing = this.guildStates.get(key);
         if (existing) {
+            this.guildStates.delete(key);
+            this.guildStates.set(key, existing);
             return existing;
+        }
+        if (this.guildStates.size >= this.config.guild.maxGuildStates) {
+            this._evictOldestGuildStates(now);
         }
         const state = {
             tokens: this.config.guild.baseCapacity,
@@ -922,6 +961,7 @@ export default class AdmissionManager {
             playerCreates: 0,
             playerDestroys: 0,
             churnWindowReset: now,
+            stablePlayersBaseline: 0,
             ewmaRate: 10,
             lastEwmaUpdate: now,
             currentIntervalRequests: 0,
@@ -929,6 +969,8 @@ export default class AdmissionManager {
             lastSeen: now,
             lastResumeTimestamp: 0,
             resumeCount: 0,
+            reconciliationWindowReset: now,
+            reconciliationGrantsInWindow: 0,
             warmupUntil: 0,
             warmupChurnBudget: 0
         };
@@ -959,11 +1001,56 @@ export default class AdmissionManager {
         return state;
     }
     /**
+     * Broadcasts an IP block event to peer workers when running in Cluster mode.
+     * @param ip - Normalized IP address.
+     * @param durationMs - Block duration in milliseconds.
+     * @internal
+     */
+    _broadcastIpBlock(ip, durationMs) {
+        process.send?.({
+            type: 'ipBlock',
+            ip,
+            durationMs
+        });
+    }
+    /**
+     * Checks whether a player exists for a given session and guild.
+     * @param sessionId - Session identifier.
+     * @param guildId - Guild identifier.
+     * @internal
+     */
+    _isGuildPlayerRegistered(sessionId, guildId) {
+        const session = this.nodelink.sessions?.get?.(sessionId);
+        if (!session)
+            return false;
+        const player = session.players?.get?.(guildId);
+        return player !== undefined;
+    }
+    /**
+     * Evicts least recently used idle guild admission states when capacity ceiling is met.
+     * @param now - Monotonic timestamp.
+     * @internal
+     */
+    _evictOldestGuildStates(now) {
+        const targetEvictions = Math.max(1, Math.floor(this.config.guild.maxGuildStates * 0.05));
+        let evictedCount = 0;
+        for (const [key, state] of this.guildStates.entries()) {
+            const isEligible = now > state.quarantineUntil && state.activeConcurrency === 0;
+            if (isEligible) {
+                this.guildStates.delete(key);
+                evictedCount += 1;
+                if (evictedCount >= targetEvictions) {
+                    break;
+                }
+            }
+        }
+    }
+    /**
      * Prunes idle states across guild, session, and ip stores.
      * @internal
      */
     _pruneExpiredStates() {
-        const now = Date.now();
+        const now = performance.now();
         const idleThreshold = 120000;
         for (const [key, state] of this.guildStates.entries()) {
             const isIdle = now - state.lastSeen > idleThreshold;

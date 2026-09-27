@@ -197,7 +197,8 @@ export const config = {
             quarantineScoreThreshold: 10,
             quarantineRecoveryThreshold: 4,
             quarantineDurationMs: 15000,
-            scoreDecayHalfLifeSeconds: 8
+            scoreDecayHalfLifeSeconds: 8,
+            maxGuildStates: 10000
         },
         session: {
             baseCapacity: 150,
@@ -212,7 +213,9 @@ export const config = {
             organicGrowthFactor: 0.2,
             organicGrowthFloor: 25,
             flappingThresholdMs: 120000,
-            warmupDurationMs: 45000
+            warmupDurationMs: 45000,
+            maxReconciliationsPerWindow: 3,
+            reconciliationWindowMs: 3600000
         },
         ip: {
             baseCapacity: 500,
