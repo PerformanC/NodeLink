@@ -30,6 +30,10 @@ const DEFAULT_CONFIG = {
         maxReconciliationsPerWindow: 3,
         reconciliationWindowMs: 3600000
     },
+    global: {
+        baseCapacity: 300,
+        refillRatePerSecond: 60
+    },
     ip: {
         baseCapacity: 500,
         refillRatePerSecond: 100,
@@ -165,17 +169,15 @@ export default class AdmissionManager {
             }
             lastDecision = ipDecision;
         }
-        const effectiveSessionId = context.sessionId ??
-            (context.authenticated ? this._resolveSessionIdForIp(context.ip) : null);
-        if (effectiveSessionId) {
-            const sessionDecision = this._evaluateSessionLayer(effectiveSessionId, context, now);
+        if (context.sessionId) {
+            const sessionDecision = this._evaluateSessionLayer(context.sessionId, context, now);
             const sessionBlocked = !sessionDecision.allowed;
             if (sessionBlocked) {
                 return sessionDecision;
             }
             lastDecision = sessionDecision;
         }
-        else if (context.cost > 1 && !context.guildId) {
+        else if (context.authenticated && context.cost > 1 && !context.guildId) {
             const globalDecision = this._evaluateGlobalLayer(context, now);
             const globalBlocked = !globalDecision.allowed;
             if (globalBlocked) {
@@ -183,8 +185,8 @@ export default class AdmissionManager {
             }
             lastDecision = globalDecision;
         }
-        if (context.guildId && effectiveSessionId) {
-            const guildDecision = this._evaluateGuildLayer(effectiveSessionId, context.guildId, context, now);
+        if (context.guildId && context.sessionId) {
+            const guildDecision = this._evaluateGuildLayer(context.sessionId, context.guildId, context, now);
             const guildBlocked = !guildDecision.allowed;
             if (guildBlocked) {
                 return guildDecision;
@@ -1048,33 +1050,14 @@ export default class AdmissionManager {
         return player !== undefined;
     }
     /**
-     * Resolves the active session associated with a remote IP if not explicitly provided in the request.
-     * @param ip - Remote IP address.
-     * @internal
-     */
-    _resolveSessionIdForIp(ip) {
-        if (!ip)
-            return null;
-        const sessions = this.nodelink.sessions;
-        const activeSessions = sessions?.activeSessions;
-        if (!activeSessions || activeSessions.size === 0)
-            return null;
-        for (const [sessionId, session] of activeSessions.entries()) {
-            const socketIp = this._normalizeIp(session.socket?.remoteAddress);
-            if (socketIp === ip) {
-                return sessionId;
-            }
-        }
-        return null;
-    }
-    /**
      * Evaluates server-wide global admission for heavy operations when no session context is present.
      * @internal
      */
     _evaluateGlobalLayer(context, now) {
         const state = this.globalState;
-        const baseCapacity = 300;
-        const refillRate = 60;
+        const config = this.config.global;
+        const baseCapacity = config.baseCapacity;
+        const refillRate = config.refillRatePerSecond;
         this._applyScoreDecay(state, now, 15);
         const elapsedSeconds = Math.max(0, (now - state.lastRefill) / 1000);
         const replenished = state.tokens + elapsedSeconds * refillRate;
@@ -1188,6 +1171,10 @@ export default class AdmissionManager {
             session: {
                 ...DEFAULT_CONFIG.session,
                 ...partial?.session
+            },
+            global: {
+                ...DEFAULT_CONFIG.global,
+                ...partial?.global
             },
             ip: {
                 ...DEFAULT_CONFIG.ip,

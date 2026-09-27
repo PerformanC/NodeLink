@@ -217,6 +217,10 @@ export const config = {
             maxReconciliationsPerWindow: 3,
             reconciliationWindowMs: 3600000
         },
+        global: {
+            baseCapacity: 300,
+            refillRatePerSecond: 60
+        },
         ip: {
             baseCapacity: 500,
             refillRatePerSecond: 100,

@@ -396,6 +396,18 @@ export interface IpAdmissionConfig {
 }
 
 /**
+ * Configuration for server-wide Global admission and non-contextual operations.
+ * @public
+ */
+export interface GlobalAdmissionConfig {
+  /** Maximum burst tokens available in the global non-context pool. */
+  baseCapacity: number
+
+  /** Continuous token refill rate per second for the global pool. */
+  refillRatePerSecond: number
+}
+
+/**
  * Root configuration for AdmissionManager.
  * @public
  */
@@ -414,6 +426,9 @@ export interface AdmissionConfig {
 
   /** Session context layer config. */
   session: SessionAdmissionConfig
+
+  /** Global admission config for non-contextual heavy operations. */
+  global: GlobalAdmissionConfig
 
   /** IP edge layer config. */
   ip: IpAdmissionConfig
