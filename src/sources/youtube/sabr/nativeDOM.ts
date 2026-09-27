@@ -1042,15 +1042,16 @@ export class NativeDOM {
           subWindow.btoa = windowMock.btoa
           subWindow.atob = windowMock.atob
           subWindow.close = () => {}
+          Object.assign(subWindow, windowClasses)
           Object.setPrototypeOf(subWindow, globalThis)
           subWindow.window = subWindow
           subWindow.self = subWindow
           subWindow.top = windowProxy
           subWindow.parent = windowProxy
           subWindow.frames = subWindow
-          subDocument.defaultView = subWindow
 
-          _contentWindow = makeWindowProxy(subWindow)
+          _contentWindow = makeWindowProxy(subWindow, windowProxy)
+          subDocument.defaultView = _contentWindow
         }
         Object.defineProperty(element, 'contentWindow', {
           get() {
@@ -1171,7 +1172,7 @@ export class NativeDOM {
     windowMock.scheduler = new Scheduler()
     windowMock.fetchLater = () => DEFERRED_REQUEST_OBJ
 
-    Object.assign(windowMock, {
+    const windowClasses = {
       EventTarget,
       Window,
       Document,
@@ -1193,9 +1194,11 @@ export class NativeDOM {
       HTMLBodyElement,
       HTMLHtmlElement,
       Scheduler
-    })
+    }
 
-    const makeWindowProxy = (winTarget: AnyObj) =>
+    Object.assign(windowMock, windowClasses)
+
+    const makeWindowProxy = (winTarget: AnyObj, topWindow?: AnyObj) =>
       new Proxy(winTarget, {
         has(target, prop) {
           if (typeof prop !== 'string') return Reflect.has(target, prop)
@@ -1240,14 +1243,11 @@ export class NativeDOM {
         get(target, prop, receiver) {
           if (typeof prop !== 'string')
             return Reflect.get(target, prop, receiver)
-          if (
-            prop === 'window' ||
-            prop === 'self' ||
-            prop === 'top' ||
-            prop === 'parent' ||
-            prop === 'frames'
-          ) {
+          if (prop === 'window' || prop === 'self' || prop === 'frames') {
             return receiver
+          }
+          if (prop === 'top' || prop === 'parent') {
+            return topWindow ?? receiver
           }
           if (Reflect.has(target, prop))
             return Reflect.get(target, prop, receiver)

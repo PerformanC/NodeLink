@@ -1033,21 +1033,21 @@ export class SabrStream extends PassThrough {
    * Refreshes the PO token inline after repeated limited-playback signals.
    *
    * Mints a fresh token without tearing down the session, so playback
-   * continues uninterrupted while attestation is renewed.
+   * continues uninterrupted while attestation is renewed. The shared
+   * manager is the source of truth: the token and visitorData are adopted
+   * as a pair, and the stream never pushes its pinned visitorData in,
+   * which would reset the manager's healthy state when it has moved on.
    */
   private refreshProtectionToken(): void {
     if (this.protectionRefreshPending || this._aborted || this.destroyed) return
     this.protectionRefreshPending = true
     void (async () => {
       try {
-        const tokenData = await poTokenManager.generate(
-          this.videoId,
-          this.visitorData ?? undefined
-        )
+        const tokenData = await poTokenManager.generate(this.videoId)
         if (this._aborted || this.destroyed) return
         if (tokenData.poToken) {
           this.poToken = base64ToU8(tokenData.poToken)
-          if (tokenData.visitorData && !this.visitorData) {
+          if (tokenData.visitorData) {
             this.visitorData = tokenData.visitorData
           }
           logger(
@@ -1117,15 +1117,12 @@ export class SabrStream extends PassThrough {
         if (this.requestNumber === 0 && !this.poTokenGenerated) {
           this.poTokenGenerated = true
           try {
-            const tokenData = await poTokenManager.generate(
-              this.videoId,
-              this.visitorData ?? undefined
-            )
+            const tokenData = await poTokenManager.generate(this.videoId)
             if (this._aborted || this.destroyed) break
 
             if (tokenData.poToken) {
               this.poToken = base64ToU8(tokenData.poToken)
-              if (tokenData.visitorData && !this.visitorData) {
+              if (tokenData.visitorData) {
                 this.visitorData = tokenData.visitorData
               }
               logger(
