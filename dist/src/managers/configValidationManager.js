@@ -80,11 +80,31 @@ export default class ConfigValidationManager {
                 type: 'object',
                 props: {
                     level: { type: 'string', default: 'info' },
+                    redaction: {
+                        type: 'object',
+                        optional: true,
+                        props: {
+                            enabled: { type: 'boolean', default: true },
+                            mode: { type: 'string', default: 'mask' },
+                            ips: { type: 'boolean', default: true },
+                            tokens: { type: 'boolean', default: true },
+                            passwords: { type: 'boolean', default: true },
+                            userPaths: { type: 'boolean', default: true },
+                            networkInfo: { type: 'boolean', default: true },
+                            cookies: { type: 'boolean', default: true },
+                            emails: { type: 'boolean', default: true },
+                            discordIds: { type: 'boolean', default: false },
+                            accountInfo: { type: 'boolean', default: true }
+                        }
+                    },
                     file: {
                         type: 'object',
                         props: {
                             enabled: { type: 'boolean', default: false },
-                            path: { type: 'string', default: 'logs' }
+                            path: { type: 'string', default: 'logs' },
+                            rotation: { type: 'string', default: 'daily' },
+                            ttlDays: { type: 'number', default: 7 },
+                            redactSensitive: { type: 'boolean', default: true }
                         }
                     }
                 }

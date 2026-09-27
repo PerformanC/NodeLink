@@ -17,6 +17,7 @@ import {
   REDIRECT_STATUS_CODES,
   SEMVER_PATTERN
 } from './constants.ts'
+import { LogSanitizer, defaultSanitizer } from './utils/sanitizer.ts'
 import type CredentialManager from './managers/credentialManager.ts'
 import type {
   ApiHttpMethod,
@@ -131,6 +132,7 @@ type LogLevelName = keyof typeof logLevels
 
 let loggingConfig: LoggingConfig = {}
 let currentLogLevel: (typeof logLevels)[LogLevelName] = logLevels.info
+let logSanitizer: LogSanitizer = defaultSanitizer
 let logStream: fs.WriteStream | null = null
 let gitInfoCache: GitInfo | null = null
 let currentLogFile: string | null = null
@@ -288,6 +290,9 @@ function initFileLogger(): void {
 function initLogger(config: { logging?: LoggingConfig }): void {
   loggingConfig = config.logging || {}
   currentLogLevel = logLevels[loggingConfig.level || 'info']
+  if (loggingConfig.redaction) {
+    logSanitizer.updateOptions(loggingConfig.redaction)
+  }
   initFileLogger()
 }
 
@@ -360,13 +365,20 @@ function logger(level: string, ...args: unknown[]): void {
     return arg
   })
 
-  const msg = util.format(...formattedArgs)
+  const rawMsg = util.format(...formattedArgs)
+  const isRedactionActive =
+    loggingConfig.redaction?.enabled !== false &&
+    loggingConfig.redaction?.mode !== 'off'
 
-  const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${msg}`
+  const consoleMsg = isRedactionActive ? logSanitizer.sanitize(rawMsg) : rawMsg
+  const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${consoleMsg}`
   console.log(consoleOutput)
 
   if (logStream) {
-    const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${msg}\n`
+    const shouldRedactFile =
+      loggingConfig.file?.redactSensitive !== false || isRedactionActive
+    const fileMsg = shouldRedactFile ? logSanitizer.sanitize(rawMsg) : rawMsg
+    const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${fileMsg}\n`
     logStream.write(fileOutput)
   }
 }
@@ -2836,6 +2848,8 @@ export {
   parseSemver,
   sendErrorResponse,
   sendResponse,
+  LogSanitizer,
+  defaultSanitizer,
   validateProperty,
   verifyDiscordID,
   verifyMethod

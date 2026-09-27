@@ -11,6 +11,7 @@ import util from 'node:util';
 import zlib from 'node:zlib';
 import packageJson from '../package.json' with { type: 'json' };
 import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from './constants.js';
+import { LogSanitizer, defaultSanitizer } from './utils/sanitizer.js';
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
  *
@@ -85,6 +86,7 @@ const logLevels = {
 };
 let loggingConfig = {};
 let currentLogLevel = logLevels.info;
+let logSanitizer = defaultSanitizer;
 let logStream = null;
 let gitInfoCache = null;
 let currentLogFile = null;
@@ -220,6 +222,9 @@ function initFileLogger() {
 function initLogger(config) {
     loggingConfig = config.logging || {};
     currentLogLevel = logLevels[loggingConfig.level || 'info'];
+    if (loggingConfig.redaction) {
+        logSanitizer.updateOptions(loggingConfig.redaction);
+    }
     initFileLogger();
 }
 /**
@@ -283,11 +288,16 @@ function logger(level, ...args) {
         }
         return arg;
     });
-    const msg = util.format(...formattedArgs);
-    const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${msg}`;
+    const rawMsg = util.format(...formattedArgs);
+    const isRedactionActive = loggingConfig.redaction?.enabled !== false &&
+        loggingConfig.redaction?.mode !== 'off';
+    const consoleMsg = isRedactionActive ? logSanitizer.sanitize(rawMsg) : rawMsg;
+    const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${consoleMsg}`;
     console.log(consoleOutput);
     if (logStream) {
-        const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${msg}\n`;
+        const shouldRedactFile = loggingConfig.file?.redactSensitive !== false || isRedactionActive;
+        const fileMsg = shouldRedactFile ? logSanitizer.sanitize(rawMsg) : rawMsg;
+        const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${fileMsg}\n`;
         logStream.write(fileOutput);
     }
 }
@@ -2251,4 +2261,4 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         return [];
     }
 }
-export { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
+export { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, LogSanitizer, defaultSanitizer, validateProperty, verifyDiscordID, verifyMethod };

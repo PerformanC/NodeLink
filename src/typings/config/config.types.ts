@@ -1124,12 +1124,28 @@ export interface LoggingSection {
   /** log level (e.g. 'info', 'debug'). */
   level: string
 
+  /** Sensitive data redaction configuration. */
+  redaction?: {
+    enabled?: boolean
+    mode?: 'mask' | 'trace' | 'off'
+    ips?: boolean
+    tokens?: boolean
+    passwords?: boolean
+    userPaths?: boolean
+    networkInfo?: boolean
+    cookies?: boolean
+    emails?: boolean
+    discordIds?: boolean
+    accountInfo?: boolean
+  }
+
   /** Disk logging settings. */
   file: {
     enabled: boolean
     path: string
     rotation: string
     ttlDays: number
+    redactSensitive?: boolean
   }
 
   /** Granular debug flags. */

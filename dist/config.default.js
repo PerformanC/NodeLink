@@ -64,11 +64,25 @@ export const config = {
     },
     logging: {
         level: 'debug',
+        redaction: {
+            enabled: true,
+            mode: 'mask',
+            ips: true,
+            tokens: true,
+            passwords: true,
+            userPaths: true,
+            networkInfo: true,
+            cookies: true,
+            emails: true,
+            discordIds: false,
+            accountInfo: true
+        },
         file: {
             enabled: false,
             path: 'logs',
             rotation: 'daily',
-            ttlDays: 7
+            ttlDays: 7,
+            redactSensitive: true
         },
         debug: {
             all: false,
