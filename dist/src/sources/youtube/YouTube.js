@@ -1933,8 +1933,9 @@ export default class YouTubeSource {
      * Streams audio using chunked range requests. This tries to "Replicate" on how the browser
      * streams audio directly from youtube with code status 206.
      *
-     * Uses dynamic chunk sizing (256 KB – 512 KB) based on per-stream bandwidth
-     * The limit is around ~570 KB per chunk. But setted to 512KB for better memory efficiency.
+     * Uses dynamic chunk sizing (64 KiB min, 512 KiB until 3 clean
+     * 206s, then up to 4 MiB) based on per-stream bandwidth EWMA and
+     * PassThrough buffer fill, with ±5% jitter above 512 KiB.
      * Fast-reconnects on ECONNRESET without refreshing the URL until the third consecutive failure.
      * Opens only 1 connection per stream, reusing it for multiple chunks.
      * This is the same ideia used for _streamWithRangeRequests, but this tries to limit to 1 connection only.
@@ -1969,6 +1970,7 @@ export default class YouTubeSource {
         const failedItags = new Set();
         let refreshAttempts = 0;
         let consecutiveResets = 0;
+        let cleanChunks = 0;
         let activeResponseStream = null;
         let bandwidthEstimate = this.bandwidthEstimate || 128_000;
         const updateBandwidthEstimate = (bytes, durationMs) => {
@@ -2110,6 +2112,7 @@ export default class YouTubeSource {
                 }
                 urlFetchTime = Date.now();
                 consecutiveResets = 0;
+                cleanChunks = 0;
                 logger('debug', 'YouTube', `URL refreshed for "${decodedTrack.title}" (itag ${currentItag}, client: ${currentClient || 'unknown'})`);
                 return currentUrl;
             }
@@ -2125,6 +2128,8 @@ export default class YouTubeSource {
             let targetSeconds = INITIAL_TARGET_SECONDS;
             const ABS_MIN_BYTES = 64 * 1024;
             const ABS_MAX_BYTES = 512 * 1024;
+            const HEALTHY_MAX_BYTES = 4 * 1024 * 1024;
+            const CLEAN_TO_UNLOCK = 3;
             const trackBytesPerSecond = contentLength > 0 && decodedTrack.length > 0
                 ? contentLength / (decodedTrack.length / 1000)
                 : 16_000;
@@ -2145,9 +2150,21 @@ export default class YouTubeSource {
                 }
                 const proxyToUse = currentProxy;
                 const fetchStartTime = Date.now();
+                if (stream.writableLength > STREAM_BUFFER_SIZE * 0.75) {
+                    targetSeconds = Math.max(MIN_TARGET_SECONDS, targetSeconds - 2);
+                }
+                else if (stream.writableLength === 0 &&
+                    cleanChunks >= CLEAN_TO_UNLOCK) {
+                    targetSeconds = Math.min(MAX_TARGET_SECONDS, targetSeconds + 2);
+                }
+                const maxBytes = cleanChunks >= CLEAN_TO_UNLOCK ? HEALTHY_MAX_BYTES : ABS_MAX_BYTES;
                 const bytesPerSecond = bandwidthEstimate / 8;
                 let dynamicChunkSize = Math.floor(bytesPerSecond * targetSeconds);
-                dynamicChunkSize = Math.max(ABS_MIN_BYTES, Math.min(dynamicChunkSize, ABS_MAX_BYTES));
+                dynamicChunkSize = Math.max(ABS_MIN_BYTES, Math.min(dynamicChunkSize, maxBytes));
+                if (dynamicChunkSize > ABS_MAX_BYTES) {
+                    const jitter = 0.95 + Math.random() * 0.1;
+                    dynamicChunkSize = Math.min(Math.floor(dynamicChunkSize * jitter), maxBytes);
+                }
                 const start = totalBytesReceived;
                 const end = Math.min(start + dynamicChunkSize - 1, totalContentLength - 1);
                 const rangeHeader = `bytes=${start}-${end}`;
@@ -2182,7 +2199,7 @@ export default class YouTubeSource {
                     if (result.error ||
                         (result.statusCode !== 200 && result.statusCode !== 206)) {
                         if (result.statusCode === 416) {
-                            if (totalBytesReceived > 0) {
+                            if (totalBytesReceived >= totalContentLength) {
                                 logger('debug', 'YouTube', `HTTP 416 Range Not Satisfiable at ${totalBytesReceived}/${totalContentLength} bytes -- stream completed`);
                                 if (!stream.writableEnded) {
                                     stream.emit('finishBuffering');
@@ -2190,9 +2207,10 @@ export default class YouTubeSource {
                                 }
                                 return;
                             }
-                            logger('warn', 'YouTube', `HTTP 416 at byte 0 for "${decodedTrack.title}" -- refreshing...`);
-                            if (currentItag)
+                            logger('warn', 'YouTube', `HTTP 416 at ${totalBytesReceived}/${totalContentLength} bytes for "${decodedTrack.title}" -- refreshing...`);
+                            if (totalBytesReceived === 0 && currentItag) {
                                 failedItags.add(currentItag);
+                            }
                             const refreshed = await refreshUrl('HTTP 416');
                             if (refreshed)
                                 continue;
@@ -2217,6 +2235,7 @@ export default class YouTubeSource {
                         }
                         const retryDelay = Math.min(RECOVER_BASE_DELAY_MS * 2 ** Math.max(0, refreshAttempts - 1), MAX_RETRY_DELAY_MS);
                         logger('warn', 'YouTube', `HTTP ${result.statusCode}, retrying in ${retryDelay}ms...`);
+                        cleanChunks = 0;
                         await sleep(retryDelay);
                         continue;
                     }
@@ -2298,6 +2317,7 @@ export default class YouTubeSource {
                         : Date.now() - fetchStartTime;
                     updateBandwidthEstimate(bytesThisChunk, transferDuration);
                     chunkCount++;
+                    cleanChunks++;
                     if (chunkCount <= 2) {
                         targetSeconds = MIN_TARGET_SECONDS;
                     }
@@ -2337,6 +2357,7 @@ export default class YouTubeSource {
                     if (error.code === 'ECONNRESET' ||
                         error.code === 'ERR_STREAM_DESTROYED') {
                         bandwidthEstimate = Math.max(128_000, bandwidthEstimate * 0.7);
+                        cleanChunks = 0;
                         if (isBackpressured) {
                             consecutiveResets = 0;
                             isBackpressured = false;
@@ -2383,6 +2404,7 @@ export default class YouTubeSource {
                     }
                     const retryDelay = Math.min(RECOVER_BASE_DELAY_MS * 2 ** Math.max(0, refreshAttempts - 1), MAX_RETRY_DELAY_MS);
                     logger('warn', 'YouTube', `Stream error for "${decodedTrack.title}": ${error.message}. Retrying in ${retryDelay}ms...`);
+                    cleanChunks = 0;
                     await sleep(retryDelay);
                 }
             }
