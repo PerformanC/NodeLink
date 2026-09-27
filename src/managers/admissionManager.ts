@@ -159,9 +159,13 @@ export default class AdmissionManager {
     const method = (req.method ?? 'GET').toUpperCase()
 
     const ip = this._resolveIp(req)
-    const sessionId = this._extractSessionId(pathname, req.headers)
+    const rawSessionId = this._extractSessionId(pathname, req.headers)
     const guildId = this._extractGuildId(pathname)
     const userId = this._getHeader(req.headers, 'user-id') ?? null
+    const sessionId =
+      rawSessionId && this._isSessionProven(rawSessionId, userId)
+        ? rawSessionId
+        : null
 
     const transport = this._resolveTransport(req, pathname)
     const operation = this._classifyOperation(method, pathname, body)
@@ -223,7 +227,11 @@ export default class AdmissionManager {
         return sessionDecision
       }
       lastDecision = sessionDecision
-    } else if (context.authenticated && context.cost > 1 && !context.guildId) {
+    } else if (
+      context.authenticated &&
+      context.cost > 1 &&
+      context.transport === 'http'
+    ) {
       const globalDecision = this._evaluateGlobalLayer(context, now)
       const globalBlocked = !globalDecision.allowed
       if (globalBlocked) {
@@ -241,6 +249,10 @@ export default class AdmissionManager {
       )
       const guildBlocked = !guildDecision.allowed
       if (guildBlocked) {
+        const sessionState = this.sessionStates.get(context.sessionId)
+        if (sessionState) {
+          sessionState.tokens += context.cost
+        }
         return guildDecision
       }
 
@@ -1096,6 +1108,40 @@ export default class AdmissionManager {
   }
 
   /**
+   * Validates that a session identifier exists and is registered in NodeLink.
+   * Prevents rate limit evasion and state memory exhaustion via forged or rotated Session-Id headers.
+   * @internal
+   */
+  private _isSessionProven(
+    sessionId?: string | null,
+    userId?: string | null
+  ): boolean {
+    if (!sessionId) return false
+
+    const sessions = this.nodelink.sessions
+    if (!sessions) return false
+
+    const session =
+      sessions.get?.(sessionId) ??
+      sessions.activeSessions?.get?.(sessionId) ??
+      sessions.resumableSessions?.get?.(sessionId)
+
+    if (!session) return false
+
+    if (userId && session.userId) {
+      const sessionUserId = Array.isArray(session.userId)
+        ? session.userId[0]
+        : session.userId
+
+      if (sessionUserId && userId !== sessionUserId) {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  /**
    * Extracts guild identifier from URL pathname.
    * @internal
    */
@@ -1452,8 +1498,9 @@ export default class AdmissionManager {
     for (const [sessionId, state] of this.sessionStates.entries()) {
       const isIdle = now - state.lastSeen > idleThreshold
       const notQuarantined = now > state.quarantineUntil
+      const isDead = !this._isSessionProven(sessionId)
 
-      if (isIdle && notQuarantined) {
+      if ((isIdle || isDead) && notQuarantined) {
         this.sessionStates.delete(sessionId)
       }
     }
