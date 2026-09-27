@@ -39,6 +39,11 @@ export interface ApiSocketInfo {
    * Client TCP port when available.
    */
   remotePort?: number
+
+  /**
+   * Aborts and closes the underlying TCP socket.
+   */
+  destroy?: () => void
 }
 
 /**
@@ -415,6 +420,31 @@ export interface ApiDosProtectionManager {
    * Checks the incoming request against DoS rules.
    */
   check: (req: ApiRequest) => ApiDosProtectionResult
+
+  /**
+   * Records a failed password attempt and jails IP if limit exceeded.
+   */
+  recordAuthFailure: (rawAddress?: string | null) => boolean
+
+  /**
+   * Tracks an active TCP socket and enforces max concurrent connections per IP.
+   */
+  incrementActiveSockets: (rawAddress?: string | null) => boolean
+
+  /**
+   * Decrements active TCP sockets when connection closes.
+   */
+  decrementActiveSockets: (rawAddress?: string | null) => void
+
+  /**
+   * Checks whether an IP address is currently blocked.
+   */
+  isIpBlocked: (rawAddress?: string | null) => boolean
+
+  /**
+   * Programmatically blocks an IP address.
+   */
+  blockIp: (rawAddress: string, durationMs: number, broadcast?: boolean) => void
 }
 
 /**
@@ -426,6 +456,11 @@ export interface ApiRateLimitManager {
    * Checks the incoming request against rate limit rules.
    */
   check: (req: ApiRequest, parsedUrl: URL) => ApiRateLimitResult
+
+  /**
+   * Checks incoming WebSocket upgrade handshakes against rate limits.
+   */
+  checkUpgrade: (req: ApiRequest, parsedUrl: URL) => ApiRateLimitResult
 }
 
 /**
@@ -474,4 +509,9 @@ export interface ApiNodelinkServer {
    * DoS protection instance.
    */
   dosProtectionManager: ApiDosProtectionManager
+
+  /**
+   * Adaptive admission control and multi-layer resource protection manager.
+   */
+  admissionManager: import('../../managers/admissionManager.ts').default
 }

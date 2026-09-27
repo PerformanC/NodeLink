@@ -20,7 +20,30 @@ function setupClusterWorkerSocket(server: NodelinkServerType): void {
       msg: IPCMessage | { type: string },
       handle: { pause?: () => void; destroy?: () => void } | null
     ) => {
-      if (msg?.type !== 'sticky-session' || !handle) return
+      switch (msg?.type) {
+        case 'ipBlock': {
+          const payload = msg as { ip?: string; durationMs?: number }
+          if (payload.ip) {
+            const g = globalThis as unknown as {
+              nodelink?: {
+                admissionManager?: {
+                  blockIp: (ip: string, d: number) => void
+                }
+              }
+            }
+            g.nodelink?.admissionManager?.blockIp(
+              payload.ip,
+              payload.durationMs ?? 300000
+            )
+          }
+          return
+        }
+        case 'sticky-session':
+          if (!handle) return
+          break
+        default:
+          return
+      }
       try {
         try {
           handle.pause?.()

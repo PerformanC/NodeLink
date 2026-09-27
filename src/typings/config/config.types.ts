@@ -1,3 +1,6 @@
+import type { AdmissionConfig } from '../admission/admission.types.ts'
+import type { DosProtectionConfig } from '../api/dosProtection.types.ts'
+import type { RateLimitConfig } from '../api/rateLimit.types.ts'
 import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 
 /**
@@ -951,6 +954,12 @@ export interface ServerSection {
   /** Request body timeout in milliseconds. */
   bodyTimeout?: number
 
+  /** HTTP socket headers timeout in milliseconds. */
+  headersTimeout?: number
+
+  /** HTTP keep-alive timeout in milliseconds. */
+  keepAliveTimeout?: number
+
   /** Automatic server self-update settings. */
   autoUpdate?: AutoUpdateSection
 }
@@ -985,59 +994,17 @@ export interface SecuritySection {
   /** Master auth password. */
   password?: string
 
-  /** Trust X-Forwarded-For headers. */
+  /** Trust proxy headers (X-Forwarded-For, CF-Connecting-IP, etc). */
   trustProxy: boolean
 
-  /** Anti-flooding protection. */
-  dosProtection: {
-    enabled: boolean
-    thresholds: {
-      /** Max requests in window. */
-      burstRequests: number
-      /** Sliding window size (ms). */
-      timeWindowMs: number
-    }
-    mitigation: {
-      /** Artificial response delay (ms). */
-      delayMs: number
-      /** access block duration (ms). */
-      blockDurationMs: number
-    }
-    ignore: {
-      userIds: string[]
-      guildIds: string[]
-      ips: string[]
-    }
-  }
+  /** Anti-flooding and DoS protection. */
+  dosProtection: DosProtectionConfig
 
-  /** fair-use API throttling. */
-  rateLimit: {
-    enabled: boolean
-    maxEntries: number
-    global: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    perIp: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    perUserId: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    perGuildId: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    /** Paths that bypass rate limiting. */
-    ignorePaths: string[]
-    ignore: {
-      userIds: string[]
-      guildIds: string[]
-      ips: string[]
-    }
-  }
+  /** Fair-use API and WebSocket rate limiting. */
+  rateLimit: RateLimitConfig
+
+  /** Adaptive admission control and multi-layer resource protection. */
+  admission?: AdmissionConfig
 
   /** Allow additional security-specific properties. */
   [key: string]: unknown
@@ -1248,6 +1215,7 @@ export interface NodelinkConfig {
   connection: NetworkSection['connection']
   rateLimit: SecuritySection['rateLimit']
   dosProtection: SecuritySection['dosProtection']
+  admission?: AdmissionConfig
   trustProxy: boolean
   network: NetworkSection
   search: {

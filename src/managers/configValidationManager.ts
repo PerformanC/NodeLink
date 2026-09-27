@@ -39,6 +39,10 @@ export default class ConfigValidationManager {
           password: { type: 'string', min: 1, optional: true },
           useBunServer: { type: 'boolean', default: true, optional: true },
           cors: { type: 'boolean', default: false, optional: true },
+          maxBodySize: { type: 'number', integer: true, optional: true },
+          bodyTimeout: { type: 'number', integer: true, optional: true },
+          headersTimeout: { type: 'number', integer: true, optional: true },
+          keepAliveTimeout: { type: 'number', integer: true, optional: true },
           autoUpdate: {
             type: 'object',
             optional: true,
@@ -120,20 +124,32 @@ export default class ConfigValidationManager {
           timeout: { type: 'number', integer: true, min: 1000 }
         }
       },
-      rateLimit: {
+      admission: {
         type: 'object',
+        optional: true,
         props: {
           enabled: { type: 'boolean', default: true },
-          global: { type: 'object' },
-          perIp: { type: 'object' }
+          guild: { type: 'object', optional: true },
+          session: { type: 'object', optional: true },
+          ip: { type: 'object', optional: true }
+        }
+      },
+      rateLimit: {
+        type: 'object',
+        optional: true,
+        props: {
+          enabled: { type: 'boolean', default: true },
+          global: { type: 'object', optional: true },
+          perIp: { type: 'object', optional: true }
         }
       },
       dosProtection: {
         type: 'object',
+        optional: true,
         props: {
           enabled: { type: 'boolean', default: true },
-          thresholds: { type: 'object' },
-          mitigation: { type: 'object' }
+          thresholds: { type: 'object', optional: true },
+          mitigation: { type: 'object', optional: true }
         }
       },
       trustProxy: { type: 'boolean', default: false },

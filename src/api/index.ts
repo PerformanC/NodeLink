@@ -333,81 +333,89 @@ async function requestHandler(
     }
   }
 
-  const dosCheck = nodelink.dosProtectionManager.check(req)
-  if (!dosCheck.allowed) {
-    logger(
-      'warn',
-      'DosProtection',
-      `DoS protection triggered for ${clientAddress} on ${parsedUrl.pathname}`
-    )
-    ;(res as unknown as { __traceReason?: string }).__traceReason =
-      'dos_protection'
-    nodelink.statsManager.incrementDosProtectionBlock(
-      remoteAddress,
-      dosCheck.message
-    )
-    sendErrorResponse(
-      req,
-      res,
-      dosCheck.status ?? 403,
-      dosCheck.message ?? 'Forbidden',
-      dosCheck.message ?? 'Forbidden',
-      parsedUrl.pathname,
-      trace
-    )
-    return
-  }
-  if (dosCheck.delay) {
-    await new Promise((resolve) => setTimeout(resolve, dosCheck.delay))
-  }
+  const admissionContext = nodelink.admissionManager.resolveContext(
+    req,
+    parsedUrl
+  )
+  const admissionDecision = nodelink.admissionManager.admit(admissionContext)
 
-  const rateLimitCheck = nodelink.rateLimitManager.check(req, parsedUrl)
   if (
-    rateLimitCheck.limit !== undefined &&
-    rateLimitCheck.remaining !== undefined &&
-    rateLimitCheck.reset !== undefined
+    admissionDecision.remainingTokens !== undefined &&
+    admissionDecision.capacityLimit !== undefined
   ) {
-    res.setHeader('X-RateLimit-Limit', rateLimitCheck.limit)
-    res.setHeader('X-RateLimit-Remaining', rateLimitCheck.remaining)
-    res.setHeader('X-RateLimit-Reset', Math.ceil(rateLimitCheck.reset / 1000))
+    res.setHeader('X-RateLimit-Limit', admissionDecision.capacityLimit)
+    res.setHeader('X-RateLimit-Remaining', admissionDecision.remainingTokens)
+
+    if (admissionDecision.resetTimestamp) {
+      res.setHeader(
+        'X-RateLimit-Reset',
+        Math.ceil(admissionDecision.resetTimestamp / 1000)
+      )
+      res.setHeader('RateLimit-Limit', admissionDecision.capacityLimit)
+      res.setHeader('RateLimit-Remaining', admissionDecision.remainingTokens)
+      res.setHeader(
+        'RateLimit-Reset',
+        Math.ceil(
+          Math.max(0, admissionDecision.resetTimestamp - Date.now()) / 1000
+        )
+      )
+      res.setHeader(
+        'RateLimit-Policy',
+        `${admissionDecision.capacityLimit};w=60`
+      )
+    }
   }
 
-  if (!rateLimitCheck.allowed) {
+  if (!admissionDecision.allowed) {
     logger(
       'warn',
-      'RateLimit',
-      `Rate limit exceeded for ${clientAddress} on ${parsedUrl.pathname}`
+      'Admission',
+      `Admission [${admissionDecision.scope}] rejected ${clientAddress} on ${parsedUrl.pathname}: ${admissionDecision.message}`
     )
     ;(res as unknown as { __traceReason?: string }).__traceReason =
-      'rate_limited'
-    nodelink.statsManager.incrementRateLimitHit(
-      parsedUrl.pathname,
-      remoteAddress
-    )
+      'admission_rejected'
 
-    const resetTime = rateLimitCheck.reset ?? Date.now()
-    const retryAfter = Math.ceil((resetTime - Date.now()) / 1000)
-    res.setHeader('Retry-After', retryAfter)
+    if (admissionDecision.retryAfterSeconds > 0) {
+      res.setHeader('Retry-After', admissionDecision.retryAfterSeconds)
+    }
 
     sendErrorResponse(
       req,
       res,
-      429,
-      'Too Many Requests',
-      'You are sending too many requests. Please try again later.',
+      admissionDecision.status,
+      admissionDecision.status === 403 ? 'Forbidden' : 'Too Many Requests',
+      admissionDecision.message,
       parsedUrl.pathname,
       trace
     )
     return
+  }
+
+  if (admissionDecision.releaseConcurrency) {
+    const release = admissionDecision.releaseConcurrency
+    const previousEnd = res.end.bind(res)
+    let released = false
+    const safeRelease = () => {
+      if (!released) {
+        released = true
+        release()
+      }
+    }
+
+    res.end = (...args: Parameters<ApiResponse['end']>) => {
+      safeRelease()
+      previousEnd(...args)
+    }
   }
 
   if (!isMetricsEndpoint && !isProfilerEndpoint) {
     const authHeader = getHeaderValue(headerAccess.authorization)
-    if (
-      !authHeader ||
-      (authHeader !== nodelink.options.server.password &&
-        authHeader !== `Bearer ${nodelink.options.server.password}`)
-    ) {
+    const serverPassword = nodelink.options.server.password
+    const isAuthValid =
+      authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`
+
+    if (!isAuthValid) {
+      nodelink.admissionManager.recordAuthFailure(remoteAddress)
       logger(
         'warn',
         'Server',
@@ -422,7 +430,7 @@ async function requestHandler(
     }
   }
 
-  const MAX_BODY_SIZE = nodelink.options.server?.maxBodySize || 10 * 1024 * 1024
+  const MAX_BODY_SIZE = nodelink.options.server?.maxBodySize ?? 1024 * 1024
 
   let body = ''
   let parsedBody: unknown = body
@@ -450,7 +458,7 @@ async function requestHandler(
     }
 
     const bodyReadSuccess = await new Promise<boolean>((resolve) => {
-      if (typeof req.on !== 'function') {
+      if (!req.on) {
         resolve(true)
         return
       }

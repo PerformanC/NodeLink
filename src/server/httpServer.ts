@@ -9,7 +9,7 @@ import { handleHttpUpgrade } from './wsRouter.ts'
 
 type RequestHandlerType = typeof import('../api/index.ts').default
 
-/* INFO: Creates and configures native Node.js HTTP server with socket error guards and upgrade routing */
+/* INFO: Creates and configures native Node.js HTTP server with socket pool guards, DoS defense, and upgrade routing */
 function createHttpServer(
   nodelink: NodelinkServer,
   getRequestHandler: () => Promise<RequestHandlerType>
@@ -34,20 +34,42 @@ function createHttpServer(
       })
   })
 
-  /* INFO: Tune keep-alive settings for high-throughput gateway traffic */
-  server.keepAliveTimeout = 65000
-  server.headersTimeout = 66000
+  /* INFO: Anti-Slowloris and high-throughput timeout calibration */
+  server.keepAliveTimeout = nodelink.options.server?.keepAliveTimeout ?? 15000
+  server.headersTimeout = nodelink.options.server?.headersTimeout ?? 15000
+  server.requestTimeout = nodelink.options.server?.bodyTimeout ?? 30000
 
-  /* INFO: Guard all incoming sockets against EPIPE and ECONNRESET races */
+  /* INFO: Guard all incoming sockets against DoS blocks, connection floods, and reset errors */
   server.on('connection', (socket: NetSocket) => {
+    const remoteAddress = socket.remoteAddress
+
+    const isIpBlocked = nodelink.admissionManager.isIpBlocked(remoteAddress)
+    if (isIpBlocked) {
+      socket.destroy()
+      return
+    }
+
+    const socketAllowed =
+      nodelink.admissionManager.incrementActiveSockets(remoteAddress)
+    if (!socketAllowed) {
+      socket.destroy()
+      return
+    }
+
+    socket.on('close', () => {
+      nodelink.admissionManager.decrementActiveSockets(remoteAddress)
+    })
+
     socket.on('error', (err: NodeJS.ErrnoException) => {
-      if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') return
+      const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET'
+      if (isBenign) return
       logger('debug', 'Server', `HTTP socket error: ${err.message}`)
     })
   })
 
   server.on('clientError', (err: NodeJS.ErrnoException, socket: NetSocket) => {
-    if (err?.code !== 'EPIPE' && err?.code !== 'ECONNRESET') {
+    const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET'
+    if (!isBenign) {
       logger('debug', 'Server', `HTTP client error: ${err.message}`)
     }
     try {
@@ -69,21 +91,25 @@ function listenHttpServer(
   port: number
 ): void {
   server.on('error', (err: NodeJS.ErrnoException) => {
-    if (err.code === 'EADDRINUSE') {
-      logger('error', 'Server', `Port ${port} is already in use.`)
-    } else if (err.code === 'EADDRNOTAVAIL') {
-      logger(
-        'error',
-        'Server',
-        `The address ${host} is not available on this machine.`
-      )
-      logger(
-        'error',
-        'Server',
-        'Please check your "host" configuration. Use "0.0.0.0" to listen on all interfaces.'
-      )
-    } else {
-      logger('error', 'Server', `Failed to start server: ${err.message}`)
+    switch (err.code) {
+      case 'EADDRINUSE':
+        logger('error', 'Server', `Port ${port} is already in use.`)
+        break
+      case 'EADDRNOTAVAIL':
+        logger(
+          'error',
+          'Server',
+          `The address ${host} is not available on this machine.`
+        )
+        logger(
+          'error',
+          'Server',
+          'Please check your "host" configuration. Use "0.0.0.0" to listen on all interfaces.'
+        )
+        break
+      default:
+        logger('error', 'Server', `Failed to start server: ${err.message}`)
+        break
     }
     process.exit(1)
   })

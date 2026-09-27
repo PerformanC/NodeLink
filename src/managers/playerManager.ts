@@ -60,6 +60,7 @@ interface PlayerManagerNodelinkContext {
   statistics: {
     players: number
   }
+  admissionManager?: import('./admissionManager.ts').default | null
   workerManager: WorkerManagerLike | null
   pluginManager?: import('./pluginManager.ts').default | null
   extensions?: {
@@ -508,6 +509,7 @@ export default class PlayerManager {
 
     this.players.set(playerKey, player)
     this.nodelink.statistics.players += 1
+    this.nodelink.admissionManager?.recordPlayerCreate(this.sessionId)
 
     this.nodelink.pluginManager?.callHook(
       'onPlayerCreate',
@@ -551,6 +553,7 @@ export default class PlayerManager {
 
       workerManager.unassignGuild(playerKey)
       this.players.delete(playerKey)
+      this.nodelink.admissionManager?.recordPlayerDestroy(this.sessionId)
 
       this.nodelink.pluginManager?.callHook(
         'onPlayerDestroy',
@@ -568,6 +571,7 @@ export default class PlayerManager {
       0,
       this.nodelink.statistics.players - 1
     )
+    this.nodelink.admissionManager?.recordPlayerDestroy(this.sessionId)
 
     this.nodelink.pluginManager?.callHook(
       'onPlayerDestroy',
@@ -739,9 +743,7 @@ export default class PlayerManager {
       return interception.result as PlayerCommandResponse
 
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'setFilters', [
-        filtersPayload
-      ])
+      return this.runClusterMutation(guildId, 'setFilters', [filtersPayload])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -787,9 +789,7 @@ export default class PlayerManager {
       return interception.result as PlayerCommandResponse
 
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'setCrossfade', [
-        crossfadeConfig
-      ])
+      return this.runClusterMutation(guildId, 'setCrossfade', [crossfadeConfig])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -844,9 +844,7 @@ export default class PlayerManager {
       return interception.result as PlayerCommandResponse
 
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'updateVoice', [
-        voicePayload
-      ])
+      return this.runClusterMutation(guildId, 'updateVoice', [voicePayload])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -880,10 +878,7 @@ export default class PlayerManager {
     volume: number | null = null
   ): Promise<MixAddResult | PlayerCommandResponse> {
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'addMix', [
-        trackPayload,
-        volume
-      ])
+      return this.runClusterMutation(guildId, 'addMix', [trackPayload, volume])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -990,9 +985,7 @@ export default class PlayerManager {
     >
   ): Promise<PlayerCommandResponse | undefined> {
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'updateSponsorBlock', [
-        updates
-      ])
+      return this.runClusterMutation(guildId, 'updateSponsorBlock', [updates])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))

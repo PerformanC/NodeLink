@@ -118,6 +118,7 @@ export function migrateConfig(
     enableLoadStreamEndpoint: 'api.enableLoadStreamEndpoint',
     dosProtection: 'dosProtection',
     rateLimit: 'rateLimit',
+    admission: 'admission',
     metrics: 'metrics',
     enableHoloTracks: 'experimental.enableHoloTracks',
     commandTimeout: 'cluster.timeouts.heavyMs',

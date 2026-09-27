@@ -2,7 +2,7 @@ import http from 'node:http';
 import process from 'node:process';
 import { logger } from '../utils.js';
 import { handleHttpUpgrade } from './wsRouter.js';
-/* INFO: Creates and configures native Node.js HTTP server with socket error guards and upgrade routing */
+/* INFO: Creates and configures native Node.js HTTP server with socket pool guards, DoS defense, and upgrade routing */
 function createHttpServer(nodelink, getRequestHandler) {
     const server = http.createServer((req, res) => {
         nodelink.pluginManager.callHook('onRESTRequest', req, res);
@@ -18,19 +18,36 @@ function createHttpServer(nodelink, getRequestHandler) {
             res.end('Internal Server Error');
         });
     });
-    /* INFO: Tune keep-alive settings for high-throughput gateway traffic */
-    server.keepAliveTimeout = 65000;
-    server.headersTimeout = 66000;
-    /* INFO: Guard all incoming sockets against EPIPE and ECONNRESET races */
+    /* INFO: Anti-Slowloris and high-throughput timeout calibration */
+    server.keepAliveTimeout = nodelink.options.server?.keepAliveTimeout ?? 15000;
+    server.headersTimeout = nodelink.options.server?.headersTimeout ?? 15000;
+    server.requestTimeout = nodelink.options.server?.bodyTimeout ?? 30000;
+    /* INFO: Guard all incoming sockets against DoS blocks, connection floods, and reset errors */
     server.on('connection', (socket) => {
+        const remoteAddress = socket.remoteAddress;
+        const isIpBlocked = nodelink.admissionManager.isIpBlocked(remoteAddress);
+        if (isIpBlocked) {
+            socket.destroy();
+            return;
+        }
+        const socketAllowed = nodelink.admissionManager.incrementActiveSockets(remoteAddress);
+        if (!socketAllowed) {
+            socket.destroy();
+            return;
+        }
+        socket.on('close', () => {
+            nodelink.admissionManager.decrementActiveSockets(remoteAddress);
+        });
         socket.on('error', (err) => {
-            if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET')
+            const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET';
+            if (isBenign)
                 return;
             logger('debug', 'Server', `HTTP socket error: ${err.message}`);
         });
     });
     server.on('clientError', (err, socket) => {
-        if (err?.code !== 'EPIPE' && err?.code !== 'ECONNRESET') {
+        const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET';
+        if (!isBenign) {
             logger('debug', 'Server', `HTTP client error: ${err.message}`);
         }
         try {
@@ -47,15 +64,17 @@ function createHttpServer(nodelink, getRequestHandler) {
 /* INFO: Starts listening on configured port and host with descriptive network error diagnostics */
 function listenHttpServer(server, host, port) {
     server.on('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-            logger('error', 'Server', `Port ${port} is already in use.`);
-        }
-        else if (err.code === 'EADDRNOTAVAIL') {
-            logger('error', 'Server', `The address ${host} is not available on this machine.`);
-            logger('error', 'Server', 'Please check your "host" configuration. Use "0.0.0.0" to listen on all interfaces.');
-        }
-        else {
-            logger('error', 'Server', `Failed to start server: ${err.message}`);
+        switch (err.code) {
+            case 'EADDRINUSE':
+                logger('error', 'Server', `Port ${port} is already in use.`);
+                break;
+            case 'EADDRNOTAVAIL':
+                logger('error', 'Server', `The address ${host} is not available on this machine.`);
+                logger('error', 'Server', 'Please check your "host" configuration. Use "0.0.0.0" to listen on all interfaces.');
+                break;
+            default:
+                logger('error', 'Server', `Failed to start server: ${err.message}`);
+                break;
         }
         process.exit(1);
     });

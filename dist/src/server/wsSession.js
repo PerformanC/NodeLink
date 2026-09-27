@@ -30,6 +30,13 @@ function _setupSocketInterceptors(context, socket, clientInfo) {
     socket.on = (event, listener) => {
         if (event === 'message') {
             return originalOn(event, async (...args) => {
+                /* INFO: Lavalink v4 gateway is unidirectional (server -> client only). */
+                const interceptors = context.extensions.wsInterceptors;
+                const hasInterceptors = interceptors.length > 0;
+                if (!hasInterceptors) {
+                    socket.close?.(1008, 'Client-to-server messages are not supported');
+                    return;
+                }
                 const raw = args[0];
                 let parsed;
                 try {
@@ -40,7 +47,6 @@ function _setupSocketInterceptors(context, socket, clientInfo) {
                     parsed = raw;
                 }
                 /* INFO: Execute custom WebSocket interceptors pipeline */
-                const interceptors = context.extensions.wsInterceptors;
                 for (const interceptor of interceptors) {
                     const handled = await interceptor(context, socket, parsed, clientInfo);
                     if (handled === true)
@@ -83,6 +89,7 @@ function _resumeSession(context, socket, clientInfo, oldSessionId) {
     const session = context.sessions.resume(oldSessionId, socket);
     if (!session)
         return false;
+    context.admissionManager.recordSessionResume(oldSessionId);
     logger('info', 'Server', `${_formatClientTag(clientInfo)} resumed session: ${oldSessionId}`);
     context.statsManager.incrementSessionResume(clientInfo.name, true);
     _attachDisconnectHandler(context, socket, oldSessionId, clientInfo);
@@ -102,6 +109,7 @@ function _resumeSession(context, socket, clientInfo, oldSessionId) {
 /* INFO: Creates a fresh session for a newly connected client */
 function _createNewSession(context, socket, request, clientInfo) {
     const sessionId = context.sessions.create(request, socket, clientInfo);
+    context.admissionManager.recordSessionConnect(sessionId);
     _attachDisconnectHandler(context, socket, sessionId, clientInfo);
     socket.send(JSON.stringify({
         op: 'ready',

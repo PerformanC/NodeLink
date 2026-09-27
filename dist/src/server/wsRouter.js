@@ -57,6 +57,12 @@ function handleHttpUpgrade(context, request, socket, head) {
     const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort})`;
     const url = new URL(request.url || '/', 'http://localhost');
     const pathname = url.pathname;
+    const admissionContext = context.admissionManager.resolveContext(request, url);
+    const admissionDecision = context.admissionManager.admit(admissionContext);
+    if (!admissionDecision.allowed) {
+        _rejectUpgrade(socket, admissionDecision.status, 'Too Many Requests', admissionDecision.message);
+        return;
+    }
     if (pathname === '/v4/profiler/socket') {
         _handleProfilerUpgrade(context, request, socket, head, clientAddress, isInternal);
         return;
@@ -99,7 +105,9 @@ function _handleGatewayUpgrade(context, request, socket, head, pathname, clientA
         _rejectUpgrade(socket, status, title, reason);
     };
     const authHeader = _getHeader(request.headers, 'authorization');
-    if (!_isAuthorized(authHeader, context.options.server?.password ?? '')) {
+    const isAuthorized = _isAuthorized(authHeader, context.options.server?.password ?? '');
+    if (!isAuthorized) {
+        context.admissionManager.recordAuthFailure(request.socket.remoteAddress);
         reject(401, 'Unauthorized', 'Invalid password provided.');
         return;
     }

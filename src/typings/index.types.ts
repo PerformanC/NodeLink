@@ -770,6 +770,12 @@ export interface SessionSocket {
   /** Optional guild association used by websocket hooks. */
   guildId?: string
 
+  /** Client IP address when available. */
+  remoteAddress?: string
+
+  /** Optional socket identifier. */
+  id?: string
+
   /**
    * Sends data through the socket
    */

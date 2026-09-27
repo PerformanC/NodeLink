@@ -68,6 +68,11 @@ export type IPCMessage =
         affectedGuilds: string[]
       }
     }
+  | {
+      type: 'ipBlock'
+      ip: string
+      durationMs?: number
+    }
 
 /**
  * HTTP Extension route

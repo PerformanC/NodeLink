@@ -4,8 +4,22 @@ import { logger } from '../utils.js';
 function setupClusterWorkerSocket(server) {
     logger('info', 'Server', 'Running as cluster worker — waiting for sockets from master.');
     process.on('message', (msg, handle) => {
-        if (msg?.type !== 'sticky-session' || !handle)
-            return;
+        switch (msg?.type) {
+            case 'ipBlock': {
+                const payload = msg;
+                if (payload.ip) {
+                    const g = globalThis;
+                    g.nodelink?.admissionManager?.blockIp(payload.ip, payload.durationMs ?? 300000);
+                }
+                return;
+            }
+            case 'sticky-session':
+                if (!handle)
+                    return;
+                break;
+            default:
+                return;
+        }
         try {
             try {
                 handle.pause?.();
