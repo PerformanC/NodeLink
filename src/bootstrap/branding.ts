@@ -23,7 +23,7 @@ const SUPPORT_GUIDELINES = `\x1b[35m
 │  4. Cut logs or missing Node.js version will result in an ignored ticket.    │
 │  5. FAQ and Rules: https://discord.gg/bVz6ppZ3SP                             │
 │                    https://discord.gg/z4ayqfeBdB                             │
-│╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m
+╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m
 `
 
 function printSupportGuidelines(): void {
@@ -55,7 +55,8 @@ interface PostUpdateBannerInfo {
 }
 
 function padAscii(line: string, width = 24): string {
-  return line + ' '.repeat(Math.max(0, width - line.length))
+  const trimmed = line.trimEnd()
+  return trimmed + ' '.repeat(Math.max(1, width - trimmed.length))
 }
 
 function printPostUpdateBanner(info: PostUpdateBannerInfo): void {
@@ -71,23 +72,23 @@ function printPostUpdateBanner(info: PostUpdateBannerInfo): void {
   const currCommit = info.currentCommit?.slice(0, 7) ?? 'unknown'
 
   const art = [
-    '_      _       ',
-    ' ___ /\\\\   _/\\\\___   ',
-    '/  //\\ \\\\ (_   _ _)) ',
-    '\\:.\\\\_\\ \\\\ /  |))\\\\  ',
-    ' \\  :.  ///:. ___//  ',
-    '(_   ___))\\_ \\\\      ',
-    '  \\//       \\//      '
+    '  _           _',
+    ' ___ /\\\\   _/\\\\___',
+    '/  //\\ \\\\ (_   _ _))',
+    '\\:.\\\\_\\ \\\\ /  |))\\\\',
+    ' \\  :.  ///:. ___//',
+    '(_   ___))\\_ \\\\',
+    '  \\//       \\//'
   ]
 
   const rightLines = [
     '\x1b[1;34mUpdate Applied\x1b[0m \x1b[3m\x1b[90m(via space shooting star)\x1b[0m',
-    `\x1b[34m➜\x1b[0m \x1b[37mBefore :\x1b[0m \x1b[33m${prevVer}\x1b[0m \x1b[90m(${prevCommit})\x1b[0m`,
-    `\x1b[34m➜\x1b[0m \x1b[37mAfter  :\x1b[0m \x1b[1;32m${currVer}\x1b[0m \x1b[90m(${currCommit})\x1b[0m`,
-    '',
-    '\x1b[34m•\x1b[0m \x1b[37mReport issues :\x1b[0m \x1b[36mhttps://github.com/PerformanC/NodeLink/issues\x1b[0m',
-    '\x1b[34m•\x1b[0m \x1b[37mDiscord       :\x1b[0m \x1b[36mhttps://discord.gg/bVz6ppZ3SP\x1b[0m',
-    '                \x1b[36mhttps://discord.gg/z4ayqfeBdB\x1b[0m'
+    `\x1b[34m➜\x1b[0m \x1b[37mBefore  :\x1b[0m \x1b[33m${prevVer}\x1b[0m \x1b[90m(${prevCommit})\x1b[0m`,
+    `\x1b[34m➜\x1b[0m \x1b[37mAfter   :\x1b[0m \x1b[1;32m${currVer}\x1b[0m \x1b[90m(${currCommit})\x1b[0m`,
+    '\x1b[34m•\x1b[0m \x1b[37mIssues  :\x1b[0m \x1b[36mhttps://github.com/PerformanC/NodeLink/issues\x1b[0m',
+    '\x1b[34m•\x1b[0m \x1b[37mDiscord :\x1b[0m \x1b[36mhttps://discord.gg/bVz6ppZ3SP\x1b[0m',
+    '            \x1b[36mhttps://discord.gg/z4ayqfeBdB\x1b[0m',
+    ''
   ]
 
   let banner = '\n'

@@ -1,7 +1,8 @@
-import { spawn } from 'node:child_process';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { execFile, spawn } from 'node:child_process';
+import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { promisify } from 'node:util';
 import { logger } from '../../utils.js';
 import { DEFAULT_UPDATE_CHANNEL, MANIFEST_FILE_NAME, UPDATER_PATHS } from './constants.js';
 import { drainAndShutdown } from './drain.js';
@@ -11,6 +12,17 @@ import { DockerProvider } from './providers/dockerProvider.js';
 import { GitProvider } from './providers/gitProvider.js';
 import { HttpProvider } from './providers/httpProvider.js';
 import { UpdateStateStore } from './state.js';
+import { FileSwapper } from './swapper.js';
+const execFileAsync = promisify(execFile);
+function areCommitsEqual(a, b) {
+    if (!a || !b || a === 'unknown' || b === 'unknown')
+        return false;
+    const cleanA = a.trim().toLowerCase();
+    const cleanB = b.trim().toLowerCase();
+    return (cleanA === cleanB ||
+        cleanA.startsWith(cleanB) ||
+        cleanB.startsWith(cleanA));
+}
 export class UpdateManager {
     root;
     stateStore;
@@ -39,7 +51,17 @@ export class UpdateManager {
             const content = await readFile(lockPath, 'utf8');
             const lockData = JSON.parse(content);
             const age = Date.now() - (lockData.timestamp ?? 0);
-            if (age < 10 * 60 * 1000) {
+            let isAlive = false;
+            if (lockData.pid) {
+                try {
+                    process.kill(lockData.pid, 0);
+                    isAlive = true;
+                }
+                catch {
+                    isAlive = false;
+                }
+            }
+            if (isAlive && age < 10 * 60 * 1000) {
                 return true;
             }
             await unlink(lockPath).catch((err) => {
@@ -78,8 +100,18 @@ export class UpdateManager {
     }
     async getCurrentState(fallbackVersion, fallbackCommit = 'unknown', channel = DEFAULT_UPDATE_CHANNEL) {
         const savedState = await this.stateStore.read();
+        const activeCommit = fallbackCommit !== 'unknown'
+            ? fallbackCommit
+            : (savedState?.commit ?? 'unknown');
+        const activeVersion = fallbackVersion !== 'unknown'
+            ? fallbackVersion
+            : (savedState?.version ?? 'unknown');
         if (savedState) {
-            return savedState;
+            return {
+                ...savedState,
+                commit: activeCommit,
+                version: activeVersion
+            };
         }
         return {
             version: fallbackVersion,
@@ -162,9 +194,33 @@ export class UpdateManager {
                 };
             }
         }
+        const isSameCommit = areCommitsEqual(current.commit, latest.commit);
+        if (isSameCommit) {
+            return {
+                available: false,
+                current: { ...current, commit: latest.commit, version: latest.version },
+                latest,
+                provider: provider.type,
+                reason: 'Local installation is already running the latest commit'
+            };
+        }
+        if (provider.type === 'git') {
+            const gitProvider = provider;
+            const isAhead = await gitProvider.isAhead(current.commit, latest.commit);
+            if (isAhead) {
+                return {
+                    available: false,
+                    current,
+                    latest,
+                    provider: provider.type,
+                    reason: 'Local installation is ahead of upstream commit'
+                };
+            }
+        }
         const localManifestCommit = await this.getLocalManifestCommit();
-        if (localManifestCommit && localManifestCommit === latest.commit) {
-            if (current.commit !== latest.commit) {
+        if (localManifestCommit &&
+            areCommitsEqual(localManifestCommit, latest.commit)) {
+            if (!areCommitsEqual(current.commit, latest.commit)) {
                 await this.stateStore.write({
                     ...current,
                     commit: latest.commit,
@@ -179,9 +235,14 @@ export class UpdateManager {
                 reason: 'Local installation is already running the latest commit'
             };
         }
-        const available = latest.commit !== current.commit &&
+        let available = !isSameCommit &&
             current.commit !== 'unknown' &&
             latest.commit.length > 0;
+        if (provider.type === 'git') {
+            const gitProvider = provider;
+            const isBehind = await gitProvider.isBehind(current.commit, latest.commit);
+            available = isBehind;
+        }
         return {
             available,
             current,
@@ -200,38 +261,61 @@ export class UpdateManager {
             return false;
         }
         try {
-            const downloadDir = path.join(this.root, UPDATER_PATHS.download);
-            await mkdir(downloadDir, { recursive: true });
-            const archivePath = path.join(downloadDir, `${manifest.commit}.tar.gz`);
-            logger('info', 'UpdateManager', `Downloading update package for ${manifest.commit.slice(0, 7)}...`);
-            await this.download(manifest, archivePath);
-            const stagingDir = path.join(this.root, UPDATER_PATHS.staging, manifest.commit);
-            logger('info', 'UpdateManager', 'Unpacking update archive to staging...');
-            await this.extractor.extract(archivePath, stagingDir);
+            const provider = await this.selectProvider();
+            if (provider.type === 'git') {
+                logger('info', 'UpdateManager', `Syncing repository to commit ${manifest.commit.slice(0, 7)}...`);
+                await execFileAsync('git', ['reset', '--hard', manifest.commit], {
+                    cwd: this.root
+                });
+            }
+            else {
+                const downloadDir = path.join(this.root, UPDATER_PATHS.download);
+                await mkdir(downloadDir, { recursive: true });
+                const archivePath = path.join(downloadDir, `${manifest.commit}.tar.gz`);
+                logger('info', 'UpdateManager', `Downloading update package for ${manifest.commit.slice(0, 7)}...`);
+                await this.download(manifest, archivePath);
+                const stagingDir = path.join(this.root, UPDATER_PATHS.staging, manifest.commit);
+                logger('info', 'UpdateManager', 'Unpacking update archive to staging...');
+                await this.extractor.extract(archivePath, stagingDir);
+                const backupDir = path.join(this.root, UPDATER_PATHS.backup);
+                const swapper = new FileSwapper(this.root);
+                await swapper.createBackup(backupDir);
+                await swapper.applyStaging(stagingDir);
+                await rm(stagingDir, { recursive: true, force: true }).catch((error) => {
+                    logger('debug', 'UpdateManager', `Failed to remove staging directory: ${error instanceof Error ? error.message : String(error)}`);
+                });
+                await rm(downloadDir, { recursive: true, force: true }).catch((error) => {
+                    logger('debug', 'UpdateManager', `Failed to remove download directory: ${error instanceof Error ? error.message : String(error)}`);
+                });
+            }
+            const previousState = await this.stateStore.read();
+            await this.stateStore.write({
+                version: manifest.version,
+                commit: manifest.commit,
+                channel: manifest.channel,
+                updatedAt: new Date().toISOString(),
+                previousVersion: previousState?.version,
+                previousCommit: previousState?.commit,
+                quarantinedCommits: previousState?.quarantinedCommits ?? {},
+                consecutiveCrashCount: 0,
+                justUpdated: true,
+                lastAcknowledgedCommit: manifest.commit
+            });
             if (server) {
                 await drainAndShutdown(server, 'Server restarting for update', drainTimeout);
             }
-            const backupDir = path.join(this.root, UPDATER_PATHS.backup);
-            const workerPath = path.join(this.root, 'src', 'bootstrap', 'updater', 'updater-worker.ts');
-            logger('info', 'UpdateManager', 'Spawning detached update-worker...');
-            const child = spawn(process.execPath, [
-                '--dns-result-order=ipv4first',
-                '--experimental-strip-types',
-                workerPath,
-                `--root=${this.root}`,
-                `--staging=${stagingDir}`,
-                `--backup=${backupDir}`,
-                `--parent-pid=${process.pid}`,
-                `--target-commit=${manifest.commit}`,
-                `--target-version=${manifest.version}`,
-                `--channel=${manifest.channel}`
-            ], {
-                cwd: this.root,
+            await this.releaseLock();
+            logger('info', 'UpdateManager', 'Update applied successfully. Restarting process to apply changes...');
+            const child = spawn(process.argv[0], process.argv.slice(1), {
                 stdio: 'inherit',
-                detached: true
+                env: process.env
             });
-            child.unref();
-            process.exit(0);
+            child.on('exit', (code) => {
+                process.exit(code ?? 0);
+            });
+            // Halt execution of the parent process forever while the child runs
+            await new Promise(() => { });
+            return true;
         }
         catch (error) {
             await this.releaseLock();

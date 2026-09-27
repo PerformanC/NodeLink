@@ -100,4 +100,22 @@ export class GitProvider {
             size: fileStat.size
         };
     }
+    async isAhead(localCommit, remoteCommit) {
+        try {
+            await this.git('merge-base', '--is-ancestor', remoteCommit, localCommit);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    async isBehind(localCommit, remoteCommit) {
+        try {
+            await this.git('merge-base', '--is-ancestor', localCommit, remoteCommit);
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
 }

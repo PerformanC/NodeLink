@@ -155,4 +155,28 @@ export class GitProvider implements UpdateProvider {
       size: fileStat.size
     }
   }
+
+  public async isAhead(
+    localCommit: string,
+    remoteCommit: string
+  ): Promise<boolean> {
+    try {
+      await this.git('merge-base', '--is-ancestor', remoteCommit, localCommit)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  public async isBehind(
+    localCommit: string,
+    remoteCommit: string
+  ): Promise<boolean> {
+    try {
+      await this.git('merge-base', '--is-ancestor', localCommit, remoteCommit)
+      return true
+    } catch {
+      return false
+    }
+  }
 }
