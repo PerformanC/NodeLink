@@ -23,9 +23,12 @@ import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
 
 const BASE_URL = 'https://api-v2.soundcloud.com'
 const SOUNDCLOUD_URL = 'https://soundcloud.com'
-const ASSET_PATTERN = /https:\/\/a-v2\.sndcdn\.com\/assets\/[a-zA-Z0-9-]+\.js/g
+const ASSET_PATTERN =
+  /https:\/\/[A-Za-z0-9.-]+\/assets\/[a-zA-Z0-9-]+\.js/g
 const CLIENT_ID_PATTERN =
-  /(?:[?&/]?(?:client_id)[\s:=&]*"?|"data":{"id":")([A-Za-z0-9]{32})"?/
+  /(?:[?&/]?(?:client_id)[\s:=&]*"?|"data":{"id":")([A-Za-z0-9_-]{16,})"?/
+const SOUNDCLOUD_USER_AGENT =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.100 Safari/537.36'
 const TRACK_PATTERN =
   /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s?]+(\?.*)?$/
 const SEARCH_URL_PATTERN =
@@ -91,7 +94,10 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
 
     try {
-      const mainPage = await makeRequest(SOUNDCLOUD_URL, { method: 'GET' })
+      const mainPage = await makeRequest(SOUNDCLOUD_URL, {
+        method: 'GET',
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (!mainPage || mainPage.error) {
         this._logError('Failed to load SoundCloud main page', mainPage?.error)
@@ -124,7 +130,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
           clientId = await Promise.any(
             assetMatches.map(async (match) => {
               const assetUrl = match[0]
-              const asset = await http1makeRequest(assetUrl)
+              const asset = await http1makeRequest(assetUrl, {
+                headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+              })
 
               if (asset && !asset.error && typeof asset.body === 'string') {
                 const idMatch = asset.body.match(CLIENT_ID_PATTERN)
@@ -142,7 +150,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
           this.nodelink.credentialManager.set(
             'soundcloud_client_id',
             clientId,
-            7 * 24 * 60 * 60 * 1000
+            60 * 60 * 1000
           )
           logger(
             'info',
@@ -158,6 +166,64 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       }
     } catch (err) {
       this._logError('Setup failed', err)
+      return false
+    }
+  }
+
+  private async _refreshClientId(): Promise<boolean> {
+    try {
+      const mainPage = await makeRequest(SOUNDCLOUD_URL, {
+        method: 'GET',
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
+
+      if (!mainPage || mainPage.error || typeof mainPage.body !== 'string') {
+        return false
+      }
+
+      let clientId = mainPage.body.match(CLIENT_ID_PATTERN)?.[1]
+
+      if (!clientId) {
+        const assetMatches = [...mainPage.body.matchAll(ASSET_PATTERN)]
+
+        if (assetMatches.length === 0) {
+          return false
+        }
+
+        clientId = await Promise.any(
+          assetMatches.map(async (match) => {
+            const asset = await http1makeRequest(match[0], {
+              headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+            })
+
+            if (asset && !asset.error && typeof asset.body === 'string') {
+              const idMatch = asset.body.match(CLIENT_ID_PATTERN)
+              if (idMatch?.[1]) return idMatch[1]
+            }
+
+            throw new Error('No client_id found in asset')
+          })
+        )
+      }
+
+      if (!clientId) return false
+
+      this.clientId = clientId
+      this.nodelink.credentialManager.set(
+        'soundcloud_client_id',
+        clientId,
+        60 * 60 * 1000
+      )
+
+      logger(
+        'info',
+        'Sources',
+        `Refreshed SoundCloud client_id (${clientId})`
+      )
+
+      return true
+    } catch (err: unknown) {
+      this._logError('SoundCloud client_id refresh failed', err)
       return false
     }
   }
@@ -235,7 +301,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
         params.append('facet', 'model')
       }
 
-      const req = await http1makeRequest(`${BASE_URL}${endpoint}?${params}`)
+      const req = await http1makeRequest(`${BASE_URL}${endpoint}?${params}`, {
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (req.error || req.statusCode !== 200) {
         return this._buildError(
@@ -559,7 +627,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
 
     try {
       const reqUrl = `${BASE_URL}/resolve?${new URLSearchParams({ url, client_id: this.clientId ?? '' })}`
-      const req = await http1makeRequest(reqUrl)
+      const req = await http1makeRequest(reqUrl, {
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
 
       if (req.statusCode === 404) return { loadType: 'empty', data: {} }
 
@@ -708,7 +778,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     const info: TrackEncodeInput = {
       title: item.title ?? 'Unknown',
       author: item.user?.username ?? 'Unknown',
-      length: item.duration ?? 0,
+      length: item.full_duration ?? item.duration ?? 0,
       identifier: String(item.id ?? ''),
       isSeekable: true,
       isStream: false,
@@ -757,8 +827,9 @@ export default class SoundCloudSource implements SoundCloudSourceState {
           'soundcloud',
           info.identifier
         )
+
       if (cached) {
-        const expiresMatch = cached.url.match(/expires=(\d+)/)
+        const expiresMatch = cached.url.match(/expires=(\\d+)/)
         const expires = expiresMatch?.[1]
           ? parseInt(expiresMatch[1], 10) * 1000
           : 0
@@ -775,9 +846,41 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
 
     try {
-      const trackUrl = `https://api.soundcloud.com/tracks/${info.identifier}`
-      const reqUrl = `${BASE_URL}/resolve?${new URLSearchParams({ url: trackUrl, client_id: this.clientId ?? '' })}`
-      const req = await http1makeRequest(reqUrl)
+      /*
+       * Match Lavaplayer's SoundCloud flow:
+       * resolve the original SoundCloud permalink through api-v2 rather than
+       * resolving an api.soundcloud.com/tracks/{id} URL.
+       */
+      const trackUrl = info.uri
+
+      if (!trackUrl) {
+        return this._buildException('SoundCloud track URI is missing')
+      }
+
+      const reqUrl = `${BASE_URL}/resolve?${new URLSearchParams({
+        url: trackUrl,
+        client_id: this.clientId ?? ''
+      })}`
+
+      logger(
+        'debug',
+        'Sources',
+        `Resolving SoundCloud track URL: ${trackUrl}`
+      )
+
+      let req = await http1makeRequest(reqUrl, {
+        headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+      })
+
+      if (req.statusCode === 401 && (await this._refreshClientId())) {
+        const retryUrl = `${BASE_URL}/resolve?${new URLSearchParams({
+          url: trackUrl,
+          client_id: this.clientId ?? ''
+        })}`
+        req = await http1makeRequest(retryUrl, {
+          headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+        })
+      }
 
       if (req.error || req.statusCode !== 200) {
         this._logError('getTrackUrl failed', req.error)
@@ -790,13 +893,39 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       const body = req.body as SoundCloudApiTrack & {
         errors?: Array<{ error_message?: string }>
       }
+
       if (body?.errors?.[0]) {
         const msg = body.errors[0].error_message ?? 'Unknown error'
         this._logError('API error', new Error(msg))
         return this._buildException(msg)
       }
 
+      logger(
+        'debug',
+        'Sources',
+        `Resolved SoundCloud track ${body.id ?? info.identifier}: ${JSON.stringify({
+          duration: body.duration,
+          full_duration: body.full_duration,
+          access: body.access,
+          snippet: body.snippet,
+          monetization_model: body.monetization_model,
+          policy: body.policy,
+          transcodings: body.media?.transcodings?.map((t) => ({
+            preset: t.preset,
+            protocol: t.format?.protocol,
+            mime: t.format?.mime_type,
+            quality: t.quality,
+            url: t.url
+          }))
+        })}`
+      )
+
+      if (body.policy === 'BLOCK') {
+        return this._buildException('SoundCloud track is blocked')
+      }
+
       const result = await this._selectTranscoding(body)
+
       if (result && !result.exception) {
         this.nodelink.trackCacheManager.set(
           'soundcloud',
@@ -805,6 +934,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
           1000 * 60 * 15
         )
       }
+
       return result
     } catch (err: unknown) {
       this._logError('getTrackUrl exception', err)
@@ -817,141 +947,207 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   async _selectTranscoding(
     body: SoundCloudApiTrack
   ): Promise<SoundCloudStreamUrlResult> {
-    const transcodings: SoundCloudApiTranscoding[] =
-      body.media?.transcodings ?? []
-
-    if (!transcodings.length && (body.hls_aac_160_url || body.hls_aac_96_url)) {
-      if (body.hls_aac_160_url) {
-        transcodings.push({
-          format: { protocol: 'hls', mime_type: 'audio/aac' },
-          url: body.hls_aac_160_url,
-          quality: 'hq'
-        })
-      }
-
-      if (body.hls_aac_96_url) {
-        transcodings.push({
-          format: { protocol: 'hls', mime_type: 'audio/aac' },
-          url: body.hls_aac_96_url,
-          quality: 'sq'
-        })
-      }
-    }
+    const transcodings: SoundCloudApiTranscoding[] = [
+      ...(body.media?.transcodings ?? [])
+    ]
 
     if (transcodings.length === 0) {
       return this._buildException('No transcodings available')
     }
 
-    const progressiveMp3 = transcodings.find(
-      (t) =>
-        t.format?.protocol === 'progressive' &&
-        t.format?.mime_type?.includes('mpeg')
-    )
+    /*
+     * Lavaplayer format preference:
+     *   1. HLS Opus
+     *   2. HLS MP3
+     *   3. Progressive MP3
+     *
+     * Keep any remaining formats as a final compatibility fallback.
+     */
+    const orderedCandidates = [
+      ...transcodings.filter(
+        (t) =>
+          t.format?.protocol === 'hls' &&
+          t.format?.mime_type?.includes('ogg')
+      ),
+      ...transcodings.filter(
+        (t) =>
+          t.format?.protocol === 'hls' &&
+          t.format?.mime_type?.includes('mpeg')
+      ),
+      ...transcodings.filter(
+        (t) =>
+          t.format?.protocol === 'progressive' &&
+          t.format?.mime_type?.includes('mpeg')
+      ),
+      ...transcodings
+    ]
 
-    const progressiveAac = transcodings.find(
-      (t) =>
-        t.format?.protocol === 'progressive' &&
-        t.format?.mime_type?.includes('aac')
-    )
+    const candidates = [
+      ...new Map(
+        orderedCandidates
+          .filter(
+            (
+              t
+            ): t is SoundCloudApiTranscoding & { url: string } =>
+              Boolean(t?.url)
+          )
+          .map((t) => [t.url, t])
+      ).values()
+    ]
 
-    const hlsAacHigh = transcodings.find(
-      (t) =>
-        t.format?.protocol === 'hls' &&
-        (t.format?.mime_type?.includes('aac') ||
-          t.format?.mime_type?.includes('mp4')) &&
-        (t.quality === 'hq' ||
-          t.preset?.includes('160') ||
-          t.url?.includes('160'))
-    )
+    let sawPreview = false
+    let lastFailure: string | null = null
 
-    const hlsAacStandard = transcodings.find(
-      (t) =>
-        t.format?.protocol === 'hls' &&
-        (t.format?.mime_type?.includes('aac') ||
-          t.format?.mime_type?.includes('mp4'))
-    )
+    for (const candidate of candidates) {
+      /*
+       * A preview lookup URL is already definitive. Do not spend another
+       * request resolving a known 30-second stream.
+       */
+      if (candidate.url.includes('/preview/')) {
+        sawPreview = true
+        logger(
+          'debug',
+          'Sources',
+          `Skipping SoundCloud preview transcoding for track ${body.id ?? 'unknown'}: ${candidate.url}`
+        )
+        continue
+      }
 
-    const anyHls = transcodings.find((t) => t.format?.protocol === 'hls')
-    const anyProgressive = transcodings.find(
-      (t) => t.format?.protocol === 'progressive'
-    )
+      const separator = candidate.url.includes('?') ? '&' : '?'
+      const streamAuthUrl =
+        `${candidate.url}${separator}client_id=${this.clientId ?? ''}`
 
-    const selected =
-      progressiveMp3 ||
-      progressiveAac ||
-      hlsAacHigh ||
-      hlsAacStandard ||
-      anyProgressive ||
-      anyHls ||
-      transcodings[0]
+      try {
+        let urlReq = await http1makeRequest(streamAuthUrl, {
+          method: 'GET',
+          headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+        })
 
-    if (!selected?.url) {
-      return this._buildException('No valid transcoding found')
-    }
+        if (urlReq.statusCode === 401 && (await this._refreshClientId())) {
+          const retrySeparator = candidate.url.includes('?') ? '&' : '?'
+          const retryUrl =
+            `${candidate.url}${retrySeparator}client_id=${this.clientId ?? ''}`
 
-    if (selected.format?.mime_type?.includes('opus')) {
-      logger(
-        'warn',
-        'Sources',
-        `Using Opus codec which may cause decoder issues (track: ${body.id})`
-      )
-    }
+          urlReq = await http1makeRequest(retryUrl, {
+            method: 'GET',
+            headers: { 'User-Agent': SOUNDCLOUD_USER_AGENT }
+          })
+        }
 
-    const streamAuthUrl = `${selected.url}?client_id=${this.clientId}`
-    const urlReq = await http1makeRequest(streamAuthUrl, { method: 'GET' })
-    let finalUrl: string | null = null
+        let finalUrl: string | null = null
 
-    if (urlReq.finalUrl && urlReq.finalUrl !== streamAuthUrl) {
-      finalUrl = urlReq.finalUrl
-    } else if (urlReq.statusCode === 302 || urlReq.statusCode === 301) {
-      finalUrl =
-        typeof urlReq.headers?.location === 'string'
-          ? urlReq.headers.location
-          : null
-    } else if (
-      urlReq.body &&
-      typeof urlReq.body === 'object' &&
-      'url' in urlReq.body &&
-      urlReq.body.url
-    ) {
-      finalUrl = urlReq.body.url as string
-    } else if (urlReq.statusCode === 200) {
-      finalUrl = streamAuthUrl
-    }
+        if (urlReq.finalUrl && urlReq.finalUrl !== streamAuthUrl) {
+          finalUrl = urlReq.finalUrl
+        } else if (
+          urlReq.statusCode === 301 ||
+          urlReq.statusCode === 302 ||
+          urlReq.statusCode === 303 ||
+          urlReq.statusCode === 307 ||
+          urlReq.statusCode === 308
+        ) {
+          finalUrl =
+            typeof urlReq.headers?.location === 'string'
+              ? urlReq.headers.location
+              : null
+        } else if (
+          urlReq.body &&
+          typeof urlReq.body === 'object' &&
+          'url' in urlReq.body &&
+          typeof urlReq.body.url === 'string'
+        ) {
+          finalUrl = urlReq.body.url
+        } else if (urlReq.statusCode === 200) {
+          finalUrl = streamAuthUrl
+        }
 
-    if (!finalUrl) {
-      return this._buildException('Failed to resolve stream URL')
+        if (!finalUrl) {
+          lastFailure =
+            `No stream URL returned for ${candidate.preset ?? candidate.format?.protocol ?? 'unknown'}`
+          continue
+        }
+
+        const normalizedUrl = finalUrl.toLowerCase()
+        const isPreview =
+          normalizedUrl.includes('cf-preview-media.sndcdn.com') ||
+          normalizedUrl.includes('/preview/') ||
+          normalizedUrl.includes('preview_mp3') ||
+          normalizedUrl.includes('/playlist/0/30/') ||
+          normalizedUrl.includes('/0/30/')
+
+        if (isPreview) {
+          sawPreview = true
+          logger(
+            'debug',
+            'Sources',
+            `Skipping resolved 30-second SoundCloud preview for track ${body.id ?? 'unknown'}`
+          )
+          continue
+        }
+
+        const mimeType =
+          candidate.format?.mime_type?.toLowerCase() ?? ''
+        const protocol =
+          candidate.format?.protocol ?? 'progressive'
+
+        let format:
+          | 'mp3'
+          | 'm4a'
+          | 'aac_hls'
+          | 'opus'
+          | 'arbitrary' = 'arbitrary'
+
+        if (mimeType.includes('mpeg')) {
+          format = 'mp3'
+        } else if (mimeType.includes('ogg') || mimeType.includes('opus')) {
+          format = 'opus'
+        } else if (
+          mimeType.includes('aac') ||
+          mimeType.includes('mp4')
+        ) {
+          format = protocol === 'hls' ? 'aac_hls' : 'm4a'
+        }
+
+        logger(
+          'debug',
+          'Sources',
+          `Selected SoundCloud transcoding for track ${body.id ?? 'unknown'}: preset=${candidate.preset ?? 'unknown'}, protocol=${protocol}, mime=${mimeType}`
+        )
+
+        return {
+          url: finalUrl,
+          protocol,
+          format,
+          additionalData: { format }
+        }
+      } catch (err: unknown) {
+        lastFailure =
+          err instanceof Error ? err.message : String(err)
+
+        logger(
+          'debug',
+          'Sources',
+          `Failed SoundCloud transcoding for track ${body.id ?? 'unknown'} (${candidate.preset ?? candidate.format?.protocol ?? 'unknown'}): ${lastFailure}`
+        )
+      }
     }
 
     if (
-      finalUrl.includes('cf-preview-media.sndcdn.com') ||
-      finalUrl.includes('/preview/')
+      body.monetization_model === 'SUB_HIGH_TIER' ||
+      body.access === 'preview' ||
+      body.snippet === true ||
+      sawPreview
     ) {
-      return this._buildException('Track only has preview URL')
+      return this._buildException(
+        'SoundCloud only provides a preview for this track',
+        'SOUNDCLOUD_PREVIEW_ONLY'
+      )
     }
 
-    const mimeType = selected.format?.mime_type?.toLowerCase() ?? ''
-    const protocol = selected.format?.protocol ?? 'progressive'
-    let format: 'mp3' | 'm4a' | 'aac_hls' | 'opus' | 'arbitrary' = 'arbitrary'
-
-    if (mimeType.includes('mpeg')) {
-      format = 'mp3'
-    } else if (mimeType.includes('aac') || mimeType.includes('mp4')) {
-      if (protocol === 'hls') {
-        format = 'aac_hls'
-      } else {
-        format = 'm4a'
-      }
-    } else if (mimeType.includes('opus')) {
-      format = 'opus'
-    }
-
-    return {
-      url: finalUrl,
-      protocol,
-      format,
-      additionalData: { format }
-    }
+    return this._buildException(
+      lastFailure
+        ? `Failed to resolve a playable SoundCloud stream: ${lastFailure}`
+        : 'Failed to resolve a playable SoundCloud stream'
+    )
   }
 
   async loadStream(
@@ -1069,12 +1265,15 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
   }
 
-  _buildException(message: string): TrackUrlResult {
+  _buildException(
+    message: string,
+    cause: string = 'Unknown'
+  ): TrackUrlResult {
     return {
       exception: {
         message,
         severity: 'fault',
-        cause: 'Unknown'
+        cause
       }
     }
   }

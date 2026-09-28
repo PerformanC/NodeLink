@@ -359,7 +359,12 @@ export default class ConfigValidationManager {
             optional: true,
             props: {
               enabled: { type: 'boolean', default: false },
-              clientId: { type: 'string', optional: true }
+              clientId: { type: 'string', optional: true },
+              fallbackSources: {
+                type: 'array',
+                optional: true,
+                items: 'string'
+              }
             }
           },
           local: {
