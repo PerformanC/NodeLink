@@ -98,6 +98,7 @@ export class Player {
     _stuckTime = 0;
     _lastStreamDataTime = 0;
     _isRecovering = false;
+    _resumePositionMs = null;
     destroying = false;
     isUpdatingTrack = false;
     _isRestoring = false;
@@ -264,6 +265,19 @@ export class Player {
             this.audioMixer = null;
         }
         this._audioMixerInitPromise = null;
+    }
+    _isVoiceReady() {
+        return (this.connStatus === 'connected' && !!this.connection?.udpInfo?.secretKey);
+    }
+    _ensureVoiceConnection() {
+        if (this.destroying || this._isVoiceReady())
+            return;
+        if (!this.voice.sessionId || !this.voice.token || !this.voice.endpoint)
+            return;
+        try {
+            this.updateVoice(this.voice, true);
+        }
+        catch { }
     }
     /**
      * Establishes the voice connection and attaches event listeners.
@@ -578,6 +592,14 @@ export class Player {
                 severity = 'suspicious';
                 cause = 'VOICE_STATE_TIMEOUT';
             }
+            else if (error.message.includes('Voice WS closed with reconnect code')) {
+                logger('warn', 'Player', `Voice websocket closed during reconnect burst for guild ${this.guildId}. Preserving track for resume.`);
+                severity = 'suspicious';
+                cause = 'VOICE_WS_RECONNECT_FAILED';
+                shouldStop = false;
+                this._resumePositionMs = this._realPosition();
+                this.updateVoice(this.voice, true);
+            }
             else if (error.message.includes('stream') ||
                 error.message.includes('timeout') ||
                 error.message.includes('timed out') ||
@@ -633,6 +655,7 @@ export class Player {
         this.isPaused = false;
         this.position = 0;
         this._pausedAtPosition = undefined;
+        this._resumePositionMs = null;
         this._lastStreamDataTime = 0;
         this.streamInfo = null;
         this.sponsorBlock.segments = [];
@@ -1181,7 +1204,10 @@ export class Player {
         if (!this.connection) {
             this._initConnection();
         }
-        if (!this.connection?.udpInfo?.secretKey) {
+        if (!this._isVoiceReady()) {
+            this._ensureVoiceConnection();
+        }
+        if (!this._isVoiceReady()) {
             logger('debug', 'Player', `Waiting for voice connection to be ready for guild ${this.guildId}`);
             try {
                 await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
@@ -1190,7 +1216,7 @@ export class Player {
                 logger('warn', 'Player', `Timeout or error while waiting for voice connection on guild ${this.guildId}:`, err);
             }
         }
-        if (!this.connection?.udpInfo?.secretKey) {
+        if (!this.connection || !this._isVoiceReady()) {
             this._onError(new Error(`Voice connection timed out for guild ${this.guildId} (missing UDP info).`, { cause: 'VOICE_CONNECTION_TIMEOUT' }));
             return false;
         }
@@ -1733,14 +1759,14 @@ export class Player {
         if (!this.connection) {
             this._initConnection();
         }
-        if (!this.connection?.udpInfo?.secretKey) {
-            logger('debug', 'Player', `Waiting for voice connection to be ready for guild ${this.guildId}`);
+        if (!this._isVoiceReady()) {
+            this._ensureVoiceConnection();
             try {
                 await this.waitEvent('stateChange', (s) => s.status === 'connected' && !!this.connection?.udpInfo?.secretKey);
             }
             catch { }
         }
-        if (!this.connection?.udpInfo?.secretKey) {
+        if (!this.connection || !this._isVoiceReady()) {
             this._onError(new Error(`Voice connection timed out for guild ${this.guildId} (missing UDP info).`, { cause: 'VOICE_CONNECTION_TIMEOUT' }));
             return false;
         }
@@ -2260,7 +2286,8 @@ export class Player {
             const connectionDead = !this.connection ||
                 this.connStatus === 'disconnected' ||
                 this.connStatus === 'destroyed' ||
-                !this.connection.voiceServer;
+                !this.connection.voiceServer ||
+                (this.connStatus === 'connected' && !this.connection.udpInfo?.secretKey);
             if (!changed && !force && !connectionDead) {
                 logger('debug', 'Player', `Voice state for guild ${this.guildId} is unchanged. Skipping update.`);
                 return;
@@ -2296,7 +2323,9 @@ export class Player {
                     !this.connection?.audioStream &&
                     !this.isUpdatingTrack) {
                     logger('debug', 'Player', `Voice state updated for guild ${this.guildId}, starting pending track.`);
-                    await this._startPlayback().catch((err) => {
+                    const resumeAt = this._resumePositionMs;
+                    this._resumePositionMs = null;
+                    await this._startPlayback(resumeAt ?? 0).catch((err) => {
                         logger('error', 'Player', `Failed to start pending track during voice update for guild ${this.guildId}:`, err);
                     });
                 }
