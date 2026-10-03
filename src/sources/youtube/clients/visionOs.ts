@@ -61,13 +61,13 @@ export default class VisionOs extends BaseClient {
     return {
       client: {
         clientName: 'VISIONOS',
-        clientVersion: '0.1',
+        clientVersion: '1.08',
         userAgent:
-          'com.google.ios.youtube/0.1 (RealityDevice14,1; U; CPU visionOS 1_3 like Mac OS X;)',
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.1)',
         deviceMake: 'Apple',
-        deviceModel: 'RealityDevice14,1',
+        deviceModel: 'RealityDevice17,1',
         osName: 'visionOS',
-        osVersion: '1.3.21O771',
+        osVersion: '26.5.23O471',
         hl: context.client.hl,
         gl: context.client.gl,
         visitorData: context.client.visitorData

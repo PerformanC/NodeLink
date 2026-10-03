@@ -8,6 +8,7 @@ import discordVoice, {
   type VoicePlayerState
 } from '@performanc/voice'
 import { EndReasons, GatewayEvents } from '../constants.ts'
+import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.ts'
 import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
 import type {
   AudioMixer,
@@ -55,6 +56,28 @@ const trackFinishMemoryTraceEnabled =
 const SEEK_CROSSFADE_SAFETY_MS = 15000
 const MIN_CROSSFADE_SELECTION_MS = 6000
 const MAX_CROSSFADE_SELECTION_MS = 21000
+
+/**
+ * True for YouTube/ytmusic streams served as WebM/opus. Those must skip
+ * the generic seekable path: it keeps downloading the rest of the file
+ * into RAM while voice plays in realtime (measured: a 180MB file cost
+ * 2.8GB across 19 players). Unknown formats default to WebM, since
+ * itag 251 dominates and itag is always present in practice.
+ */
+function isWebmYouTubePlayback(
+  sourceName: string,
+  data?: Pick<TrackUrlResult, 'additionalData' | 'format'> | null
+): boolean {
+  if (sourceName !== 'youtube' && sourceName !== 'ytmusic') return false
+  const itag = data?.additionalData?.itag
+  if (typeof itag === 'number') return YOUTUBE_WEBM_ITAGS.has(itag)
+  const format = data?.format
+  if (typeof format === 'string')
+    return format.toLowerCase().includes('webm')
+  if (typeof format?.itag === 'number')
+    return YOUTUBE_WEBM_ITAGS.has(format.itag)
+  return true
+}
 
 function getCrossfadeSelectionWindowMs(durationMs: number): number {
   return Math.min(
@@ -1754,7 +1777,8 @@ export class Player {
     cleanupReason: string,
     fadingAction: 'trackStartArm' | 'seekPrepare',
     playLogMessage: string,
-    preserveQueuedCrossfade = false
+    preserveQueuedCrossfade = false,
+    suppressErrorEvents = false
   ): Promise<boolean> {
     if (!this.track) return false
 
@@ -1789,12 +1813,14 @@ export class Player {
     }
 
     if (!this.connection || !this._isVoiceReady()) {
-      this._onError(
-        new Error(
-          `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
-          { cause: 'VOICE_CONNECTION_TIMEOUT' }
+      if (!suppressErrorEvents) {
+        this._onError(
+          new Error(
+            `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
+            { cause: 'VOICE_CONNECTION_TIMEOUT' }
+          )
         )
-      )
+      }
       return false
     }
 
@@ -1806,6 +1832,7 @@ export class Player {
       position > 0 &&
       !!urlData.url &&
       !unsupportedSeekSources.includes(resolvedSourceName) &&
+      !isWebmYouTubePlayback(resolvedSourceName, urlData) &&
       urlData.protocol !== 'sabr' &&
       urlData.protocol !== 'hls' &&
       urlData.protocol !== 'dash'
@@ -1851,8 +1878,10 @@ export class Player {
         position
       )
       if ('exception' in fetched) {
-        const err = new Error(fetched.exception.message)
-        this._onError(err)
+        if (!suppressErrorEvents) {
+          const err = new Error(fetched.exception.message)
+          this._onError(err)
+        }
         return false
       }
       resource = fetched.stream
@@ -2267,7 +2296,8 @@ export class Player {
       const canNativeSeek =
         !!hasSourceLoader &&
         (this.streamInfo?.protocol === 'sabr' ||
-          (sourceName === 'deezer' && resolvedSourceName === 'deezer'))
+          (sourceName === 'deezer' && resolvedSourceName === 'deezer') ||
+          isWebmYouTubePlayback(resolvedSourceName, this.streamInfo))
 
       if (forceLegacy) {
         seekPromise = this._legacySeek(
@@ -2413,6 +2443,38 @@ export class Player {
     const trackInfo = {
       ...this.track.info,
       audioTrackId: this.track.audioTrackId
+    }
+
+    // Reuse the playing URL when it's a native WebM stream: resolving a
+    // fresh URL hits the cipher on every seek. A stale URL just fails
+    // here and falls through to the fresh resolve below.
+    const seekSourceName =
+      (this.streamInfo?.newTrack as { info?: { sourceName?: string } } | null)
+        ?.info?.sourceName ?? this.track.info.sourceName
+    if (
+      !reuseUrlData &&
+      this.streamInfo?.protocol !== 'sabr' &&
+      this.streamInfo?.protocol !== 'hls' &&
+      this.streamInfo?.protocol !== 'dash' &&
+      isWebmYouTubePlayback(seekSourceName, this.streamInfo) &&
+      this.streamInfo?.url
+    ) {
+      const cachedUrlData = this.streamInfo as unknown as TrackUrlResult
+      const cachedResult = await this._connectAndPlayStream(
+        cachedUrlData,
+        position,
+        'source-seek',
+        'seekPrepare',
+        `Playing resource for guild ${this.guildId} after source seek (cached URL)`,
+        false,
+        true
+      )
+      if (cachedResult) return true
+      logger(
+        'debug',
+        'Player',
+        `Cached URL seek failed for guild ${this.guildId}, resolving fresh URL`
+      )
     }
 
     const urlData =

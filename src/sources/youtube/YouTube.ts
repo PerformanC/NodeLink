@@ -34,6 +34,7 @@ import CipherManager from './CipherManager.ts'
 import {
   checkURLType,
   YOUTUBE_CONSTANTS,
+  YOUTUBE_WEBM_ITAGS,
   type YouTubeContext
 } from './common.ts'
 import YouTubeLiveChat from './LiveChat.ts'
@@ -54,6 +55,14 @@ const VISITOR_DATA_INTERVAL = 3_600_000
 
 /** PassThrough buffer size. 48KB = ~3s of 128kbps Opus, enough to cover reconnect gaps. */
 const STREAM_BUFFER_SIZE = 48 * 1024
+
+/** WebM Cluster element header bytes (0x1F, 0x43, 0xB6, 0x75). */
+const WEBM_CLUSTER_MAGIC = Buffer.from([0x1f, 0x43, 0xb6, 0x75])
+
+/** Header probe windows (bytes) for the Cluster search on seek. Long
+ * files carry big Cues/SeekHead sections, so the first Cluster may sit
+ * well past 32KB; each window costs one small range request. */
+const WEBM_SEEK_PROBE_WINDOWS = [32767, 262143, 1048575]
 
 /** Refresh URL before YouTube's ~6h expiry. */
 const URL_MAX_AGE_MS = 4.5 * 60 * 60 * 1000
@@ -502,9 +511,6 @@ export default class YouTubeSource {
    * @returns Promise that resolves when the fetch attempt completes.
    */
   private async _fetchVisitorData(): Promise<void> {
-    // this should prevent the visitorData getting initialized twice.
-    if (process.env.WORKER_TYPE === 'source') return
-
     const cachedPlayerScript = this.nodelink.credentialManager?.get<string>(
       'yt_player_script_url'
     )
@@ -2850,6 +2856,13 @@ export default class YouTubeSource {
     let isDestroyed = false
     let isBackpressured = false
     let totalBytesReceived = 0
+    const initialSeekMs =
+      typeof additionalData?.startTime === 'number' &&
+      additionalData.startTime > 0
+        ? additionalData.startTime
+        : 0
+    let needsClusterAlignment = false
+    let clusterSearchRemainder = Buffer.alloc(0)
     let currentItag = additionalData?.itag
     let currentClient =
       (additionalData?.client as string | undefined) || undefined
@@ -3078,6 +3091,29 @@ export default class YouTubeSource {
       }
     }
 
+    // Mid-file jumps only work for WebM: we prepend the file header and
+    // resume audio from the seek point, which m4a can't decode. So a
+    // startTime on non-WebM is dropped and playback starts from zero,
+    // same as before; m4a seeks keep using the seekable path instead.
+    let effectiveSeekMs = initialSeekMs
+    if (initialSeekMs > 0) {
+      const seekMime =
+        availableFormats.find((formatEntry) => formatEntry.itag === currentItag)
+          ?.mimeType || ''
+      const seekIsWebm =
+        seekMime.toLowerCase().includes('webm') ||
+        (typeof currentItag === 'number' &&
+          YOUTUBE_WEBM_ITAGS.has(currentItag))
+      if (!seekIsWebm) {
+        logger(
+          'warn',
+          'YouTube',
+          `Ignoring startTime seek for non-WebM itag ${currentItag} on "${decodedTrack.title}", playing from start`
+        )
+        effectiveSeekMs = 0
+      }
+    }
+
     const startStreaming = async (): Promise<void> => {
       const MIN_TARGET_SECONDS = 2
       const MAX_TARGET_SECONDS = 12
@@ -3096,12 +3132,117 @@ export default class YouTubeSource {
 
       let chunkCount = 0
 
+      if (
+        effectiveSeekMs > 0 &&
+        totalContentLength > 0 &&
+        decodedTrack.length > 0
+      ) {
+        try {
+          let headerData: Buffer | null = null
+          let firstClusterIndex = -1
+          for (const windowEnd of WEBM_SEEK_PROBE_WINDOWS) {
+            if (isDestroyed || cancelSignal.aborted) break
+            const headerResult = await http1makeRequest(currentUrl, {
+              method: 'GET',
+              streamOnly: true,
+              proxy: currentProxy,
+              timeout: 15000,
+              headers: {
+                Range: `bytes=0-${windowEnd}`,
+                'Accept-Encoding': 'identity;q=1, *;q=0',
+                'Sec-Fetch-Dest': 'video',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'same-origin',
+                Referer: currentUrl,
+                Accept: '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Cache-Control': 'no-cache',
+                Pragma: 'no-cache',
+                Priority: 'i'
+              }
+            })
+            const headerStream = headerResult.stream as
+              | (NodeJS.ReadableStream & { destroy: () => void })
+              | undefined
+            if (
+              headerResult.error ||
+              (headerResult.statusCode !== 206 &&
+                headerResult.statusCode !== 200) ||
+              !headerStream
+            ) {
+              try {
+                headerStream?.destroy()
+              } catch {}
+              logger(
+                'warn',
+                'YouTube',
+                `WebM header prefetch failed for "${decodedTrack.title}" (status ${headerResult.statusCode}), seeking from start`
+              )
+              break
+            }
+            const headerChunks: Buffer[] = []
+            let headerBytes = 0
+            for await (const headerChunk of headerStream as unknown as AsyncIterable<Buffer>) {
+              if (isDestroyed || cancelSignal.aborted) break
+              headerChunks.push(headerChunk)
+              headerBytes += headerChunk.length
+              if (headerBytes > windowEnd) break
+            }
+            try {
+              headerStream.destroy()
+            } catch {}
+            headerData = Buffer.concat(headerChunks)
+            firstClusterIndex = headerData.indexOf(WEBM_CLUSTER_MAGIC)
+            if (firstClusterIndex > 0) break
+          }
+          if (!isDestroyed && !cancelSignal.aborted) {
+            if (headerData && firstClusterIndex > 0) {
+              stream.write(headerData.subarray(0, firstClusterIndex))
+              const seekRatio = Math.min(
+                Math.max(effectiveSeekMs / decodedTrack.length, 0),
+                1
+              )
+              totalBytesReceived = Math.min(
+                Math.floor(seekRatio * totalContentLength),
+                totalContentLength - 1
+              )
+              needsClusterAlignment = true
+              logger(
+                'debug',
+                'YouTube',
+                `Prepared WebM seek to ${effectiveSeekMs}ms at target byte ${totalBytesReceived}/${totalContentLength} for "${decodedTrack.title}"`
+              )
+            } else if (headerData) {
+              logger(
+                'warn',
+                'YouTube',
+                `No WebM Cluster found in first ${WEBM_SEEK_PROBE_WINDOWS[WEBM_SEEK_PROBE_WINDOWS.length - 1]} bytes for "${decodedTrack.title}", seeking from start`
+              )
+            }
+          }
+        } catch (error) {
+          logger(
+            'warn',
+            'YouTube',
+            `WebM header prefetch threw for "${decodedTrack.title}": ${(error as Error).message}, seeking from start`
+          )
+        }
+      }
+
       while (
         !isDestroyed &&
         !cancelSignal.aborted &&
         !parkedForRecovery &&
         totalBytesReceived < totalContentLength
       ) {
+        // Hard backpressure: never fetch ahead while the downstream has a
+        // full buffer. Without this the loop downloads the whole remainder
+        // (e.g: ~180MB files from the video that i tested.) into the PassThrough while voice consumes realtime.
+        if (stream.writableLength > STREAM_BUFFER_SIZE) {
+          await Promise.race([waitForDrainOrClose(), sleep(30000)])
+          continue
+        }
+
         const urlAge = Date.now() - urlFetchTime
         if (urlAge > URL_MAX_AGE_MS) {
           const refreshed = await refreshUrl('URL age > 4.5h')
@@ -3312,9 +3453,31 @@ export default class YouTubeSource {
               if (dataStartTime === 0) dataStartTime = Date.now()
               bytesThisChunk += chunk.length
               totalBytesReceived += chunk.length
-              if (!stream.write(chunk)) {
-                isBackpressured = true
-                responseStream.pause()
+
+              let dataToWrite: Buffer | null = chunk
+              if (needsClusterAlignment) {
+                const combined =
+                  clusterSearchRemainder.length > 0
+                    ? Buffer.concat([clusterSearchRemainder, chunk])
+                    : chunk
+                const magicIndex = combined.indexOf(WEBM_CLUSTER_MAGIC)
+                if (magicIndex !== -1) {
+                  needsClusterAlignment = false
+                  clusterSearchRemainder = Buffer.alloc(0)
+                  dataToWrite = Buffer.from(combined.subarray(magicIndex))
+                } else {
+                  clusterSearchRemainder = Buffer.from(
+                    combined.subarray(Math.max(0, combined.length - 3))
+                  )
+                  dataToWrite = null
+                }
+              }
+
+              if (dataToWrite && dataToWrite.length > 0) {
+                if (!stream.write(dataToWrite)) {
+                  isBackpressured = true
+                  responseStream.pause()
+                }
               }
             }
 

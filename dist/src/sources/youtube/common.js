@@ -2,6 +2,13 @@ import { YOUTUBE_CONSTANTS } from '../../typings/sources/youtube.types.js';
 import { encodeTrack, logger, makeRequest } from '../../utils.js';
 export { YOUTUBE_CONSTANTS };
 /**
+ * YouTube's opus-in-WebM itags. Only WebM stays playable when we jump
+ * into the middle of the file, so only these take the native seek path.
+ *
+ * @public
+ */
+export const YOUTUBE_WEBM_ITAGS = new Set([249, 250, 251]);
+/**
  * Fallback strings used when metadata cannot be retrieved from YouTube.
  * These ensure track objects always have meaningful title/author values.
  *
