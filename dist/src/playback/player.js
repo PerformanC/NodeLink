@@ -17,7 +17,7 @@ const MAX_CROSSFADE_SELECTION_MS = 21000;
  * True for YouTube/ytmusic streams served as WebM/opus. Those must skip
  * the generic seekable path: it keeps downloading the rest of the file
  * into RAM while voice plays in realtime (measured: a 180MB file cost
- * 2.8GB across 18 players, just a example when i was making this.). Unknown formats default to WebM, since
+ * 2.8GB across 19 players). Unknown formats default to WebM, since
  * itag 251 dominates and itag is always present in practice.
  */
 function isWebmYouTubePlayback(sourceName, data) {

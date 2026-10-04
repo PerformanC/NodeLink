@@ -65,6 +65,14 @@ export default class TVEmbedded extends BaseClient {
         return true;
     }
     /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     * This client (tvembedded) does not work anymore tho :(
+     */
+    requiresOAuth() {
+        return true;
+    }
+    /**
      * TV Embedded client requires a player script for signature deciphering.
      *
      * @returns Always true for the TV Embedded client

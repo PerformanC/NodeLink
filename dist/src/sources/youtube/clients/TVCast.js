@@ -65,6 +65,13 @@ export default class TVCast extends BaseClient {
         return true;
     }
     /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return false;
+    }
+    /**
      * Returns empty auth headers since cast clients do not use OAuth.
      *
      * @returns Empty headers object

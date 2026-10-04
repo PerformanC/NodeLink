@@ -1146,6 +1146,13 @@ export default class YouTubeSource {
       const client = this.clients[clientName]
       if (!client) continue
 
+      const oauthRejection = this.rejectOAuthClientWithoutToken(clientName)
+      if (oauthRejection) {
+        clientErrors.push({ client: clientName, message: oauthRejection })
+        logger('error', 'YouTube', oauthRejection)
+        continue
+      }
+
       if (!isMusicUrl && clientName === 'Music') continue
       if (isMusicUrl && clientName !== 'Music' && type !== 'youtube-fallback') {
         continue
@@ -1283,6 +1290,26 @@ export default class YouTubeSource {
     }
   }
   /**
+   * Rejects OAuth-only clients (TV family) without a configured refresh
+   * token, before they waste a resolve attempt and fail confusingly.
+   * Token-less metadata lookups go through oEmbed, not clients.
+   *
+   * @param clientName - Client to check.
+   * @returns Skip message, or null when the client can be used.
+   */
+  private rejectOAuthClientWithoutToken(clientName: string): string | null {
+    const client = this.clients[clientName]
+    if (client?.requiresOAuth?.() && !client.oauth?.hasRefreshToken?.()) {
+      return (
+        `Client ${clientName} requires a YouTube refresh token and none is ` +
+        `configured (enable sources.youtube.getOAuthToken to generate one ` +
+        `or set clients.settings.${clientName}.refreshToken). Skipping.`
+      )
+    }
+    return null
+  }
+
+  /**
    * Resolves the playable stream URL for a decoded track.
    *
    * Checks the track cache first (unless `forceRefresh` is set), then
@@ -1405,6 +1432,13 @@ export default class YouTubeSource {
 
       const client = this.clients[clientName]
       if (!client) continue
+
+      const oauthRejection = this.rejectOAuthClientWithoutToken(clientName)
+      if (oauthRejection) {
+        clientErrors.push({ client: clientName, message: oauthRejection })
+        logger('error', 'YouTube', oauthRejection)
+        continue
+      }
 
       try {
         logger(

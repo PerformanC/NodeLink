@@ -61,6 +61,13 @@ export default class AndroidVR extends BaseClient {
         return false;
     }
     /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return false;
+    }
+    /**
      * Searches YouTube for tracks matching the given query.
      *
      * @param query - Search query string (e.g., song name, artist)

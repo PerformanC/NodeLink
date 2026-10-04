@@ -60,6 +60,13 @@ export default class TV extends BaseClient {
         return '2AMB';
     }
     /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return true;
+    }
+    /**
      * TV client requires a player script for signature deciphering.
      *
      * @returns Always true for the TV client

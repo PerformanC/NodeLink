@@ -87,6 +87,14 @@ export default class VisionOs extends BaseClient {
   }
 
   /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
+    return false
+  }
+
+  /**
    * VISIONOS client does not require a player script.
    *
    * @returns Always false for the VISIONOS client

@@ -1542,6 +1542,13 @@ export class BaseClient {
         return false;
     }
     /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return false;
+    }
+    /**
      * Returns the base API endpoint for this client.
      */
     getApiEndpoint() {

@@ -64,6 +64,16 @@ export default class OAuth {
         this.tokenExpiry = 0;
     }
     /**
+     * Whether any refresh token is configured, without validating it.
+     * OAuth-only clients (TV family) are skipped without one.
+     *
+     * @returns `true` when at least one non-empty refresh token exists.
+     */
+    hasRefreshToken() {
+        return (this.refreshToken.length > 0 &&
+            this.refreshToken.some((token) => typeof token === 'string' && token.startsWith('1//')));
+    }
+    /**
      * Resolves a valid OAuth access token for authenticated YouTube requests.
      *
      * The helper first checks the in-memory token, then the credential cache,

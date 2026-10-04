@@ -82,6 +82,14 @@ export default class WebRemix extends BaseClient {
   }
 
   /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
+    return false
+  }
+
+  /**
    * Searches YouTube Music for tracks, playlists, albums, or artists.
    * @param query - Search query string
    * @param type - Search type ('track', 'playlist', 'album', 'artist')

@@ -89,6 +89,14 @@ export default class TV_DOWN extends BaseClient {
   }
 
   /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
+    return true
+  }
+
+  /**
    * Retrieves OAuth authorization headers for TV device authentication.
    *
    * @returns Promise resolving to authorization headers, or empty object if no OAuth
