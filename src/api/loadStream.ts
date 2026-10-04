@@ -1,5 +1,6 @@
+import { Buffer } from 'node:buffer'
 import type { Readable, Writable } from 'node:stream'
-import { pipeline } from 'node:stream'
+import { pipeline, Transform } from 'node:stream'
 import type {
   ApiNodelinkServer,
   ApiRequest,
@@ -35,6 +36,40 @@ const LOAD_STREAM_HEADERS = {
 } as const
 
 /**
+ * Builds a 44-byte standard RIFF WAV header for 16-bit 48kHz stereo PCM.
+ *
+ * @param totalAudioBytes - Total PCM byte length (excluding the 44-byte header).
+ * If 0 or unknown, uses 0x7ffffff0 for streaming.
+ * @returns 44-byte WAV header Buffer.
+ */
+function createWavHeader(totalAudioBytes: number): Buffer {
+  const buffer = Buffer.alloc(44)
+  const sampleRate = 48000
+  const channels = 2
+  const bitsPerSample = 16
+  const byteRate = sampleRate * channels * (bitsPerSample / 8)
+  const blockAlign = channels * (bitsPerSample / 8)
+  const dataSize = totalAudioBytes > 0 ? totalAudioBytes : 0x7ffffff0
+  const fileSize = dataSize + 36
+
+  buffer.write('RIFF', 0, 'ascii')
+  buffer.writeUInt32LE(fileSize, 4)
+  buffer.write('WAVE', 8, 'ascii')
+  buffer.write('fmt ', 12, 'ascii')
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(channels, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(byteRate, 28)
+  buffer.writeUInt16LE(blockAlign, 32)
+  buffer.writeUInt16LE(bitsPerSample, 34)
+  buffer.write('data', 36, 'ascii')
+  buffer.writeUInt32LE(dataSize, 40)
+
+  return buffer
+}
+
+/**
  * Request payload accepted by the load stream endpoint.
  */
 interface LoadStreamInput {
@@ -62,6 +97,11 @@ interface LoadStreamInput {
    * Optional filter state applied before streaming PCM to the client.
    */
   filters: FiltersState
+
+  /**
+   * Audio container format. 'raw' for raw PCM (default), 'wav' for RIFF WAV.
+   */
+  format?: 'raw' | 'wav'
 }
 
 /**
@@ -87,6 +127,11 @@ interface LoadStreamBodyPayload {
    * Optional filter state.
    */
   filters?: FiltersState
+
+  /**
+   * Desired container format ('raw' or 'wav').
+   */
+  format?: string
 }
 
 /**
@@ -536,11 +581,18 @@ function getLoadStreamInputFromBody(
     return null
   }
 
+  const format =
+    typeof (payload as { format?: unknown }).format === 'string' &&
+    (payload as { format?: string }).format?.toLowerCase() === 'wav'
+      ? 'wav'
+      : 'raw'
+
   return {
     encodedTrack: payload.encodedTrack,
     volume: payload.volume ?? 100,
     position: payload.position ?? 0,
-    filters
+    filters,
+    format
   }
 }
 
@@ -598,12 +650,15 @@ function getLoadStreamInputFromQuery(parsedUrl: URL): LoadStreamInput | null {
   }
 
   const filters = getFiltersFromQuery(parsedUrl) ?? {}
+  const formatParam = parsedUrl.searchParams.get('format')?.toLowerCase()
+  const format = formatParam === 'wav' ? 'wav' : 'raw'
 
   return {
     encodedTrack,
     volume,
     position,
-    filters
+    filters,
+    format
   }
 }
 
@@ -618,9 +673,22 @@ function getLoadStreamInput(
   req: ApiRequest,
   parsedUrl: URL
 ): LoadStreamInput | null {
-  return req.method === 'POST'
-    ? getLoadStreamInputFromBody(req.body)
-    : getLoadStreamInputFromQuery(parsedUrl)
+  const input =
+    req.method === 'POST'
+      ? getLoadStreamInputFromBody(req.body)
+      : getLoadStreamInputFromQuery(parsedUrl)
+
+  if (!input) return null
+
+  if (
+    req.headers.range &&
+    !parsedUrl.searchParams.has('format') &&
+    input.format === 'raw'
+  ) {
+    input.format = 'wav'
+  }
+
+  return input
 }
 
 /**
@@ -692,6 +760,18 @@ async function handler(
   _sendResponse: ApiSendResponse,
   parsedUrl: URL
 ): Promise<void> {
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': '*',
+      'Access-Control-Expose-Headers':
+        'Content-Range, Accept-Ranges, Content-Length'
+    })
+    res.end()
+    return
+  }
+
   const runtime = getLoadStreamRuntime(nodelink)
   if (!runtime) {
     sendErrorResponse(
@@ -737,6 +817,103 @@ async function handler(
   try {
     const decodedTrack = decodeTrack(encodedTrack)
 
+    const isWav = input.format === 'wav'
+    const trackDurationMs = decodedTrack.info.length
+    const isLiveStream = decodedTrack.info.isStream || trackDurationMs <= 0
+    const totalPcmBytes = isLiveStream
+      ? 0
+      : Math.floor((trackDurationMs / 1000) * 48000) * 4
+    const totalWavSize = isLiveStream ? 0 : 44 + totalPcmBytes
+    const totalFileSize = isWav ? totalWavSize : totalPcmBytes
+
+    let isRangeRequest = false
+    let rangeStart = 0
+    let rangeEnd = totalFileSize > 0 ? totalFileSize - 1 : 0
+    let rangeHeaderBytesToSend: Buffer | null = null
+
+    const rangeHeader = req.headers.range
+    if (
+      !isLiveStream &&
+      totalFileSize > 0 &&
+      typeof rangeHeader === 'string' &&
+      rangeHeader.startsWith('bytes=')
+    ) {
+      const parts = rangeHeader.slice(6).trim().split('-')
+      let start = Number(parts[0])
+      let end = parts[1] ? Number(parts[1]) : totalFileSize - 1
+
+      if (Number.isNaN(start) || start < 0) start = 0
+      if (Number.isNaN(end) || end >= totalFileSize) end = totalFileSize - 1
+
+      if (start > end) {
+        streamResponse.writeHead(416, {
+          'Content-Range': `bytes */${totalFileSize}`,
+          'Content-Type': 'text/plain'
+        })
+        streamResponse.end('Requested range not satisfiable')
+        return
+      }
+
+      isRangeRequest = true
+      rangeStart = start
+      rangeEnd = end
+
+      let pcmByteOffset = start
+      if (isWav) {
+        const wavHeader = createWavHeader(totalPcmBytes)
+        if (start < 44) {
+          const headerEnd = Math.min(44, end + 1)
+          rangeHeaderBytesToSend = wavHeader.subarray(start, headerEnd)
+          pcmByteOffset = 0
+        } else {
+          pcmByteOffset = start - 44
+        }
+      }
+
+      const alignedPcmByteOffset = Math.floor(pcmByteOffset / 4) * 4
+      const seekPositionMs = Math.floor((alignedPcmByteOffset / 192000) * 1000)
+      input.position = seekPositionMs
+    }
+
+    const effectiveHeaders: Record<string, string> = isRangeRequest
+      ? {
+          'Content-Type': isWav
+            ? 'audio/wav'
+            : 'audio/l16;rate=48000;channels=2',
+          'Content-Range': `bytes ${rangeStart}-${rangeEnd}/${totalFileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(rangeEnd - rangeStart + 1),
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Expose-Headers':
+            'Content-Range, Accept-Ranges, Content-Length',
+          Connection: 'keep-alive'
+        }
+      : isWav
+        ? {
+            'Content-Type': 'audio/wav',
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Expose-Headers':
+              'Content-Range, Accept-Ranges, Content-Length',
+            Connection: 'keep-alive',
+            ...(totalWavSize > 0
+              ? { 'Content-Length': String(totalWavSize) }
+              : { 'Transfer-Encoding': 'chunked' })
+          }
+        : {
+            ...LOAD_STREAM_HEADERS,
+            'Accept-Ranges': 'bytes',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Expose-Headers':
+              'Content-Range, Accept-Ranges, Content-Length'
+          }
+
+    if (isRangeRequest && isWav && rangeEnd < 44 && rangeHeaderBytesToSend) {
+      streamResponse.writeHead(206, effectiveHeaders)
+      streamResponse.end(rangeHeaderBytesToSend)
+      return
+    }
+
     if (runtime.sourceWorkerManager) {
       const delegated = runtime.sourceWorkerManager.delegate(
         req,
@@ -749,7 +926,8 @@ async function handler(
           filters: input.filters
         },
         {
-          headers: { ...LOAD_STREAM_HEADERS }
+          statusCode: isRangeRequest ? 206 : 200,
+          headers: effectiveHeaders
         }
       )
       if (delegated) {
@@ -768,7 +946,8 @@ async function handler(
           filters: input.filters
         },
         {
-          headers: { ...LOAD_STREAM_HEADERS }
+          statusCode: isRangeRequest ? 206 : 200,
+          headers: effectiveHeaders
         }
       )
       if (delegated) {
@@ -909,24 +1088,92 @@ async function handler(
       )
     })
 
-    streamResponse.writeHead(200, { ...LOAD_STREAM_HEADERS })
+    const statusCode = isRangeRequest ? 206 : 200
+    streamResponse.writeHead(statusCode, effectiveHeaders)
 
-    pipeline(
-      pcmStream,
-      streamResponse,
-      (error: NodeJS.ErrnoException | null) => {
-        if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
-          logger(
-            'error',
-            'LoadStream',
-            `Pipeline output failed for ${decodedTrack.info.title}: ${error.message}`
-          )
-        }
+    if (req.method === 'HEAD') {
+      streamResponse.end()
+      destroyStream(pcmStream)
+      destroyStream(fetchedStream)
+      return
+    }
 
+    if (isRangeRequest) {
+      let bytesRemaining = rangeEnd - rangeStart + 1
+
+      if (rangeHeaderBytesToSend && rangeHeaderBytesToSend.length > 0) {
+        streamResponse.write(rangeHeaderBytesToSend)
+        bytesRemaining -= rangeHeaderBytesToSend.length
+      }
+
+      if (bytesRemaining <= 0) {
+        streamResponse.end()
         destroyStream(pcmStream)
         destroyStream(fetchedStream)
+        return
       }
-    )
+
+      const limiter = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          if (bytesRemaining <= 0) {
+            cb()
+            return
+          }
+          if (chunk.length <= bytesRemaining) {
+            bytesRemaining -= chunk.length
+            cb(null, chunk)
+            if (bytesRemaining <= 0) {
+              limiter.end()
+            }
+          } else {
+            const slice = chunk.subarray(0, bytesRemaining)
+            bytesRemaining = 0
+            cb(null, slice)
+            limiter.end()
+          }
+        }
+      })
+
+      pipeline(
+        pcmStream,
+        limiter,
+        streamResponse,
+        (error: NodeJS.ErrnoException | null) => {
+          if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger(
+              'error',
+              'LoadStream',
+              `Pipeline output failed for ${decodedTrack.info.title}: ${error.message}`
+            )
+          }
+
+          destroyStream(pcmStream)
+          destroyStream(fetchedStream)
+        }
+      )
+    } else {
+      if (isWav) {
+        const wavHeader = createWavHeader(totalPcmBytes)
+        streamResponse.write(wavHeader)
+      }
+
+      pipeline(
+        pcmStream,
+        streamResponse,
+        (error: NodeJS.ErrnoException | null) => {
+          if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger(
+              'error',
+              'LoadStream',
+              `Pipeline output failed for ${decodedTrack.info.title}: ${error.message}`
+            )
+          }
+
+          destroyStream(pcmStream)
+          destroyStream(fetchedStream)
+        }
+      )
+    }
 
     streamResponse.on('close', () => {
       destroyStream(pcmStream)
@@ -954,7 +1201,7 @@ async function handler(
  */
 const loadStreamRoute: ApiRouteModule = {
   handler,
-  methods: ['GET', 'POST']
+  methods: ['GET', 'POST', 'HEAD', 'OPTIONS']
 }
 
 export default loadStreamRoute

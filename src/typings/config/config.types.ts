@@ -1282,6 +1282,7 @@ export interface NodelinkConfig {
   api: {
     enableTrackStreamEndpoint: boolean
     enableLoadStreamEndpoint: boolean
+    enableHlsEndpoint: boolean
     metrics: {
       enabled: boolean
       authorization: {

@@ -393,6 +393,7 @@ export const config: NodelinkConfig = {
   api: {
     enableTrackStreamEndpoint: false,
     enableLoadStreamEndpoint: false,
+    enableHlsEndpoint: false,
     metrics: {
       enabled: true,
       authorization: {
