@@ -380,6 +380,7 @@ export const config = {
     api: {
         enableTrackStreamEndpoint: false,
         enableLoadStreamEndpoint: false,
+        enableHlsEndpoint: false,
         metrics: {
             enabled: true,
             authorization: {

@@ -311,6 +311,7 @@ export default class ConfigValidationManager {
                 props: {
                     enableTrackStreamEndpoint: { type: 'boolean', default: false },
                     enableLoadStreamEndpoint: { type: 'boolean', default: false },
+                    enableHlsEndpoint: { type: 'boolean', default: false },
                     metrics: { type: 'object', optional: true }
                 }
             },
