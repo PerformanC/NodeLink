@@ -1404,6 +1404,7 @@ async function _internalHttp1Request(
     const cleanupReq = () => {
       req.removeListener('error', reqErrorHandler)
       req.removeListener('timeout', reqTimeoutHandler)
+      req.removeListener('close', cleanupReq)
     }
 
     req = lib.request(reqOptions, (res) => {
@@ -1499,18 +1500,31 @@ async function _internalHttp1Request(
       }
 
       let cleanupBody: (() => void) | undefined
-      res.on('error', (err) => {
+      const responseErrorHandler = (err: Error) => {
         cleanupBody?.()
         cleanupReq()
         reject(new Error(`Response error for ${urlString}: ${err.message}`))
-      })
+      }
+      const responseCloseHandler = () => {
+        res.removeListener('error', responseErrorHandler)
+        if (finalStream === res) cleanupBody?.()
+        cleanupReq()
+      }
+      res.on('error', responseErrorHandler)
+      res.once('close', responseCloseHandler)
       if (finalStream !== res) {
-        finalStream.on('error', (err) => {
+        const decompressionErrorHandler = (err: Error) => {
           cleanupBody?.()
           cleanupReq()
           reject(
             new Error(`Decompression error for ${urlString}: ${err.message}`)
           )
+        }
+        finalStream.on('error', decompressionErrorHandler)
+        finalStream.once('close', () => {
+          finalStream.removeListener('error', decompressionErrorHandler)
+          cleanupBody?.()
+          cleanupReq()
         })
       }
 
@@ -1596,6 +1610,7 @@ async function _internalHttp1Request(
 
     req.on('error', reqErrorHandler)
     req.on('timeout', reqTimeoutHandler)
+    req.once('close', cleanupReq)
 
     if (payloadBuffer) {
       req.end(payloadBuffer)

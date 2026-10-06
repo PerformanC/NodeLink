@@ -153,7 +153,8 @@ export default class AppleMusicSource {
             if (jsStatus !== 200 || typeof jsData !== 'string')
                 return null;
             const tokenMatch = jsData.match(/(?<token>(ey[\w-]+)\.([\w-]+)\.([\w-]+))/);
-            return tokenMatch?.groups?.token || null;
+            const token = tokenMatch?.groups?.token;
+            return token ? Buffer.from(token).toString('utf8') : null;
         }
         catch {
             return null;

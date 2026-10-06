@@ -1169,6 +1169,7 @@ async function _internalHttp1Request(urlString, options = {}) {
         const cleanupReq = () => {
             req.removeListener('error', reqErrorHandler);
             req.removeListener('timeout', reqTimeoutHandler);
+            req.removeListener('close', cleanupReq);
         };
         req = lib.request(reqOptions, (res) => {
             const { statusCode, headers: respHeaders } = res;
@@ -1254,16 +1255,30 @@ async function _internalHttp1Request(urlString, options = {}) {
                 finalStream = res.pipe(zlib.createInflate());
             }
             let cleanupBody;
-            res.on('error', (err) => {
+            const responseErrorHandler = (err) => {
                 cleanupBody?.();
                 cleanupReq();
                 reject(new Error(`Response error for ${urlString}: ${err.message}`));
-            });
+            };
+            const responseCloseHandler = () => {
+                res.removeListener('error', responseErrorHandler);
+                if (finalStream === res)
+                    cleanupBody?.();
+                cleanupReq();
+            };
+            res.on('error', responseErrorHandler);
+            res.once('close', responseCloseHandler);
             if (finalStream !== res) {
-                finalStream.on('error', (err) => {
+                const decompressionErrorHandler = (err) => {
                     cleanupBody?.();
                     cleanupReq();
                     reject(new Error(`Decompression error for ${urlString}: ${err.message}`));
+                };
+                finalStream.on('error', decompressionErrorHandler);
+                finalStream.once('close', () => {
+                    finalStream.removeListener('error', decompressionErrorHandler);
+                    cleanupBody?.();
+                    cleanupReq();
                 });
             }
             if (streamOnly) {
@@ -1334,6 +1349,7 @@ async function _internalHttp1Request(urlString, options = {}) {
         });
         req.on('error', reqErrorHandler);
         req.on('timeout', reqTimeoutHandler);
+        req.once('close', cleanupReq);
         if (payloadBuffer) {
             req.end(payloadBuffer);
         }

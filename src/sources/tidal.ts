@@ -904,7 +904,11 @@ export default class TidalSource {
 
     for (const match of text.matchAll(regex)) {
       count += 1
-      if (count === 2) return match[1] || null
+      if (count === 2) {
+        return match[1]
+          ? Buffer.from(match[1], 'utf16le').toString('utf16le')
+          : null
+      }
     }
 
     return null

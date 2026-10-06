@@ -286,7 +286,8 @@ export default class AppleMusicSource implements SourceInstance {
       const tokenMatch = jsData.match(
         /(?<token>(ey[\w-]+)\.([\w-]+)\.([\w-]+))/
       )
-      return tokenMatch?.groups?.token || null
+      const token = tokenMatch?.groups?.token
+      return token ? Buffer.from(token).toString('utf8') : null
     } catch {
       return null
     }
