@@ -2478,7 +2478,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
                     emitResourceError(passthroughStream, err);
             });
             const format = hinted || (ext ? ext : 'm4a');
-            return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, returnPCM ? true : (player.loudnessNormalizer ?? enableAGC), enableCrossfade);
+            return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, player.loudnessNormalizer ?? enableAGC, enableCrossfade);
         }
         const { stream, meta } = (await seekableStream(url, seekTime, endTime, {}, _createSeekableProxyRequest(seekProxy)));
         const passthroughStream = new PassThrough({
@@ -2492,7 +2492,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
                 emitResourceError(passthroughStream, err);
         });
         const format = meta.codec?.container || player.streamInfo?.format;
-        return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, returnPCM ? true : (player.loudnessNormalizer ?? enableAGC), enableCrossfade);
+        return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, player.loudnessNormalizer ?? enableAGC, enableCrossfade);
     }
     catch (err) {
         const cause = err instanceof SeekError ? err.code : 'UNKNOWN';
