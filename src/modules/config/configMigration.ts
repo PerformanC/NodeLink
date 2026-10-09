@@ -141,6 +141,7 @@ export function migrateConfig(
   }
 
   for (const [oldKey, newPath] of Object.entries(migrationMap)) {
+    if (oldKey === newPath) continue
     if (Object.hasOwn(newConfig, oldKey)) {
       const value: unknown | undefined = newConfig[oldKey]
       if (value === undefined) continue
