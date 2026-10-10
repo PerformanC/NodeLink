@@ -25,18 +25,13 @@ function createHttpServer(nodelink, getRequestHandler) {
     /* INFO: Guard all incoming sockets against DoS blocks, connection floods, and reset errors */
     server.on('connection', (socket) => {
         const remoteAddress = socket.remoteAddress;
-        const isIpBlocked = nodelink.admissionManager.isIpBlocked(remoteAddress);
-        if (isIpBlocked) {
-            socket.destroy();
-            return;
-        }
-        const socketAllowed = nodelink.admissionManager.incrementActiveSockets(remoteAddress);
-        if (!socketAllowed) {
+        const connectionAllowed = nodelink.admissionManager.admitConnection(remoteAddress);
+        if (!connectionAllowed) {
             socket.destroy();
             return;
         }
         socket.on('close', () => {
-            nodelink.admissionManager.decrementActiveSockets(remoteAddress);
+            nodelink.admissionManager.releaseConnection(remoteAddress);
         });
         socket.on('error', (err) => {
             const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET';

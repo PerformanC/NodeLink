@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { sendErrorResponse } from '../utils.js';
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 /**
@@ -2366,8 +2366,8 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
     if (!endpointConfig.patchEnabled) {
         return sendErrorResponse(req, res, 403, 'Forbidden', 'Profiler endpoint is disabled.', parsedUrl.pathname);
     }
-    const remoteAddress = req.socket?.remoteAddress || '';
-    if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+    const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers);
+    if (!endpointConfig.allowExternalPatch && !isLocal) {
         return sendErrorResponse(req, res, 403, 'Forbidden', 'External access to profiler UI is blocked.', parsedUrl.pathname);
     }
     const code = parsedUrl.searchParams.get('code');

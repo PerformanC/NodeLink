@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { logger, parseClient, verifyDiscordID } from '../utils.js';
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/;
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/;
@@ -134,7 +135,7 @@ export function createBunServer(context, getRequestHandler) {
                 : url.pathname;
             if (pathname === '/v4/profiler/socket') {
                 const remoteAddress = server.requestIP(req)?.address || 'unknown';
-                const isInternal = /^(::1|localhost|127\.0\.0\.1)/.test(remoteAddress);
+                const isInternal = isLoopbackRequest(remoteAddress, Object.fromEntries(req.headers));
                 const endpoint = context.options.cluster?.endpoint || {};
                 const patchEnabled = endpoint.patchEnabled === true;
                 const allowExternalPatch = endpoint.allowExternalPatch === true;
@@ -182,7 +183,15 @@ export function createBunServer(context, getRequestHandler) {
             const liveMatch = pathname.match(LIVE_PATH_RE);
             const isMainWs = pathname === '/v4/websocket';
             if (isMainWs || voiceMatch || liveMatch) {
-                const remoteAddress = server.requestIP(req)?.address || 'unknown';
+                const peerAddress = server.requestIP(req)?.address || 'unknown';
+                const upgradeReqShim = {
+                    method: req.method,
+                    url: req.url,
+                    headers: Object.fromEntries(req.headers),
+                    socket: { remoteAddress: peerAddress }
+                };
+                const remoteAddress = context.admissionManager.resolveClientAddress(upgradeReqShim) ??
+                    peerAddress;
                 const clientAddress = `[External] (${remoteAddress})`;
                 const isIpBlocked = context.admissionManager.isIpBlocked(remoteAddress);
                 if (isIpBlocked) {
@@ -191,12 +200,6 @@ export function createBunServer(context, getRequestHandler) {
                         statusText: 'Forbidden'
                     });
                 }
-                const upgradeReqShim = {
-                    method: req.method,
-                    url: req.url,
-                    headers: Object.fromEntries(req.headers),
-                    socket: { remoteAddress }
-                };
                 const admissionContext = context.admissionManager.resolveContext(upgradeReqShim, url);
                 const admissionDecision = context.admissionManager.admit(admissionContext);
                 if (!admissionDecision.allowed) {
