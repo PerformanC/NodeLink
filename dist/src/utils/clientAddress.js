@@ -1,43 +1,61 @@
 import net from 'node:net';
 /**
  * Matches peer addresses against an explicit list of trusted proxy IPs/CIDRs.
- * Invalid entries are reported through `invalidEntries` and never match.
+ * IPv4 and IPv6 rules are kept in separate lists so an address only matches
+ * rules of its own family. Invalid entries are reported through
+ * `invalidEntries` and never match.
  * @public
  */
 export class TrustedProxyList {
-    ranges;
-    invalidEntries;
+    ipv4 = new net.BlockList();
+    ipv6 = new net.BlockList();
+    invalidEntries = [];
+    size = 0;
     constructor(entries = []) {
-        this.ranges = [];
-        this.invalidEntries = [];
         for (const entry of entries) {
-            const range = parseRange(entry);
-            if (range) {
-                this.ranges.push(range);
+            if (this.add(entry)) {
+                this.size += 1;
             }
             else {
                 this.invalidEntries.push(entry);
             }
         }
     }
-    get size() {
-        return this.ranges.length;
-    }
     /**
      * Checks whether an address belongs to a trusted proxy.
      * @param rawAddress - Peer address (IPv4, IPv6 or IPv4-mapped IPv6).
      */
     contains(rawAddress) {
-        if (this.ranges.length === 0)
+        if (this.size === 0)
             return false;
         const address = normalizeAddress(rawAddress);
         if (!address)
             return false;
-        const parsed = parseAddress(address);
-        if (!parsed)
+        return net.isIP(address) === 4
+            ? this.ipv4.check(address, 'ipv4')
+            : this.ipv6.check(address, 'ipv6');
+    }
+    add(entry) {
+        const [rawAddress, rawPrefix, ...rest] = entry.trim().split('/');
+        if (rest.length > 0)
             return false;
-        return this.ranges.some((range) => range.family === parsed.family &&
-            (parsed.value & range.mask) === range.base);
+        const address = normalizeAddress(rawAddress);
+        if (!address)
+            return false;
+        const isIpv4 = net.isIP(address) === 4;
+        const bits = isIpv4 ? 32 : 128;
+        const prefix = rawPrefix === undefined ? bits : Number(rawPrefix);
+        const isValidPrefix = rawPrefix === undefined ||
+            (/^\d+$/.test(rawPrefix) && prefix >= 0 && prefix <= bits);
+        if (!isValidPrefix)
+            return false;
+        if (isIpv4) {
+            this.ipv4.addSubnet(address, prefix, 'ipv4');
+        }
+        else {
+            this.ipv6.addSubnet(address, prefix, 'ipv6');
+        }
+        return true;
     }
 }
 /**
@@ -129,66 +147,4 @@ function readHeader(headers, name) {
     const raw = headers[name];
     const value = Array.isArray(raw) ? raw.join(',') : raw;
     return value?.trim() || undefined;
-}
-function parseRange(entry) {
-    const [rawAddress, rawPrefix, ...rest] = entry.trim().split('/');
-    if (rest.length > 0)
-        return null;
-    const address = normalizeAddress(rawAddress);
-    if (!address)
-        return null;
-    const parsed = parseAddress(address);
-    if (!parsed)
-        return null;
-    const bits = parsed.family === 4 ? 32 : 128;
-    const prefix = rawPrefix === undefined ? bits : Number(rawPrefix);
-    const isValidPrefix = rawPrefix === undefined ||
-        (/^\d+$/.test(rawPrefix) && prefix >= 0 && prefix <= bits);
-    if (!isValidPrefix)
-        return null;
-    const hostBits = BigInt(bits - prefix);
-    const full = (1n << BigInt(bits)) - 1n;
-    const mask = (full >> hostBits) << hostBits;
-    return { family: parsed.family, base: parsed.value & mask, mask };
-}
-function parseAddress(address) {
-    const family = net.isIP(address);
-    if (family === 4) {
-        const value = address
-            .split('.')
-            .reduce((acc, octet) => (acc << 8n) | BigInt(Number(octet)), 0n);
-        return { family: 4, value };
-    }
-    if (family === 6) {
-        const groups = expandIpv6(address);
-        if (!groups)
-            return null;
-        const value = groups.reduce((acc, group) => (acc << 16n) | BigInt(group), 0n);
-        return { family: 6, value };
-    }
-    return null;
-}
-function expandIpv6(address) {
-    let source = address;
-    const embeddedIpv4 = source.match(/(\d+\.\d+\.\d+\.\d+)$/);
-    if (embeddedIpv4?.[1]) {
-        const octets = embeddedIpv4[1].split('.').map(Number);
-        const high = ((octets[0] ?? 0) << 8) | (octets[1] ?? 0);
-        const low = ((octets[2] ?? 0) << 8) | (octets[3] ?? 0);
-        source = `${source.slice(0, -embeddedIpv4[1].length)}${high.toString(16)}:${low.toString(16)}`;
-    }
-    const [head = '', tail] = source.split('::');
-    const headGroups = head ? head.split(':') : [];
-    const tailGroups = tail ? tail.split(':') : [];
-    const missing = 8 - headGroups.length - tailGroups.length;
-    if (tail === undefined ? missing !== 0 : missing < 0)
-        return null;
-    const groups = [
-        ...headGroups,
-        ...new Array(tail === undefined ? 0 : missing).fill('0'),
-        ...tailGroups
-    ].map((group) => Number.parseInt(group, 16));
-    return groups.length === 8 && groups.every((g) => g >= 0 && g <= 0xffff)
-        ? groups
-        : null;
 }

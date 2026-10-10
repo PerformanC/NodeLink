@@ -27,6 +27,15 @@ test('TrustedProxyList matches IPv4/IPv6 CIDRs and rejects bad entries', () => {
     assert.equal(list.contains('2001:db9::1'), false);
     assert.equal(new TrustedProxyList(['0.0.0.0/0']).contains('8.8.8.8'), true);
 });
+test('TrustedProxyList only matches rules of the same address family', () => {
+    const ipv6Only = new TrustedProxyList(['::ffff:0:0/96', '::/0']);
+    assert.equal(ipv6Only.contains('10.0.0.1'), false);
+    assert.equal(ipv6Only.contains('::ffff:10.0.0.1'), false);
+    assert.equal(ipv6Only.contains('2001:db8::1'), true);
+    const ipv4Only = new TrustedProxyList(['0.0.0.0/0']);
+    assert.equal(ipv4Only.contains('2001:db8::1'), false);
+    assert.equal(ipv4Only.contains('::ffff:10.0.0.1'), true);
+});
 test('forwarding headers from untrusted peers are ignored', () => {
     const client = resolveClientAddress('203.0.113.7', { 'x-forwarded-for': '198.51.100.1', 'x-real-ip': '198.51.100.2' }, proxies);
     assert.equal(client, '203.0.113.7');
@@ -54,64 +63,21 @@ test('isLoopbackRequest rejects proxied loopback traffic', () => {
     assert.equal(isLoopbackRequest('127.0.0.1', { forwarded: 'for=1.2.3.4' }), false);
     assert.equal(isLoopbackRequest('198.51.100.1', {}), false);
 });
-function createAdmission(config) {
+test('trustProxy without trustedProxies ignores forwarding headers', (t) => {
     const nodelink = {
         options: { server: { password: 'test-password' } }
     };
-    return new AdmissionManager(nodelink, config);
-}
-function proxiedRequest(clientIp) {
-    return {
+    const admission = new AdmissionManager(nodelink, {
+        trustProxy: true,
+        trustedProxies: []
+    });
+    t.after(() => admission.destroy());
+    const request = {
         method: 'GET',
         url: '/v4/info',
-        headers: { 'x-forwarded-for': clientIp },
+        headers: { 'x-forwarded-for': '198.51.100.66' },
         socket: { remoteAddress: '::ffff:127.0.0.1' }
     };
-}
-test('auth bans behind a trusted proxy apply per client', (t) => {
-    const admission = createAdmission({
-        trustProxy: true,
-        trustedProxies: ['127.0.0.1']
-    });
-    t.after(() => admission.destroy());
-    const attacker = proxiedRequest('198.51.100.66');
-    const bystander = proxiedRequest('198.51.100.10');
-    for (let attempt = 0; attempt < 5; attempt++) {
-        admission.recordAuthFailure(admission.resolveClientAddress(attacker));
-    }
-    const url = new URL('http://localhost/v4/info');
-    const attackerDecision = admission.admit(admission.resolveContext(attacker, url));
-    const bystanderDecision = admission.admit(admission.resolveContext(bystander, url));
-    assert.equal(attackerDecision.allowed, false);
-    assert.equal(attackerDecision.status, 403);
-    assert.equal(bystanderDecision.allowed, true);
-    // The proxy itself keeps accepting connections.
-    assert.equal(admission.admitConnection('::ffff:127.0.0.1'), true);
-    admission.releaseConnection('::ffff:127.0.0.1');
-});
-test('trusted proxies use an aggregate pool that is released on close', (t) => {
-    const admission = createAdmission({
-        trustProxy: true,
-        trustedProxies: ['127.0.0.1'],
-        ip: { maxConcurrentSockets: 2, maxProxySockets: 3 }
-    });
-    t.after(() => admission.destroy());
-    const proxy = '::ffff:127.0.0.1';
-    for (let index = 0; index < 3; index++) {
-        assert.equal(admission.admitConnection(proxy), true);
-    }
-    assert.equal(admission.admitConnection(proxy), false);
-    admission.releaseConnection(proxy);
-    assert.equal(admission.admitConnection(proxy), true);
-    // Direct peers keep their per-IP limit.
-    assert.equal(admission.admitConnection('203.0.113.7'), true);
-    assert.equal(admission.admitConnection('203.0.113.7'), true);
-    assert.equal(admission.admitConnection('203.0.113.7'), false);
-});
-test('trustProxy without trustedProxies ignores forwarding headers', (t) => {
-    const admission = createAdmission({ trustProxy: true, trustedProxies: [] });
-    t.after(() => admission.destroy());
-    const request = proxiedRequest('198.51.100.66');
     assert.equal(admission.resolveClientAddress(request), '127.0.0.1');
     assert.equal(admission.isTrustedProxy('127.0.0.1'), false);
 });

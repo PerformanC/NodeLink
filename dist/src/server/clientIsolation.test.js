@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import WebSocketServer from '@performanc/pwsl-server';
+import requestHandler from '../api/index.js';
 import AdmissionManager from '../managers/admissionManager.js';
 import { createHttpServer } from './httpServer.js';
-import { setupWebSocketEvents } from './wsRouter.js';
 const PASSWORD = 'test-password';
 async function startServer(config) {
     const options = {
         server: { password: PASSWORD },
         playback: { voiceReceive: { enabled: false } },
-        cluster: {}
+        cluster: {},
+        api: {}
     };
     const admission = new AdmissionManager({ options }, config);
     const socketBus = new WebSocketServer();
@@ -18,27 +19,34 @@ async function startServer(config) {
         admissionManager: admission,
         socket: socketBus,
         sessions: { isResumable: () => false },
-        pluginManager: { callHook: () => { } }
+        pluginManager: { callHook: () => { } },
+        statsManager: {
+            incrementApiRequest: () => { },
+            recordHttpRequestDuration: () => { }
+        },
+        extensions: { middlewares: [], routes: [] }
     };
-    setupWebSocketEvents(context);
-    socketBus.removeAllListeners('/v4/websocket');
-    const server = createHttpServer(context, () => Promise.reject(new Error('REST is not used in this test')));
+    const server = createHttpServer(context, () => Promise.resolve(requestHandler));
+    /* INFO: Upgraded sockets are not closed by closeAllConnections, so a failing test would hang teardown */
+    const sockets = new Set();
+    server.on('connection', (socket) => sockets.add(socket));
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address();
     return {
         url: `ws://127.0.0.1:${port}/v4/websocket`,
-        admission,
+        restUrl: `http://127.0.0.1:${port}/v4/nodelink-test-route`,
         socketBus,
         close: async () => {
             admission.destroy();
-            server.closeAllConnections();
+            for (const socket of sockets)
+                socket.destroy();
             await new Promise((resolve) => server.close(() => resolve()));
         }
     };
 }
-function connect(url, forwardedFor) {
+function connect(url, forwardedFor, password = PASSWORD) {
     const headers = {
-        Authorization: PASSWORD,
+        Authorization: password,
         'Client-Name': 'release-test/1.0.0',
         'User-Id': '123456789012345678'
     };
@@ -119,4 +127,40 @@ test('server-side destroy releases the slot', async (t) => {
             ? resolve(null)
             : ws.addEventListener('close', resolve, { once: true }));
     }
+});
+async function restStatus(url, forwardedFor, password = PASSWORD) {
+    const response = await fetch(url, {
+        headers: { Authorization: password, 'X-Forwarded-For': forwardedFor }
+    });
+    await response.body?.cancel();
+    return response.status;
+}
+const proxyConfig = {
+    trustProxy: true,
+    trustedProxies: ['127.0.0.1']
+};
+test('REST auth failures behind a proxy ban only the offending client', async (t) => {
+    const harness = await startServer(proxyConfig);
+    t.after(() => harness.close());
+    for (let attempt = 0; attempt < 5; attempt++) {
+        assert.equal(await restStatus(harness.restUrl, '198.51.100.66', 'wrong'), 401);
+    }
+    assert.equal(await restStatus(harness.restUrl, '198.51.100.66'), 403);
+    assert.equal(await restStatus(harness.restUrl, '6.6.6.6, 198.51.100.66'), 403, 'a spoofed leftmost hop does not lift the ban');
+    assert.equal(await restStatus(harness.restUrl, '198.51.100.10'), 404);
+    const bystander = await connectEventually(harness.url, '198.51.100.10');
+    assert.ok(bystander, 'other clients behind the proxy still connect');
+    await closeClient(bystander);
+});
+test('WebSocket auth failures behind a proxy ban only the offending client', async (t) => {
+    const harness = await startServer(proxyConfig);
+    t.after(() => harness.close());
+    for (let attempt = 0; attempt < 5; attempt++) {
+        assert.equal(await connect(harness.url, '198.51.100.66', 'wrong'), null);
+    }
+    assert.equal(await connect(harness.url, '198.51.100.66'), null);
+    assert.equal(await restStatus(harness.restUrl, '198.51.100.66'), 403);
+    const bystander = await connectEventually(harness.url, '198.51.100.10');
+    assert.ok(bystander, 'other clients behind the proxy still connect');
+    await closeClient(bystander);
 });
