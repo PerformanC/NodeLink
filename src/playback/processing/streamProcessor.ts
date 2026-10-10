@@ -3378,7 +3378,7 @@ export const createSeekeableAudioResource = async (
         volume,
         audioMixer,
         returnPCM,
-        returnPCM ? true : (player.loudnessNormalizer ?? enableAGC),
+        player.loudnessNormalizer ?? enableAGC,
         enableCrossfade
       )
     }
@@ -3414,7 +3414,7 @@ export const createSeekeableAudioResource = async (
       volume,
       audioMixer,
       returnPCM,
-      returnPCM ? true : (player.loudnessNormalizer ?? enableAGC),
+      player.loudnessNormalizer ?? enableAGC,
       enableCrossfade
     )
   } catch (err) {
