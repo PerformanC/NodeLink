@@ -12,6 +12,7 @@ import type {
   ApiRouteDefinition,
   ApiRouteModule
 } from '../typings/api/api.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import {
   logger,
   sendErrorResponse,
@@ -229,10 +230,14 @@ async function requestHandler(
 
   nodelink.statsManager.incrementApiRequest(parsedUrl.pathname)
   const trace = parsedUrl.searchParams.get('trace') === 'true'
-  const remoteAddress = req.socket?.remoteAddress ?? 'unknown'
-  const remotePort = req.socket?.remotePort
-  const isInternal = ['127.0.0.1', '::1', 'localhost'].includes(remoteAddress)
-  const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort ?? 'unknown'})`
+  const remoteAddress =
+    nodelink.admissionManager.resolveClientAddress(req) ?? 'unknown'
+  const isProxied = nodelink.admissionManager.isTrustedProxy(
+    req.socket?.remoteAddress
+  )
+  const remotePort = isProxied ? undefined : req.socket?.remotePort
+  const isInternal = isLoopbackRequest(req.socket?.remoteAddress, req.headers)
+  const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}${remotePort ? `:${remotePort}` : ''})`
   const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
   const originalEnd = res.end.bind(res)

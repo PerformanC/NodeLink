@@ -10,6 +10,7 @@ import type {
   SessionSocket
 } from '../typings/index.types.ts'
 import type { ClientInfo, ReqShim } from '../typings/shared.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { logger, parseClient, verifyDiscordID } from '../utils.ts'
 
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/
@@ -197,7 +198,10 @@ export function createBunServer(
 
       if (pathname === '/v4/profiler/socket') {
         const remoteAddress = server.requestIP(req)?.address || 'unknown'
-        const isInternal = /^(::1|localhost|127\.0\.0\.1)/.test(remoteAddress)
+        const isInternal = isLoopbackRequest(
+          remoteAddress,
+          Object.fromEntries(req.headers)
+        )
         const endpoint = context.options.cluster?.endpoint || {}
         const patchEnabled = endpoint.patchEnabled === true
         const allowExternalPatch = endpoint.allowExternalPatch === true
@@ -251,7 +255,16 @@ export function createBunServer(
       const isMainWs = pathname === '/v4/websocket'
 
       if (isMainWs || voiceMatch || liveMatch) {
-        const remoteAddress = server.requestIP(req)?.address || 'unknown'
+        const peerAddress = server.requestIP(req)?.address || 'unknown'
+        const upgradeReqShim: ApiRequest = {
+          method: req.method,
+          url: req.url,
+          headers: Object.fromEntries(req.headers),
+          socket: { remoteAddress: peerAddress }
+        }
+        const remoteAddress =
+          context.admissionManager.resolveClientAddress(upgradeReqShim) ??
+          peerAddress
         const clientAddress = `[External] (${remoteAddress})`
 
         const isIpBlocked = context.admissionManager.isIpBlocked(remoteAddress)
@@ -260,13 +273,6 @@ export function createBunServer(
             status: 403,
             statusText: 'Forbidden'
           })
-        }
-
-        const upgradeReqShim: ApiRequest = {
-          method: req.method,
-          url: req.url,
-          headers: Object.fromEntries(req.headers),
-          socket: { remoteAddress }
         }
 
         const admissionContext = context.admissionManager.resolveContext(
@@ -375,6 +381,23 @@ export function createBunServer(
           sessionId = null
         }
 
+        /* INFO: Bun has no TCP connection hook, so peer and per-client capacity are reserved per upgrade */
+        const releaseCapacity = context.admissionManager.reserveUpgrade(
+          peerAddress,
+          admissionContext.ip,
+          true
+        )
+        if (!releaseCapacity) {
+          return new Response('Too many concurrent connections.', {
+            status: 429,
+            statusText: 'Too Many Requests',
+            headers: {
+              'Nodelink-Api-Version': '4',
+              IamNodelink: 'true'
+            }
+          })
+        }
+
         const success = server.upgrade(req, {
           data: {
             clientInfo,
@@ -384,11 +407,13 @@ export function createBunServer(
             url: req.url,
             pathname,
             eventName,
-            routeId
+            routeId,
+            releaseCapacity
           }
         })
 
         if (success) return undefined
+        releaseCapacity()
         return new Response('WebSocket upgrade failed', {
           status: 400,
           headers: {
@@ -618,6 +643,7 @@ export function createBunServer(
         wrapper._handleMessage(message)
       },
       close(ws: ServerWebSocket<BunSocketData>, code: number, reason: string) {
+        ws.data?.releaseCapacity?.()
         const wrapper = ws.data?.wrapper
         if (!wrapper) {
           logger(

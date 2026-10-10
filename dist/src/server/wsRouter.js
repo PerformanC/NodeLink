@@ -2,17 +2,13 @@ import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import { URL } from 'node:url';
 import { attachProfilerSocket } from '../api/profiler.socket.js';
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { decodeTrack, logger, parseClient, verifyDiscordID } from '../utils.js';
+import { bindWebSocketRelease, trackSocketRelease } from './socketRelease.js';
 import { handleClientWebSocket } from './wsSession.js';
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/;
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/;
 const DISCORD_SNOWFLAKE_RE = /^\d{17,20}$/;
-const INTERNAL_IPS = new Set([
-    '127.0.0.1',
-    '::1',
-    '::ffff:127.0.0.1',
-    'localhost'
-]);
 function _getHeader(headers, name) {
     const value = headers[name];
     return Array.isArray(value) ? value[0] : value;
@@ -51,18 +47,27 @@ function handleHttpUpgrade(context, request, socket, head) {
             return;
         logger('debug', 'Server', `Upgrade socket error: ${err.message}`);
     });
-    const remoteAddress = request.socket.remoteAddress || 'unknown';
-    const remotePort = request.socket.remotePort || 0;
-    const isInternal = INTERNAL_IPS.has(remoteAddress);
-    const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort})`;
+    const admission = context.admissionManager;
+    const peerAddress = request.socket.remoteAddress;
+    const remoteAddress = admission.resolveClientAddress(request) ?? 'unknown';
+    const isProxied = admission.isTrustedProxy(peerAddress);
+    const remotePort = isProxied ? 0 : request.socket.remotePort || 0;
+    const isInternal = isLoopbackRequest(peerAddress, request.headers);
+    const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}${remotePort ? `:${remotePort}` : ''})`;
     const url = new URL(request.url || '/', 'http://localhost');
     const pathname = url.pathname;
-    const admissionContext = context.admissionManager.resolveContext(request, url);
-    const admissionDecision = context.admissionManager.admit(admissionContext);
+    const admissionContext = admission.resolveContext(request, url);
+    const admissionDecision = admission.admit(admissionContext);
     if (!admissionDecision.allowed) {
         _rejectUpgrade(socket, admissionDecision.status, 'Too Many Requests', admissionDecision.message);
         return;
     }
+    const releaseUpgrade = admission.reserveUpgrade(peerAddress, admissionContext.ip, false);
+    if (!releaseUpgrade) {
+        _rejectUpgrade(socket, 429, 'Too Many Requests', 'Too many concurrent connections.');
+        return;
+    }
+    trackSocketRelease(socket, releaseUpgrade);
     if (pathname === '/v4/profiler/socket') {
         _handleProfilerUpgrade(context, request, socket, head, clientAddress, isInternal);
         return;
@@ -96,6 +101,7 @@ function _handleProfilerUpgrade(context, request, socket, head, clientAddress, i
     logger('info', 'ProfilerSocket', `Profiler socket connected from ${clientAddress} | URL: ${request.url}`);
     const wsServer = context.socket;
     wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+        bindWebSocketRelease(ws, socket);
         context.socket?.emit('/v4/profiler/socket', ws, request, { name: 'ProfilerUI', version: '1' }, null, null);
     });
 }
@@ -107,7 +113,7 @@ function _handleGatewayUpgrade(context, request, socket, head, pathname, clientA
     const authHeader = _getHeader(request.headers, 'authorization');
     const isAuthorized = _isAuthorized(authHeader, context.options.server?.password ?? '');
     if (!isAuthorized) {
-        context.admissionManager.recordAuthFailure(request.socket.remoteAddress);
+        context.admissionManager.recordAuthFailure(context.admissionManager.resolveClientAddress(request));
         reject(401, 'Unauthorized', 'Invalid password provided.');
         return;
     }
@@ -152,6 +158,7 @@ function _handleGatewayUpgrade(context, request, socket, head, pathname, clientA
     }
     const wsServer = context.socket;
     wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+        bindWebSocketRelease(ws, socket);
         context.socket?.emit(eventName, ws, request, clientInfo, sessionId, routeId);
     });
 }
