@@ -1,6 +1,7 @@
 import http from 'node:http';
 import process from 'node:process';
 import { logger } from '../utils.js';
+import { trackSocketRelease } from './socketRelease.js';
 import { handleHttpUpgrade } from './wsRouter.js';
 /* INFO: Creates and configures native Node.js HTTP server with socket pool guards, DoS defense, and upgrade routing */
 function createHttpServer(nodelink, getRequestHandler) {
@@ -30,9 +31,7 @@ function createHttpServer(nodelink, getRequestHandler) {
             socket.destroy();
             return;
         }
-        socket.on('close', () => {
-            nodelink.admissionManager.releaseConnection(remoteAddress);
-        });
+        trackSocketRelease(socket, () => nodelink.admissionManager.releaseConnection(remoteAddress));
         socket.on('error', (err) => {
             const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET';
             if (isBenign)

@@ -4,6 +4,7 @@ import { URL } from 'node:url';
 import { attachProfilerSocket } from '../api/profiler.socket.js';
 import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { decodeTrack, logger, parseClient, verifyDiscordID } from '../utils.js';
+import { bindWebSocketRelease, trackSocketRelease } from './socketRelease.js';
 import { handleClientWebSocket } from './wsSession.js';
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/;
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/;
@@ -61,15 +62,12 @@ function handleHttpUpgrade(context, request, socket, head) {
         _rejectUpgrade(socket, admissionDecision.status, 'Too Many Requests', admissionDecision.message);
         return;
     }
-    /* INFO: Proxied clients share the proxy's TCP pool, so cap each client's upgraded sockets here */
-    if (isProxied && admissionContext.ip) {
-        const clientIp = admissionContext.ip;
-        if (!admission.incrementActiveSockets(clientIp)) {
-            _rejectUpgrade(socket, 429, 'Too Many Requests', 'Too many concurrent connections.');
-            return;
-        }
-        socket.once('close', () => admission.decrementActiveSockets(clientIp));
+    const releaseUpgrade = admission.reserveUpgrade(peerAddress, admissionContext.ip, false);
+    if (!releaseUpgrade) {
+        _rejectUpgrade(socket, 429, 'Too Many Requests', 'Too many concurrent connections.');
+        return;
     }
+    trackSocketRelease(socket, releaseUpgrade);
     if (pathname === '/v4/profiler/socket') {
         _handleProfilerUpgrade(context, request, socket, head, clientAddress, isInternal);
         return;
@@ -103,6 +101,7 @@ function _handleProfilerUpgrade(context, request, socket, head, clientAddress, i
     logger('info', 'ProfilerSocket', `Profiler socket connected from ${clientAddress} | URL: ${request.url}`);
     const wsServer = context.socket;
     wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+        bindWebSocketRelease(ws, socket);
         context.socket?.emit('/v4/profiler/socket', ws, request, { name: 'ProfilerUI', version: '1' }, null, null);
     });
 }
@@ -159,6 +158,7 @@ function _handleGatewayUpgrade(context, request, socket, head, pathname, clientA
     }
     const wsServer = context.socket;
     wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+        bindWebSocketRelease(ws, socket);
         context.socket?.emit(eventName, ws, request, clientInfo, sessionId, routeId);
     });
 }

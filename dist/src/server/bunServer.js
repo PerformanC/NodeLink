@@ -287,6 +287,18 @@ export function createBunServer(context, getRequestHandler) {
                     logger('warn', 'Server', `Session-ID provided by ${clientAddress} does not exist or is not resumable: ${sessionId}, creating a new session`);
                     sessionId = null;
                 }
+                /* INFO: Bun has no TCP connection hook, so peer and per-client capacity are reserved per upgrade */
+                const releaseCapacity = context.admissionManager.reserveUpgrade(peerAddress, admissionContext.ip, true);
+                if (!releaseCapacity) {
+                    return new Response('Too many concurrent connections.', {
+                        status: 429,
+                        statusText: 'Too Many Requests',
+                        headers: {
+                            'Nodelink-Api-Version': '4',
+                            IamNodelink: 'true'
+                        }
+                    });
+                }
                 const success = server.upgrade(req, {
                     data: {
                         clientInfo,
@@ -296,11 +308,13 @@ export function createBunServer(context, getRequestHandler) {
                         url: req.url,
                         pathname,
                         eventName,
-                        routeId
+                        routeId,
+                        releaseCapacity
                     }
                 });
                 if (success)
                     return undefined;
+                releaseCapacity();
                 return new Response('WebSocket upgrade failed', {
                     status: 400,
                     headers: {
@@ -478,6 +492,7 @@ export function createBunServer(context, getRequestHandler) {
                 wrapper._handleMessage(message);
             },
             close(ws, code, reason) {
+                ws.data?.releaseCapacity?.();
                 const wrapper = ws.data?.wrapper;
                 if (!wrapper) {
                     logger('debug', 'WebSocket', `Bun close received without wrapper (code: ${code}, remote: ${ws.data?.remoteAddress || 'unknown'})`);
