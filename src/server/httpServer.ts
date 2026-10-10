@@ -5,6 +5,7 @@ import process from 'node:process'
 import type NodelinkServer from '../index.ts'
 import type { ApiNodelinkServer } from '../typings/api/api.types.ts'
 import { logger } from '../utils.ts'
+import { trackSocketRelease } from './socketRelease.ts'
 import { handleHttpUpgrade } from './wsRouter.ts'
 
 type RequestHandlerType = typeof import('../api/index.ts').default
@@ -50,9 +51,9 @@ function createHttpServer(
       return
     }
 
-    socket.on('close', () => {
+    trackSocketRelease(socket, () =>
       nodelink.admissionManager.releaseConnection(remoteAddress)
-    })
+    )
 
     socket.on('error', (err: NodeJS.ErrnoException) => {
       const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET'

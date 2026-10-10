@@ -11,6 +11,7 @@ import type { RequestShim, SessionSocket } from '../typings/index.types.ts'
 import type { ClientInfo } from '../typings/shared.types.ts'
 import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { decodeTrack, logger, parseClient, verifyDiscordID } from '../utils.ts'
+import { bindWebSocketRelease, trackSocketRelease } from './socketRelease.ts'
 import { handleClientWebSocket } from './wsSession.ts'
 
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/
@@ -97,20 +98,21 @@ function handleHttpUpgrade(
     return
   }
 
-  /* INFO: Proxied clients share the proxy's TCP pool, so cap each client's upgraded sockets here */
-  if (isProxied && admissionContext.ip) {
-    const clientIp = admissionContext.ip
-    if (!admission.incrementActiveSockets(clientIp)) {
-      _rejectUpgrade(
-        socket,
-        429,
-        'Too Many Requests',
-        'Too many concurrent connections.'
-      )
-      return
-    }
-    socket.once('close', () => admission.decrementActiveSockets(clientIp))
+  const releaseUpgrade = admission.reserveUpgrade(
+    peerAddress,
+    admissionContext.ip,
+    false
+  )
+  if (!releaseUpgrade) {
+    _rejectUpgrade(
+      socket,
+      429,
+      'Too Many Requests',
+      'Too many concurrent connections.'
+    )
+    return
   }
+  trackSocketRelease(socket, releaseUpgrade)
 
   if (pathname === '/v4/profiler/socket') {
     _handleProfilerUpgrade(
@@ -173,6 +175,7 @@ function _handleProfilerUpgrade(
 
   const wsServer = context.socket as WebSocketServer
   wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+    bindWebSocketRelease(ws, socket)
     context.socket?.emit(
       '/v4/profiler/socket',
       ws as SessionSocket,
@@ -268,6 +271,7 @@ function _handleGatewayUpgrade(
 
   const wsServer = context.socket as WebSocketServer
   wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+    bindWebSocketRelease(ws, socket)
     context.socket?.emit(
       eventName,
       ws as SessionSocket,

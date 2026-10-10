@@ -66,6 +66,12 @@ export interface BunSocketData {
    * @internal
    */
   routeId?: string | null
+
+  /**
+   * Returns the socket capacity reserved for this upgrade; idempotent
+   * @internal
+   */
+  releaseCapacity?: () => void
 }
 
 /**

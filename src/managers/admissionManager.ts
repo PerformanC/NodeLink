@@ -346,6 +346,43 @@ export default class AdmissionManager {
   }
 
   /**
+   * Reserves socket capacity for a WebSocket upgrade. Proxied clients share the
+   * proxy's TCP pool, so their own per-client pool is charged here.
+   * @param peerAddress - TCP peer address.
+   * @param clientKey - Resolved client admission key (AdmissionContext.ip).
+   * @param includePeer - Also admit the peer connection itself, for runtimes
+   *   without a TCP-level connection hook (Bun).
+   * @returns An idempotent release callback, or null if capacity is exhausted.
+   */
+  reserveUpgrade(
+    peerAddress: string | null | undefined,
+    clientKey: string | null,
+    includePeer: boolean
+  ): (() => void) | null {
+    const releases: Array<() => void> = []
+    const release = (): void => {
+      while (releases.length > 0) {
+        releases.pop()?.()
+      }
+    }
+
+    if (includePeer) {
+      if (!this.admitConnection(peerAddress)) return null
+      releases.push(() => this.releaseConnection(peerAddress))
+    }
+
+    if (clientKey && this.trustedProxies.contains(peerAddress)) {
+      if (!this.incrementActiveSockets(clientKey)) {
+        release()
+        return null
+      }
+      releases.push(() => this.decrementActiveSockets(clientKey))
+    }
+
+    return release
+  }
+
+  /**
    * Tracks an incoming TCP socket. Returns false if IP connection pool is exhausted.
    * @param rawAddress - Remote IP address.
    */
