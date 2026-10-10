@@ -9,13 +9,8 @@ import type {
   WorkerMetricsEntry,
   WorkerMetricsPayload
 } from '../typings/api/stats.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { sendErrorResponse, sendResponse } from '../utils.ts'
-
-/**
- * Loopback addresses allowed to access the workers patch endpoint when
- * external patching is disabled.
- */
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
 /**
  * Request payload accepted by the workers patch endpoint.
@@ -341,8 +336,8 @@ function handlePatch(
     return
   }
 
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+  const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers)
+  if (!endpointConfig.allowExternalPatch && !isLocal) {
     sendErrorResponse(
       req,
       res,
