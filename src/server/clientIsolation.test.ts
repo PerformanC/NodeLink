@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict'
 import type http from 'node:http'
-import type { AddressInfo } from 'node:net'
+import type { AddressInfo, Socket } from 'node:net'
 import test from 'node:test'
 import WebSocketServer from '@performanc/pwsl-server'
 
+import requestHandler from '../api/index.ts'
 import type NodelinkServer from '../index.ts'
 import AdmissionManager from '../managers/admissionManager.ts'
 import type { AdmissionConfig } from '../typings/admission/admission.types.ts'
 import { createHttpServer } from './httpServer.ts'
-import { setupWebSocketEvents } from './wsRouter.ts'
 
 const PASSWORD = 'test-password'
 
 interface Harness {
   url: string
-  admission: AdmissionManager
+  restUrl: string
   socketBus: WebSocketServer
   close: () => Promise<void>
 }
@@ -23,7 +23,8 @@ async function startServer(config: Partial<AdmissionConfig>): Promise<Harness> {
   const options = {
     server: { password: PASSWORD },
     playback: { voiceReceive: { enabled: false } },
-    cluster: {}
+    cluster: {},
+    api: {}
   }
   const admission = new AdmissionManager(
     { options } as unknown as ConstructorParameters<typeof AdmissionManager>[0],
@@ -35,25 +36,30 @@ async function startServer(config: Partial<AdmissionConfig>): Promise<Harness> {
     admissionManager: admission,
     socket: socketBus,
     sessions: { isResumable: () => false },
-    pluginManager: { callHook: () => {} }
+    pluginManager: { callHook: () => {} },
+    statsManager: {
+      incrementApiRequest: () => {},
+      recordHttpRequestDuration: () => {}
+    },
+    extensions: { middlewares: [], routes: [] }
   } as unknown as NodelinkServer
 
-  setupWebSocketEvents(context)
-  socketBus.removeAllListeners('/v4/websocket')
-
   const server = createHttpServer(context, () =>
-    Promise.reject(new Error('REST is not used in this test'))
+    Promise.resolve(requestHandler)
   ) as http.Server
+  /* INFO: Upgraded sockets are not closed by closeAllConnections, so a failing test would hang teardown */
+  const sockets = new Set<Socket>()
+  server.on('connection', (socket: Socket) => sockets.add(socket))
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address() as AddressInfo
 
   return {
     url: `ws://127.0.0.1:${port}/v4/websocket`,
-    admission,
+    restUrl: `http://127.0.0.1:${port}/v4/nodelink-test-route`,
     socketBus,
     close: async () => {
       admission.destroy()
-      server.closeAllConnections()
+      for (const socket of sockets) socket.destroy()
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   }
@@ -61,10 +67,11 @@ async function startServer(config: Partial<AdmissionConfig>): Promise<Harness> {
 
 function connect(
   url: string,
-  forwardedFor?: string
+  forwardedFor?: string,
+  password = PASSWORD
 ): Promise<WebSocket | null> {
   const headers: Record<string, string> = {
-    Authorization: PASSWORD,
+    Authorization: password,
     'Client-Name': 'release-test/1.0.0',
     'User-Id': '123456789012345678'
   }
@@ -170,4 +177,61 @@ test('server-side destroy releases the slot', async (t) => {
         : ws.addEventListener('close', resolve, { once: true })
     )
   }
+})
+
+async function restStatus(
+  url: string,
+  forwardedFor: string,
+  password = PASSWORD
+): Promise<number> {
+  const response = await fetch(url, {
+    headers: { Authorization: password, 'X-Forwarded-For': forwardedFor }
+  })
+  await response.body?.cancel()
+  return response.status
+}
+
+const proxyConfig: Partial<AdmissionConfig> = {
+  trustProxy: true,
+  trustedProxies: ['127.0.0.1']
+}
+
+test('REST auth failures behind a proxy ban only the offending client', async (t) => {
+  const harness = await startServer(proxyConfig)
+  t.after(() => harness.close())
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    assert.equal(
+      await restStatus(harness.restUrl, '198.51.100.66', 'wrong'),
+      401
+    )
+  }
+
+  assert.equal(await restStatus(harness.restUrl, '198.51.100.66'), 403)
+  assert.equal(
+    await restStatus(harness.restUrl, '6.6.6.6, 198.51.100.66'),
+    403,
+    'a spoofed leftmost hop does not lift the ban'
+  )
+  assert.equal(await restStatus(harness.restUrl, '198.51.100.10'), 404)
+
+  const bystander = await connectEventually(harness.url, '198.51.100.10')
+  assert.ok(bystander, 'other clients behind the proxy still connect')
+  await closeClient(bystander)
+})
+
+test('WebSocket auth failures behind a proxy ban only the offending client', async (t) => {
+  const harness = await startServer(proxyConfig)
+  t.after(() => harness.close())
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    assert.equal(await connect(harness.url, '198.51.100.66', 'wrong'), null)
+  }
+
+  assert.equal(await connect(harness.url, '198.51.100.66'), null)
+  assert.equal(await restStatus(harness.restUrl, '198.51.100.66'), 403)
+
+  const bystander = await connectEventually(harness.url, '198.51.100.10')
+  assert.ok(bystander, 'other clients behind the proxy still connect')
+  await closeClient(bystander)
 })

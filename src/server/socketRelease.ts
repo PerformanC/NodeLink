@@ -29,9 +29,9 @@ export function trackSocketRelease(
 /**
  * Runs and clears every pending release for the socket. Idempotent.
  * @param socket - TCP socket holding the capacity.
- * @public
+ * @internal
  */
-export function releaseSocket(socket: NetSocket): void {
+function releaseSocket(socket: NetSocket): void {
   const releases = pendingReleases.get(socket)
   if (!releases) return
 
