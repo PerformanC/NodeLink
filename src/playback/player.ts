@@ -479,12 +479,14 @@ export class Player {
     ) => this._onPlay(s)
     this.connection.on('playerStateChange', this._connPlayHandler)
     this._connErrorHandler = (err: Error) => {
+      const daveRecoveryStarted = err.cause === 'DAVE_RECOVERY_STARTED'
       logger(
-        'error',
+        daveRecoveryStarted ? 'warn' : 'error',
         'Player',
         `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`,
         err
       )
+      if (daveRecoveryStarted) return
 
       process.nextTick(() => {
         if (this.destroying) return
@@ -1782,6 +1784,7 @@ export class Player {
   ): Promise<boolean> {
     if (!this.track) return false
 
+    const playbackTrack = this.track
     if (!this.connection) {
       this._initConnection()
     }
@@ -1812,6 +1815,8 @@ export class Player {
       }
     }
 
+    if (this.destroying || this.track !== playbackTrack) return false
+
     if (!this.connection || !this._isVoiceReady()) {
       if (!suppressErrorEvents) {
         this._onError(
@@ -1837,7 +1842,10 @@ export class Player {
       urlData.protocol !== 'hls' &&
       urlData.protocol !== 'dash'
     const seekUrl = seekEligible ? urlData.url : undefined
-    if (seekUrl) await getStreamProcessor()
+    if (seekUrl) {
+      await getStreamProcessor()
+      if (this.destroying || this.track !== playbackTrack) return false
+    }
 
     let resource: AudioResource | undefined
     if (seekUrl && createSeekeableAudioResource) {
@@ -1860,6 +1868,10 @@ export class Player {
         this.loudnessNormalizer,
         this._getCrossfadeConfig() !== null
       )
+      if (this.destroying || this.track !== playbackTrack) {
+        if (!('exception' in seekResult)) seekResult.destroy()
+        return false
+      }
       if ('exception' in seekResult) {
         logger(
           'error',
@@ -1877,6 +1889,10 @@ export class Player {
         urlData,
         position
       )
+      if (this.destroying || this.track !== playbackTrack) {
+        if (!('exception' in fetched)) fetched.stream.destroy()
+        return false
+      }
       if ('exception' in fetched) {
         if (!suppressErrorEvents) {
           const err = new Error(fetched.exception.message)
@@ -1914,6 +1930,7 @@ export class Player {
       'playerStateChange',
       (s: VoicePlayerState) => s.status === 'playing'
     )
+    if (this.destroying || this.track !== playbackTrack) return false
 
     this._lyricsBasePosition = position
     this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
@@ -2214,6 +2231,7 @@ export class Player {
       )
       return false
     }
+    const seekTrack = this.track
     if (!this.track.info.isSeekable && !this.track.info.isStream) return false
 
     const streamFormat =
@@ -2262,6 +2280,7 @@ export class Player {
           'No stream info URL available for seek. awaiting getTrackUrl.'
         )
         await sleep(1600)
+        if (this.destroying || this.track !== seekTrack) return false
         if (!this.streamInfo?.url) {
           logger(
             'debug',
@@ -2274,7 +2293,7 @@ export class Player {
               audioTrackId: this.track.audioTrackId
             }
             const urlData = await this.nodelink.sources.getTrackUrl(trackInfo)
-            if (!this.track) return false
+            if (this.destroying || this.track !== seekTrack) return false
             this.streamInfo = { ...urlData, trackInfo: this.track.info }
             logger(
               'debug',
@@ -2328,6 +2347,7 @@ export class Player {
 
       const startPosition = this._realPosition()
       const result = await seekPromise
+      if (this.destroying || this.track !== seekTrack) return false
       if (result) {
         this.emitEvent(GatewayEvents.SEEK, {
           position: this.position,
@@ -2366,6 +2386,7 @@ export class Player {
       }
       return result
     } catch (e) {
+      if (this.destroying || this.track !== seekTrack) return false
       logger('error', 'Player', `Seek failed for guild ${this.guildId}`, e)
       this._onError(e as Error)
       return false
@@ -2382,6 +2403,7 @@ export class Player {
     endTime?: number
   ): Promise<boolean> {
     if (!this.track) return false
+    const seekTrack = this.track
 
     logger(
       'debug',
@@ -2405,6 +2427,10 @@ export class Player {
       )?.pipes?.[0]
 
       const previousSession = await inputStream?.beginSeekHandoff?.()
+      if (this.destroying || this.track !== seekTrack) {
+        inputStream?.cancelSeekHandoff?.()
+        return false
+      }
       if (previousSession) {
         seekHandoff = inputStream?.cancelSeekHandoff
           ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
@@ -2469,6 +2495,7 @@ export class Player {
         false,
         true
       )
+      if (this.destroying || this.track !== seekTrack) return false
       if (cachedResult) return true
       logger(
         'debug',
@@ -2479,6 +2506,10 @@ export class Player {
 
     const urlData =
       reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo))
+    if (this.destroying || this.track !== seekTrack) {
+      seekHandoff?.cancelSeekHandoff()
+      return false
+    }
     this.streamInfo = { ...urlData, trackInfo: this.track.info }
 
     if (urlData.exception) {
@@ -2496,6 +2527,10 @@ export class Player {
         'seekPrepare',
         `Playing resource for guild ${this.guildId} after source seek`
       )
+      if (this.destroying || this.track !== seekTrack) {
+        seekHandoff?.cancelSeekHandoff()
+        return false
+      }
       if (!result) seekHandoff?.cancelSeekHandoff()
       return result
     } catch (error) {

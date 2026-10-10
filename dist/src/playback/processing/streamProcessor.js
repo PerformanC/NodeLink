@@ -696,6 +696,7 @@ class SymphoniaDecoderStream extends Transform {
     decoder;
     codecRegistryHint;
     flushCallback;
+    transformCallback;
     inputClosed;
     isFinished;
     _aborted;
@@ -712,6 +713,7 @@ class SymphoniaDecoderStream extends Transform {
         this.decoder = new SymphoniaDecoder();
         this.codecRegistryHint = codecRegistryHint ?? null;
         this.flushCallback = null;
+        this.transformCallback = null;
         this.inputClosed = false;
         this.isFinished = false;
         this._aborted = false;
@@ -750,7 +752,13 @@ class SymphoniaDecoderStream extends Transform {
                 this.decoder.initialize(this.codecRegistryHint);
             }
             this._scheduleDecode();
-            callback();
+            if (this.decoder.isProbed &&
+                this.decoder.bufferedBytes >= BUFFER_THRESHOLDS.maxCompressed) {
+                this.transformCallback = callback;
+            }
+            else {
+                callback();
+            }
         }
         catch (err) {
             callback(err);
@@ -824,6 +832,13 @@ class SymphoniaDecoderStream extends Transform {
         }
         finally {
             this._isDecoding = false;
+            if (this.transformCallback &&
+                this.decoder &&
+                this.decoder.bufferedBytes < BUFFER_THRESHOLDS.minCompressed) {
+                const callback = this.transformCallback;
+                this.transformCallback = null;
+                callback();
+            }
         }
     }
     _finishDecode() {
@@ -834,8 +849,9 @@ class SymphoniaDecoderStream extends Transform {
         callback?.();
     }
     _failDecode(err) {
-        const callback = this.flushCallback;
+        const callback = this.flushCallback ?? this.transformCallback;
         this.flushCallback = null;
+        this.transformCallback = null;
         this.isFinished = true;
         this._cleanup();
         const error = err instanceof Error ? err : new Error(`Symphonia decode failed: ${err}`);
@@ -882,10 +898,10 @@ class SymphoniaDecoderStream extends Transform {
             this.flushCallback = null;
             cb(err);
         }
-        this._cleanup();
+        this._cleanup(err);
         super._destroy(err, callback);
     }
-    _cleanup() {
+    _cleanup(error) {
         this._cancelTimers();
         if (this.decoder) {
             try {
@@ -893,6 +909,11 @@ class SymphoniaDecoderStream extends Transform {
             }
             catch { }
             this.decoder = null;
+        }
+        if (this.transformCallback) {
+            const callback = this.transformCallback;
+            this.transformCallback = null;
+            callback(error);
         }
     }
 }

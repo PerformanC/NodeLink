@@ -323,7 +323,10 @@ export class Player {
         this._connPlayHandler = (_, s) => this._onPlay(s);
         this.connection.on('playerStateChange', this._connPlayHandler);
         this._connErrorHandler = (err) => {
-            logger('error', 'Player', `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`, err);
+            const daveRecoveryStarted = err.cause === 'DAVE_RECOVERY_STARTED';
+            logger(daveRecoveryStarted ? 'warn' : 'error', 'Player', `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`, err);
+            if (daveRecoveryStarted)
+                return;
             process.nextTick(() => {
                 if (this.destroying)
                     return;
@@ -1222,6 +1225,7 @@ export class Player {
     async _connectAndPlayStream(urlData, position, cleanupReason, fadingAction, playLogMessage, preserveQueuedCrossfade = false, suppressErrorEvents = false) {
         if (!this.track)
             return false;
+        const playbackTrack = this.track;
         if (!this.connection) {
             this._initConnection();
         }
@@ -1237,6 +1241,8 @@ export class Player {
                 logger('warn', 'Player', `Timeout or error while waiting for voice connection on guild ${this.guildId}:`, err);
             }
         }
+        if (this.destroying || this.track !== playbackTrack)
+            return false;
         if (!this.connection || !this._isVoiceReady()) {
             if (!suppressErrorEvents) {
                 this._onError(new Error(`Voice connection timed out for guild ${this.guildId} (missing UDP info).`, { cause: 'VOICE_CONNECTION_TIMEOUT' }));
@@ -1254,12 +1260,20 @@ export class Player {
             urlData.protocol !== 'hls' &&
             urlData.protocol !== 'dash';
         const seekUrl = seekEligible ? urlData.url : undefined;
-        if (seekUrl)
+        if (seekUrl) {
             await getStreamProcessor();
+            if (this.destroying || this.track !== playbackTrack)
+                return false;
+        }
         let resource;
         if (seekUrl && createSeekeableAudioResource) {
             logger('debug', 'Player', `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`);
             const seekResult = await createSeekeableAudioResource(this.guildId, seekUrl, position, this.track?.endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer, this._getCrossfadeConfig() !== null);
+            if (this.destroying || this.track !== playbackTrack) {
+                if (!('exception' in seekResult))
+                    seekResult.destroy();
+                return false;
+            }
             if ('exception' in seekResult) {
                 logger('error', 'Player', `Seekeable resource creation failed for guild ${this.guildId}: ${seekResult.exception.message}. Falling back to old method.`);
             }
@@ -1269,6 +1283,11 @@ export class Player {
         }
         if (!resource) {
             const fetched = await this._fetchResource(this.track.info, urlData, position);
+            if (this.destroying || this.track !== playbackTrack) {
+                if (!('exception' in fetched))
+                    fetched.stream.destroy();
+                return false;
+            }
             if ('exception' in fetched) {
                 if (!suppressErrorEvents) {
                     const err = new Error(fetched.exception.message);
@@ -1296,6 +1315,8 @@ export class Player {
             });
         }
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
+        if (this.destroying || this.track !== playbackTrack)
+            return false;
         this._lyricsBasePosition = position;
         this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
         return true;
@@ -1481,6 +1502,7 @@ export class Player {
             logger('debug', 'Player', `[Action: seek] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`);
             return false;
         }
+        const seekTrack = this.track;
         if (!this.track.info.isSeekable && !this.track.info.isStream)
             return false;
         const streamFormat = typeof this.streamInfo?.format === 'string'
@@ -1510,6 +1532,8 @@ export class Player {
             if (!this.streamInfo?.url) {
                 logger('debug', 'Player', 'No stream info URL available for seek. awaiting getTrackUrl.');
                 await sleep(1600);
+                if (this.destroying || this.track !== seekTrack)
+                    return false;
                 if (!this.streamInfo?.url) {
                     logger('debug', 'Player', 'Still no stream info URL available for seek.');
                     if (this.track) {
@@ -1518,7 +1542,7 @@ export class Player {
                             audioTrackId: this.track.audioTrackId
                         };
                         const urlData = await this.nodelink.sources.getTrackUrl(trackInfo);
-                        if (!this.track)
+                        if (this.destroying || this.track !== seekTrack)
                             return false;
                         this.streamInfo = { ...urlData, trackInfo: this.track.info };
                         logger('debug', 'Player', 'Fetched stream info URL for seek after wait.');
@@ -1551,6 +1575,8 @@ export class Player {
             }
             const startPosition = this._realPosition();
             const result = await seekPromise;
+            if (this.destroying || this.track !== seekTrack)
+                return false;
             if (result) {
                 this.emitEvent(GatewayEvents.SEEK, {
                     position: this.position,
@@ -1587,6 +1613,8 @@ export class Player {
             return result;
         }
         catch (e) {
+            if (this.destroying || this.track !== seekTrack)
+                return false;
             logger('error', 'Player', `Seek failed for guild ${this.guildId}`, e);
             this._onError(e);
             return false;
@@ -1601,6 +1629,7 @@ export class Player {
     async _seekUsingSource(position, endTime) {
         if (!this.track)
             return false;
+        const seekTrack = this.track;
         logger('debug', 'Player', `Seeking using source (native) to ${position}ms for guild ${this.guildId}`);
         this.position = position;
         this.track.endTime = endTime;
@@ -1609,6 +1638,10 @@ export class Player {
         if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
             const inputStream = this.connection.audioStream?.pipes?.[0];
             const previousSession = await inputStream?.beginSeekHandoff?.();
+            if (this.destroying || this.track !== seekTrack) {
+                inputStream?.cancelSeekHandoff?.();
+                return false;
+            }
             if (previousSession) {
                 seekHandoff = inputStream?.cancelSeekHandoff
                     ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
@@ -1644,11 +1677,17 @@ export class Player {
             this.streamInfo?.url) {
             const cachedUrlData = this.streamInfo;
             const cachedResult = await this._connectAndPlayStream(cachedUrlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek (cached URL)`, false, true);
+            if (this.destroying || this.track !== seekTrack)
+                return false;
             if (cachedResult)
                 return true;
             logger('debug', 'Player', `Cached URL seek failed for guild ${this.guildId}, resolving fresh URL`);
         }
         const urlData = reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo));
+        if (this.destroying || this.track !== seekTrack) {
+            seekHandoff?.cancelSeekHandoff();
+            return false;
+        }
         this.streamInfo = { ...urlData, trackInfo: this.track.info };
         if (urlData.exception) {
             seekHandoff?.cancelSeekHandoff();
@@ -1658,6 +1697,10 @@ export class Player {
         }
         try {
             const result = await this._connectAndPlayStream(urlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek`);
+            if (this.destroying || this.track !== seekTrack) {
+                seekHandoff?.cancelSeekHandoff();
+                return false;
+            }
             if (!result)
                 seekHandoff?.cancelSeekHandoff();
             return result;
