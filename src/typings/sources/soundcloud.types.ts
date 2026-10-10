@@ -327,6 +327,14 @@ export interface SoundCloudApiTrack {
   duration?: number
 
   /**
+   * Full track duration in milliseconds.
+   *
+   * SoundCloud may expose `duration` as a 30-second preview length while
+   * keeping the original track duration in `full_duration`.
+   */
+  full_duration?: number
+
+  /**
    * Canonical SoundCloud track URL.
    */
   permalink_url?: string
@@ -446,6 +454,24 @@ export interface SoundCloudApiTrack {
    * @deprecated Use media.transcodings instead
    */
   hls_aac_96_url?: string
+
+  /**
+   * Playback access granted by SoundCloud.
+   */
+  access?: 'playable' | 'preview' | 'blocked'
+
+  /**
+   * SoundCloud monetization model.
+   *
+   * `SUB_HIGH_TIER` indicates a subscription-only full track where the
+   * public web API exposes a preview.
+   */
+  monetization_model?: string
+
+  /**
+   * SoundCloud playback policy (for example `ALLOW` or `BLOCK`).
+   */
+  policy?: string
 
   /**
    * Preview URL for restricted tracks.
@@ -917,6 +943,11 @@ export interface SoundCloudSourceOptions {
    * If provided, skips the client ID extraction from SoundCloud pages.
    */
   clientId?: string
+
+  /**
+   * Sources used when SoundCloud exposes only preview/SNIP playback.
+   */
+  fallbackSources?: string[]
 
   /**
    * Maximum number of search results to return.
