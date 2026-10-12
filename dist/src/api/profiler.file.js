@@ -1,12 +1,8 @@
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { sendErrorResponse, sendResponse } from '../utils.js';
-/**
- * Loopback addresses allowed to access the profiler endpoints when external
- * access is disabled.
- */
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 /**
  * Returns whether the provided body value is a plain object record.
  *
@@ -210,8 +206,8 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'Profiler endpoint is disabled.', parsedUrl.pathname);
         return;
     }
-    const remoteAddress = req.socket?.remoteAddress ?? '';
-    if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+    const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers);
+    if (!endpointConfig.allowExternalPatch && !isLocal) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'External access to profiler file endpoint is blocked.', parsedUrl.pathname);
         return;
     }

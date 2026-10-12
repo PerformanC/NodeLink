@@ -1,9 +1,5 @@
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { sendErrorResponse, sendResponse } from '../utils.js';
-/**
- * Loopback addresses allowed to access the workers patch endpoint when
- * external patching is disabled.
- */
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 /**
  * Creates a strongly typed runtime view for the workers endpoint.
  *
@@ -151,8 +147,8 @@ function handlePatch(nodelink, req, res, parsedUrl) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'Workers patch endpoint is disabled.', parsedUrl.pathname);
         return;
     }
-    const remoteAddress = req.socket?.remoteAddress ?? '';
-    if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+    const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers);
+    if (!endpointConfig.allowExternalPatch && !isLocal) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'External access to the workers patch endpoint is blocked.', parsedUrl.pathname);
         return;
     }

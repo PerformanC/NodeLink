@@ -1,3 +1,4 @@
+import { normalizeAddress, resolveClientAddress, TrustedProxyList } from '../utils/clientAddress.js';
 import { logger } from '../utils.js';
 const DEFAULT_CONFIG = {
     enabled: true,
@@ -38,6 +39,7 @@ const DEFAULT_CONFIG = {
         baseCapacity: 500,
         refillRatePerSecond: 100,
         maxConcurrentSockets: 25,
+        maxProxySockets: 1024,
         ipv6SubnetMask: 64,
         blockScoreThreshold: 30,
         blockDurationMs: 300000,
@@ -90,6 +92,8 @@ export default class AdmissionManager {
     guildStates;
     sessionStates;
     ipStates;
+    proxySockets;
+    trustedProxies;
     globalState;
     cleanupInterval;
     constructor(nodelink, config) {
@@ -98,6 +102,8 @@ export default class AdmissionManager {
         this.guildStates = new Map();
         this.sessionStates = new Map();
         this.ipStates = new Map();
+        this.proxySockets = new Map();
+        this.trustedProxies = this._buildTrustedProxies();
         const now = performance.now();
         this.globalState = {
             tokens: 300,
@@ -206,6 +212,92 @@ export default class AdmissionManager {
             return lastDecision;
         }
         return this._buildAllowedDecision('ip', 100, 100);
+    }
+    /**
+     * Resolves the originating client address, honoring forwarding headers only
+     * from trusted proxies. Unlike admission keys, the result is not subnet-masked.
+     * @param req - Raw or shimmed API request.
+     */
+    resolveClientAddress(req) {
+        return resolveClientAddress(req.socket?.remoteAddress, req.headers, this.trustedProxies);
+    }
+    /**
+     * Checks whether a TCP peer is a configured trusted proxy.
+     * @param rawAddress - Peer address.
+     */
+    isTrustedProxy(rawAddress) {
+        return this.trustedProxies.contains(rawAddress);
+    }
+    /**
+     * Admits a new TCP connection. Trusted proxies share one aggregate pool, since
+     * per-client bans and limits are enforced per request once headers are known.
+     * Other peers are checked against their own block state and socket pool.
+     * @param rawAddress - Peer address.
+     * @returns Whether the connection may proceed; call releaseConnection on close.
+     */
+    admitConnection(rawAddress) {
+        if (!this.trustedProxies.contains(rawAddress)) {
+            if (this.isIpBlocked(rawAddress))
+                return false;
+            return this.incrementActiveSockets(rawAddress);
+        }
+        const proxy = normalizeAddress(rawAddress);
+        const active = this.proxySockets.get(proxy) ?? 0;
+        const maxSockets = this.config.ip.maxProxySockets;
+        if (active >= maxSockets) {
+            logger('warn', 'AdmissionManager', `Trusted proxy ${proxy} exceeded aggregate socket pool (${active}/${maxSockets}). Dropping connection.`);
+            return false;
+        }
+        this.proxySockets.set(proxy, active + 1);
+        return true;
+    }
+    /**
+     * Releases a connection admitted by admitConnection.
+     * @param rawAddress - Peer address.
+     */
+    releaseConnection(rawAddress) {
+        if (!this.trustedProxies.contains(rawAddress)) {
+            this.decrementActiveSockets(rawAddress);
+            return;
+        }
+        const proxy = normalizeAddress(rawAddress);
+        const next = (this.proxySockets.get(proxy) ?? 0) - 1;
+        if (next > 0) {
+            this.proxySockets.set(proxy, next);
+        }
+        else {
+            this.proxySockets.delete(proxy);
+        }
+    }
+    /**
+     * Reserves socket capacity for a WebSocket upgrade. Proxied clients share the
+     * proxy's TCP pool, so their own per-client pool is charged here.
+     * @param peerAddress - TCP peer address.
+     * @param clientKey - Resolved client admission key (AdmissionContext.ip).
+     * @param includePeer - Also admit the peer connection itself, for runtimes
+     *   without a TCP-level connection hook (Bun).
+     * @returns An idempotent release callback, or null if capacity is exhausted.
+     */
+    reserveUpgrade(peerAddress, clientKey, includePeer) {
+        const releases = [];
+        const release = () => {
+            while (releases.length > 0) {
+                releases.pop()?.();
+            }
+        };
+        if (includePeer) {
+            if (!this.admitConnection(peerAddress))
+                return null;
+            releases.push(() => this.releaseConnection(peerAddress));
+        }
+        if (clientKey && this.trustedProxies.contains(peerAddress)) {
+            if (!this.incrementActiveSockets(clientKey)) {
+                release();
+                return null;
+            }
+            releases.push(() => this.decrementActiveSockets(clientKey));
+        }
+        return release;
     }
     /**
      * Tracks an incoming TCP socket. Returns false if IP connection pool is exhausted.
@@ -878,26 +970,32 @@ export default class AdmissionManager {
         return match?.[1] ?? null;
     }
     /**
-     * Resolves remote IP with edge proxy header precedence.
+     * Resolves the admission key for a request's client address.
      * @internal
      */
     _resolveIp(req) {
-        const socketAddress = req.socket?.remoteAddress;
-        const trustProxyEnabled = this.config.trustProxy === true;
-        if (!trustProxyEnabled) {
-            return this._normalizeIp(socketAddress);
+        return this._normalizeIp(this.resolveClientAddress(req));
+    }
+    /**
+     * Builds the trusted proxy matcher and reports misconfiguration.
+     * @internal
+     */
+    _buildTrustedProxies() {
+        const { trustProxy, trustedProxies } = this.config;
+        if (!trustProxy) {
+            if (trustedProxies.length > 0) {
+                logger('warn', 'AdmissionManager', 'admission.trustedProxies is set but admission.trustProxy is false; forwarding headers are ignored.');
+            }
+            return new TrustedProxyList();
         }
-        const headers = req.headers;
-        const cfConnectingIp = this._getHeader(headers, 'cf-connecting-ip');
-        const trueClientIp = this._getHeader(headers, 'true-client-ip');
-        const xRealIp = this._getHeader(headers, 'x-real-ip');
-        const forwardedFor = this._getHeader(headers, 'x-forwarded-for');
-        const candidate = cfConnectingIp ??
-            trueClientIp ??
-            xRealIp ??
-            forwardedFor?.split(',')?.[0]?.trim() ??
-            socketAddress;
-        return this._normalizeIp(candidate);
+        const list = new TrustedProxyList(trustedProxies);
+        for (const entry of list.invalidEntries) {
+            logger('warn', 'AdmissionManager', `Ignoring invalid admission.trustedProxies entry: ${entry}`);
+        }
+        if (list.size === 0) {
+            logger('warn', 'AdmissionManager', 'admission.trustProxy is enabled but admission.trustedProxies has no valid entries; forwarding headers are ignored.');
+        }
+        return list;
     }
     /**
      * Normalizes IP and applies IPv6 /64 subnet mask.

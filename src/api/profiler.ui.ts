@@ -8,9 +8,9 @@ import type {
   ApiRouteModule,
   ApiSendResponse
 } from '../typings/api/api.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { sendErrorResponse } from '../utils.ts'
 
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -2418,8 +2418,8 @@ async function handler(
     )
   }
 
-  const remoteAddress = req.socket?.remoteAddress || ''
-  if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+  const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers)
+  if (!endpointConfig.allowExternalPatch && !isLocal) {
     return sendErrorResponse(
       req,
       res,

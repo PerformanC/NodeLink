@@ -1,6 +1,7 @@
 import http from 'node:http';
 import process from 'node:process';
 import { logger } from '../utils.js';
+import { trackSocketRelease } from './socketRelease.js';
 import { handleHttpUpgrade } from './wsRouter.js';
 /* INFO: Creates and configures native Node.js HTTP server with socket pool guards, DoS defense, and upgrade routing */
 function createHttpServer(nodelink, getRequestHandler) {
@@ -25,19 +26,12 @@ function createHttpServer(nodelink, getRequestHandler) {
     /* INFO: Guard all incoming sockets against DoS blocks, connection floods, and reset errors */
     server.on('connection', (socket) => {
         const remoteAddress = socket.remoteAddress;
-        const isIpBlocked = nodelink.admissionManager.isIpBlocked(remoteAddress);
-        if (isIpBlocked) {
+        const connectionAllowed = nodelink.admissionManager.admitConnection(remoteAddress);
+        if (!connectionAllowed) {
             socket.destroy();
             return;
         }
-        const socketAllowed = nodelink.admissionManager.incrementActiveSockets(remoteAddress);
-        if (!socketAllowed) {
-            socket.destroy();
-            return;
-        }
-        socket.on('close', () => {
-            nodelink.admissionManager.decrementActiveSockets(remoteAddress);
-        });
+        trackSocketRelease(socket, () => nodelink.admissionManager.releaseConnection(remoteAddress));
         socket.on('error', (err) => {
             const isBenign = err?.code === 'EPIPE' || err?.code === 'ECONNRESET';
             if (isBenign)

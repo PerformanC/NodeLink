@@ -9,19 +9,14 @@ import { attachProfilerSocket } from '../api/profiler.socket.ts'
 import type NodelinkServer from '../index.ts'
 import type { RequestShim, SessionSocket } from '../typings/index.types.ts'
 import type { ClientInfo } from '../typings/shared.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { decodeTrack, logger, parseClient, verifyDiscordID } from '../utils.ts'
+import { bindWebSocketRelease, trackSocketRelease } from './socketRelease.ts'
 import { handleClientWebSocket } from './wsSession.ts'
 
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/
 const DISCORD_SNOWFLAKE_RE = /^\d{17,20}$/
-
-const INTERNAL_IPS = new Set([
-  '127.0.0.1',
-  '::1',
-  '::ffff:127.0.0.1',
-  'localhost'
-])
 
 function _getHeader(
   headers: http.IncomingHttpHeaders,
@@ -80,16 +75,19 @@ function handleHttpUpgrade(
     logger('debug', 'Server', `Upgrade socket error: ${err.message}`)
   })
 
-  const remoteAddress = request.socket.remoteAddress || 'unknown'
-  const remotePort = request.socket.remotePort || 0
-  const isInternal = INTERNAL_IPS.has(remoteAddress)
-  const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort})`
+  const admission = context.admissionManager
+  const peerAddress = request.socket.remoteAddress
+  const remoteAddress = admission.resolveClientAddress(request) ?? 'unknown'
+  const isProxied = admission.isTrustedProxy(peerAddress)
+  const remotePort = isProxied ? 0 : request.socket.remotePort || 0
+  const isInternal = isLoopbackRequest(peerAddress, request.headers)
+  const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}${remotePort ? `:${remotePort}` : ''})`
 
   const url = new URL(request.url || '/', 'http://localhost')
   const pathname = url.pathname
 
-  const admissionContext = context.admissionManager.resolveContext(request, url)
-  const admissionDecision = context.admissionManager.admit(admissionContext)
+  const admissionContext = admission.resolveContext(request, url)
+  const admissionDecision = admission.admit(admissionContext)
   if (!admissionDecision.allowed) {
     _rejectUpgrade(
       socket,
@@ -99,6 +97,22 @@ function handleHttpUpgrade(
     )
     return
   }
+
+  const releaseUpgrade = admission.reserveUpgrade(
+    peerAddress,
+    admissionContext.ip,
+    false
+  )
+  if (!releaseUpgrade) {
+    _rejectUpgrade(
+      socket,
+      429,
+      'Too Many Requests',
+      'Too many concurrent connections.'
+    )
+    return
+  }
+  trackSocketRelease(socket, releaseUpgrade)
 
   if (pathname === '/v4/profiler/socket') {
     _handleProfilerUpgrade(
@@ -161,6 +175,7 @@ function _handleProfilerUpgrade(
 
   const wsServer = context.socket as WebSocketServer
   wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+    bindWebSocketRelease(ws, socket)
     context.socket?.emit(
       '/v4/profiler/socket',
       ws as SessionSocket,
@@ -195,7 +210,9 @@ function _handleGatewayUpgrade(
     context.options.server?.password ?? ''
   )
   if (!isAuthorized) {
-    context.admissionManager.recordAuthFailure(request.socket.remoteAddress)
+    context.admissionManager.recordAuthFailure(
+      context.admissionManager.resolveClientAddress(request)
+    )
     reject(401, 'Unauthorized', 'Invalid password provided.')
     return
   }
@@ -254,6 +271,7 @@ function _handleGatewayUpgrade(
 
   const wsServer = context.socket as WebSocketServer
   wsServer?.handleUpgrade(request, socket, head, null, (ws) => {
+    bindWebSocketRelease(ws, socket)
     context.socket?.emit(
       eventName,
       ws as SessionSocket,

@@ -10,6 +10,7 @@ import fs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PATH_VERSION } from '../constants.js';
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { logger, sendErrorResponse, sendResponse, verifyMethod } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -171,10 +172,11 @@ async function requestHandler(nodelink, req, res) {
     }
     nodelink.statsManager.incrementApiRequest(parsedUrl.pathname);
     const trace = parsedUrl.searchParams.get('trace') === 'true';
-    const remoteAddress = req.socket?.remoteAddress ?? 'unknown';
-    const remotePort = req.socket?.remotePort;
-    const isInternal = ['127.0.0.1', '::1', 'localhost'].includes(remoteAddress);
-    const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}:${remotePort ?? 'unknown'})`;
+    const remoteAddress = nodelink.admissionManager.resolveClientAddress(req) ?? 'unknown';
+    const isProxied = nodelink.admissionManager.isTrustedProxy(req.socket?.remoteAddress);
+    const remotePort = isProxied ? undefined : req.socket?.remotePort;
+    const isInternal = isLoopbackRequest(req.socket?.remoteAddress, req.headers);
+    const clientAddress = `${isInternal ? '[Internal]' : '[External]'} (${remoteAddress}${remotePort ? `:${remotePort}` : ''})`;
     const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const originalEnd = res.end.bind(res);
     res.end = (...args) => {

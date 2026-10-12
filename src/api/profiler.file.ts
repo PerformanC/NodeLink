@@ -8,13 +8,8 @@ import type {
   ApiRouteModule,
   ApiSendResponse
 } from '../typings/api/api.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { sendErrorResponse, sendResponse } from '../utils.ts'
-
-/**
- * Loopback addresses allowed to access the profiler endpoints when external
- * access is disabled.
- */
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
 /**
  * JSON-compatible object used for request payload narrowing.
@@ -364,8 +359,8 @@ async function handler(
     return
   }
 
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+  const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers)
+  if (!endpointConfig.allowExternalPatch && !isLocal) {
     sendErrorResponse(
       req,
       res,

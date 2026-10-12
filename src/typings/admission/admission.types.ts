@@ -368,8 +368,14 @@ export interface IpAdmissionConfig {
   /** Refill rate: tokens added per second. */
   refillRatePerSecond: number
 
-  /** Maximum concurrent TCP connections per IP. */
+  /**
+   * Maximum concurrent TCP connections per client IP. Behind a trusted proxy
+   * this applies to WebSocket upgrades of each forwarded client.
+   */
   maxConcurrentSockets: number
+
+  /** Maximum concurrent TCP connections from a single trusted proxy (aggregate). */
+  maxProxySockets: number
 
   /** Subnet mask for IPv6 grouping (e.g. 64). */
   ipv6SubnetMask: number
@@ -415,10 +421,13 @@ export interface AdmissionConfig {
   /** Master toggle for the entire admission manager. */
   enabled: boolean
 
-  /** Whether to trust proxy headers (CF-Connecting-IP, etc.). */
+  /**
+   * Whether to resolve client IPs from X-Forwarded-For / X-Real-IP.
+   * Only honored for peers listed in trustedProxies.
+   */
   trustProxy: boolean
 
-  /** Trusted proxy IP list. */
+  /** Trusted reverse proxy IPs or CIDR blocks (e.g. '127.0.0.1', '10.0.0.0/8'). */
   trustedProxies: string[]
 
   /** Guild execution layer config. */
