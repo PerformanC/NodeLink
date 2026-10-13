@@ -1481,26 +1481,34 @@ export function checkURLType(url, type) {
  * @public
  */
 export async function fetchEncryptedHostFlags(videoId) {
+    return (await fetchEmbedConfig(videoId))?.encryptedHostFlags ?? null;
+}
+/**
+ * Fetches host flags and their matching visitor from the same embed page.
+ * @param videoId - YouTube video ID
+ * @param proxy - Proxy used for the player request
+ * @returns Embed configuration or null when the page cannot be fetched
+ * @internal
+ */
+async function fetchEmbedConfig(videoId, proxy) {
     try {
         const embedUrl = `https://www.youtube.com/embed/${videoId}`;
         const { body, statusCode, error } = await makeRequest(embedUrl, {
             method: 'GET',
             headers: {
                 Referer: 'https://www.google.com',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36'
+            },
+            proxy
         });
         if (error || statusCode !== 200 || !body || typeof body !== 'string') {
             logger('warn', 'fetchEncryptedHostFlags', `Failed to fetch embed page: ${statusCode} - ${error ?? 'Unknown error'}`);
             return null;
         }
-        const match = body.match(/"encryptedHostFlags":"([^"]+)"/);
-        if (match?.[1]) {
-            logger('debug', 'fetchEncryptedHostFlags', `Successfully extracted encryptedHostFlags for ${videoId}`);
-            return match[1];
-        }
-        logger('debug', 'fetchEncryptedHostFlags', 'encryptedHostFlags not found in embed page');
-        return null;
+        return {
+            encryptedHostFlags: body.match(/"encryptedHostFlags"\s*:\s*"([^"]+)"/)?.[1] ?? null,
+            visitorData: body.match(/"VISITOR_DATA"\s*:\s*"([^"]+)"/)?.[1] ?? null
+        };
     }
     catch (e) {
         logger('error', 'fetchEncryptedHostFlags', `Error fetching encryptedHostFlags: ${e instanceof Error ? e.message : String(e)}`);
@@ -1587,8 +1595,10 @@ export class BaseClient {
      */
     async _makePlayerRequest(videoId, context, headers, cipherManager, proxy) {
         const apiEndpoint = this.getApiEndpoint();
+        const clientContext = this.getClient(context);
+        const requestProxy = proxy || this.getProxy();
         const requestBody = {
-            context: this.getClient(context),
+            context: clientContext,
             videoId: videoId,
             contentCheckOk: true,
             attestationRequest: { omitBotguardData: true },
@@ -1599,19 +1609,17 @@ export class BaseClient {
             requestBody.params = playerParams;
         }
         if (this.isEmbedded()) {
-            const encryptedHostFlags = await fetchEncryptedHostFlags(videoId);
-            if (encryptedHostFlags) {
+            const embedConfig = await fetchEmbedConfig(videoId, requestProxy);
+            if (embedConfig?.encryptedHostFlags) {
+                if (clientContext.client.clientName === 'WEB_EMBEDDED_PLAYER' &&
+                    embedConfig.visitorData) {
+                    clientContext.client.visitorData = embedConfig.visitorData;
+                }
                 const playbackContext = requestBody.playbackContext || {};
                 playbackContext.contentPlaybackContext =
                     playbackContext.contentPlaybackContext || {};
-                playbackContext.contentPlaybackContext.encryptedHostFlags = encryptedHostFlags;
+                playbackContext.contentPlaybackContext.encryptedHostFlags = embedConfig.encryptedHostFlags;
                 requestBody.playbackContext = playbackContext;
-            }
-            if (context.client.clientName === 'WEB_EMBEDDED_PLAYER') {
-                requestBody.serializedThirdPartyEmbedConfig = {
-                    hideInfoBar: true,
-                    disableRelatedVideos: true
-                };
             }
         }
         if (this.requirePlayerScript() && cipherManager) {
@@ -1630,14 +1638,13 @@ export class BaseClient {
                 logger('warn', `youtube-${this.name}`, `Failed to get signature timestamp: ${e instanceof Error ? e.message : String(e)}`);
             }
         }
-        const clientCtx = this.getClient(context);
         const response = await makeRequest(`${apiEndpoint}/youtubei/v1/player?prettyPrint=false`, {
             method: 'POST',
             headers: {
-                'User-Agent': clientCtx.client.userAgent,
-                ...(clientCtx.client.visitorData
+                'User-Agent': clientContext.client.userAgent,
+                ...(clientContext.client.visitorData
                     ? {
-                        'X-Goog-Visitor-Id': clientCtx.client.visitorData
+                        'X-Goog-Visitor-Id': clientContext.client.visitorData
                     }
                     : {}),
                 ...(this.isEmbedded() ? { Referer: 'https://www.youtube.com' } : {}),
@@ -1645,7 +1652,7 @@ export class BaseClient {
             },
             body: requestBody,
             disableBodyCompression: true,
-            proxy: proxy || this.getProxy()
+            proxy: requestProxy
         });
         if (response.statusCode !== 200) {
             const message = `Failed to get player data. Status: ${response.statusCode}`;
