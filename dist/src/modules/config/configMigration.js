@@ -103,7 +103,8 @@ export function migrateConfig(oldConfig) {
         tidalToken: 'sources.tidal.token'
     };
     for (const [oldKey, newPath] of Object.entries(migrationMap)) {
-        if (oldKey === newPath) continue
+        if (oldKey === newPath)
+            continue;
         if (Object.hasOwn(newConfig, oldKey)) {
             const value = newConfig[oldKey];
             if (value === undefined)
