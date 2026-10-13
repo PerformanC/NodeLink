@@ -379,117 +379,58 @@ export default class YouTubeSource {
         }
     }
     /**
-     * Fetches visitor data and player script URL from YouTube embed pages.
-     *
-     * Tries the embed endpoint first, then falls back to the guide API.
-     * Both visitor data and player script URL are cached in the credential
-     * manager for use by innertube clients.
-     *
-     * @returns Promise that resolves when the fetch attempt completes.
+     * Refreshes the shared visitor from service-worker data, falling back to guide.
+     * Keeps the current visitor when both requests fail. Player-script discovery
+     * and caching are handled separately by the cipher manager.
+     * @returns Promise that resolves when the refresh attempt completes.
+     * @internal
      */
     async _fetchVisitorData() {
-        const cachedPlayerScript = this.nodelink.credentialManager?.get('yt_player_script_url');
-        if (cachedPlayerScript) {
-            this.cipherManager.setPlayerScriptUrl(cachedPlayerScript);
-            logger('debug', 'YouTube', 'Player script URL loaded from cache.');
-        }
-        let visitorFound = false;
-        let playerScriptUrl = null;
+        const proxy = this.getProxy();
         try {
             const { body, error, statusCode } = await http1makeRequest('https://music.youtube.com/sw.js_data', {
                 method: 'GET',
                 responseType: 'buffer',
-                disableBodyCompression: true
+                disableBodyCompression: true,
+                proxy
             });
             if (!error && statusCode === 200) {
                 const text = body.toString('utf-8');
                 const json = text.slice(text.indexOf('\n') + 1);
-                const visitorData = this._extractVisitorData(JSON.parse(json));
-                if (visitorData) {
+                const data = JSON.parse(json);
+                const visitorData = data.find(([name]) => name === 'yt.sw.adr')?.[2]?.[6];
+                if (typeof visitorData === 'string' && visitorData) {
                     this.ytContext.client.visitorData = visitorData;
-                    visitorFound = true;
-                    logger('debug', 'YouTube', `visitorData obtained from sw.js_data endpoint (len=${visitorData.length})`);
+                    logger('debug', 'YouTube', 'visitorData refreshed from sw.js_data.');
+                    return;
                 }
             }
         }
-        catch (e) {
-            logger('debug', 'YouTube', `sw.js_data endpoint failed: ${e.message}`);
+        catch (error) {
+            logger('debug', 'YouTube', `sw.js_data endpoint failed: ${error.message}`);
         }
-        if (!visitorFound) {
-            try {
-                const { body: data, error, statusCode } = await makeRequest('https://www.youtube.com/embed', {
-                    method: 'GET',
-                    headers: {
-                        Cookie: 'YSC=LUAfwHpna4E; VISITOR_INFO1_LIVE=Zuih2uZbq3I;'
-                    }
-                });
-                if (!error && statusCode === 200) {
-                    const bodyStr = data;
-                    const visitorMatch = bodyStr?.match(/"VISITOR_DATA":"([^"]+)"/);
-                    if (visitorMatch?.[1]) {
-                        this.ytContext.client.visitorData = visitorMatch[1];
-                        visitorFound = true;
-                        logger('debug', 'YouTube', 'visitorData refreshed from embed.');
-                    }
-                    if (!cachedPlayerScript) {
-                        const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/);
-                        if (playerScriptMatch?.[1]) {
-                            playerScriptUrl = playerScriptMatch[1].replace(/\/[a-z]{2}_[A-Z]{2}\//, '/en_US/');
-                            this.nodelink.credentialManager?.set('yt_player_script_url', playerScriptUrl, 12 * 60 * 60 * 1000);
-                            logger('debug', 'YouTube', `Player script URL: ${playerScriptUrl}`);
-                        }
-                    }
-                }
-                else {
-                    logger('warn', 'YouTube', `Embed request failed: ${error?.message || `Status ${statusCode}`}`);
-                }
-                if (!visitorFound) {
-                    const { body: guideData, error: guideError, statusCode: guideStatusCode } = await makeRequest('https://www.youtube.com/youtubei/v1/guide', {
-                        method: 'POST',
-                        body: { context: this.ytContext },
-                        disableBodyCompression: true
-                    });
-                    const guideBody = guideData;
-                    if (!guideError &&
-                        guideStatusCode === 200 &&
-                        guideBody?.responseContext?.visitorData) {
-                        this.ytContext.client.visitorData =
-                            guideBody.responseContext.visitorData;
-                        visitorFound = true;
-                        logger('debug', 'YouTube', 'visitorData refreshed via guide.');
-                    }
-                    else {
-                        logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.');
-                    }
-                }
+        try {
+            const { body, error, statusCode } = await makeRequest('https://www.youtube.com/youtubei/v1/guide', {
+                method: 'POST',
+                body: { context: this.clients.Web?.getClient(this.ytContext) },
+                disableBodyCompression: true,
+                proxy
+            });
+            const visitorData = body?.responseContext?.visitorData;
+            if (!error &&
+                statusCode === 200 &&
+                typeof visitorData === 'string' &&
+                visitorData) {
+                this.ytContext.client.visitorData = visitorData;
+                logger('debug', 'YouTube', 'visitorData refreshed via guide.');
             }
-            catch (e) {
-                logger('error', 'YouTube', `Error fetching visitor data: ${e.message}`);
+            else {
+                logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.');
             }
         }
-        if (playerScriptUrl)
-            this.cipherManager.setPlayerScriptUrl(playerScriptUrl);
-    }
-    /**
-     * Recursively searches the parsed `sw.js_data` payload for the visitor data
-     * token. The token is a protobuf-encoded base64 string embedded somewhere in
-     * the nested response arrays, so its exact position cannot be relied upon.
-     * @param node - Current payload node (array or string) being inspected.
-     * @returns The visitor data token, or `null` when not found.
-     * @internal
-     */
-    _extractVisitorData(node) {
-        if (typeof node === 'string') {
-            return /^Cg[A-Za-z0-9+/=_%-]{100,}$/.test(node) ? node : null;
+        catch (error) {
+            logger('warn', 'YouTube', `Error refreshing visitor data: ${error.message}`);
         }
-        if (Array.isArray(node)) {
-            for (const child of node) {
-                const found = this._extractVisitorData(child);
-                if (found)
-                    return found;
-            }
-        }
-        return null;
     }
     /**
      * Searches YouTube for tracks, playlists, or recommendations.
