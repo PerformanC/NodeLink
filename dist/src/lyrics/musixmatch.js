@@ -44,7 +44,6 @@ const BRACKET_JUNK = /\s*\[([^\]]*(?:official|lyrics?|video|audio|mv|visualizer|
 const FEAT_PATTERN = /\s*[([]\s*(?:ft\.?|feat\.?|featuring)\s+[^)\]]+[)\]]/gi;
 const SEPARATORS = [' - ', ' – ', ' — ', ' ~ '];
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
-const DEFAULT_COOKIE = 'AWSELB=unknown; x-mxm-user-id=undefined; x-mxm-token-guid=undefined; mxm-encrypted-token=';
 const isAuthCode = (code) => code === 401 || code === 403;
 const extractMacroCalls = (body) => {
     const calls = body?.macro_calls;
@@ -287,6 +286,11 @@ export default class MusixmatchLyrics {
             ? ''
             : Array.from(this.cookies, ([k, v]) => `${k}=${v}`).join('; ');
     }
+    /* INFO: Musixmatch's AWS edge returns 403 for the old placeholder cookie, so only send cookies it actually issued */
+    _cookieHeader() {
+        const cookie = this._getCookies();
+        return cookie ? { cookie } : {};
+    }
     async _fetchToken() {
         const url = _buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID });
         const { statusCode, headers, body } = await http1makeRequest(url, {
@@ -294,7 +298,6 @@ export default class MusixmatchLyrics {
             headers: {
                 accept: '*/*',
                 'accept-language': 'en',
-                cookie: DEFAULT_COOKIE,
                 'user-agent': DEFAULT_UA
             }
         });
@@ -407,7 +410,7 @@ export default class MusixmatchLyrics {
             headers: {
                 accept: 'application/json',
                 'user-agent': DEFAULT_UA,
-                cookie: this._getCookies()
+                ...this._cookieHeader()
             }
         });
         if (!this.useManualToken && headers?.['set-cookie']) {
@@ -432,7 +435,7 @@ export default class MusixmatchLyrics {
                     headers: {
                         accept: 'application/json',
                         'user-agent': DEFAULT_UA,
-                        cookie: this._getCookies()
+                        ...this._cookieHeader()
                     }
                 });
                 if (retryHeaders?.['set-cookie']) {
