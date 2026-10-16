@@ -398,6 +398,8 @@ export default class YouTubeSource {
                 const text = body.toString('utf-8');
                 const json = text.slice(text.indexOf('\n') + 1);
                 const data = JSON.parse(json);
+                // Structure is [key, timestamp, payload[]]
+                // and in payload[6] is visitorData value, from what i tested, it was always at that index.
                 const visitorData = data.find(([name]) => name === 'yt.sw.adr')?.[2]?.[6];
                 if (typeof visitorData === 'string' && visitorData) {
                     this.ytContext.client.visitorData = visitorData;
@@ -2109,8 +2111,7 @@ export default class YouTubeSource {
             const seekMime = availableFormats.find((formatEntry) => formatEntry.itag === currentItag)
                 ?.mimeType || '';
             const seekIsWebm = seekMime.toLowerCase().includes('webm') ||
-                (typeof currentItag === 'number' &&
-                    YOUTUBE_WEBM_ITAGS.has(currentItag));
+                (typeof currentItag === 'number' && YOUTUBE_WEBM_ITAGS.has(currentItag));
             if (!seekIsWebm) {
                 logger('warn', 'YouTube', `Ignoring startTime seek for non-WebM itag ${currentItag} on "${decodedTrack.title}", playing from start`);
                 effectiveSeekMs = 0;

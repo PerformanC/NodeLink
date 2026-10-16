@@ -93,10 +93,11 @@ export interface SoundCloudApiTranscodingFormat {
    *
    * - `'progressive'` - Direct HTTP download (preferred for compatibility)
    * - `'hls'` - HTTP Live Streaming (adaptive bitrate)
+   * - `'cbc-encrypted-hls'` / `'ctr-encrypted-hls'` - DRM-protected HLS
    *
    * @example 'progressive'
    */
-  protocol?: 'progressive' | 'hls'
+  protocol?: 'progressive' | 'hls' | 'cbc-encrypted-hls' | 'ctr-encrypted-hls'
 
   /**
    * MIME type of the audio stream.

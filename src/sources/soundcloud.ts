@@ -1,4 +1,4 @@
-import { PassThrough, type Readable } from 'node:stream'
+import { PassThrough } from 'node:stream'
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import {
   SEARCH_TYPE_MAP,
@@ -16,6 +16,7 @@ import {
 import type {
   SourceResult,
   TrackInfo,
+  TrackStreamResult,
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
@@ -817,8 +818,12 @@ export default class SoundCloudSource implements SoundCloudSourceState {
   async _selectTranscoding(
     body: SoundCloudApiTrack
   ): Promise<SoundCloudStreamUrlResult> {
-    const transcodings: SoundCloudApiTranscoding[] =
+    const transcodings: SoundCloudApiTranscoding[] = (
       body.media?.transcodings ?? []
+    ).filter((transcoding) => {
+      const protocol = transcoding.format?.protocol ?? 'progressive'
+      return protocol === 'progressive' || protocol === 'hls'
+    })
 
     if (!transcodings.length && (body.hls_aac_160_url || body.hls_aac_96_url)) {
       if (body.hls_aac_160_url) {
@@ -839,6 +844,19 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     }
 
     if (transcodings.length === 0) {
+      const hasDrm = body.media?.transcodings?.some(
+        (transcoding) =>
+          transcoding.format?.protocol === 'cbc-encrypted-hls' ||
+          transcoding.format?.protocol === 'ctr-encrypted-hls'
+      )
+      if (hasDrm) {
+        return this._buildException(
+          'Track only provides DRM-protected SoundCloud streams, which are not supported'
+        )
+      }
+      if (body.media?.transcodings?.length) {
+        return this._buildException('No supported transcodings available')
+      }
       return this._buildException('No transcodings available')
     }
 
@@ -959,7 +977,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
     url: string,
     protocol?: string,
     additionalData?: { format?: string; startTime?: number }
-  ): Promise<{ stream: Readable; type?: string }> {
+  ): Promise<TrackStreamResult> {
     if (protocol === 'progressive') {
       const stream = new PassThrough()
       this._handleProgressive(url, stream)
@@ -982,9 +1000,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       })
       return { stream, type }
     } else {
-      const stream = new PassThrough()
-      stream.destroy(new Error(`Unsupported protocol: ${protocol}`))
-      return { stream }
+      return this._buildException(`Unsupported protocol: ${protocol}`)
     }
   }
 

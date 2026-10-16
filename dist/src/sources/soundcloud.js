@@ -580,7 +580,10 @@ export default class SoundCloudSource {
         }
     }
     async _selectTranscoding(body) {
-        const transcodings = body.media?.transcodings ?? [];
+        const transcodings = (body.media?.transcodings ?? []).filter((transcoding) => {
+            const protocol = transcoding.format?.protocol ?? 'progressive';
+            return protocol === 'progressive' || protocol === 'hls';
+        });
         if (!transcodings.length && (body.hls_aac_160_url || body.hls_aac_96_url)) {
             if (body.hls_aac_160_url) {
                 transcodings.push({
@@ -598,6 +601,14 @@ export default class SoundCloudSource {
             }
         }
         if (transcodings.length === 0) {
+            const hasDrm = body.media?.transcodings?.some((transcoding) => transcoding.format?.protocol === 'cbc-encrypted-hls' ||
+                transcoding.format?.protocol === 'ctr-encrypted-hls');
+            if (hasDrm) {
+                return this._buildException('Track only provides DRM-protected SoundCloud streams, which are not supported');
+            }
+            if (body.media?.transcodings?.length) {
+                return this._buildException('No supported transcodings available');
+            }
             return this._buildException('No transcodings available');
         }
         const progressiveMp3 = transcodings.find((t) => t.format?.protocol === 'progressive' &&
@@ -705,9 +716,7 @@ export default class SoundCloudSource {
             return { stream, type };
         }
         else {
-            const stream = new PassThrough();
-            stream.destroy(new Error(`Unsupported protocol: ${protocol}`));
-            return { stream };
+            return this._buildException(`Unsupported protocol: ${protocol}`);
         }
     }
     async _handleProgressive(url, stream) {
