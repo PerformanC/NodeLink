@@ -56,6 +56,14 @@ export default class Android extends BaseClient {
         return false;
     }
     /**
+     * Returns player parameters for ANDROID playback.
+     *
+     * @returns Base64-encoded player parameters string
+     */
+    getPlayerParams() {
+        return '2AMB';
+    }
+    /**
      * Searches YouTube for tracks, playlists, channels, or artists.
      *
      * Extends the base class `search` with optional proxy and status reporting
