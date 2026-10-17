@@ -1,27 +1,30 @@
 import { SeekError } from '@ecliptia/seekable-stream'
 import type { VoiceConnectionState, VoicePlayerState } from '@performanc/voice'
 
-import { EndReasons, GatewayEvents } from '../../constants.ts'
-import type { NodeLink, Session } from '../../typings/playback/player.types.ts'
-import { logger } from '../../utils.ts'
-import type { PlayerConnection } from '../../voice/playerConnection.ts'
-import type { EndReason, Player } from '../player.ts'
-import type { PlayerTransitions } from './audio/transitions.ts'
-import type { PlaybackClock } from './base/clock.ts'
-import type { PlayerEvents } from './events.ts'
-import type { PlayerQueue } from './playback/queue.ts'
-import type { PlayerRecovery } from './playback/recovery.ts'
-import type { PlayerSeeking } from './playback/seeking.ts'
-import type { PlayerPlayback } from './playback/tracks.ts'
+import { EndReasons, GatewayEvents } from '../../../constants.ts'
+import type {
+  NodeLink,
+  Session
+} from '../../../typings/playback/player.types.ts'
+import { logger } from '../../../utils.ts'
+import type { PlayerConnection } from '../../../voice/playerConnection.ts'
+import type { EndReason, Player } from '../../player.ts'
+import type { PlayerFading } from '../audio/fading.ts'
+import type { PlaybackClock } from '../tracks/clock.ts'
+import type { PlayerPlaybackMonitor } from '../tracks/monitor.ts'
+import type { PlayerPlayback } from '../tracks/playback.ts'
+import type { PlayerQueue } from '../tracks/queue.ts'
+import type { PlayerSeeking } from '../tracks/seeking.ts'
+import type { PlayerEvents } from './playerEvents.ts'
 
 interface PlayerConnectionEventsDependencies {
   voiceConnection: PlayerConnection
   clock: PlaybackClock
-  recovery: PlayerRecovery
+  monitor: PlayerPlaybackMonitor
   playback: PlayerPlayback
   seeking: PlayerSeeking
   queue: PlayerQueue
-  transitions: PlayerTransitions
+  fadingEffects: PlayerFading
   finishTrack: (reason: EndReason) => void
   trackPlaying: () => void
   events: PlayerEvents
@@ -78,7 +81,7 @@ export class PlayerConnectionEvents {
       (previousStatus === 'connected' || state.status === 'connected')
 
     if (crossedConnectedBoundary) {
-      this.dependencies.recovery._onConnectionBoundary()
+      this.dependencies.monitor._onConnectionBoundary()
       if (state.status === 'connected') {
         this.player._lastStreamDataTime = Date.now()
       }
@@ -153,7 +156,7 @@ export class PlayerConnectionEvents {
       )
     }
     this.player._sendUpdate()
-    if (crossedConnectedBoundary) this.dependencies.recovery._resetStuckTime()
+    if (crossedConnectedBoundary) this.dependencies.monitor._resetStuckTime()
   }
 
   /**
@@ -193,7 +196,7 @@ export class PlayerConnectionEvents {
         'Player',
         `Track became stuck for guild ${this.player.guildId}. Triggering immediate recovery.`
       )
-      this.dependencies.recovery._markStuck()
+      this.dependencies.monitor._markStuck()
       this.player._sendUpdate()
       return
     }
@@ -250,7 +253,7 @@ export class PlayerConnectionEvents {
       this.player.track &&
       !this.dependencies.seeking.isSeeking &&
       (['requested', 'reconnected', 'unpaused'].includes(state.reason ?? '') ||
-        this.dependencies.transitions.hasPendingTrackStartFade)
+        this.dependencies.fadingEffects.hasPendingTrackStartFade)
     ) {
       this.dependencies.trackPlaying()
     } else if (
@@ -342,7 +345,6 @@ export class PlayerConnectionEvents {
         this.dependencies.playback._rememberReconnectPosition(
           this.dependencies.clock._realPosition()
         )
-        this.player.updateVoice(this.player.voice, true)
       } else if (
         error.message.includes('stream') ||
         error.message.includes('timeout') ||

@@ -1,12 +1,12 @@
-import { GatewayEvents } from '../../constants.ts'
+import { GatewayEvents } from '../../../constants.ts'
 import type {
   NodeLink,
   PlayerTrack,
   Session
-} from '../../typings/playback/player.types.ts'
-import { logger } from '../../utils.ts'
-import type { EndReason, GatewayEventName, Player } from '../player.ts'
-import type { PlayerLyrics } from './features/lyrics.ts'
+} from '../../../typings/playback/player.types.ts'
+import { logger } from '../../../utils.ts'
+import type { EndReason, GatewayEventName, Player } from '../../player.ts'
+import type { PlayerLyrics } from '../features/lyrics.ts'
 
 /**
  * Delivers player events, prepares track payloads, and invokes plugin hooks.

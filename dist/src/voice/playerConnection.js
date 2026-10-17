@@ -11,6 +11,7 @@ export class PlayerConnection {
     session;
     nodelink;
     callbacks;
+    _pendingVoiceUpdate = null;
     _connStateHandler = () => { };
     _connPlayHandler = () => { };
     _connErrorHandler = () => { };
@@ -49,6 +50,7 @@ export class PlayerConnection {
         });
     }
     destroy() {
+        this._pendingVoiceUpdate = null;
         if (this.player.connection) {
             try {
                 this.player.connection.removeListener('stateChange', this._connStateHandler);
@@ -98,7 +100,9 @@ export class PlayerConnection {
             !!this.player.connection?.udpInfo?.secretKey);
     }
     _ensureVoiceConnection() {
-        if (this.player.destroying || this._isVoiceReady())
+        if (this.player.destroying ||
+            this._isVoiceReady() ||
+            this.player.connStatus === 'connecting')
             return;
         if (!this.player.voice.sessionId ||
             !this.player.voice.token ||
@@ -124,8 +128,11 @@ export class PlayerConnection {
         });
         this.player.connection.stuckTimeout =
             Math.max(this.nodelink.options.playback.trackStuckThresholdMs ?? 10000, 30000) + 5000;
+        const connection = this.player.connection;
         this._connStateHandler = (_, s) => {
             logger('debug', 'Player', `Voice connection state change for guild ${this.player.guildId} in session ${this.session.id}: ${s.status}`);
+            if (this._isConnectionReady(s))
+                this._onVoiceReady(connection);
             this.callbacks.onConnectionState(s);
         };
         this.player.connection.on('stateChange', this._connStateHandler);
@@ -183,6 +190,7 @@ export class PlayerConnection {
         const conn = this.player.connection;
         if (!conn || this.player.destroying)
             return;
+        this._pendingVoiceUpdate = null;
         logger('warn', 'Player', `Resetting dead voice connection for guild ${this.player.guildId}`);
         try {
             conn.removeListener('stateChange', this._connStateHandler);
@@ -211,11 +219,29 @@ export class PlayerConnection {
             }
         }
     }
+    async _onVoiceReady(connection) {
+        if (this.player.destroying ||
+            this.player.connection !== connection ||
+            this._pendingVoiceUpdate !== connection)
+            return;
+        this._pendingVoiceUpdate = null;
+        if (connection.audioStream && !this.player.isPaused) {
+            connection.unpause?.('reconnected');
+        }
+        if (this.player.track &&
+            !connection.audioStream &&
+            !this.player.isUpdatingTrack) {
+            logger('debug', 'Player', `Voice state updated for guild ${this.player.guildId}, starting pending track.`);
+            await this.callbacks.startPendingTrack().catch((err) => {
+                logger('error', 'Player', `Failed to start pending track during voice update for guild ${this.player.guildId}:`, err);
+            });
+        }
+    }
     /**
      * Updates the voice state for this player.
      *
      * @param voicePayload - Session/token/endpoint/channel updates.
-     * @param force - Forces reconnect even when unchanged.
+     * @param force - Reconnects unless an unchanged handshake is already active.
      */
     updateVoice(voicePayload = {}, force = false) {
         logger('debug', 'Player', `[Action: updateVoice] Method invoked for guild ${this.player.guildId} with force=${force}`);
@@ -268,33 +294,25 @@ export class PlayerConnection {
             }
             if (!this.player.connection)
                 this._initConnection();
-            this.player.connection?.voiceStateUpdate({
+            const connection = this.player.connection;
+            if (!connection)
+                return;
+            const serverChanged = connection.voiceServer?.token !== this.player.voice.token ||
+                connection.voiceServer?.endpoint !== this.player.voice.endpoint;
+            this._pendingVoiceUpdate = connection;
+            connection.voiceStateUpdate({
                 session_id: this.player.voice.sessionId,
                 channel_id: this.player.voice.channelId ?? undefined
             });
-            if (force && this.player.connection?.voiceServer) {
-                this.player.connection.voiceServer = null;
-            }
-            this.player.connection?.voiceServerUpdate({
+            connection.voiceServerUpdate({
                 token: this.player.voice.token,
                 endpoint: this.player.voice.endpoint,
                 channel_id: this.player.voice.channelId ?? undefined
             });
-            this.player.connection?.connect(async () => {
-                if (this.player.destroying)
-                    return;
-                if (this.player.connection?.audioStream && !this.player.isPaused) {
-                    this.player.connection.unpause?.('reconnected');
-                }
-                if (this.player.track &&
-                    !this.player.connection?.audioStream &&
-                    !this.player.isUpdatingTrack) {
-                    logger('debug', 'Player', `Voice state updated for guild ${this.player.guildId}, starting pending track.`);
-                    await this.callbacks.startPendingTrack().catch((err) => {
-                        logger('error', 'Player', `Failed to start pending track during voice update for guild ${this.player.guildId}:`, err);
-                    });
-                }
-            });
+            if (this.player.connStatus !== 'connecting' ||
+                (changed && !serverChanged)) {
+                connection.connect(() => this._onVoiceReady(connection));
+            }
         }
         else {
             logger('warn', 'Player', `Incomplete voice update for guild ${this.player.guildId}. Missing sessionId, token, or endpoint.`);

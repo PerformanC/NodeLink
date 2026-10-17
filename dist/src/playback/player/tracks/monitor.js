@@ -4,7 +4,7 @@ import { logger } from '../../../utils.js';
  * Checks playback progress and recovers stuck tracks.
  * @internal
  */
-export class PlayerRecovery {
+export class PlayerPlaybackMonitor {
     player;
     nodelink;
     session;
@@ -43,7 +43,7 @@ export class PlayerRecovery {
     _sendUpdate() {
         if (!this.player.connection ||
             (this.player.isPaused &&
-                !this.dependencies.transitions.isPauseFadeActive) ||
+                !this.dependencies.fadingEffects.isPauseFadeActive) ||
             this.player.connStatus === 'destroyed' ||
             this.player.destroying)
             return false;
@@ -52,7 +52,7 @@ export class PlayerRecovery {
         const threshold = this.nodelink.options.playback.trackStuckThresholdMs ?? 0;
         if (threshold > 0 &&
             !this.player.isUpdatingTrack &&
-            !this.dependencies.transitions.isStopping &&
+            !this.dependencies.fadingEffects.isStopping &&
             this.player.track &&
             !this.dependencies.isResuming() &&
             !this.player.isPaused &&
@@ -113,8 +113,8 @@ export class PlayerRecovery {
                         return false;
                     }
                     if (this.player.stuckRecoveryCount >=
-                        PlayerRecovery.MAX_STUCK_RECOVERY_ATTEMPTS) {
-                        logger('error', 'Player', `Player for guild ${this.player.guildId} exceeded max recovery attempts (${PlayerRecovery.MAX_STUCK_RECOVERY_ATTEMPTS}). Stopping track.`);
+                        PlayerPlaybackMonitor.MAX_STUCK_RECOVERY_ATTEMPTS) {
+                        logger('error', 'Player', `Player for guild ${this.player.guildId} exceeded max recovery attempts (${PlayerPlaybackMonitor.MAX_STUCK_RECOVERY_ATTEMPTS}). Stopping track.`);
                         this.player.emitEvent(GatewayEvents.TRACK_STUCK, {
                             guildId: this.player.guildId,
                             track: this.player.track,
@@ -124,7 +124,7 @@ export class PlayerRecovery {
                         this.player.stop();
                         return false;
                     }
-                    logger('warn', 'Player', `Player for guild ${this.player.guildId} is stuck. Attempting to recover... (attempt ${this.player.stuckRecoveryCount + 1}/${PlayerRecovery.MAX_STUCK_RECOVERY_ATTEMPTS})`, {
+                    logger('warn', 'Player', `Player for guild ${this.player.guildId} is stuck. Attempting to recover... (attempt ${this.player.stuckRecoveryCount + 1}/${PlayerPlaybackMonitor.MAX_STUCK_RECOVERY_ATTEMPTS})`, {
                         lastPosition: this._lastPosition,
                         currentPosition: position,
                         stuckTime: stuckTime,

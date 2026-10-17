@@ -1,6 +1,6 @@
 import { SeekError } from '@ecliptia/seekable-stream';
-import { EndReasons, GatewayEvents } from '../../constants.js';
-import { logger } from '../../utils.js';
+import { EndReasons, GatewayEvents } from '../../../constants.js';
+import { logger } from '../../../utils.js';
 /**
  * Interprets voice state changes and errors for the player.
  * Lifecycle actions return to Player through synchronous callbacks.
@@ -28,7 +28,7 @@ export class PlayerConnectionEvents {
         const crossedConnectedBoundary = previousStatus !== state.status &&
             (previousStatus === 'connected' || state.status === 'connected');
         if (crossedConnectedBoundary) {
-            this.dependencies.recovery._onConnectionBoundary();
+            this.dependencies.monitor._onConnectionBoundary();
             if (state.status === 'connected') {
                 this.player._lastStreamDataTime = Date.now();
             }
@@ -82,7 +82,7 @@ export class PlayerConnectionEvents {
         }
         this.player._sendUpdate();
         if (crossedConnectedBoundary)
-            this.dependencies.recovery._resetStuckTime();
+            this.dependencies.monitor._resetStuckTime();
     }
     /**
      * Handles player state changes emitted by the voice connection.
@@ -105,7 +105,7 @@ export class PlayerConnectionEvents {
         }
         if (state.status === 'idle' && state.reason === 'stuck') {
             logger('warn', 'Player', `Track became stuck for guild ${this.player.guildId}. Triggering immediate recovery.`);
-            this.dependencies.recovery._markStuck();
+            this.dependencies.monitor._markStuck();
             this.player._sendUpdate();
             return;
         }
@@ -137,7 +137,7 @@ export class PlayerConnectionEvents {
             this.player.track &&
             !this.dependencies.seeking.isSeeking &&
             (['requested', 'reconnected', 'unpaused'].includes(state.reason ?? '') ||
-                this.dependencies.transitions.hasPendingTrackStartFade)) {
+                this.dependencies.fadingEffects.hasPendingTrackStartFade)) {
             this.dependencies.trackPlaying();
         }
         else if (state.status === 'idle' &&
@@ -195,7 +195,6 @@ export class PlayerConnectionEvents {
                 cause = 'VOICE_WS_RECONNECT_FAILED';
                 shouldStop = false;
                 this.dependencies.playback._rememberReconnectPosition(this.dependencies.clock._realPosition());
-                this.player.updateVoice(this.player.voice, true);
             }
             else if (error.message.includes('stream') ||
                 error.message.includes('timeout') ||

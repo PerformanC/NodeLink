@@ -1,5 +1,5 @@
-import { GatewayEvents } from '../../constants.js';
-import { logger } from '../../utils.js';
+import { GatewayEvents } from '../../../constants.js';
+import { logger } from '../../../utils.js';
 /**
  * Delivers player events, prepares track payloads, and invokes plugin hooks.
  * @internal

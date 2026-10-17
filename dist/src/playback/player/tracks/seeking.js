@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { EndReasons, GatewayEvents } from '../../../constants.js';
 import { logger } from '../../../utils.js';
 import { AutoMixRegistry } from '../../processing/AutoMixRegistry.js';
-import { createSeekeableAudioResource, getStreamProcessor, isWebmYouTubePlayback } from '../base/resources.js';
+import { createSeekeableAudioResource, getStreamProcessor, isWebmYouTubePlayback } from '../audio/resources.js';
 const SEEK_CROSSFADE_SAFETY_MS = 15000;
 /**
  * Selects and runs the existing seek strategies.
@@ -46,7 +46,7 @@ export class PlayerSeeking {
         }
         const seekPosition = position ?? this.dependencies.clock._realPosition();
         if (seekPosition === 0 &&
-            !this.dependencies.recovery.isRecovering &&
+            !this.dependencies.monitor.isRecovering &&
             this.dependencies.clock._realPosition() < 2000) {
             logger('debug', 'Player', 'Ignoring seek to 0 as track has just started.');
             return false;
@@ -120,8 +120,8 @@ export class PlayerSeeking {
                 this.dependencies.lyrics._clearMarkerTimer();
                 if (this.player.isLyricsSubscribed)
                     this.dependencies.lyrics._recalculateLyricsIndex(undefined, undefined, true);
-                this.dependencies.transitions._fading('seek');
-                this.dependencies.transitions._fading('trackEndSchedule', {
+                this.dependencies.fadingEffects._fading('seek');
+                this.dependencies.fadingEffects._fading('trackEndSchedule', {
                     startPosition: this.player.position
                 });
                 if (this.dependencies.queue.nextResourceIsCrossfade) {
@@ -318,7 +318,7 @@ export class PlayerSeeking {
             if (this.player.volumePercent !== 100) {
                 resource.setVolume(this.player.volumePercent / 100);
             }
-            this.dependencies.transitions._fading('seekPrepare', { resource });
+            this.dependencies.fadingEffects._fading('seekPrepare', { resource });
             resource.setFilters(this.player.filters);
             this.dependencies.queue._destroyCrossfadeResources(true);
             this.dependencies.clock._resetAudioConsumptionBaseline(position);
@@ -363,7 +363,7 @@ export class PlayerSeeking {
             ...this.player.track.info,
             audioTrackId: this.player.track.audioTrackId
         };
-        const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this.dependencies.recovery.isRecovering);
+        const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this.dependencies.monitor.isRecovering);
         if (!this.player.track)
             return false;
         this.player.streamInfo = { ...urlData, trackInfo: this.player.track.info };
@@ -398,7 +398,7 @@ export class PlayerSeeking {
         if (this.player.volumePercent !== 100) {
             resource.setVolume(this.player.volumePercent / 100);
         }
-        this.dependencies.transitions._fading('seekPrepare', { resource });
+        this.dependencies.fadingEffects._fading('seekPrepare', { resource });
         this.player.setFilters(this.player.filters);
         logger('debug', 'Player', `Playing resource for guild ${this.player.guildId} after legacy seek`);
         this.dependencies.resources._adoptResource(resource);

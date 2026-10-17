@@ -61,7 +61,7 @@ export class PlayerQueue {
         this.player.position = 0;
         this.dependencies.clock._resetAudioConsumptionBaseline(0);
         this.dependencies.clock._resetPacketBaseline(0);
-        this.dependencies.transitions._fading('trackEndSchedule', {
+        this.dependencies.fadingEffects._fading('trackEndSchedule', {
             startPosition: 0
         });
         const oldStream = this.player.connection?.play(resource);
@@ -172,7 +172,7 @@ export class PlayerQueue {
                 this._crossfadeToken += 1;
                 this._nextTrack = payload;
                 this._nextResourceIsCrossfade = true;
-                this.dependencies.transitions._clearTrackEndTimer();
+                this.dependencies.fadingEffects._clearTrackEndTimer();
                 this._scheduleCrossfadePreparation();
                 return true;
             }
@@ -405,7 +405,7 @@ export class PlayerQueue {
     }
     _rescheduleCrossfade(startPosition) {
         if (this._nextResourceIsCrossfade)
-            this.dependencies.transitions._clearTrackEndTimer();
+            this.dependencies.fadingEffects._clearTrackEndTimer();
         if (this.dependencies.voiceConnection._getAudioStream()?.getCrossfadeState?.()
             .active)
             return true;
@@ -442,14 +442,14 @@ export class PlayerQueue {
             0);
         this.player.position = consumedMs;
         this.dependencies.clock._continuePacketBaseline(consumedMs);
-        this.dependencies.recovery._recordPosition(consumedMs);
+        this.dependencies.monitor._recordPosition(consumedMs);
         this.player.sponsorBlock.segments = [];
         this.player.sponsorBlock.lastSkippedUuid = null;
         logger('info', 'Crossfade', `Transitioned ${previousTrack.info.identifier} to ${promotedTrack.info.identifier} for guild ${this.player.guildId}`);
         this.dependencies.events
             .emitTrackStart()
             .catch((error) => this.dependencies._onError(error));
-        this.dependencies.transitions._fading('trackEndSchedule', {
+        this.dependencies.fadingEffects._fading('trackEndSchedule', {
             startPosition: consumedMs
         });
     }
@@ -481,7 +481,7 @@ export class PlayerQueue {
         this._clearCrossfadeTimer();
         if (this._nextResourceIsCrossfade && !this._getCrossfadeConfig()) {
             this.player.clearNextTrack();
-            this.dependencies.transitions._fading('trackEndSchedule', {
+            this.dependencies.fadingEffects._fading('trackEndSchedule', {
                 startPosition: this.dependencies.clock._realPosition()
             });
         }

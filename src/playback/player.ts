@@ -22,18 +22,18 @@ import type {
 import { logger } from '../utils.ts'
 import { PlayerConnection } from '../voice/playerConnection.ts'
 import { PlayerAudio } from './player/audio/controls.ts'
+import { PlayerFading } from './player/audio/fading.ts'
 import { PlayerMixer } from './player/audio/mixer.ts'
-import { PlayerTransitions } from './player/audio/transitions.ts'
-import { PlaybackClock } from './player/base/clock.ts'
-import { PlayerResources } from './player/base/resources.ts'
-import { PlayerConnectionEvents } from './player/connection.ts'
-import { PlayerEvents } from './player/events.ts'
+import { PlayerResources } from './player/audio/resources.ts'
+import { PlayerConnectionEvents } from './player/events/connectionEvents.ts'
+import { PlayerEvents } from './player/events/playerEvents.ts'
 import { PlayerLyrics } from './player/features/lyrics.ts'
 import { PlayerSponsorBlock } from './player/features/sponsorBlock.ts'
-import { PlayerQueue } from './player/playback/queue.ts'
-import { PlayerRecovery } from './player/playback/recovery.ts'
-import { PlayerSeeking } from './player/playback/seeking.ts'
-import { PlayerPlayback } from './player/playback/tracks.ts'
+import { PlaybackClock } from './player/tracks/clock.ts'
+import { PlayerPlaybackMonitor } from './player/tracks/monitor.ts'
+import { PlayerPlayback } from './player/tracks/playback.ts'
+import { PlayerQueue } from './player/tracks/queue.ts'
+import { PlayerSeeking } from './player/tracks/seeking.ts'
 import { DuckingController } from './processing/DuckingController.ts'
 
 export type GatewayEventName =
@@ -49,10 +49,10 @@ export class Player {
   private readonly playback: PlayerPlayback
   private readonly queue: PlayerQueue
   private readonly seeking: PlayerSeeking
-  private readonly recovery: PlayerRecovery
+  private readonly monitor: PlayerPlaybackMonitor
   private readonly audio: PlayerAudio
   private readonly mixer: PlayerMixer
-  private readonly transitions: PlayerTransitions
+  private readonly fadingEffects: PlayerFading
   private readonly lyrics: PlayerLyrics
   private readonly sponsorBlockFeature: PlayerSponsorBlock
   private readonly voiceConnection: PlayerConnection
@@ -148,7 +148,7 @@ export class Player {
       this.lyrics
     )
     this.sponsorBlockFeature = new PlayerSponsorBlock(this, this.nodelink)
-    this.transitions = new PlayerTransitions(this, {
+    this.fadingEffects = new PlayerFading(this, {
       voiceConnection: this.voiceConnection,
       clock: this.clock
     })
@@ -160,31 +160,36 @@ export class Player {
         this.queue._destroyCrossfadeResources(preserveQueuedTrack),
       events: this.events
     })
-    this.recovery = new PlayerRecovery(this, this.nodelink, this.session, {
-      sponsorBlockFeature: this.sponsorBlockFeature,
-      transitions: this.transitions,
-      clock: this.clock,
-      voiceConnection: this.voiceConnection,
-      lyrics: this.lyrics,
-      isResuming: () => this.playback.isResuming,
-      isSeeking: () => this.seeking.isSeeking
-    })
+    this.monitor = new PlayerPlaybackMonitor(
+      this,
+      this.nodelink,
+      this.session,
+      {
+        sponsorBlockFeature: this.sponsorBlockFeature,
+        fadingEffects: this.fadingEffects,
+        clock: this.clock,
+        voiceConnection: this.voiceConnection,
+        lyrics: this.lyrics,
+        isResuming: () => this.playback.isResuming,
+        isSeeking: () => this.seeking.isSeeking
+      }
+    )
     this.queue = new PlayerQueue(this, this.nodelink, {
       voiceConnection: this.voiceConnection,
       clock: this.clock,
       resources: this.resources,
-      recovery: this.recovery,
-      transitions: this.transitions,
+      monitor: this.monitor,
+      fadingEffects: this.fadingEffects,
       events: this.events,
       _onError: (error) => this.connectionEvents.onError(error)
     })
     this.playback = new PlayerPlayback(this, this.nodelink, {
       sponsorBlockFeature: this.sponsorBlockFeature,
       voiceConnection: this.voiceConnection,
-      transitions: this.transitions,
+      fadingEffects: this.fadingEffects,
       resources: this.resources,
       clock: this.clock,
-      recovery: this.recovery,
+      monitor: this.monitor,
       queue: this.queue,
       _onError: (error) => this.connectionEvents.onError(error),
       events: this.events,
@@ -192,9 +197,9 @@ export class Player {
     })
     this.seeking = new PlayerSeeking(this, this.nodelink, {
       clock: this.clock,
-      recovery: this.recovery,
+      monitor: this.monitor,
       lyrics: this.lyrics,
-      transitions: this.transitions,
+      fadingEffects: this.fadingEffects,
       playback: this.playback,
       resources: this.resources,
       mixer: this.mixer,
@@ -206,7 +211,7 @@ export class Player {
     this.audio = new PlayerAudio(this, this.nodelink, {
       queue: this.queue,
       clock: this.clock,
-      transitions: this.transitions
+      fadingEffects: this.fadingEffects
     })
     this.connectionEvents = new PlayerConnectionEvents(
       this,
@@ -215,11 +220,11 @@ export class Player {
       {
         voiceConnection: this.voiceConnection,
         clock: this.clock,
-        recovery: this.recovery,
+        monitor: this.monitor,
         playback: this.playback,
         seeking: this.seeking,
         queue: this.queue,
-        transitions: this.transitions,
+        fadingEffects: this.fadingEffects,
         finishTrack: (reason) => this._finishTrack(reason),
         trackPlaying: () => this._trackPlaying(),
         events: this.events
@@ -308,7 +313,7 @@ export class Player {
       filters: this.filters,
       state: {
         time: Date.now(),
-        position: this.clock._realPosition(),
+        position: this._realPosition(),
         connected: this.connStatus === 'connected',
         ping:
           this.connection && this.connection.ping >= 0
@@ -323,7 +328,7 @@ export class Player {
    * Sends player state updates to the client.
    */
   public _sendUpdate(): boolean {
-    return this.recovery._sendUpdate()
+    return this.monitor._sendUpdate()
   }
 
   /**
@@ -409,7 +414,7 @@ export class Player {
    * @returns Always true.
    */
   public setFading(config?: FadingConfig): boolean {
-    return this.transitions.setFading(config)
+    return this.fadingEffects.setFading(config)
   }
 
   /**
@@ -569,6 +574,10 @@ export class Player {
     return this.queue.setCrossfade(config)
   }
 
+  private _realPosition(): number {
+    return this.clock._realPosition()
+  }
+
   private _finishTrack(reason: EndReason): void {
     this.resources._traceTrackFinishMemory('before-cleanup')
     this.resources._cleanupCurrentAudioStream('track-end')
@@ -583,7 +592,7 @@ export class Player {
 
     if (!wasResuming && !this._isRestoring) {
       this.clock._snapshotPacketCount()
-      this.transitions._fading('trackStart')
+      this.fadingEffects._fading('trackStart')
       this.events
         .emitTrackStart()
         .catch((err) => this.connectionEvents.onError(err))
@@ -591,7 +600,7 @@ export class Player {
   }
 
   private _resetTrack(): void {
-    this.transitions._resetStopping()
+    this.fadingEffects._resetStopping()
     this.queue._resetQueue()
 
     this.track = null
@@ -604,7 +613,7 @@ export class Player {
     this.sponsorBlock.segments = []
     this.currentLyrics = null
     this.lyricsLineIndex = -1
-    this.transitions._fading('reset')
+    this.fadingEffects._fading('reset')
     this.mixer._destroyAudioMixer()
     this.clock._resetPacketBaseline(0)
     this.lyrics._clearMarkerTimer()

@@ -6,14 +6,14 @@ import type {
 import { logger } from '../../../utils.ts'
 import type { PlayerConnection } from '../../../voice/playerConnection.ts'
 import type { Player } from '../../player.ts'
-import type { PlayerTransitions } from '../audio/transitions.ts'
-import type { PlaybackClock } from '../base/clock.ts'
+import type { PlayerFading } from '../audio/fading.ts'
 import type { PlayerLyrics } from '../features/lyrics.ts'
 import type { PlayerSponsorBlock } from '../features/sponsorBlock.ts'
+import type { PlaybackClock } from './clock.ts'
 
-interface PlayerRecoveryDependencies {
+interface PlayerPlaybackMonitorDependencies {
   sponsorBlockFeature: PlayerSponsorBlock
-  transitions: PlayerTransitions
+  fadingEffects: PlayerFading
   clock: PlaybackClock
   isResuming: () => boolean
   voiceConnection: PlayerConnection
@@ -25,7 +25,7 @@ interface PlayerRecoveryDependencies {
  * Checks playback progress and recovers stuck tracks.
  * @internal
  */
-export class PlayerRecovery {
+export class PlayerPlaybackMonitor {
   private readonly player: Pick<
     Player,
     | 'seek'
@@ -46,7 +46,7 @@ export class PlayerRecovery {
   >
   private readonly nodelink: NodeLink
   private readonly session: Session
-  private readonly dependencies: PlayerRecoveryDependencies
+  private readonly dependencies: PlayerPlaybackMonitorDependencies
   private _lastPosition = 0
   private _stuckTime = 0
   private _isRecovering = false
@@ -54,10 +54,10 @@ export class PlayerRecovery {
   private static MAX_STUCK_RECOVERY_ATTEMPTS = 3
 
   constructor(
-    player: PlayerRecovery['player'],
+    player: PlayerPlaybackMonitor['player'],
     nodelink: NodeLink,
     session: Session,
-    dependencies: PlayerRecoveryDependencies
+    dependencies: PlayerPlaybackMonitorDependencies
   ) {
     this.player = player
     this.nodelink = nodelink
@@ -94,7 +94,7 @@ export class PlayerRecovery {
     if (
       !this.player.connection ||
       (this.player.isPaused &&
-        !this.dependencies.transitions.isPauseFadeActive) ||
+        !this.dependencies.fadingEffects.isPauseFadeActive) ||
       this.player.connStatus === 'destroyed' ||
       this.player.destroying
     )
@@ -111,7 +111,7 @@ export class PlayerRecovery {
     if (
       threshold > 0 &&
       !this.player.isUpdatingTrack &&
-      !this.dependencies.transitions.isStopping &&
+      !this.dependencies.fadingEffects.isStopping &&
       this.player.track &&
       !this.dependencies.isResuming() &&
       !this.player.isPaused &&
@@ -208,12 +208,12 @@ export class PlayerRecovery {
 
           if (
             this.player.stuckRecoveryCount >=
-            PlayerRecovery.MAX_STUCK_RECOVERY_ATTEMPTS
+            PlayerPlaybackMonitor.MAX_STUCK_RECOVERY_ATTEMPTS
           ) {
             logger(
               'error',
               'Player',
-              `Player for guild ${this.player.guildId} exceeded max recovery attempts (${PlayerRecovery.MAX_STUCK_RECOVERY_ATTEMPTS}). Stopping track.`
+              `Player for guild ${this.player.guildId} exceeded max recovery attempts (${PlayerPlaybackMonitor.MAX_STUCK_RECOVERY_ATTEMPTS}). Stopping track.`
             )
             this.player.emitEvent(GatewayEvents.TRACK_STUCK, {
               guildId: this.player.guildId,
@@ -228,7 +228,7 @@ export class PlayerRecovery {
           logger(
             'warn',
             'Player',
-            `Player for guild ${this.player.guildId} is stuck. Attempting to recover... (attempt ${this.player.stuckRecoveryCount + 1}/${PlayerRecovery.MAX_STUCK_RECOVERY_ATTEMPTS})`,
+            `Player for guild ${this.player.guildId} is stuck. Attempting to recover... (attempt ${this.player.stuckRecoveryCount + 1}/${PlayerPlaybackMonitor.MAX_STUCK_RECOVERY_ATTEMPTS})`,
             {
               lastPosition: this._lastPosition,
               currentPosition: position,

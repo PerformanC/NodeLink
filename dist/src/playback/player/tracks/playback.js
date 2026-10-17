@@ -1,7 +1,7 @@
 import { EndReasons, GatewayEvents } from '../../../constants.js';
 import { logger } from '../../../utils.js';
 import { AutoMixRegistry } from '../../processing/AutoMixRegistry.js';
-import { createSeekeableAudioResource, getStreamProcessor, isWebmYouTubePlayback } from '../base/resources.js';
+import { createSeekeableAudioResource, getStreamProcessor, isWebmYouTubePlayback } from '../audio/resources.js';
 /**
  * Handles track commands, stream replacement, and pause/resume state.
  * @internal
@@ -34,7 +34,7 @@ export class PlayerPlayback {
         this.player.isPaused = false;
         this.player._lastStreamDataTime = Date.now();
         if (wasResuming) {
-            this.dependencies.transitions._fading('trackEndSchedule', {
+            this.dependencies.fadingEffects._fading('trackEndSchedule', {
                 startPosition: this._pausedAtPosition ?? this.dependencies.clock._realPosition()
             });
             this._pausedAtPosition = undefined;
@@ -139,7 +139,7 @@ export class PlayerPlayback {
         if (this.player.volumePercent !== 100) {
             resource.setVolume(this.player.volumePercent / 100);
         }
-        this.dependencies.transitions._fading(fadingAction, { resource });
+        this.dependencies.fadingEffects._fading(fadingAction, { resource });
         this.player.setFilters(this.player.filters);
         logger('debug', 'Player', playLogMessage);
         this.dependencies.resources._adoptResource(resource);
@@ -165,7 +165,7 @@ export class PlayerPlayback {
             ...this.player.track.info,
             audioTrackId: this.player.track.audioTrackId
         };
-        const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this.dependencies.recovery.isRecovering);
+        const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this.dependencies.monitor.isRecovering);
         if (!this.player.track)
             return false;
         if (urlData.newTrack?.info &&
@@ -187,10 +187,10 @@ export class PlayerPlayback {
         const result = await this._connectAndPlayStream(urlData, startTime, 'start-playback', 'trackStartArm', `Playing resource for guild ${this.player.guildId}`);
         if (!result)
             return false;
-        this.dependencies.transitions._fading('trackEndSchedule', {
+        this.dependencies.fadingEffects._fading('trackEndSchedule', {
             startPosition: startTime || 0
         });
-        this.dependencies.recovery._resetStuckTime();
+        this.dependencies.monitor._resetStuckTime();
         if (this.dependencies.queue.nextTrack &&
             this.dependencies.queue.nextResourceIsCrossfade) {
             this.dependencies.queue._scheduleCrossfadePreparation(startTime || 0);
@@ -280,7 +280,7 @@ export class PlayerPlayback {
                     userData: userData ?? {},
                     audioTrackId
                 };
-                this.dependencies.transitions._fading('reset');
+                this.dependencies.fadingEffects._fading('reset');
                 if (!this.player.voice.endpoint || !this.player.voice.token) {
                     logger('debug', 'Player', `No voice state for guild ${this.player.guildId}, track is enqueued and will play when voice state is provided.`);
                     this.player.isUpdatingTrack = false;
@@ -320,7 +320,7 @@ export class PlayerPlayback {
             this.dependencies.queue._stopQueuedTrack();
             if (this.player.connection && this.player.connStatus !== 'destroyed') {
                 if (this.player.connection.audioStream) {
-                    this.dependencies.transitions._stopPlayback();
+                    this.dependencies.fadingEffects._stopPlayback();
                 }
                 else {
                     this.dependencies.events.emitTrackEnd(EndReasons.STOPPED);
@@ -353,8 +353,8 @@ export class PlayerPlayback {
         if (shouldPause) {
             this._pausedAtPosition = this.dependencies.clock._realPosition();
             this.dependencies.queue._pauseCrossfade();
-            this.dependencies.transitions._clearTrackEndTimer();
-            if (this.dependencies.transitions._fading('pause')) {
+            this.dependencies.fadingEffects._clearTrackEndTimer();
+            if (this.dependencies.fadingEffects._fading('pause')) {
                 this.player.isPaused = true;
                 this.player.emitEvent(GatewayEvents.PAUSE, { paused: true });
                 return true;
@@ -367,7 +367,7 @@ export class PlayerPlayback {
             this._isResuming = true;
             const audioStream = this.dependencies.voiceConnection._getAudioStream();
             audioStream?.setCrossfadePaused?.(false);
-            this.dependencies.transitions._fading('resume');
+            this.dependencies.fadingEffects._fading('resume');
             if (audioStream)
                 this.player.connection?.unpause?.('requested');
             this.dependencies.queue._rescheduleCrossfade(this._pausedAtPosition);

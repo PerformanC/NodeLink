@@ -10,9 +10,9 @@ import type {
 import { logger } from '../../../utils.ts'
 import type { Player } from '../../player.ts'
 import { DuckingController } from '../../processing/DuckingController.ts'
-import type { PlaybackClock } from '../base/clock.ts'
-import type { PlayerQueue } from '../playback/queue.ts'
-import type { PlayerTransitions } from './transitions.ts'
+import type { PlaybackClock } from '../tracks/clock.ts'
+import type { PlayerQueue } from '../tracks/queue.ts'
+import type { PlayerFading } from './fading.ts'
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -20,7 +20,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 interface PlayerAudioDependencies {
   queue: PlayerQueue
   clock: PlaybackClock
-  transitions: PlayerTransitions
+  fadingEffects: PlayerFading
 }
 
 /**
@@ -316,7 +316,7 @@ export class PlayerAudio {
     if (this.player.connection?.audioStream) {
       this.dependencies.clock._snapshotPosition()
       this.player.connection.audioStream.setFilters(this.player.filters)
-      this.dependencies.transitions._fading('trackEndSchedule', {
+      this.dependencies.fadingEffects._fading('trackEndSchedule', {
         startPosition: this.dependencies.clock._realPosition()
       })
     }

@@ -5,7 +5,7 @@ import type {
 } from '../../../typings/playback/player.types.ts'
 import { logger } from '../../../utils.ts'
 import type { Player } from '../../player.ts'
-import type { PlaybackClock } from '../base/clock.ts'
+import type { PlaybackClock } from '../tracks/clock.ts'
 
 /**
  * Loads lyrics and synchronizes their events with playback.

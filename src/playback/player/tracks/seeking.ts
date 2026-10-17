@@ -12,29 +12,29 @@ import { logger } from '../../../utils.ts'
 import type { PlayerConnection } from '../../../voice/playerConnection.ts'
 import type { Player } from '../../player.ts'
 import { AutoMixRegistry } from '../../processing/AutoMixRegistry.ts'
+import type { PlayerFading } from '../audio/fading.ts'
 import type { PlayerMixer } from '../audio/mixer.ts'
-import type { PlayerTransitions } from '../audio/transitions.ts'
-import type { PlaybackClock } from '../base/clock.ts'
-import type { PlayerResources } from '../base/resources.ts'
+import type { PlayerResources } from '../audio/resources.ts'
 import {
   createSeekeableAudioResource,
   getStreamProcessor,
   isWebmYouTubePlayback
-} from '../base/resources.ts'
-import type { PlayerEvents } from '../events.ts'
+} from '../audio/resources.ts'
+import type { PlayerEvents } from '../events/playerEvents.ts'
 import type { PlayerLyrics } from '../features/lyrics.ts'
-import type { PlayerQueue } from '../playback/queue.ts'
-import type { PlayerRecovery } from './recovery.ts'
-import type { PlayerPlayback } from './tracks.ts'
+import type { PlaybackClock } from './clock.ts'
+import type { PlayerPlaybackMonitor } from './monitor.ts'
+import type { PlayerPlayback } from './playback.ts'
+import type { PlayerQueue } from './queue.ts'
 
 const SEEK_CROSSFADE_SAFETY_MS = 15000
 
 interface PlayerSeekingDependencies {
   queue: PlayerQueue
   clock: PlaybackClock
-  recovery: PlayerRecovery
+  monitor: PlayerPlaybackMonitor
   lyrics: PlayerLyrics
-  transitions: PlayerTransitions
+  fadingEffects: PlayerFading
   playback: PlayerPlayback
   resources: PlayerResources
   mixer: PlayerMixer
@@ -130,7 +130,7 @@ export class PlayerSeeking {
 
     if (
       seekPosition === 0 &&
-      !this.dependencies.recovery.isRecovering &&
+      !this.dependencies.monitor.isRecovering &&
       this.dependencies.clock._realPosition() < 2000
     ) {
       logger('debug', 'Player', 'Ignoring seek to 0 as track has just started.')
@@ -249,8 +249,8 @@ export class PlayerSeeking {
             undefined,
             true
           )
-        this.dependencies.transitions._fading('seek')
-        this.dependencies.transitions._fading('trackEndSchedule', {
+        this.dependencies.fadingEffects._fading('seek')
+        this.dependencies.fadingEffects._fading('trackEndSchedule', {
           startPosition: this.player.position
         })
         if (this.dependencies.queue.nextResourceIsCrossfade) {
@@ -600,7 +600,7 @@ export class PlayerSeeking {
       if (this.player.volumePercent !== 100) {
         resource.setVolume(this.player.volumePercent / 100)
       }
-      this.dependencies.transitions._fading('seekPrepare', { resource })
+      this.dependencies.fadingEffects._fading('seekPrepare', { resource })
       resource.setFilters(this.player.filters)
 
       this.dependencies.queue._destroyCrossfadeResources(true)
@@ -670,7 +670,7 @@ export class PlayerSeeking {
     const urlData = await this.nodelink.sources.getTrackUrl(
       trackInfo,
       undefined,
-      this.dependencies.recovery.isRecovering
+      this.dependencies.monitor.isRecovering
     )
     if (!this.player.track) return false
     this.player.streamInfo = { ...urlData, trackInfo: this.player.track.info }
@@ -726,7 +726,7 @@ export class PlayerSeeking {
     if (this.player.volumePercent !== 100) {
       resource.setVolume(this.player.volumePercent / 100)
     }
-    this.dependencies.transitions._fading('seekPrepare', { resource })
+    this.dependencies.fadingEffects._fading('seekPrepare', { resource })
 
     this.player.setFilters(this.player.filters)
 

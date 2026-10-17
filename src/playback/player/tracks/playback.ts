@@ -12,26 +12,26 @@ import { logger } from '../../../utils.ts'
 import type { PlayerConnection } from '../../../voice/playerConnection.ts'
 import type { Player } from '../../player.ts'
 import { AutoMixRegistry } from '../../processing/AutoMixRegistry.ts'
-import type { PlayerTransitions } from '../audio/transitions.ts'
-import type { PlaybackClock } from '../base/clock.ts'
-import type { PlayerResources } from '../base/resources.ts'
+import type { PlayerFading } from '../audio/fading.ts'
+import type { PlayerResources } from '../audio/resources.ts'
 import {
   createSeekeableAudioResource,
   getStreamProcessor,
   isWebmYouTubePlayback
-} from '../base/resources.ts'
-import type { PlayerEvents } from '../events.ts'
+} from '../audio/resources.ts'
+import type { PlayerEvents } from '../events/playerEvents.ts'
 import type { PlayerSponsorBlock } from '../features/sponsorBlock.ts'
+import type { PlaybackClock } from './clock.ts'
+import type { PlayerPlaybackMonitor } from './monitor.ts'
 import type { PlayerQueue } from './queue.ts'
-import type { PlayerRecovery } from './recovery.ts'
 
 interface PlayerPlaybackDependencies {
   sponsorBlockFeature: PlayerSponsorBlock
   voiceConnection: PlayerConnection
-  transitions: PlayerTransitions
+  fadingEffects: PlayerFading
   resources: PlayerResources
   clock: PlaybackClock
-  recovery: PlayerRecovery
+  monitor: PlayerPlaybackMonitor
   queue: PlayerQueue
   _onError: (error: Error) => void
   events: PlayerEvents
@@ -101,7 +101,7 @@ export class PlayerPlayback {
     this.player.isPaused = false
     this.player._lastStreamDataTime = Date.now()
     if (wasResuming) {
-      this.dependencies.transitions._fading('trackEndSchedule', {
+      this.dependencies.fadingEffects._fading('trackEndSchedule', {
         startPosition:
           this._pausedAtPosition ?? this.dependencies.clock._realPosition()
       })
@@ -275,7 +275,7 @@ export class PlayerPlayback {
       resource.setVolume(this.player.volumePercent / 100)
     }
 
-    this.dependencies.transitions._fading(fadingAction, { resource })
+    this.dependencies.fadingEffects._fading(fadingAction, { resource })
     this.player.setFilters(this.player.filters)
 
     logger('debug', 'Player', playLogMessage)
@@ -315,7 +315,7 @@ export class PlayerPlayback {
     const urlData = await this.nodelink.sources.getTrackUrl(
       trackInfo,
       undefined,
-      this.dependencies.recovery.isRecovering
+      this.dependencies.monitor.isRecovering
     )
     if (!this.player.track) return false
 
@@ -354,10 +354,10 @@ export class PlayerPlayback {
     )
     if (!result) return false
 
-    this.dependencies.transitions._fading('trackEndSchedule', {
+    this.dependencies.fadingEffects._fading('trackEndSchedule', {
       startPosition: startTime || 0
     })
-    this.dependencies.recovery._resetStuckTime()
+    this.dependencies.monitor._resetStuckTime()
 
     if (
       this.dependencies.queue.nextTrack &&
@@ -512,7 +512,7 @@ export class PlayerPlayback {
           userData: userData ?? {},
           audioTrackId
         }
-        this.dependencies.transitions._fading('reset')
+        this.dependencies.fadingEffects._fading('reset')
 
         if (!this.player.voice.endpoint || !this.player.voice.token) {
           logger(
@@ -571,7 +571,7 @@ export class PlayerPlayback {
 
       if (this.player.connection && this.player.connStatus !== 'destroyed') {
         if (this.player.connection.audioStream) {
-          this.dependencies.transitions._stopPlayback()
+          this.dependencies.fadingEffects._stopPlayback()
         } else {
           this.dependencies.events.emitTrackEnd(EndReasons.STOPPED)
           this.dependencies._resetTrack()
@@ -616,9 +616,9 @@ export class PlayerPlayback {
       this._pausedAtPosition = this.dependencies.clock._realPosition()
       this.dependencies.queue._pauseCrossfade()
 
-      this.dependencies.transitions._clearTrackEndTimer()
+      this.dependencies.fadingEffects._clearTrackEndTimer()
 
-      if (this.dependencies.transitions._fading('pause')) {
+      if (this.dependencies.fadingEffects._fading('pause')) {
         this.player.isPaused = true
         this.player.emitEvent(GatewayEvents.PAUSE, { paused: true })
         return true
@@ -631,7 +631,7 @@ export class PlayerPlayback {
       this._isResuming = true
       const audioStream = this.dependencies.voiceConnection._getAudioStream()
       audioStream?.setCrossfadePaused?.(false)
-      this.dependencies.transitions._fading('resume')
+      this.dependencies.fadingEffects._fading('resume')
       if (audioStream) this.player.connection?.unpause?.('requested')
       this.dependencies.queue._rescheduleCrossfade(this._pausedAtPosition)
     }

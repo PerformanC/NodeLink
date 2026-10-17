@@ -20,8 +20,8 @@ import type { TrackUrlResult } from '../../../typings/sources/source.types.ts'
 import { logger } from '../../../utils.ts'
 import type { PlayerConnection } from '../../../voice/playerConnection.ts'
 import type { Player } from '../../player.ts'
-import type { PlayerMixer } from '../audio/mixer.ts'
-import type { PlayerEvents } from '../events.ts'
+import type { PlayerEvents } from '../events/playerEvents.ts'
+import type { PlayerMixer } from './mixer.ts'
 
 const trackFinishMemoryTraceEnabled =
   process.env.NODELINK_TRACK_FINISH_MEMORY_TRACE?.toLowerCase() === 'true'

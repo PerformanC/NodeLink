@@ -209,7 +209,7 @@ export class PlayerAudio {
         if (this.player.connection?.audioStream) {
             this.dependencies.clock._snapshotPosition();
             this.player.connection.audioStream.setFilters(this.player.filters);
-            this.dependencies.transitions._fading('trackEndSchedule', {
+            this.dependencies.fadingEffects._fading('trackEndSchedule', {
                 startPosition: this.dependencies.clock._realPosition()
             });
         }

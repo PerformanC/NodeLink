@@ -4,7 +4,7 @@ import { logger } from '../../../utils.js';
  * Owns fades, tape and scratch effects, and their timers.
  * @internal
  */
-export class PlayerTransitions {
+export class PlayerFading {
     player;
     dependencies;
     _pendingTrackStartFade = false;

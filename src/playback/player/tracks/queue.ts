@@ -9,11 +9,11 @@ import type {
 import { logger } from '../../../utils.ts'
 import type { PlayerConnection } from '../../../voice/playerConnection.ts'
 import type { Player } from '../../player.ts'
-import type { PlayerTransitions } from '../audio/transitions.ts'
-import type { PlaybackClock } from '../base/clock.ts'
-import type { PlayerResources } from '../base/resources.ts'
-import type { PlayerEvents } from '../events.ts'
-import type { PlayerRecovery } from './recovery.ts'
+import type { PlayerFading } from '../audio/fading.ts'
+import type { PlayerResources } from '../audio/resources.ts'
+import type { PlayerEvents } from '../events/playerEvents.ts'
+import type { PlaybackClock } from './clock.ts'
+import type { PlayerPlaybackMonitor } from './monitor.ts'
 
 const MIN_CROSSFADE_SELECTION_MS = 6000
 const MAX_CROSSFADE_SELECTION_MS = 21000
@@ -28,8 +28,8 @@ interface PlayerQueueDependencies {
   voiceConnection: PlayerConnection
   clock: PlaybackClock
   resources: PlayerResources
-  recovery: PlayerRecovery
-  transitions: PlayerTransitions
+  monitor: PlayerPlaybackMonitor
+  fadingEffects: PlayerFading
   events: PlayerEvents
   _onError: (error: Error) => void
 }
@@ -123,7 +123,7 @@ export class PlayerQueue {
     this.dependencies.clock._resetAudioConsumptionBaseline(0)
     this.dependencies.clock._resetPacketBaseline(0)
 
-    this.dependencies.transitions._fading('trackEndSchedule', {
+    this.dependencies.fadingEffects._fading('trackEndSchedule', {
       startPosition: 0
     })
 
@@ -266,7 +266,7 @@ export class PlayerQueue {
         this._crossfadeToken += 1
         this._nextTrack = payload
         this._nextResourceIsCrossfade = true
-        this.dependencies.transitions._clearTrackEndTimer()
+        this.dependencies.fadingEffects._clearTrackEndTimer()
         this._scheduleCrossfadePreparation()
         return true
       }
@@ -606,7 +606,7 @@ export class PlayerQueue {
 
   public _rescheduleCrossfade(startPosition?: number): boolean {
     if (this._nextResourceIsCrossfade)
-      this.dependencies.transitions._clearTrackEndTimer()
+      this.dependencies.fadingEffects._clearTrackEndTimer()
     if (
       this.dependencies.voiceConnection._getAudioStream()?.getCrossfadeState?.()
         .active
@@ -654,7 +654,7 @@ export class PlayerQueue {
     )
     this.player.position = consumedMs
     this.dependencies.clock._continuePacketBaseline(consumedMs)
-    this.dependencies.recovery._recordPosition(consumedMs)
+    this.dependencies.monitor._recordPosition(consumedMs)
     this.player.sponsorBlock.segments = []
     this.player.sponsorBlock.lastSkippedUuid = null
 
@@ -666,7 +666,7 @@ export class PlayerQueue {
     this.dependencies.events
       .emitTrackStart()
       .catch((error) => this.dependencies._onError(error as Error))
-    this.dependencies.transitions._fading('trackEndSchedule', {
+    this.dependencies.fadingEffects._fading('trackEndSchedule', {
       startPosition: consumedMs
     })
   }
@@ -704,7 +704,7 @@ export class PlayerQueue {
     this._clearCrossfadeTimer()
     if (this._nextResourceIsCrossfade && !this._getCrossfadeConfig()) {
       this.player.clearNextTrack()
-      this.dependencies.transitions._fading('trackEndSchedule', {
+      this.dependencies.fadingEffects._fading('trackEndSchedule', {
         startPosition: this.dependencies.clock._realPosition()
       })
     } else if (this._nextResourceIsCrossfade) {

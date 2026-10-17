@@ -10,9 +10,9 @@ import type { ScratchStyle } from '../../../typings/playback/processing.types.ts
 import { logger } from '../../../utils.ts'
 import type { PlayerConnection } from '../../../voice/playerConnection.ts'
 import type { Player } from '../../player.ts'
-import type { PlaybackClock } from '../base/clock.ts'
+import type { PlaybackClock } from '../tracks/clock.ts'
 
-interface PlayerTransitionsDependencies {
+interface PlayerFadingDependencies {
   voiceConnection: PlayerConnection
   clock: PlaybackClock
 }
@@ -21,7 +21,7 @@ interface PlayerTransitionsDependencies {
  * Owns fades, tape and scratch effects, and their timers.
  * @internal
  */
-export class PlayerTransitions {
+export class PlayerFading {
   private readonly player: Pick<
     Player,
     | 'guildId'
@@ -31,14 +31,14 @@ export class PlayerTransitions {
     | 'isUpdatingTrack'
     | 'duckingController'
   >
-  private readonly dependencies: PlayerTransitionsDependencies
+  private readonly dependencies: PlayerFadingDependencies
   private _pendingTrackStartFade = false
   private _isStopping = false
   private _fadeTimers: FadeTimers = { trackEnd: null, pause: null, stop: null }
 
   constructor(
-    player: PlayerTransitions['player'],
-    dependencies: PlayerTransitionsDependencies
+    player: PlayerFading['player'],
+    dependencies: PlayerFadingDependencies
   ) {
     this.player = player
     this.dependencies = dependencies
