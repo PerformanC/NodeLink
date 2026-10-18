@@ -54,7 +54,6 @@ export default class InstagramSource {
             csrfToken: null,
             igAppId: null,
             fbLsd: null,
-            docId_post: '10015901848480474',
             jazoest: '2957'
         };
     }
@@ -71,8 +70,10 @@ export default class InstagramSource {
     async setup() {
         logger('info', 'Sources', 'Checking Instagram API parameters...');
         const cachedConfig = this.nodelink.credentialManager.get('instagram_api_config');
-        if (cachedConfig) {
-            this.apiConfig = { ...this.apiConfig, ...cachedConfig };
+        if (cachedConfig?.csrfToken && cachedConfig.igAppId && cachedConfig.fbLsd) {
+            this.apiConfig.csrfToken = cachedConfig.csrfToken;
+            this.apiConfig.igAppId = cachedConfig.igAppId;
+            this.apiConfig.fbLsd = cachedConfig.fbLsd;
             logger('info', 'Sources', 'Loaded Instagram parameters from CredentialManager.');
             return true;
         }
@@ -90,8 +91,8 @@ export default class InstagramSource {
             const csrfToken = body.match(/"csrf_token":"(.*?)"/)?.[1];
             const igAppId = body.match(/"appId":"(.*?)"/)?.[1];
             const fbLsd = body.match(/"LSD",\[\],{"token":"(.*?)"},/)?.[1] ||
-                body.match(/name="lsd" value="(.*?)"/)?.[1];
-            const docIdPost = body.match(/"PostPage",\[\],"(\d+)",/)?.[1];
+                body.match(/name="lsd" value="(.*?)"/)?.[1] ||
+                body.match(/<script\b[^>]*\bid="__eqmc"[^>]*>[^<]*"l":"([^"]+)"/)?.[1];
             if (!csrfToken || !igAppId || !fbLsd) {
                 logger('error', 'Sources', 'Could not fetch all required Instagram parameters (CSRF, AppID, LSD). Source will be unavailable.');
                 return false;
@@ -99,13 +100,10 @@ export default class InstagramSource {
             this.apiConfig.csrfToken = csrfToken;
             this.apiConfig.igAppId = igAppId;
             this.apiConfig.fbLsd = fbLsd;
-            if (docIdPost)
-                this.apiConfig.docId_post = docIdPost;
             this.nodelink.credentialManager.set('instagram_api_config', {
                 csrfToken: this.apiConfig.csrfToken,
                 igAppId: this.apiConfig.igAppId,
-                fbLsd: this.apiConfig.fbLsd,
-                docId_post: this.apiConfig.docId_post
+                fbLsd: this.apiConfig.fbLsd
             }, 24 * 60 * 60 * 1000);
             logger('info', 'Sources', 'Loaded Instagram source.');
             return true;
@@ -486,49 +484,6 @@ export default class InstagramSource {
         }
     }
     /**
-     * Encodes the GraphQL request body for a post query.
-     *
-     * @param shortcode - Instagram post shortcode.
-     * @returns URL-encoded form body string.
-     */
-    _encodePostRequestData(shortcode) {
-        const variables = JSON.stringify({
-            shortcode: shortcode,
-            fetch_comment_count: 'null',
-            fetch_related_profile_media_count: 'null',
-            parent_comment_count: 'null',
-            child_comment_count: 'null',
-            fetch_like_count: 'null',
-            fetch_tagged_user_count: 'null',
-            fetch_preview_comment_count: 'null',
-            has_threaded_comments: 'false',
-            hoisted_comment_id: 'null',
-            hoisted_reply_id: 'null'
-        });
-        const requestData = {
-            av: '0',
-            __user: '0',
-            __a: '1',
-            __req: '3',
-            dpr: '1',
-            __ccg: 'UNKNOWN',
-            lsd: this.apiConfig.fbLsd ?? '',
-            jazoest: this.apiConfig.jazoest,
-            doc_id: this.apiConfig.docId_post,
-            variables: variables,
-            fb_api_req_friendly_name: 'PolarisPostActionLoadPostQueryQuery',
-            fb_api_caller_class: 'RelayModern'
-        };
-        const params = new URLSearchParams();
-        for (const key in requestData) {
-            const value = requestData[key];
-            if (value !== undefined) {
-                params.append(key, value);
-            }
-        }
-        return params.toString();
-    }
-    /**
      * Fetches audio information from the authenticated Instagram audio API.
      *
      * Supports both original sound info and music info payloads. When the
@@ -792,73 +747,6 @@ export default class InstagramSource {
         };
     }
     /**
-     * Fetches a video from Instagram's logged-out clips query.
-     *
-     * @param postId - Instagram shortcode for the video.
-     * @returns Video data when found, otherwise `null`.
-     */
-    async _fetchFromClipsQuery(postId) {
-        try {
-            const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-            let mediaId = 0n;
-            for (const character of postId) {
-                mediaId = mediaId * 64n + BigInt(alphabet.indexOf(character));
-            }
-            const variables = JSON.stringify({
-                data: {
-                    chaining_mode: 'same_author',
-                    clips_media_id: mediaId.toString()
-                },
-                __relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider: false,
-                __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
-            });
-            const query = new URLSearchParams({
-                doc_id: '27695069083459414',
-                variables
-            });
-            const response = await makeRequest(`https://www.instagram.com/graphql/query/?${query.toString()}`, { method: 'GET' });
-            if (response.error || response.statusCode !== 200)
-                return null;
-            const responseData = typeof response.body === 'string'
-                ? JSON.parse(response.body)
-                : response.body;
-            const edges = responseData.data
-                ?.xdt_api__v1__clips__clips_on_logged_out_connection_v2?.edges;
-            const media = edges
-                ?.map((edge) => edge.node.media)
-                .find((item) => item?.code === postId);
-            if (media?.media_type !== 2)
-                return null;
-            const videoVersions = media.video_versions;
-            const videoUrl = videoVersions?.find((version) => typeof version.url === 'string')?.url;
-            if (!videoUrl)
-                return null;
-            const user = media.user;
-            const caption = media.caption;
-            const imageVersions = media.image_versions2;
-            const imageCandidates = imageVersions?.candidates;
-            const manifest = media.video_dash_manifest;
-            const manifestDuration = manifest?.match(/mediaPresentationDuration="PT([\d.]+)S"/)?.[1];
-            return {
-                data: {
-                    videoUrl,
-                    author: user?.username || 'User Unknown',
-                    length: Math.round(Number(manifestDuration || 0) * 1000),
-                    thumbnail: imageCandidates?.find((candidate) => typeof candidate.url === 'string')?.url || '',
-                    title: caption?.text || 'Instagram Video',
-                    isStream: false,
-                    isSeekable: true
-                },
-                exception: null
-            };
-        }
-        catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
-            logger('debug', 'Sources', `Instagram clips query failed for ${postId}: ${message}`);
-            return null;
-        }
-    }
-    /**
      * Fetches post/reel media information from the Instagram GraphQL API.
      *
      * Handles both single video posts and carousel posts with video children.
@@ -874,23 +762,67 @@ export default class InstagramSource {
                 exception: { message: 'Post ID not provided', severity: 'common' }
             };
         }
-        // this no longer works btw...
-        // only is working from clips, but there are ways to do it on /embed/ too.
+        if (!this.apiConfig.csrfToken ||
+            !this.apiConfig.igAppId ||
+            !this.apiConfig.fbLsd) {
+            if (!(await this.setup())) {
+                return {
+                    data: null,
+                    exception: {
+                        message: 'Instagram API parameters not available.',
+                        severity: 'fault'
+                    }
+                };
+            }
+        }
+        const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+        let shortcode = postId;
+        if (shortcode.length > 28) {
+            shortcode = shortcode.slice(0, -28);
+        }
+        let mediaId = 0n;
+        for (const character of shortcode) {
+            const index = alphabet.indexOf(character);
+            if (index < 0) {
+                return {
+                    data: null,
+                    exception: {
+                        message: 'Invalid Instagram shortcode.',
+                        severity: 'common'
+                    }
+                };
+            }
+            mediaId = mediaId * 64n + BigInt(index);
+        }
+        const friendlyName = 'PolarisLoggedOutDesktopWWWPostRootContentQuery';
         const headers = {
             Accept: '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
             'Content-Type': 'application/x-www-form-urlencoded',
-            'X-FB-Friendly-Name': 'PolarisPostActionLoadPostQueryQuery',
+            'X-FB-Friendly-Name': friendlyName,
             'X-CSRFToken': this.apiConfig.csrfToken ?? '',
             'X-IG-App-ID': this.apiConfig.igAppId ?? '',
+            'X-IG-Max-Touch-Points': '0',
             'X-FB-LSD': this.apiConfig.fbLsd ?? '',
-            'X-ASBD-ID': '129477',
+            'X-ASBD-ID': '359341',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
             'Sec-Fetch-Site': 'same-origin',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) Gecko/20100101 Firefox/159.0',
             Origin: 'https://www.instagram.com',
-            Referer: `https://www.instagram.com/${pathSegment || 'p'}/${postId}/`
+            Referer: `https://www.instagram.com/${pathSegment || 'reel'}/${postId}/`
         };
-        const encodedData = this._encodePostRequestData(postId);
+        const encodedData = new URLSearchParams({
+            __d: 'www',
+            __user: '0',
+            __a: '1',
+            __comet_req: '7',
+            lsd: this.apiConfig.fbLsd ?? '',
+            fb_api_caller_class: 'RelayModern',
+            fb_api_req_friendly_name: friendlyName,
+            variables: JSON.stringify({ media_id: mediaId.toString() }),
+            doc_id: '27776306792043877'
+        }).toString();
         let response = null;
         try {
             response = await http1makeRequest(this.apiConfig.apiUrl, {
@@ -902,18 +834,18 @@ export default class InstagramSource {
         }
         catch (e) {
             const message = e instanceof Error ? e.message : String(e);
-            logger('error', 'Sources', `Internal error during Instagram GraphQL request for postId ${postId}: ${message}`);
+            logger('error', 'Sources', `Internal error during Instagram Polaris request for postId ${postId}: ${message}`);
             return {
                 data: null,
                 exception: {
-                    message: `Internal error during GraphQL request: ${message}`,
+                    message: `Internal error during Polaris request: ${message}`,
                     severity: 'fault'
                 }
             };
         }
         if (response.error || response.statusCode !== 200) {
             const errorMsg = response.error ||
-                `GraphQL request failed with code ${response.statusCode}`;
+                `Polaris request failed with code ${response.statusCode}`;
             return {
                 data: null,
                 exception: {
@@ -926,31 +858,21 @@ export default class InstagramSource {
         let responseData = response.body;
         if (typeof responseData === 'string') {
             try {
-                responseData = JSON.parse(responseData);
+                responseData = JSON.parse(responseData.replace(/^for \(;;\);/, ''));
             }
             catch (_e) {
                 return {
                     data: null,
                     exception: {
-                        message: 'Invalid JSON response from GraphQL',
+                        message: 'Invalid JSON response from Polaris',
                         severity: 'fault'
                     }
                 };
             }
         }
         const data = responseData;
-        if (!data?.data) {
-            return {
-                data: null,
-                exception: {
-                    message: 'Invalid data structure in GraphQL JSON response',
-                    severity: 'fault'
-                }
-            };
-        }
-        const media = data.data
-            .xdt_shortcode_media;
-        if (media === null) {
+        const media = data?.data?.xig_polaris_media?.if_not_gated_logged_out;
+        if (!media) {
             return {
                 data: null,
                 exception: {
@@ -959,20 +881,16 @@ export default class InstagramSource {
                 }
             };
         }
-        let videoNode = null;
-        if (media.is_video) {
-            videoNode = media;
-        }
-        else if (media.__typename === 'XDTGraphSidecar' &&
-            media.edge_sidecar_to_children) {
-            const edges = media.edge_sidecar_to_children
-                .edges;
-            const videoEdge = edges?.find((edge) => edge.node.is_video);
-            if (videoEdge) {
-                videoNode = videoEdge.node;
+        let videoNode = media;
+        const carouselMedia = media.carousel_media;
+        if (Array.isArray(carouselMedia)) {
+            const videoChild = carouselMedia.find((item) => Array.isArray(item?.video_versions) && item.video_versions.length > 0);
+            if (videoChild) {
+                videoNode = videoChild;
             }
         }
-        if (!videoNode) {
+        const videoUrl = videoNode.video_versions?.find((version) => typeof version.url === 'string')?.url;
+        if (!videoUrl) {
             return {
                 data: null,
                 exception: {
@@ -981,28 +899,21 @@ export default class InstagramSource {
                 }
             };
         }
-        const videoUrl = videoNode.video_url;
-        if (!videoUrl) {
-            return {
-                data: null,
-                exception: {
-                    message: 'Video URL not found in API response.',
-                    severity: 'common'
-                }
-            };
-        }
-        const captionEdges = media.edge_media_to_caption?.edges;
-        const title = captionEdges?.[0]?.node?.text || 'Instagram Video';
-        const owner = media.owner;
+        const user = videoNode.user ?? media.user;
+        const caption = videoNode.caption ?? media.caption;
+        const imageVersions = videoNode.image_versions2 ?? media.image_versions2;
+        const thumbnail = imageVersions?.candidates?.find((candidate) => typeof candidate.url === 'string')?.url;
+        const manifest = videoNode.video_dash_manifest ?? media.video_dash_manifest;
+        const manifestDuration = typeof manifest === 'string'
+            ? manifest.match(/mediaPresentationDuration="PT([\d.]+)S"/)?.[1]
+            : undefined;
         return {
             data: {
-                videoUrl: videoUrl,
-                author: owner?.username || 'User Unknown',
-                length: (videoNode.video_duration || 0) * 1000,
-                thumbnail: videoNode.display_url ||
-                    media.display_url ||
-                    '',
-                title: title,
+                videoUrl,
+                author: user?.username || 'User Unknown',
+                length: Math.round(Number(manifestDuration || 0) * 1000),
+                thumbnail: thumbnail || '',
+                title: caption?.text || 'Instagram Video',
                 isStream: false,
                 isSeekable: true
             },
@@ -1036,9 +947,9 @@ export default class InstagramSource {
         let trackData = null;
         let fetchError = null;
         if (type === 'post') {
-            const clipsResult = await this._fetchFromClipsQuery(contentId);
+            ;
             ({ data: trackData, exception: fetchError } =
-                clipsResult ?? (await this._fetchFromGraphQL(contentId, pathSegment)));
+                await this._fetchFromGraphQL(contentId, pathSegment));
         }
         else if (type === 'audio') {
             ;
@@ -1141,9 +1052,9 @@ export default class InstagramSource {
         let trackData = null;
         let fetchError = null;
         if (type === 'post') {
-            const clipsResult = await this._fetchFromClipsQuery(contentId);
+            ;
             ({ data: trackData, exception: fetchError } =
-                clipsResult ?? (await this._fetchFromGraphQL(contentId, pathSegment)));
+                await this._fetchFromGraphQL(contentId, pathSegment));
         }
         else if (type === 'audio') {
             ;
