@@ -71,6 +71,9 @@ const SEPARATORS = [' - ', ' – ', ' — ', ' ~ ']
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
 
+const DEFAULT_COOKIE =
+  'AWSELB=unknown; x-mxm-user-id=undefined; x-mxm-token-guid=undefined; mxm-encrypted-token='
+
 const isAuthCode = (code: number): boolean => code === 401 || code === 403
 
 const extractMacroCalls = (body: MxmMacroBody | unknown) => {
@@ -345,12 +348,6 @@ export default class MusixmatchLyrics {
       : Array.from(this.cookies, ([k, v]) => `${k}=${v}`).join('; ')
   }
 
-  /* INFO: Musixmatch's AWS edge returns 403 for the old placeholder cookie, so only send cookies it actually issued */
-  private _cookieHeader(): { cookie?: string } {
-    const cookie = this._getCookies()
-    return cookie ? { cookie } : {}
-  }
-
   private async _fetchToken(): Promise<string> {
     const url = _buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID })
     const { statusCode, headers, body } = await http1makeRequest(url, {
@@ -358,6 +355,7 @@ export default class MusixmatchLyrics {
       headers: {
         accept: '*/*',
         'accept-language': 'en',
+        cookie: DEFAULT_COOKIE,
         'user-agent': DEFAULT_UA
       }
     })
@@ -494,7 +492,7 @@ export default class MusixmatchLyrics {
       headers: {
         accept: 'application/json',
         'user-agent': DEFAULT_UA,
-        ...this._cookieHeader()
+        cookie: this._getCookies()
       }
     })
 
@@ -527,7 +525,7 @@ export default class MusixmatchLyrics {
           headers: {
             accept: 'application/json',
             'user-agent': DEFAULT_UA,
-            ...this._cookieHeader()
+            cookie: this._getCookies()
           }
         })
 
