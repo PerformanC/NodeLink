@@ -76,6 +76,17 @@ export default class LyricsManager {
             await fs.mkdir(lyricsDir, { recursive: true });
         }
     }
+    /* INFO: A provider that throws must not abort the search, so a throw becomes an error result like any other failure */
+    async _fetchFrom(source, name, trackInfo, language) {
+        try {
+            return await source.getLyrics(trackInfo, language);
+        }
+        catch (e) {
+            const message = getErrorMessage(e);
+            logger('warn', 'Lyrics', `Lyrics source ${name} threw: ${message}`);
+            return { loadType: 'error', data: { message, severity: 'fault' } };
+        }
+    }
     async loadLyrics(decodedTrack, language, skipTrackSource = false, requestedSource) {
         if (!decodedTrack?.info?.sourceName || !decodedTrack.info?.uri) {
             logger('warn', 'Lyrics', 'Invalid track object provided to loadLyrics', decodedTrack);
@@ -133,6 +144,8 @@ export default class LyricsManager {
             : undefined;
         const isYouTube = sourceName === 'youtube' || sourceName === 'ytmusic';
         let youtubeCaptions = null;
+        let lastError = null;
+        let sawEmpty = false;
         if (lyricsSource && !skipTrackSource) {
             if (isYouTube) {
                 try {
@@ -146,12 +159,16 @@ export default class LyricsManager {
                 }
             }
             else {
-                const lyrics = await lyricsSource.getLyrics(trackInfo, language);
-                if (lyrics && lyrics.loadType !== 'empty') {
-                    if (lyrics.loadType === 'lyrics') {
-                        lyrics.data.provider = sourceName;
-                    }
+                const lyrics = await this._fetchFrom(lyricsSource, sourceName, trackInfo, language);
+                if (lyrics?.loadType === 'lyrics') {
+                    lyrics.data.provider = sourceName;
                     return lyrics;
+                }
+                if (lyrics?.loadType === 'error') {
+                    lastError = lyrics;
+                }
+                else {
+                    sawEmpty = true;
                 }
             }
         }
@@ -164,7 +181,11 @@ export default class LyricsManager {
             if (!source || name === sourceName)
                 continue;
             logger('debug', 'Lyrics', `Trying lyrics source ${name} for ${trackInfo?.title || 'Unknown Title'}.`);
-            const lyrics = await source.getLyrics(trackInfo, language);
+            const lyrics = await this._fetchFrom(source, name, trackInfo, language);
+            if (lyrics?.loadType === 'error') {
+                lastError = lyrics;
+                continue;
+            }
             if (lyrics && lyrics.loadType !== 'empty') {
                 if (isYouTube &&
                     youtubeCaptions?.loadType === 'lyrics' &&
@@ -186,10 +207,15 @@ export default class LyricsManager {
                 }
                 return lyrics;
             }
+            sawEmpty = true;
         }
         if (isYouTube && youtubeCaptions?.loadType === 'lyrics') {
             youtubeCaptions.data.provider = sourceName;
             return youtubeCaptions;
+        }
+        /* INFO: Only report a failure when every provider that answered failed; otherwise the track simply has no lyrics */
+        if (lastError && !sawEmpty) {
+            return lastError;
         }
         logger('debug', 'Lyrics', `No lyrics found for ${trackInfo?.title || 'Unknown Track'}`);
         return { loadType: 'empty', data: {} };
