@@ -414,7 +414,7 @@ function extractThumbnail(renderer, videoId) {
         }
     }
     if (!resultUrl && videoId) {
-        resultUrl = `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+        resultUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
     }
     return resultUrl;
 }
