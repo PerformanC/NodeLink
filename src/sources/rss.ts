@@ -95,6 +95,16 @@ interface RssPlaylistData {
     name: string
 
     /**
+     * Playlist author.
+     */
+    author: string
+
+    /**
+     * Playlist thumbnail.
+     */
+    thumbnail: string
+
+    /**
      * Default selected track index.
      */
     selectedTrack: number
@@ -246,7 +256,7 @@ export default class RssSource {
       }
 
       const playlistData: RssPlaylistData = {
-        info: { name: channelTitle, selectedTrack: 0 },
+        info: { name: channelTitle, author: '', thumbnail: '', selectedTrack: 0 },
         pluginInfo: { feedUrl: url },
         tracks
       }

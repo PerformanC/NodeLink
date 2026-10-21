@@ -504,7 +504,7 @@ export default class AnghamiSource {
   ): Promise<{
     loadType: 'playlist'
     data: {
-      info: { name: string; selectedTrack: number }
+      info: { name: string; author: string; thumbnail: string; selectedTrack: number }
       pluginInfo: Record<string, unknown>
       tracks: AnghamiTrackData[]
     }
@@ -543,7 +543,7 @@ export default class AnghamiSource {
 
     return {
       loadType: 'playlist',
-      data: { info: { name, selectedTrack: 0 }, pluginInfo: {}, tracks }
+      data: { info: { name, author: '', thumbnail: '', selectedTrack: 0 }, pluginInfo: {}, tracks }
     }
   }
 
@@ -719,6 +719,7 @@ export default class AnghamiSource {
             this.asString(artistBody.name) ??
             this.asString(artistBody.title) ??
             'Artist Top Tracks',
+          author: '', thumbnail: '',
           selectedTrack: 0
         },
         pluginInfo: {},

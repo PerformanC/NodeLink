@@ -561,7 +561,7 @@ export default class BilibiliSource implements SourceInstance {
     return {
       loadType: 'playlist',
       data: {
-        info: { name: videoData.title, selectedTrack: 0 },
+        info: { name: videoData.title, author: '', thumbnail: '', selectedTrack: 0 },
         tracks,
         pluginInfo: {}
       }
@@ -730,7 +730,7 @@ export default class BilibiliSource implements SourceInstance {
         return {
           loadType: 'playlist',
           data: {
-            info: { name: seasonTitle, selectedTrack: 0 },
+            info: { name: seasonTitle, author: '', thumbnail: '', selectedTrack: 0 },
             tracks,
             pluginInfo: {}
           }
@@ -808,7 +808,7 @@ export default class BilibiliSource implements SourceInstance {
         return {
           loadType: 'playlist',
           data: {
-            info: { name: `Uploads by ${firstAuthor}`, selectedTrack: 0 },
+            info: { name: `Uploads by ${firstAuthor}`, author: '', thumbnail: '', selectedTrack: 0 },
             tracks,
             pluginInfo: {}
           }
@@ -929,7 +929,7 @@ export default class BilibiliSource implements SourceInstance {
         return {
           loadType: 'playlist',
           data: {
-            info: { name: result.season_title, selectedTrack: 0 },
+            info: { name: result.season_title, author: '', thumbnail: '', selectedTrack: 0 },
             tracks,
             pluginInfo: {}
           }
@@ -1046,6 +1046,7 @@ export default class BilibiliSource implements SourceInstance {
           data: {
             info: {
               name: infoRes?.data?.title || 'Bilibili Album',
+              author: '', thumbnail: '',
               selectedTrack: 0
             },
             tracks,
@@ -1190,7 +1191,7 @@ export default class BilibiliSource implements SourceInstance {
         return {
           loadType: 'playlist',
           data: {
-            info: { name: `Uploads by ${firstAuthor}`, selectedTrack: 0 },
+            info: { name: `Uploads by ${firstAuthor}`, author: '', thumbnail: '', selectedTrack: 0 },
             tracks,
             pluginInfo: {}
           }

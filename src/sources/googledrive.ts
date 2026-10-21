@@ -393,7 +393,7 @@ export default class GoogleDriveSource implements SourceInstance {
         return {
           loadType: 'playlist',
           data: {
-            info: { name: embeddedResult.title, selectedTrack: 0 },
+            info: { name: embeddedResult.title, author: '', thumbnail: '', selectedTrack: 0 },
             tracks: embeddedResult.tracks,
             pluginInfo: {}
           }
@@ -511,7 +511,7 @@ export default class GoogleDriveSource implements SourceInstance {
       return {
         loadType: 'playlist',
         data: {
-          info: { name: title, selectedTrack: 0 },
+          info: { name: title, author: '', thumbnail: '', selectedTrack: 0 },
           tracks,
           pluginInfo: {}
         }

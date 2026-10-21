@@ -250,6 +250,7 @@ export default class BandcampSource {
           info: {
             name:
               this.normalizeText(tralbum.current?.title) ?? 'BandCamp Playlist',
+            author: '', thumbnail: '',
             selectedTrack: 0
           },
           pluginInfo: {} as Record<string, unknown>,

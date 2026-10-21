@@ -558,6 +558,16 @@ interface DeezerPlaylistData {
     name: string
 
     /**
+     * Playlist author.
+     */
+    author: string
+
+    /**
+     * Playlist thumbnail.
+     */
+    thumbnail: string
+
+    /**
      * Default selected track index.
      */
     selectedTrack: number
@@ -860,7 +870,7 @@ export default class DeezerSource {
       if (tracks.length === 0) return { loadType: 'empty', data: {} }
 
       const playlist: DeezerPlaylistData = {
-        info: { name: 'Deezer Recommendations', selectedTrack: 0 },
+        info: { name: 'Deezer Recommendations', author: '', thumbnail: '', selectedTrack: 0 },
         pluginInfo: { type: 'recommendations' },
         tracks
       }
@@ -963,6 +973,7 @@ export default class DeezerSource {
           data: {
             info: {
               name: entity.title ?? 'Unknown Deezer Collection',
+              author: '', thumbnail: '',
               selectedTrack: 0
             },
             pluginInfo: {} as Record<string, unknown>,
@@ -999,6 +1010,7 @@ export default class DeezerSource {
           data: {
             info: {
               name: `${entity.name ?? 'Unknown Artist'}'s Top Tracks`,
+              author: '', thumbnail: '',
               selectedTrack: 0
             },
             pluginInfo: {} as Record<string, unknown>,

@@ -584,7 +584,7 @@ export default class GaanaSource {
     return {
       loadType: 'playlist',
       data: {
-        info: { name: infoName, selectedTrack: 0 },
+        info: { name: infoName, author: '', thumbnail: '', selectedTrack: 0 },
         pluginInfo: { type, url, artwork, author: author || undefined },
         tracks
       }

@@ -423,7 +423,7 @@ export default class YandexMusicSource implements SourceInstance {
     return {
       loadType: 'playlist',
       data: {
-        info: { name: 'Yandex Music Recommendations', selectedTrack: 0 },
+        info: { name: 'Yandex Music Recommendations', author: '', thumbnail: '', selectedTrack: 0 },
         pluginInfo: { type: 'recommendations' },
         tracks
       }
@@ -775,7 +775,7 @@ export default class YandexMusicSource implements SourceInstance {
     return {
       loadType: 'playlist',
       data: {
-        info: { name: album.title || 'Yandex Music Album', selectedTrack: 0 },
+        info: { name: album.title || 'Yandex Music Album', author: '', thumbnail: '', selectedTrack: 0 },
         pluginInfo: { type: 'album' },
         tracks
       }
@@ -821,7 +821,7 @@ export default class YandexMusicSource implements SourceInstance {
     return {
       loadType: 'playlist',
       data: {
-        info: { name: `${name}'s Top Tracks`, selectedTrack: 0 },
+        info: { name: `${name}'s Top Tracks`, author: '', thumbnail: '', selectedTrack: 0 },
         pluginInfo: { type: 'artist' },
         tracks
       }
@@ -928,7 +928,7 @@ export default class YandexMusicSource implements SourceInstance {
     return {
       loadType: 'playlist',
       data: {
-        info: { name: title, selectedTrack: 0 },
+        info: { name: title, author: '', thumbnail: '', selectedTrack: 0 },
         pluginInfo: { type: 'playlist' },
         tracks
       }

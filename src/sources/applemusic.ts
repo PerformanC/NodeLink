@@ -493,6 +493,7 @@ export default class AppleMusicSource implements SourceInstance {
       data: {
         info: {
           name: album.attributes?.name || 'Unknown Album',
+          author: '', thumbnail: '',
           selectedTrack: 0
         },
         tracks,
@@ -527,6 +528,7 @@ export default class AppleMusicSource implements SourceInstance {
       data: {
         info: {
           name: playlist.attributes?.name || 'Unknown Playlist',
+          author: '', thumbnail: '',
           selectedTrack: 0
         },
         tracks,
@@ -564,6 +566,7 @@ export default class AppleMusicSource implements SourceInstance {
       data: {
         info: {
           name: `${artist.attributes?.name}'s Top Tracks`,
+          author: '', thumbnail: '',
           selectedTrack: 0
         },
         tracks,

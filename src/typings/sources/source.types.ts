@@ -433,6 +433,10 @@ export interface PlaylistData {
   info: {
     /** Playlist name. */
     name: string
+    /** Playlist author. */
+    author: string
+    /** Playlist thumbnail. */
+    thumbnail: string
     /** Selected track index. */
     selectedTrack: number
   }

@@ -305,7 +305,7 @@ export default class LastFMSource {
         return {
           loadType: 'playlist',
           data: {
-            info: { name: `${collectionTitle} - ${artist}`, selectedTrack: 0 },
+            info: { name: `${collectionTitle} - ${artist}`, author: '', thumbnail: '', selectedTrack: 0 },
             pluginInfo: {} as Record<string, unknown>,
             tracks
           }

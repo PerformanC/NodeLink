@@ -679,6 +679,7 @@ export default class SoundCloudSource implements SoundCloudSourceState {
       data: {
         info: {
           name: body.title || 'Untitled playlist',
+          author: '', thumbnail: '',
           selectedTrack: 0
         },
         pluginInfo: {},
