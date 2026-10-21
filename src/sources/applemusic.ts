@@ -528,7 +528,8 @@ export default class AppleMusicSource implements SourceInstance {
       data: {
         info: {
           name: playlist.attributes?.name || 'Unknown Playlist',
-          author: '', thumbnail: '',
+          author: playlist.attributes?.curatorName?.trim() || '',
+          thumbnail: this.parseArtwork(playlist.attributes?.artwork) || '',
           selectedTrack: 0
         },
         tracks,
@@ -594,7 +595,13 @@ export default class AppleMusicSource implements SourceInstance {
       parent.type === 'albums' ? this.albumPageLimit : this.playlistPageLimit
     const allowed = maxPages > 0 ? Math.min(pages, maxPages) : pages
 
-    const artwork = this.parseArtwork(parent.attributes?.artwork)
+    // Album tracks share the album's cover. Playlist tracks come from many
+    // albums and carry their own artwork, so the playlist cover must not
+    // replace it.
+    const artwork =
+      parent.type === 'albums'
+        ? this.parseArtwork(parent.attributes?.artwork)
+        : null
     const editorialVideo = this.extractVideoUrl(parent.attributes)
 
     const results = baseTracks
