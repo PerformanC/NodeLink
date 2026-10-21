@@ -282,9 +282,28 @@ export default class DeezerSource {
                     tracksResponse.data.length === 0) {
                     return this.createException(tracksError ?? 'Could not fetch playlist tracks.', 'common');
                 }
-                const artworkUrl = entity.cover_xl ?? entity.picture_xl ?? null;
+                // Album track listings don't embed an `album` object, so their tracks
+                // fall back to the album's own cover. Playlist tracks do carry one, so
+                // they must keep their own album cover instead of the playlist picture.
+                const trackArtworkFallback = type === 'album'
+                    ? (entity.cover_xl ??
+                        entity.cover_big ??
+                        entity.cover_medium ??
+                        null)
+                    : null;
+                const author = type === 'album'
+                    ? entity.artist?.name?.trim() || ''
+                    : entity.creator?.name?.trim() || entity.user?.name?.trim() || '';
+                const thumbnail = entity.cover_xl ||
+                    entity.cover_big ||
+                    entity.cover_medium ||
+                    entity.picture_xl ||
+                    entity.picture_big ||
+                    entity.picture_medium ||
+                    entity.picture ||
+                    '';
                 const tracks = tracksResponse.data
-                    .map((item) => this.buildTrack(item, artworkUrl))
+                    .map((item) => this.buildTrack(item, trackArtworkFallback))
                     .filter((track) => track !== null);
                 if (tracks.length === 0)
                     return { loadType: 'empty', data: {} };
@@ -293,7 +312,8 @@ export default class DeezerSource {
                     data: {
                         info: {
                             name: entity.title ?? 'Unknown Deezer Collection',
-                            author: '', thumbnail: '',
+                            author,
+                            thumbnail,
                             selectedTrack: 0
                         },
                         pluginInfo: {},
