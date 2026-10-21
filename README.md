@@ -80,6 +80,10 @@ docker-compose up -d
 # Or using Docker directly
 docker build -t nodelink .
 docker run -p 2333:2333 nodelink
+
+# Or using pre-built images (Release or Dev/Snapshot)
+docker run -p 2333:2333 ghcr.io/performanc/nodelink:latest # Stable release
+docker run -p 2333:2333 ghcr.io/performanc/nodelink:dev    # Bleeding edge dev build
 ```
 
 **See the Docker guide:** [nodelink.js.org/docs/advanced/docker](https://nodelink.js.org/docs/advanced/docker)

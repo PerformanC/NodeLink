@@ -7,7 +7,7 @@ import type {
   ApiSendResponse
 } from '../typings/api/api.types.ts'
 import type { GitInfo, SemverInfo } from '../typings/utils.types.ts'
-import { getVersion } from '../utils.ts'
+import { getDependencyVersion, getVersion } from '../utils.ts'
 
 /**
  * Boolean flag registry describing which audio filters are enabled.
@@ -338,7 +338,10 @@ async function buildInfoResponse(
     node: process.version,
     voice: {
       name: '@performanc/voice',
-      version: 'github:PerformanC/voice'
+      version:
+        getDependencyVersion('@performanc/voice') !== 'unknown'
+          ? getDependencyVersion('@performanc/voice')
+          : 'github:PerformanC/voice'
     },
     isNodelink: true,
     sourceManagers: await getSourceManagers(nodelink),
