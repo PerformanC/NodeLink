@@ -243,7 +243,7 @@ export default class QobuzSource {
       return {
         loadType: 'playlist',
         data: {
-          info: { name: 'Qobuz Recommendations', selectedTrack: 0 },
+          info: { name: 'Qobuz Recommendations', author: '', thumbnail: '', selectedTrack: 0 },
           pluginInfo: { type: 'recommendations' },
           tracks
         }
@@ -369,6 +369,7 @@ export default class QobuzSource {
       data: {
         info: {
           name: this.asString(data.title) || 'Unknown Album',
+          author: '', thumbnail: '',
           selectedTrack: 0
         },
         tracks,
@@ -406,6 +407,7 @@ export default class QobuzSource {
       data: {
         info: {
           name: this.asString(data.name) || 'Unknown Playlist',
+          author: '', thumbnail: '',
           selectedTrack: 0
         },
         tracks,
@@ -442,7 +444,7 @@ export default class QobuzSource {
     return {
       loadType: 'playlist',
       data: {
-        info: { name: `${artistName}'s Top Tracks`, selectedTrack: 0 },
+        info: { name: `${artistName}'s Top Tracks`, author: '', thumbnail: '', selectedTrack: 0 },
         tracks,
         pluginInfo: {} as Record<string, unknown>
       }

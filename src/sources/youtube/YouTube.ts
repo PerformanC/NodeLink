@@ -767,7 +767,7 @@ export default class YouTubeSource {
         return {
           loadType: 'playlist',
           data: {
-            info: { name: 'YouTube Recommendations', selectedTrack: 0 },
+            info: { name: 'YouTube Recommendations', author: '', thumbnail: '', selectedTrack: 0 },
             pluginInfo: { type: 'recommendations' },
             tracks
           }
