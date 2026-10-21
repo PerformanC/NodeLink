@@ -1002,6 +1002,27 @@ export default class SpotifySource {
             : { loadType: 'empty', data: {} };
     }
     /**
+     * Picks the highest-resolution image URL from a list of sources.
+     * Sources without dimensions (e.g. user-uploaded playlist covers) count as
+     * width 0, so the first one wins when none report a size.
+     *
+     * @param sources - Image sources from a Spotify GraphQL response.
+     * @returns The best URL, or an empty string when there is none.
+     * @internal
+     */
+    _pickLargestImage(sources) {
+        let best = '';
+        let bestWidth = -1;
+        for (const source of sources ?? []) {
+            const width = source.width ?? 0;
+            if (source.url && width > bestWidth) {
+                best = source.url;
+                bestWidth = width;
+            }
+        }
+        return best;
+    }
+    /**
      * Resolves a playlist collection and its wrapped tracks.
      *
      * @param id - Playlist identifier.
@@ -1012,6 +1033,8 @@ export default class SpotifySource {
         const maxTracks = this.nodelink.options.playback.maxPlaylistLength || 1000;
         const tracks = [];
         let name = 'Unknown Playlist';
+        let author = '';
+        let thumbnail = '';
         if (this.anonymousToken || id.startsWith('37i9dQZ')) {
             let offset = 0;
             const limit = 100;
@@ -1027,6 +1050,8 @@ export default class SpotifySource {
                     break;
                 if (offset === 0) {
                     name = data.playlistV2.name;
+                    author = data.playlistV2.ownerV2?.data?.name?.trim() || '';
+                    thumbnail = this._pickLargestImage(data.playlistV2.images?.items?.[0]?.sources);
                     total = data.playlistV2.content?.totalCount || 0;
                 }
                 const items = data.playlistV2.content?.items || [];
@@ -1052,7 +1077,7 @@ export default class SpotifySource {
                 return {
                     loadType: 'playlist',
                     data: {
-                        info: { name, author: '', thumbnail: '', selectedTrack: 0 },
+                        info: { name, author, thumbnail, selectedTrack: 0 },
                         tracks,
                         pluginInfo: {}
                     }
@@ -1060,8 +1085,11 @@ export default class SpotifySource {
             }
         }
         const metaRes = await this._apiRequest(`/playlists/${id}?market=${this.market}`);
-        if (metaRes)
+        if (metaRes) {
             name = metaRes.name;
+            author = metaRes.owner?.display_name?.trim() || author;
+            thumbnail = metaRes.images?.[0]?.url || thumbnail;
+        }
         let nextUrl = `/playlists/${id}/items?market=${this.market}`;
         while (nextUrl && tracks.length < maxTracks) {
             const itemsRes = await this._apiRequest(nextUrl);
@@ -1085,7 +1113,7 @@ export default class SpotifySource {
             ? {
                 loadType: 'playlist',
                 data: {
-                    info: { name, author: '', thumbnail: '', selectedTrack: 0 },
+                    info: { name, author, thumbnail, selectedTrack: 0 },
                     tracks,
                     pluginInfo: {}
                 }
