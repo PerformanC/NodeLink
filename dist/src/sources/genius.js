@@ -140,6 +140,7 @@ export default class GeniusSource {
             const playlist = {
                 info: {
                     name: `${title} - ${artist} (Genius)`,
+                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 pluginInfo: {},

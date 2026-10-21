@@ -294,6 +294,7 @@ export default class SourcesManager {
         const playlistData = {
             info: {
                 name: `Search results for: ${query}`,
+                author: '', thumbnail: '',
                 selectedTrack: -1
             },
             pluginInfo: {},

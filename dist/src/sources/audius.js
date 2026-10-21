@@ -346,6 +346,7 @@ export default class AudiusSource {
                 data: {
                     info: {
                         name: playlistData.playlist_name || 'Audius Playlist',
+                        author: '', thumbnail: '',
                         selectedTrack: 0
                     },
                     pluginInfo: {
@@ -392,6 +393,7 @@ export default class AudiusSource {
                 data: {
                     info: {
                         name: albumData.playlist_name || 'Audius Album',
+                        author: '', thumbnail: '',
                         selectedTrack: 0
                     },
                     pluginInfo: {
@@ -457,6 +459,7 @@ export default class AudiusSource {
                 data: {
                     info: {
                         name: `${user.name || artist}'s Top Tracks`,
+                        author: '', thumbnail: '',
                         selectedTrack: 0
                     },
                     pluginInfo: {

@@ -1889,7 +1889,7 @@ export class BaseClient {
         return {
             loadType: 'playlist',
             data: {
-                info: { name: playlistTitle, selectedTrack },
+                info: { name: playlistTitle, author: '', thumbnail: '', selectedTrack },
                 pluginInfo: {},
                 tracks
             }
@@ -2009,7 +2009,7 @@ export class BaseClient {
         return {
             loadType: 'playlist',
             data: {
-                info: { name: playlistTitle, selectedTrack: 0 },
+                info: { name: playlistTitle, author: '', thumbnail: '', selectedTrack: 0 },
                 pluginInfo: {},
                 tracks
             }

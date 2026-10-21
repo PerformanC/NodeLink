@@ -255,7 +255,7 @@ export default class TidalSource {
             return {
                 loadType: 'playlist',
                 data: {
-                    info: { name: `Mix: ${mixId}`, selectedTrack: 0 },
+                    info: { name: `Mix: ${mixId}`, author: '', thumbnail: '', selectedTrack: 0 },
                     pluginInfo: { type: 'recommendations' },
                     tracks
                 }
@@ -426,6 +426,7 @@ export default class TidalSource {
             data: {
                 info: {
                     name: this.asString(albumData.title) || 'Unknown Album',
+                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 tracks,
@@ -486,6 +487,7 @@ export default class TidalSource {
             data: {
                 info: {
                     name: this.asString(playlistData.title) || 'Unknown Playlist',
+                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 tracks,
@@ -529,7 +531,7 @@ export default class TidalSource {
         return {
             loadType: 'playlist',
             data: {
-                info: { name, selectedTrack: 0 },
+                info: { name, author: '', thumbnail: '', selectedTrack: 0 },
                 tracks,
                 pluginInfo: {}
             }

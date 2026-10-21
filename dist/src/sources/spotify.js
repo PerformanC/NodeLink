@@ -962,7 +962,7 @@ export default class SpotifySource {
                 return {
                     loadType: 'playlist',
                     data: {
-                        info: { name, selectedTrack: 0 },
+                        info: { name, author: '', thumbnail: '', selectedTrack: 0 },
                         tracks,
                         pluginInfo: {}
                     }
@@ -994,7 +994,7 @@ export default class SpotifySource {
             ? {
                 loadType: 'playlist',
                 data: {
-                    info: { name, selectedTrack: 0 },
+                    info: { name, author: '', thumbnail: '', selectedTrack: 0 },
                     tracks,
                     pluginInfo: {}
                 }
@@ -1052,7 +1052,7 @@ export default class SpotifySource {
                 return {
                     loadType: 'playlist',
                     data: {
-                        info: { name, selectedTrack: 0 },
+                        info: { name, author: '', thumbnail: '', selectedTrack: 0 },
                         tracks,
                         pluginInfo: {}
                     }
@@ -1085,7 +1085,7 @@ export default class SpotifySource {
             ? {
                 loadType: 'playlist',
                 data: {
-                    info: { name, selectedTrack: 0 },
+                    info: { name, author: '', thumbnail: '', selectedTrack: 0 },
                     tracks,
                     pluginInfo: {}
                 }
@@ -1116,6 +1116,7 @@ export default class SpotifySource {
                     data: {
                         info: {
                             name: `${data.artistUnion.profile.name}'s Top Tracks`,
+                            author: '', thumbnail: '',
                             selectedTrack: 0
                         },
                         tracks,
@@ -1252,6 +1253,7 @@ export default class SpotifySource {
                         data: {
                             info: {
                                 name: `Spotify Recommendations for ${id}`,
+                                author: '', thumbnail: '',
                                 selectedTrack: 0
                             },
                             tracks,

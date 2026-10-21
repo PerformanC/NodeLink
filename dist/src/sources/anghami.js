@@ -437,7 +437,7 @@ export default class AnghamiSource {
             'Unknown Playlist';
         return {
             loadType: 'playlist',
-            data: { info: { name, selectedTrack: 0 }, pluginInfo: {}, tracks }
+            data: { info: { name, author: '', thumbnail: '', selectedTrack: 0 }, pluginInfo: {}, tracks }
         };
     }
     extractCollectionTracks(body) {
@@ -588,6 +588,7 @@ export default class AnghamiSource {
                     name: this.asString(artistBody.name) ??
                         this.asString(artistBody.title) ??
                         'Artist Top Tracks',
+                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 pluginInfo: {},

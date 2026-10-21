@@ -175,6 +175,7 @@ export default class BandcampSource {
                 const playlist = {
                     info: {
                         name: this.normalizeText(tralbum.current?.title) ?? 'BandCamp Playlist',
+                        author: '', thumbnail: '',
                         selectedTrack: 0
                     },
                     pluginInfo: {},

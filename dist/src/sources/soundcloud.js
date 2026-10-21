@@ -480,6 +480,7 @@ export default class SoundCloudSource {
             data: {
                 info: {
                     name: body.title || 'Untitled playlist',
+                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 pluginInfo: {},

@@ -345,7 +345,7 @@ class MonochromeSource {
             return tracks.length > 0
                 ? {
                     loadType: 'playlist',
-                    data: { info: { name, selectedTrack: 0 }, pluginInfo: {}, tracks }
+                    data: { info: { name, author: '', thumbnail: '', selectedTrack: 0 }, pluginInfo: {}, tracks }
                 }
                 : { loadType: 'empty', data: {} };
         }
