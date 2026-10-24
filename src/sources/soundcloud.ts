@@ -20,7 +20,13 @@ import type {
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
-import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
+import {
+  capTotalTracks,
+  encodeTrack,
+  http1makeRequest,
+  logger,
+  makeRequest
+} from '../utils.ts'
 
 const BASE_URL = 'https://api-v2.soundcloud.com'
 const SOUNDCLOUD_URL = 'https://soundcloud.com'
@@ -690,7 +696,10 @@ export default class SoundCloudSource implements SoundCloudSourceState {
               tracks.find((track) => track.info.artworkUrl)?.info.artworkUrl
           ),
           author: body.user?.username?.trim() || '',
-          totalTracks: body.track_count ?? body.tracks?.length ?? tracks.length
+          totalTracks: capTotalTracks(
+            body.track_count ?? body.tracks?.length ?? tracks.length,
+            limit
+          )
         },
         tracks
       }

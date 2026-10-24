@@ -1,6 +1,6 @@
 import { PassThrough } from 'node:stream';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
 import CipherManager from './CipherManager.js';
 import { checkURLType, YOUTUBE_CONSTANTS, YOUTUBE_WEBM_ITAGS } from './common.js';
 import YouTubeLiveChat from './LiveChat.js';
@@ -626,7 +626,7 @@ export default class YouTubeSource {
             url: current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
             artworkUrl: current.artworkUrl || meta.thumbnail,
             author: current.author || meta.author,
-            totalTracks: current.totalTracks ?? playlist.tracks.length
+            totalTracks: capTotalTracks(current.totalTracks ?? playlist.tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
         };
     }
     /**

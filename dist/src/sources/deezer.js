@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import BlowfishCBC from '../decrypters/blowfish-cbc.js';
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
  */
@@ -320,7 +320,7 @@ export default class DeezerSource {
                             url: entity.link ?? `https://www.deezer.com/${type}/${id}`,
                             artworkUrl: thumbnail,
                             author,
-                            totalTracks: entity.nb_tracks ?? tracks.length
+                            totalTracks: capTotalTracks(entity.nb_tracks ?? tracks.length, this.config.playback?.maxPlaylistLength)
                         },
                         tracks
                     }

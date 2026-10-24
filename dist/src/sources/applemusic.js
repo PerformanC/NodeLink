@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest } from '../utils.js';
 /**
  * Apple Music source implementation.
  * Provides integration with the Apple Music Catalog API for track resolution and searching.
@@ -367,7 +367,7 @@ export default class AppleMusicSource {
                         `https://music.apple.com/${country}/playlist/${id}`,
                     artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
                     author: playlist.attributes?.curatorName?.trim() || '',
-                    totalTracks: playlist.relationships?.tracks?.meta?.total ?? tracks.length
+                    totalTracks: capTotalTracks(playlist.relationships?.tracks?.meta?.total ?? tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
                 }
             }
         };

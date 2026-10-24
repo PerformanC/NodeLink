@@ -1,6 +1,6 @@
 import { getLocalToken } from '../modules/spotifyAuth.js';
 import { fetchCanvas } from '../modules/spotifyCanvas.js';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for the official Spotify Web API.
  * Used for standard catalog data and public resource resolution.
@@ -1042,7 +1042,7 @@ export default class SpotifySource {
             url: `https://open.spotify.com/playlist/${id}`,
             artworkUrl: thumbnail,
             author,
-            totalTracks: totalTracks || tracks.length
+            totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
         });
         if (this.anonymousToken || id.startsWith('37i9dQZ')) {
             let offset = 0;

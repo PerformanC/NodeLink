@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
 import HLSHandler from '../playback/hls/HLSHandler.js';
 import { SEARCH_TYPE_MAP } from '../typings/sources/soundcloud.types.js';
-import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
+import { capTotalTracks, encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 const BASE_URL = 'https://api-v2.soundcloud.com';
 const SOUNDCLOUD_URL = 'https://soundcloud.com';
 const ASSET_PATTERN = /https:\/\/a-v2\.sndcdn\.com\/assets\/[a-zA-Z0-9-]+\.js/g;
@@ -489,7 +489,7 @@ export default class SoundCloudSource {
                     artworkUrl: this._upgradeArtworkUrl(body.artwork_url ??
                         tracks.find((track) => track.info.artworkUrl)?.info.artworkUrl),
                     author: body.user?.username?.trim() || '',
-                    totalTracks: body.track_count ?? body.tracks?.length ?? tracks.length
+                    totalTracks: capTotalTracks(body.track_count ?? body.tracks?.length ?? tracks.length, limit)
                 },
                 tracks
             }

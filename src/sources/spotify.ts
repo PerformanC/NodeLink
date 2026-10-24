@@ -27,6 +27,7 @@ import type {
   SpotifyTrack
 } from '../typings/sources/spotify.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -1260,7 +1261,7 @@ export default class SpotifySource implements SourceInstance {
       url: `https://open.spotify.com/playlist/${id}`,
       artworkUrl: thumbnail,
       author,
-      totalTracks: totalTracks || tracks.length
+      totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
     })
 
     if (this.anonymousToken || id.startsWith('37i9dQZ')) {

@@ -25,6 +25,7 @@ import type {
   TrackEncodeInput
 } from '../../typings/utils.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -865,7 +866,10 @@ export default class YouTubeSource {
         current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
       artworkUrl: current.artworkUrl || meta.thumbnail,
       author: current.author || meta.author,
-      totalTracks: current.totalTracks ?? playlist.tracks.length
+      totalTracks: capTotalTracks(
+        current.totalTracks ?? playlist.tracks.length,
+        this.nodelink.options.playback?.maxPlaylistLength
+      )
     }
   }
 

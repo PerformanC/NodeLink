@@ -17,6 +17,7 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -998,7 +999,10 @@ export default class DeezerSource {
               url: entity.link ?? `https://www.deezer.com/${type}/${id}`,
               artworkUrl: thumbnail,
               author,
-              totalTracks: entity.nb_tracks ?? tracks.length
+              totalTracks: capTotalTracks(
+                entity.nb_tracks ?? tracks.length,
+                this.config.playback?.maxPlaylistLength
+              )
             },
             tracks
           } satisfies DeezerPlaylistData

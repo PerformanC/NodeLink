@@ -17,6 +17,7 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -656,7 +657,10 @@ export default class TidalSource {
           artworkUrl: this.getPlaylistCoverUrl(playlistData),
           // The playlist endpoint only exposes `creator.id`, not a name.
           author: '',
-          totalTracks
+          totalTracks: capTotalTracks(
+            totalTracks,
+            this.nodelink.options.playback?.maxPlaylistLength
+          )
         }
       }
     }

@@ -8,7 +8,12 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
-import { encodeTrack, getBestMatch, http1makeRequest } from '../utils.ts'
+import {
+  capTotalTracks,
+  encodeTrack,
+  getBestMatch,
+  http1makeRequest
+} from '../utils.ts'
 
 /**
  * Metadata for Apple Music catalog resource attributes.
@@ -538,8 +543,10 @@ export default class AppleMusicSource implements SourceInstance {
             `https://music.apple.com/${country}/playlist/${id}`,
           artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
           author: playlist.attributes?.curatorName?.trim() || '',
-          totalTracks:
-            playlist.relationships?.tracks?.meta?.total ?? tracks.length
+          totalTracks: capTotalTracks(
+            playlist.relationships?.tracks?.meta?.total ?? tracks.length,
+            this.nodelink.options.playback?.maxPlaylistLength
+          )
         }
       }
     }

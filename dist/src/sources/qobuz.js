@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
 /**
@@ -317,9 +317,9 @@ export default class QobuzSource {
                     url: `https://open.qobuz.com/playlist/${id}`,
                     artworkUrl: this.getPlaylistCoverUrl(data),
                     author: this.asString(this.asRecord(data.owner)?.name)?.trim() || '',
-                    totalTracks: this.asNumber(data.tracks_count) ??
+                    totalTracks: capTotalTracks(this.asNumber(data.tracks_count) ??
                         this.asNumber(tracksBlock.total) ??
-                        tracks.length
+                        tracks.length, max)
                 }
             }
         };

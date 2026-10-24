@@ -10,6 +10,7 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -415,10 +416,12 @@ export default class QobuzSource {
           url: `https://open.qobuz.com/playlist/${id}`,
           artworkUrl: this.getPlaylistCoverUrl(data),
           author: this.asString(this.asRecord(data.owner)?.name)?.trim() || '',
-          totalTracks:
+          totalTracks: capTotalTracks(
             this.asNumber(data.tracks_count) ??
-            this.asNumber(tracksBlock.total) ??
-            tracks.length
+              this.asNumber(tracksBlock.total) ??
+              tracks.length,
+            max
+          )
         }
       }
     }
