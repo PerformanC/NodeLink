@@ -1949,7 +1949,8 @@ async function startLoadStream(
     fetched.type || (urlResult.format as string) || 'unknown',
     nodelink as unknown as NodeLink,
     (payload?.volume ?? 100) / 100,
-    payload?.filters || {}
+    payload?.filters || {},
+    nodelink.options.playback?.audio?.loudnessNormalizer ?? false
   ) as unknown as PCMStream
 
   const entry: ActiveStreamEntry = {
