@@ -1380,11 +1380,8 @@ if (isMainThread) {
           {},
           {
             streamInfo: urlResult,
-            loudnessNormalizer: (
-              nodelink.options as unknown as {
-                audio?: { loudnessNormalizer?: boolean }
-              }
-            ).audio?.loudnessNormalizer
+            loudnessNormalizer:
+              nodelink.options.playback?.audio?.loudnessNormalizer ?? false
           },
           (payload?.volume ?? 100) / 100,
           null,
@@ -1423,7 +1420,8 @@ if (isMainThread) {
           fetched.type || (urlResult.format as string) || 'unknown',
           nodelink as unknown as NodeLink,
           (payload?.volume ?? 100) / 100,
-          payload?.filters || {}
+          payload?.filters || {},
+          nodelink.options.playback?.audio?.loudnessNormalizer ?? false
         ) as unknown as PCMStream
       }
 

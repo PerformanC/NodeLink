@@ -997,7 +997,7 @@ else {
             if (urlResult.url && !isHls && !isLocal && !isSabr) {
                 const resource = await createSeekeableAudioResource(id, urlResult.url, payload?.position || 0, undefined, nodelink, {}, {
                     streamInfo: urlResult,
-                    loudnessNormalizer: nodelink.options.audio?.loudnessNormalizer
+                    loudnessNormalizer: nodelink.options.playback?.audio?.loudnessNormalizer ?? false
                 }, (payload?.volume ?? 100) / 100, null, true);
                 if ('exception' in resource) {
                     throw new Error(resource.exception.message);
@@ -1015,7 +1015,7 @@ else {
                 if (!fetched || fetched.exception) {
                     throw new Error(fetched?.exception?.message || 'Failed to load stream');
                 }
-                pcmStream = createPCMStream(id, fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {});
+                pcmStream = createPCMStream(id, fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {}, nodelink.options.playback?.audio?.loudnessNormalizer ?? false);
             }
             pcmStream.on('data', (chunk) => {
                 if (!finished)
