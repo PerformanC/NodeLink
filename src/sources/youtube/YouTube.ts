@@ -2,6 +2,7 @@ import { PassThrough } from 'node:stream'
 import HLSHandler from '../../playback/hls/HLSHandler.ts'
 import type { SabrStreamConfig } from '../../typings/sources/sabr.types.ts'
 import type {
+  PlaylistData,
   SourceResult,
   TrackInfo,
   WorkerNodeLink
@@ -39,6 +40,7 @@ import {
 } from './common.ts'
 import YouTubeLiveChat from './LiveChat.ts'
 import OAuth from './OAuth.ts'
+import { parsePlaylistMeta, type YouTubePlaylistMeta } from './playlistMeta.ts'
 import { SabrStream } from './sabr/sabr.ts'
 
 /** Size in bytes of each range-request chunk for direct HTTP streaming. */
@@ -801,6 +803,10 @@ export default class YouTubeSource {
   async resolve(url: string, type?: string): Promise<SourceResult> {
     const result = await this._resolveWorker(url, type)
 
+    if (result.loadType === 'playlist') {
+      await this._applyPlaylistMeta(url, result.data as PlaylistData)
+    }
+
     if (
       this.config.mirrorOfficialAlbums &&
       url.includes('list=OLAK') &&
@@ -824,6 +830,91 @@ export default class YouTubeSource {
     }
 
     return result
+  }
+
+  /**
+   * Fills the collection metadata (`type`, `identifier`, `url`, `artworkUrl`,
+   * `author`, `totalTracks`) in `pluginInfo` on a resolved playlist.
+   *
+   * The innertube `next`/`browse` responses used by the clients don't carry the
+   * playlist owner or cover art, so those are read from the public playlist
+   * page instead. Best-effort: any failure leaves them empty, and values a
+   * client already provided are never overwritten.
+   * @internal
+   */
+  private async _applyPlaylistMeta(
+    url: string,
+    playlist: PlaylistData
+  ): Promise<void> {
+    if (!playlist?.info) return
+
+    const playlistId = url.match(/[?&]list=([\w-]+)/)?.[1]
+    if (!playlistId) return
+
+    const current = playlist.pluginInfo ?? {}
+    const meta =
+      current.author && current.artworkUrl
+        ? { author: '', thumbnail: '' }
+        : await this._fetchPlaylistMeta(playlistId)
+
+    playlist.pluginInfo = {
+      ...current,
+      type: current.type ?? 'playlist',
+      identifier: current.identifier ?? playlistId,
+      url:
+        current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
+      artworkUrl: current.artworkUrl || meta.thumbnail,
+      author: current.author || meta.author,
+      totalTracks: current.totalTracks ?? playlist.tracks.length
+    }
+  }
+
+  /**
+   * Scrapes the playlist page for its owner and thumbnail.
+   * @param playlistId - YouTube playlist ID (`PL...`, `OLAK...`, etc.).
+   * @internal
+   */
+  private async _fetchPlaylistMeta(
+    playlistId: string
+  ): Promise<YouTubePlaylistMeta> {
+    const empty: YouTubePlaylistMeta = { author: '', thumbnail: '' }
+    const proxy = this.getProxy()
+    const startedAt = Date.now()
+
+    try {
+      const { body, statusCode } = await makeRequest(
+        `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}&hl=en`,
+        {
+          method: 'GET',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            // Skips the EU cookie-consent interstitial.
+            Cookie: 'SOCS=CAI'
+          },
+          timeout: 5000,
+          proxy: proxy as unknown as HttpProxyConfig
+        }
+      )
+
+      this.reportProxyStatus(
+        proxy,
+        statusCode === 200,
+        statusCode ?? 0,
+        Date.now() - startedAt
+      )
+
+      if (statusCode !== 200 || typeof body !== 'string') return empty
+      return parsePlaylistMeta(body)
+    } catch (err: unknown) {
+      logger(
+        'debug',
+        'YouTube',
+        `Failed to fetch playlist metadata for ${playlistId}: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return empty
+    }
   }
 
   /**

@@ -409,7 +409,17 @@ export default class QobuzSource {
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'playlist',
+          identifier: id,
+          url: `https://open.qobuz.com/playlist/${id}`,
+          artworkUrl: this.getPlaylistCoverUrl(data),
+          author: this.asString(this.asRecord(data.owner)?.name)?.trim() || '',
+          totalTracks:
+            this.asNumber(data.tracks_count) ??
+            this.asNumber(tracksBlock.total) ??
+            tracks.length
+        }
       }
     }
   }
@@ -680,6 +690,25 @@ export default class QobuzSource {
 
     const encoded = (seed + info + extras).slice(0, -44)
     return Buffer.from(encoded, 'base64').toString()
+  }
+
+  /**
+   * Picks the cover image for a playlist payload.
+   * Qobuz returns up to four track covers per playlist at several sizes; the
+   * first one at the largest size is used as the thumbnail.
+   * @param playlist - Raw `/playlist/get` payload.
+   * @returns The cover URL, or an empty string when none is present.
+   */
+  private getPlaylistCoverUrl(playlist: Record<string, unknown>): string {
+    for (const key of ['images300', 'images150', 'images']) {
+      const images = playlist[key]
+      if (!Array.isArray(images)) continue
+      const first = images.find(
+        (url): url is string => typeof url === 'string' && url.length > 0
+      )
+      if (first) return first
+    }
+    return ''
   }
 
   /**

@@ -311,6 +311,18 @@ export interface SpotifyGraphQLPlaylistResponse {
   playlistV2?: {
     __typename: string
     name: string
+    /** Playlist owner. `data.name` is the owner's display name. */
+    ownerV2?: { data?: { name?: string | null } | null } | null
+    /** Playlist cover images. Sources are not guaranteed to carry dimensions. */
+    images?: {
+      items?: Array<{
+        sources?: Array<{
+          url: string
+          width?: number | null
+          height?: number | null
+        }>
+      }>
+    } | null
     content: {
       totalCount: number
       items: Array<{

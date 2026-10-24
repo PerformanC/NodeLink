@@ -681,10 +681,34 @@ export default class SoundCloudSource implements SoundCloudSourceState {
           name: body.title || 'Untitled playlist',
           selectedTrack: 0
         },
-        pluginInfo: {},
+        pluginInfo: {
+          type: 'playlist',
+          identifier: String(body.id ?? ''),
+          url: body.permalink_url ?? '',
+          artworkUrl: this._upgradeArtworkUrl(
+            body.artwork_url ??
+              tracks.find((track) => track.info.artworkUrl)?.info.artworkUrl
+          ),
+          author: body.user?.username?.trim() || '',
+          totalTracks: body.track_count ?? body.tracks?.length ?? tracks.length
+        },
         tracks
       }
     }
+  }
+
+  /**
+   * Upgrades a SoundCloud artwork URL to the 500x500 variant.
+   * The API returns the 100x100 `-large` size; `original` is left untouched.
+   * @param url - Artwork URL from the API.
+   * @returns The upgraded URL, or an empty string when there is none.
+   */
+  _upgradeArtworkUrl(url?: string | null): string {
+    if (!url) return ''
+    return url.replace(
+      /-(?:large|small|tiny|badge|mini|crop|t\d+x\d+)(\.[a-z0-9]+)(?=$|\?)/i,
+      '-t500x500$1'
+    )
   }
 
   _processTracks(

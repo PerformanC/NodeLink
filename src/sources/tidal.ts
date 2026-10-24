@@ -649,7 +649,15 @@ export default class TidalSource {
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'playlist',
+          identifier: id,
+          url: `https://tidal.com/playlist/${id}`,
+          artworkUrl: this.getPlaylistCoverUrl(playlistData),
+          // The playlist endpoint only exposes `creator.id`, not a name.
+          author: '',
+          totalTracks
+        }
       }
     }
   }
@@ -765,6 +773,32 @@ export default class TidalSource {
   }
 
   /**
+   * Builds a Tidal CDN image URL from an image UUID.
+   * @param uuid - Image UUID, dash-separated (e.g. `a178483d-e537-...`).
+   * @param size - Dimensions such as `1080x1080`.
+   * @returns The resource URL.
+   */
+  private buildImageUrl(uuid: string, size: string): string {
+    return `https://resources.tidal.com/images/${uuid.replace(/-/g, '/')}/${size}.jpg`
+  }
+
+  /**
+   * Picks the cover image for a playlist payload.
+   * Prefers the square cover, falling back to the 3:2 `image`.
+   * @param playlist - Raw playlist payload.
+   * @returns The cover URL, or an empty string when none is present.
+   */
+  private getPlaylistCoverUrl(playlist: Record<string, unknown>): string {
+    const square = this.asString(playlist.squareImage)
+    if (square) return this.buildImageUrl(square, '1080x1080')
+
+    const image = this.asString(playlist.image)
+    if (image) return this.buildImageUrl(image, '1080x720')
+
+    return ''
+  }
+
+  /**
    * Creates encoded track payload from raw Tidal item.
    * @param item - Raw Tidal track object.
    * @returns Encoded track payload.
@@ -796,9 +830,7 @@ export default class TidalSource {
       uri:
         this.asString(item.url) ||
         `https://tidal.com/browse/track/${identifier}`,
-      artworkUrl: cover
-        ? `https://resources.tidal.com/images/${cover.replace(/-/g, '/')}/1280x1280.jpg`
-        : null,
+      artworkUrl: cover ? this.buildImageUrl(cover, '1280x1280') : null,
       isrc: this.asString(item.isrc) || null,
       sourceName: 'tidal'
     }
