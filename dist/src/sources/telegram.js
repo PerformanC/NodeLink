@@ -135,7 +135,6 @@ export default class TelegramSource {
             const playlistData = {
                 info: {
                     name: title,
-                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 pluginInfo: {},

@@ -548,7 +548,7 @@ export default class YouTubeSource {
                 return {
                     loadType: 'playlist',
                     data: {
-                        info: { name: 'YouTube Recommendations', author: '', thumbnail: '', selectedTrack: 0 },
+                        info: { name: 'YouTube Recommendations', selectedTrack: 0 },
                         pluginInfo: { type: 'recommendations' },
                         tracks
                     }
@@ -600,25 +600,34 @@ export default class YouTubeSource {
         return result;
     }
     /**
-     * Fills in `info.author` and `info.thumbnail` on a resolved playlist.
+     * Fills the collection metadata (`type`, `identifier`, `url`, `artworkUrl`,
+     * `author`, `totalTracks`) in `pluginInfo` on a resolved playlist.
      *
      * The innertube `next`/`browse` responses used by the clients don't carry the
-     * playlist owner or cover art, so they are read from the public playlist page
-     * instead. Best-effort: any failure leaves the existing values untouched.
+     * playlist owner or cover art, so those are read from the public playlist
+     * page instead. Best-effort: any failure leaves them empty, and values a
+     * client already provided are never overwritten.
      * @internal
      */
     async _applyPlaylistMeta(url, playlist) {
-        const info = playlist?.info;
-        if (!info || (info.author && info.thumbnail))
+        if (!playlist?.info)
             return;
         const playlistId = url.match(/[?&]list=([\w-]+)/)?.[1];
         if (!playlistId)
             return;
-        const meta = await this._fetchPlaylistMeta(playlistId);
-        if (!info.author && meta.author)
-            info.author = meta.author;
-        if (!info.thumbnail && meta.thumbnail)
-            info.thumbnail = meta.thumbnail;
+        const current = playlist.pluginInfo ?? {};
+        const meta = current.author && current.artworkUrl
+            ? { author: '', thumbnail: '' }
+            : await this._fetchPlaylistMeta(playlistId);
+        playlist.pluginInfo = {
+            ...current,
+            type: current.type ?? 'playlist',
+            identifier: current.identifier ?? playlistId,
+            url: current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
+            artworkUrl: current.artworkUrl || meta.thumbnail,
+            author: current.author || meta.author,
+            totalTracks: current.totalTracks ?? playlist.tracks.length
+        };
     }
     /**
      * Scrapes the playlist page for its owner and thumbnail.

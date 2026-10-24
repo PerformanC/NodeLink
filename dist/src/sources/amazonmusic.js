@@ -587,7 +587,7 @@ export default class AmazonMusicSource {
                 return {
                     loadType: collectionType,
                     data: {
-                        info: { name: collectionName, author: '', thumbnail: '', selectedTrack: 0 },
+                        info: { name: collectionName, selectedTrack: 0 },
                         tracks: tracks.map((t) => ({
                             encoded: encodeTrack({ ...t, details: [] }),
                             info: t,

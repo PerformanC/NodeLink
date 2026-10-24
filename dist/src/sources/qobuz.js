@@ -167,7 +167,7 @@ export default class QobuzSource {
             return {
                 loadType: 'playlist',
                 data: {
-                    info: { name: 'Qobuz Recommendations', author: '', thumbnail: '', selectedTrack: 0 },
+                    info: { name: 'Qobuz Recommendations', selectedTrack: 0 },
                     pluginInfo: { type: 'recommendations' },
                     tracks
                 }
@@ -279,7 +279,6 @@ export default class QobuzSource {
             data: {
                 info: {
                     name: this.asString(data.title) || 'Unknown Album',
-                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 tracks,
@@ -309,12 +308,19 @@ export default class QobuzSource {
             data: {
                 info: {
                     name: this.asString(data.name) || 'Unknown Playlist',
-                    author: this.asString(this.asRecord(data.owner)?.name)?.trim() || '',
-                    thumbnail: this.getPlaylistCoverUrl(data),
                     selectedTrack: 0
                 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    type: 'playlist',
+                    identifier: id,
+                    url: `https://open.qobuz.com/playlist/${id}`,
+                    artworkUrl: this.getPlaylistCoverUrl(data),
+                    author: this.asString(this.asRecord(data.owner)?.name)?.trim() || '',
+                    totalTracks: this.asNumber(data.tracks_count) ??
+                        this.asNumber(tracksBlock.total) ??
+                        tracks.length
+                }
             }
         };
     }
@@ -339,7 +345,7 @@ export default class QobuzSource {
         return {
             loadType: 'playlist',
             data: {
-                info: { name: `${artistName}'s Top Tracks`, author: '', thumbnail: '', selectedTrack: 0 },
+                info: { name: `${artistName}'s Top Tracks`, selectedTrack: 0 },
                 tracks,
                 pluginInfo: {}
             }

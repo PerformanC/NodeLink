@@ -253,7 +253,7 @@ export default class VKMusicSource {
             return {
                 loadType: 'playlist',
                 data: {
-                    info: { name: 'VK Recommendations', author: '', thumbnail: '', selectedTrack: 0 },
+                    info: { name: 'VK Recommendations', selectedTrack: 0 },
                     tracks: res.items.map((item) => this.buildTrack(item)),
                     pluginInfo: {}
                 }
@@ -323,7 +323,7 @@ export default class VKMusicSource {
                     return {
                         loadType: 'playlist',
                         data: {
-                            info: { name: 'VK Playlist', author: '', thumbnail: '', selectedTrack: 0 },
+                            info: { name: 'VK Playlist', selectedTrack: 0 },
                             tracks: res.items.map((item) => this.buildTrack(item)),
                             pluginInfo: {}
                         }
@@ -363,7 +363,7 @@ export default class VKMusicSource {
                 return {
                     loadType: 'playlist',
                     data: {
-                        info: { name: 'VK Scraped Playlist', author: '', thumbnail: '', selectedTrack: 0 },
+                        info: { name: 'VK Scraped Playlist', selectedTrack: 0 },
                         tracks,
                         pluginInfo: {}
                     }

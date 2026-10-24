@@ -193,16 +193,6 @@ interface GeniusPlaylistData {
     name: string
 
     /**
-     * Playlist author.
-     */
-    author: string
-
-    /**
-     * Playlist thumbnail.
-     */
-    thumbnail: string
-
-    /**
      * Default selected track index.
      */
     selectedTrack: number
@@ -428,7 +418,6 @@ export default class GeniusSource {
       const playlist: GeniusPlaylistData = {
         info: {
           name: `${title} - ${artist} (Genius)`,
-          author: '', thumbnail: '',
           selectedTrack: 0
         },
         pluginInfo: {} as Record<string, unknown>,

@@ -108,7 +108,7 @@ export default class RssSource {
                 return { loadType: 'empty', data: {} };
             }
             const playlistData = {
-                info: { name: channelTitle, author: '', thumbnail: '', selectedTrack: 0 },
+                info: { name: channelTitle, selectedTrack: 0 },
                 pluginInfo: { feedUrl: url },
                 tracks
             };

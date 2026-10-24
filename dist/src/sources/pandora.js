@@ -491,7 +491,7 @@ export default class PandoraSource {
         return {
             loadType: 'album',
             data: {
-                info: { name, author: '', thumbnail: '', selectedTrack: 0 },
+                info: { name, selectedTrack: 0 },
                 tracks,
                 pluginInfo: {}
             }
@@ -570,7 +570,6 @@ export default class PandoraSource {
             data: {
                 info: {
                     name: `${artistName}'s Top Tracks`,
-                    author: '', thumbnail: '',
                     selectedTrack: 0
                 },
                 tracks,
@@ -616,7 +615,7 @@ export default class PandoraSource {
         return {
             loadType: 'playlist',
             data: {
-                info: { name: data?.name ?? 'Playlist', author: '', thumbnail: '', selectedTrack: 0 },
+                info: { name: data?.name ?? 'Playlist', selectedTrack: 0 },
                 tracks,
                 pluginInfo: {}
             }
@@ -643,7 +642,7 @@ export default class PandoraSource {
         return {
             loadType: 'station',
             data: {
-                info: { name: stationData?.name ?? 'Station', author: '', thumbnail: '', selectedTrack: 0 },
+                info: { name: stationData?.name ?? 'Station', selectedTrack: 0 },
                 tracks,
                 pluginInfo: {}
             }
@@ -775,7 +774,7 @@ export default class PandoraSource {
         return {
             loadType: 'podcast',
             data: {
-                info: { name: programName ?? 'Podcast', author: '', thumbnail: '', selectedTrack: 0 },
+                info: { name: programName ?? 'Podcast', selectedTrack: 0 },
                 tracks,
                 pluginInfo: {}
             }

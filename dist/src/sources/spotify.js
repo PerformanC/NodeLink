@@ -962,7 +962,7 @@ export default class SpotifySource {
                 return {
                     loadType: 'playlist',
                     data: {
-                        info: { name, author: '', thumbnail: '', selectedTrack: 0 },
+                        info: { name, selectedTrack: 0 },
                         tracks,
                         pluginInfo: {}
                     }
@@ -994,7 +994,7 @@ export default class SpotifySource {
             ? {
                 loadType: 'playlist',
                 data: {
-                    info: { name, author: '', thumbnail: '', selectedTrack: 0 },
+                    info: { name, selectedTrack: 0 },
                     tracks,
                     pluginInfo: {}
                 }
@@ -1035,6 +1035,15 @@ export default class SpotifySource {
         let name = 'Unknown Playlist';
         let author = '';
         let thumbnail = '';
+        let totalTracks = 0;
+        const buildPluginInfo = () => ({
+            type: 'playlist',
+            identifier: id,
+            url: `https://open.spotify.com/playlist/${id}`,
+            artworkUrl: thumbnail,
+            author,
+            totalTracks: totalTracks || tracks.length
+        });
         if (this.anonymousToken || id.startsWith('37i9dQZ')) {
             let offset = 0;
             const limit = 100;
@@ -1053,6 +1062,7 @@ export default class SpotifySource {
                     author = data.playlistV2.ownerV2?.data?.name?.trim() || '';
                     thumbnail = this._pickLargestImage(data.playlistV2.images?.items?.[0]?.sources);
                     total = data.playlistV2.content?.totalCount || 0;
+                    totalTracks = total;
                 }
                 const items = data.playlistV2.content?.items || [];
                 if (items.length === 0)
@@ -1077,9 +1087,9 @@ export default class SpotifySource {
                 return {
                     loadType: 'playlist',
                     data: {
-                        info: { name, author, thumbnail, selectedTrack: 0 },
+                        info: { name, selectedTrack: 0 },
                         tracks,
-                        pluginInfo: {}
+                        pluginInfo: buildPluginInfo()
                     }
                 };
             }
@@ -1095,6 +1105,8 @@ export default class SpotifySource {
             const itemsRes = await this._apiRequest(nextUrl);
             if (!itemsRes?.items || itemsRes.items.length === 0)
                 break;
+            if (!totalTracks)
+                totalTracks = itemsRes.total;
             for (const it of itemsRes.items) {
                 const node = it.item || it.track;
                 if (!node)
@@ -1113,9 +1125,9 @@ export default class SpotifySource {
             ? {
                 loadType: 'playlist',
                 data: {
-                    info: { name, author, thumbnail, selectedTrack: 0 },
+                    info: { name, selectedTrack: 0 },
                     tracks,
-                    pluginInfo: {}
+                    pluginInfo: buildPluginInfo()
                 }
             }
             : { loadType: 'empty', data: {} };
@@ -1144,7 +1156,6 @@ export default class SpotifySource {
                     data: {
                         info: {
                             name: `${data.artistUnion.profile.name}'s Top Tracks`,
-                            author: '', thumbnail: '',
                             selectedTrack: 0
                         },
                         tracks,
@@ -1281,7 +1292,6 @@ export default class SpotifySource {
                         data: {
                             info: {
                                 name: `Spotify Recommendations for ${id}`,
-                                author: '', thumbnail: '',
                                 selectedTrack: 0
                             },
                             tracks,

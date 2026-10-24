@@ -493,7 +493,6 @@ export default class AppleMusicSource implements SourceInstance {
       data: {
         info: {
           name: album.attributes?.name || 'Unknown Album',
-          author: '', thumbnail: '',
           selectedTrack: 0
         },
         tracks,
@@ -528,12 +527,20 @@ export default class AppleMusicSource implements SourceInstance {
       data: {
         info: {
           name: playlist.attributes?.name || 'Unknown Playlist',
-          author: playlist.attributes?.curatorName?.trim() || '',
-          thumbnail: this.parseArtwork(playlist.attributes?.artwork) || '',
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'playlist',
+          identifier: id,
+          url:
+            playlist.attributes?.url ??
+            `https://music.apple.com/${country}/playlist/${id}`,
+          artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
+          author: playlist.attributes?.curatorName?.trim() || '',
+          totalTracks:
+            playlist.relationships?.tracks?.meta?.total ?? tracks.length
+        }
       }
     }
   }
@@ -567,7 +574,6 @@ export default class AppleMusicSource implements SourceInstance {
       data: {
         info: {
           name: `${artist.attributes?.name}'s Top Tracks`,
-          author: '', thumbnail: '',
           selectedTrack: 0
         },
         tracks,

@@ -480,12 +480,17 @@ export default class SoundCloudSource {
             data: {
                 info: {
                     name: body.title || 'Untitled playlist',
-                    author: body.user?.username?.trim() || '',
-                    thumbnail: this._upgradeArtworkUrl(body.artwork_url ??
-                        tracks.find((track) => track.info.artworkUrl)?.info.artworkUrl),
                     selectedTrack: 0
                 },
-                pluginInfo: {},
+                pluginInfo: {
+                    type: 'playlist',
+                    identifier: String(body.id ?? ''),
+                    url: body.permalink_url ?? '',
+                    artworkUrl: this._upgradeArtworkUrl(body.artwork_url ??
+                        tracks.find((track) => track.info.artworkUrl)?.info.artworkUrl),
+                    author: body.user?.username?.trim() || '',
+                    totalTracks: body.track_count ?? body.tracks?.length ?? tracks.length
+                },
                 tracks
             }
         };

@@ -466,7 +466,6 @@ export default class SourcesManager implements SourceManagerLike {
     const playlistData: PlaylistData = {
       info: {
         name: `Search results for: ${query}`,
-        author: '', thumbnail: '',
         selectedTrack: -1
       },
       pluginInfo: {},

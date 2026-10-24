@@ -2,6 +2,7 @@ import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
+  PlaylistPluginInfo,
   SourceInstance,
   SourceResult,
   TrackData,
@@ -1168,7 +1169,7 @@ export default class SpotifySource implements SourceInstance {
         return {
           loadType: 'playlist',
           data: {
-            info: { name, author: '', thumbnail: '', selectedTrack: 0 },
+            info: { name, selectedTrack: 0 },
             tracks,
             pluginInfo: {}
           }
@@ -1205,7 +1206,7 @@ export default class SpotifySource implements SourceInstance {
       ? {
           loadType: 'playlist',
           data: {
-            info: { name, author: '', thumbnail: '', selectedTrack: 0 },
+            info: { name, selectedTrack: 0 },
             tracks,
             pluginInfo: {}
           }
@@ -1251,6 +1252,16 @@ export default class SpotifySource implements SourceInstance {
     let name = 'Unknown Playlist'
     let author = ''
     let thumbnail = ''
+    let totalTracks = 0
+
+    const buildPluginInfo = (): PlaylistPluginInfo => ({
+      type: 'playlist',
+      identifier: id,
+      url: `https://open.spotify.com/playlist/${id}`,
+      artworkUrl: thumbnail,
+      author,
+      totalTracks: totalTracks || tracks.length
+    })
 
     if (this.anonymousToken || id.startsWith('37i9dQZ')) {
       let offset = 0
@@ -1279,6 +1290,7 @@ export default class SpotifySource implements SourceInstance {
             data.playlistV2.images?.items?.[0]?.sources
           )
           total = data.playlistV2.content?.totalCount || 0
+          totalTracks = total
         }
 
         const items = data.playlistV2.content?.items || []
@@ -1302,9 +1314,9 @@ export default class SpotifySource implements SourceInstance {
         return {
           loadType: 'playlist',
           data: {
-            info: { name, author, thumbnail, selectedTrack: 0 },
+            info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildPluginInfo()
           }
         }
       }
@@ -1326,6 +1338,7 @@ export default class SpotifySource implements SourceInstance {
           nextUrl
         )
       if (!itemsRes?.items || itemsRes.items.length === 0) break
+      if (!totalTracks) totalTracks = itemsRes.total
 
       for (const it of itemsRes.items) {
         const node = it.item || it.track
@@ -1344,9 +1357,9 @@ export default class SpotifySource implements SourceInstance {
       ? {
           loadType: 'playlist',
           data: {
-            info: { name, author, thumbnail, selectedTrack: 0 },
+            info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildPluginInfo()
           }
         }
       : { loadType: 'empty', data: {} }
@@ -1380,7 +1393,6 @@ export default class SpotifySource implements SourceInstance {
           data: {
             info: {
               name: `${data.artistUnion.profile.name}'s Top Tracks`,
-              author: '', thumbnail: '',
               selectedTrack: 0
             },
             tracks,
@@ -1532,7 +1544,6 @@ export default class SpotifySource implements SourceInstance {
             data: {
               info: {
                 name: `Spotify Recommendations for ${id}`,
-                author: '', thumbnail: '',
                 selectedTrack: 0
               },
               tracks,

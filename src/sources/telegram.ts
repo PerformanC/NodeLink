@@ -80,16 +80,6 @@ interface TelegramPlaylistData {
     name: string
 
     /**
-     * Playlist author.
-     */
-    author: string
-
-    /**
-     * Playlist thumbnail.
-     */
-    thumbnail: string
-
-    /**
      * Default selected track index.
      */
     selectedTrack: number
@@ -272,7 +262,6 @@ export default class TelegramSource {
       const playlistData: TelegramPlaylistData = {
         info: {
           name: title,
-          author: '', thumbnail: '',
           selectedTrack: 0
         },
         pluginInfo: {} as Record<string, unknown>,
