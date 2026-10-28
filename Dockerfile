@@ -25,7 +25,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Stage 2: Runner - Copy compiled code and run
-FROM node:25-alpine
+FROM node:24.22.1-alpine
 
 # Build arguments for git and build metadata
 ARG GIT_COMMIT=""
