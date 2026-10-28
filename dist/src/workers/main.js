@@ -1404,7 +1404,7 @@ async function startLoadStream(streamId, payload) {
         throw new Error(fetched.exception.message || 'Failed to load stream');
     }
     const createPCMStream = await getCreatePCMStream();
-    const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {});
+    const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {}, nodelink.options.playback?.audio?.loudnessNormalizer ?? false);
     const entry = {
         pcmStream,
         fetched,

@@ -3210,8 +3210,9 @@ class StreamAudioResource extends BaseAudioResource {
         type: 's16le',
         volume,
         enableAGC,
-        lookaheadMs: this.nodelink?.options?.audio?.lookaheadMs,
-        gateThresholdLUFS: this.nodelink?.options?.audio?.gateThresholdLUFS
+        lookaheadMs: this.nodelink?.options?.playback?.audio?.lookaheadMs,
+        gateThresholdLUFS:
+          this.nodelink?.options?.playback?.audio?.gateThresholdLUFS
       })
 
       pipeline(pcmStream, volumeTransformer, (err: Error | null): void => {
@@ -3429,7 +3430,8 @@ export const createPCMStream = (
   type: string,
   nodelink: NodeLink,
   volume: number = 1.0,
-  filters: FiltersState = {}
+  filters: FiltersState = {},
+  enableAGC: boolean = false
 ): Transform => {
   const resamplingQuality =
     nodelink.options.playback.audio?.resamplingQuality || 'fastest'
@@ -3514,7 +3516,15 @@ export const createPCMStream = (
       throw new Error(`Unsupported audio format: '${type}'`)
   }
 
-  streams.push(new VolumeTransformer({ type: 's16le', volume }))
+  streams.push(
+    new VolumeTransformer({
+      type: 's16le',
+      volume,
+      enableAGC,
+      lookaheadMs: nodelink.options.playback.audio?.lookaheadMs,
+      gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
+    })
+  )
   streams.push(new FiltersManager(nodelink, filters))
 
   for (const s of streams) {

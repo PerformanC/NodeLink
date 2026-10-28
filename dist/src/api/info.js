@@ -1,5 +1,5 @@
 import process from 'node:process';
-import { getVersion } from '../utils.js';
+import { getDependencyVersion, getVersion } from '../utils.js';
 /**
  * Creates a strongly typed runtime view for the info endpoint.
  *
@@ -103,7 +103,9 @@ async function buildInfoResponse(nodelink) {
         node: process.version,
         voice: {
             name: '@performanc/voice',
-            version: 'github:PerformanC/voice'
+            version: getDependencyVersion('@performanc/voice') !== 'unknown'
+                ? getDependencyVersion('@performanc/voice')
+                : 'github:PerformanC/voice'
         },
         isNodelink: true,
         sourceManagers: await getSourceManagers(nodelink),

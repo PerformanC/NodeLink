@@ -2416,8 +2416,8 @@ class StreamAudioResource extends BaseAudioResource {
                 type: 's16le',
                 volume,
                 enableAGC,
-                lookaheadMs: this.nodelink?.options?.audio?.lookaheadMs,
-                gateThresholdLUFS: this.nodelink?.options?.audio?.gateThresholdLUFS
+                lookaheadMs: this.nodelink?.options?.playback?.audio?.lookaheadMs,
+                gateThresholdLUFS: this.nodelink?.options?.playback?.audio?.gateThresholdLUFS
             });
             pipeline(pcmStream, volumeTransformer, (err) => {
                 if (err && !this._destroyed) {
@@ -2520,7 +2520,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
         return _createErrorResponse(err.message, cause);
     }
 };
-export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, filters = {}) => {
+export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, filters = {}, enableAGC = false) => {
     const resamplingQuality = nodelink.options.playback.audio?.resamplingQuality || 'fastest';
     const normalizedType = normalizeFormat(type);
     const streams = [stream];
@@ -2584,7 +2584,13 @@ export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, 
         default:
             throw new Error(`Unsupported audio format: '${type}'`);
     }
-    streams.push(new VolumeTransformer({ type: 's16le', volume }));
+    streams.push(new VolumeTransformer({
+        type: 's16le',
+        volume,
+        enableAGC,
+        lookaheadMs: nodelink.options.playback.audio?.lookaheadMs,
+        gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
+    }));
     streams.push(new FiltersManager(nodelink, filters));
     for (const s of streams) {
         if (s !== stream) {

@@ -1,6 +1,8 @@
 node_modules
 npm-debug.log
 logs
+dist
+.cache
 .git
 .github
 .vscode
