@@ -1,5 +1,5 @@
 # Stage 1: Builder - Build TypeScript into JavaScript
-FROM node:25-alpine AS builder
+FROM node:26.12.1-alpine AS builder
 
 # Install git (required for npm to install dependencies from GitHub)
 RUN apk add --no-cache git
@@ -25,7 +25,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Stage 2: Runner - Copy compiled code and run
-FROM node:24.22.1-alpine
+FROM node:26.12.1-alpine
 
 # Build arguments for git and build metadata
 ARG GIT_COMMIT=""
