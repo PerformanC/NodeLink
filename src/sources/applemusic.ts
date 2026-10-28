@@ -8,7 +8,12 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
-import { encodeTrack, getBestMatch, http1makeRequest } from '../utils.ts'
+import {
+  capTotalTracks,
+  encodeTrack,
+  getBestMatch,
+  http1makeRequest
+} from '../utils.ts'
 
 /**
  * Metadata for Apple Music catalog resource attributes.
@@ -530,7 +535,19 @@ export default class AppleMusicSource implements SourceInstance {
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'playlist',
+          identifier: id,
+          url:
+            playlist.attributes?.url ??
+            `https://music.apple.com/${country}/playlist/${id}`,
+          artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
+          author: playlist.attributes?.curatorName?.trim() || '',
+          totalTracks: capTotalTracks(
+            playlist.relationships?.tracks?.meta?.total ?? tracks.length,
+            this.nodelink.options.playback?.maxPlaylistLength
+          )
+        }
       }
     }
   }
@@ -591,7 +608,13 @@ export default class AppleMusicSource implements SourceInstance {
       parent.type === 'albums' ? this.albumPageLimit : this.playlistPageLimit
     const allowed = maxPages > 0 ? Math.min(pages, maxPages) : pages
 
-    const artwork = this.parseArtwork(parent.attributes?.artwork)
+    // Album tracks share the album's cover. Playlist tracks come from many
+    // albums and carry their own artwork, so the playlist cover must not
+    // replace it.
+    const artwork =
+      parent.type === 'albums'
+        ? this.parseArtwork(parent.attributes?.artwork)
+        : null
     const editorialVideo = this.extractVideoUrl(parent.attributes)
 
     const results = baseTracks

@@ -2,6 +2,7 @@ import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
+  PlaylistPluginInfo,
   SourceInstance,
   SourceResult,
   TrackData,
@@ -20,11 +21,13 @@ import type {
   SpotifyGraphQLTrack,
   SpotifyMetadataResponse,
   SpotifyPagingObject,
+  SpotifyPlaylist,
   SpotifyPlaylistItem,
   SpotifyTokenType,
   SpotifyTrack
 } from '../typings/sources/spotify.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -1213,6 +1216,30 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
+   * Picks the highest-resolution image URL from a list of sources.
+   * Sources without dimensions (e.g. user-uploaded playlist covers) count as
+   * width 0, so the first one wins when none report a size.
+   *
+   * @param sources - Image sources from a Spotify GraphQL response.
+   * @returns The best URL, or an empty string when there is none.
+   * @internal
+   */
+  private _pickLargestImage(
+    sources?: Array<{ url: string; width?: number | null }> | null
+  ): string {
+    let best = ''
+    let bestWidth = -1
+    for (const source of sources ?? []) {
+      const width = source.width ?? 0
+      if (source.url && width > bestWidth) {
+        best = source.url
+        bestWidth = width
+      }
+    }
+    return best
+  }
+
+  /**
    * Resolves a playlist collection and its wrapped tracks.
    *
    * @param id - Playlist identifier.
@@ -1224,6 +1251,18 @@ export default class SpotifySource implements SourceInstance {
       (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Playlist'
+    let author = ''
+    let thumbnail = ''
+    let totalTracks = 0
+
+    const buildPluginInfo = (): PlaylistPluginInfo => ({
+      type: 'playlist',
+      identifier: id,
+      url: `https://open.spotify.com/playlist/${id}`,
+      artworkUrl: thumbnail,
+      author,
+      totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
+    })
 
     if (this.anonymousToken || id.startsWith('37i9dQZ')) {
       let offset = 0
@@ -1247,7 +1286,12 @@ export default class SpotifySource implements SourceInstance {
 
         if (offset === 0) {
           name = data.playlistV2.name
+          author = data.playlistV2.ownerV2?.data?.name?.trim() || ''
+          thumbnail = this._pickLargestImage(
+            data.playlistV2.images?.items?.[0]?.sources
+          )
           total = data.playlistV2.content?.totalCount || 0
+          totalTracks = total
         }
 
         const items = data.playlistV2.content?.items || []
@@ -1273,16 +1317,20 @@ export default class SpotifySource implements SourceInstance {
           data: {
             info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildPluginInfo()
           }
         }
       }
     }
 
-    const metaRes = await this._apiRequest<{ name: string }>(
-      `/playlists/${id}?market=${this.market}`
-    )
-    if (metaRes) name = metaRes.name
+    const metaRes = await this._apiRequest<
+      Pick<SpotifyPlaylist, 'name' | 'owner' | 'images'>
+    >(`/playlists/${id}?market=${this.market}`)
+    if (metaRes) {
+      name = metaRes.name
+      author = metaRes.owner?.display_name?.trim() || author
+      thumbnail = metaRes.images?.[0]?.url || thumbnail
+    }
 
     let nextUrl: string | null = `/playlists/${id}/items?market=${this.market}`
     while (nextUrl && tracks.length < maxTracks) {
@@ -1291,6 +1339,7 @@ export default class SpotifySource implements SourceInstance {
           nextUrl
         )
       if (!itemsRes?.items || itemsRes.items.length === 0) break
+      if (!totalTracks) totalTracks = itemsRes.total
 
       for (const it of itemsRes.items) {
         const node = it.item || it.track
@@ -1311,7 +1360,7 @@ export default class SpotifySource implements SourceInstance {
           data: {
             info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildPluginInfo()
           }
         }
       : { loadType: 'empty', data: {} }

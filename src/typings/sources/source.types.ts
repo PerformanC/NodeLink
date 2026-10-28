@@ -425,6 +425,25 @@ export interface TrackData {
 }
 
 /**
+ * Collection-level metadata carried in `PlaylistData.pluginInfo`.
+ * @public
+ */
+export interface PlaylistPluginInfo extends Record<string, unknown> {
+  /** Kind of collection, e.g. `playlist` or `album`. */
+  type?: string
+  /** Source-specific collection ID. */
+  identifier?: string
+  /** Canonical URL of the collection. */
+  url?: string
+  /** Cover image URL. */
+  artworkUrl?: string | null
+  /** Owner / curator / artist name. */
+  author?: string | null
+  /** Total tracks in the collection, which can exceed the tracks returned. */
+  totalTracks?: number
+}
+
+/**
  * Complete playlist object returned by source methods.
  * @public
  */
@@ -436,8 +455,12 @@ export interface PlaylistData {
     /** Selected track index. */
     selectedTrack: number
   }
-  /** Source-specific metadata. */
-  pluginInfo: Record<string, unknown>
+  /**
+   * Collection metadata. Sources that can provide it fill `type`,
+   * `identifier`, `url`, `artworkUrl`, `author` and `totalTracks`; sources may
+   * add their own keys alongside.
+   */
+  pluginInfo: PlaylistPluginInfo
   /** Tracks in the playlist. */
   tracks: TrackData[]
 }

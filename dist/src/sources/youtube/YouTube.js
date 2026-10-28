@@ -1,10 +1,11 @@
 import { PassThrough } from 'node:stream';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
 import CipherManager from './CipherManager.js';
 import { checkURLType, YOUTUBE_CONSTANTS, YOUTUBE_WEBM_ITAGS } from './common.js';
 import YouTubeLiveChat from './LiveChat.js';
 import OAuth from './OAuth.js';
+import { parsePlaylistMeta } from './playlistMeta.js';
 import { SabrStream } from './sabr/sabr.js';
 /** Size in bytes of each range-request chunk for direct HTTP streaming. */
 const CHUNK_SIZE = 64 * 1024;
@@ -576,6 +577,9 @@ export default class YouTubeSource {
      */
     async resolve(url, type) {
         const result = await this._resolveWorker(url, type);
+        if (result.loadType === 'playlist') {
+            await this._applyPlaylistMeta(url, result.data);
+        }
         if (this.config.mirrorOfficialAlbums &&
             url.includes('list=OLAK') &&
             result.loadType === 'playlist') {
@@ -594,6 +598,67 @@ export default class YouTubeSource {
             }
         }
         return result;
+    }
+    /**
+     * Fills the collection metadata (`type`, `identifier`, `url`, `artworkUrl`,
+     * `author`, `totalTracks`) in `pluginInfo` on a resolved playlist.
+     *
+     * The innertube `next`/`browse` responses used by the clients don't carry the
+     * playlist owner or cover art, so those are read from the public playlist
+     * page instead. Best-effort: any failure leaves them empty, and values a
+     * client already provided are never overwritten.
+     * @internal
+     */
+    async _applyPlaylistMeta(url, playlist) {
+        if (!playlist?.info)
+            return;
+        const playlistId = url.match(/[?&]list=([\w-]+)/)?.[1];
+        if (!playlistId)
+            return;
+        const current = playlist.pluginInfo ?? {};
+        const meta = current.author && current.artworkUrl
+            ? { author: '', thumbnail: '' }
+            : await this._fetchPlaylistMeta(playlistId);
+        playlist.pluginInfo = {
+            ...current,
+            type: current.type ?? 'playlist',
+            identifier: current.identifier ?? playlistId,
+            url: current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
+            artworkUrl: current.artworkUrl || meta.thumbnail,
+            author: current.author || meta.author,
+            totalTracks: capTotalTracks(current.totalTracks ?? playlist.tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
+        };
+    }
+    /**
+     * Scrapes the playlist page for its owner and thumbnail.
+     * @param playlistId - YouTube playlist ID (`PL...`, `OLAK...`, etc.).
+     * @internal
+     */
+    async _fetchPlaylistMeta(playlistId) {
+        const empty = { author: '', thumbnail: '' };
+        const proxy = this.getProxy();
+        const startedAt = Date.now();
+        try {
+            const { body, statusCode } = await makeRequest(`https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}&hl=en`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    // Skips the EU cookie-consent interstitial.
+                    Cookie: 'SOCS=CAI'
+                },
+                timeout: 5000,
+                proxy: proxy
+            });
+            this.reportProxyStatus(proxy, statusCode === 200, statusCode ?? 0, Date.now() - startedAt);
+            if (statusCode !== 200 || typeof body !== 'string')
+                return empty;
+            return parsePlaylistMeta(body);
+        }
+        catch (err) {
+            logger('debug', 'YouTube', `Failed to fetch playlist metadata for ${playlistId}: ${err instanceof Error ? err.message : String(err)}`);
+            return empty;
+        }
     }
     /**
      * Internal worker for URL resolution.

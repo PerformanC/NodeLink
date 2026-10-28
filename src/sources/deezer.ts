@@ -17,6 +17,7 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -255,6 +256,11 @@ interface DeezerEntity {
    * Smaller collection artwork fallback.
    */
   cover_medium?: string | null
+
+  /**
+   * Redirecting playlist or artist artwork URL, used as a last resort.
+   */
+  picture?: string | null
 
   /**
    * Largest playlist or artist artwork variant.
@@ -951,9 +957,31 @@ export default class DeezerSource {
           )
         }
 
-        const artworkUrl = entity.cover_xl ?? entity.picture_xl ?? null
+        // Album track listings don't embed an `album` object, so their tracks
+        // fall back to the album's own cover. Playlist tracks do carry one, so
+        // they must keep their own album cover instead of the playlist picture.
+        const trackArtworkFallback =
+          type === 'album'
+            ? (entity.cover_xl ??
+              entity.cover_big ??
+              entity.cover_medium ??
+              null)
+            : null
+        const author =
+          type === 'album'
+            ? entity.artist?.name?.trim() || ''
+            : entity.creator?.name?.trim() || entity.user?.name?.trim() || ''
+        const thumbnail =
+          entity.cover_xl ||
+          entity.cover_big ||
+          entity.cover_medium ||
+          entity.picture_xl ||
+          entity.picture_big ||
+          entity.picture_medium ||
+          entity.picture ||
+          ''
         const tracks = tracksResponse.data
-          .map((item) => this.buildTrack(item, artworkUrl))
+          .map((item) => this.buildTrack(item, trackArtworkFallback))
           .filter((track): track is DeezerTrackData => track !== null)
 
         if (tracks.length === 0) return { loadType: 'empty', data: {} }
@@ -965,7 +993,17 @@ export default class DeezerSource {
               name: entity.title ?? 'Unknown Deezer Collection',
               selectedTrack: 0
             },
-            pluginInfo: {} as Record<string, unknown>,
+            pluginInfo: {
+              type,
+              identifier: String(id),
+              url: entity.link ?? `https://www.deezer.com/${type}/${id}`,
+              artworkUrl: thumbnail,
+              author,
+              totalTracks: capTotalTracks(
+                entity.nb_tracks ?? tracks.length,
+                this.config.playback?.maxPlaylistLength
+              )
+            },
             tracks
           } satisfies DeezerPlaylistData
         }

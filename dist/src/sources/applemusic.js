@@ -1,4 +1,4 @@
-import { encodeTrack, getBestMatch, http1makeRequest } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest } from '../utils.js';
 /**
  * Apple Music source implementation.
  * Provides integration with the Apple Music Catalog API for track resolution and searching.
@@ -360,7 +360,15 @@ export default class AppleMusicSource {
                     selectedTrack: 0
                 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    type: 'playlist',
+                    identifier: id,
+                    url: playlist.attributes?.url ??
+                        `https://music.apple.com/${country}/playlist/${id}`,
+                    artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
+                    author: playlist.attributes?.curatorName?.trim() || '',
+                    totalTracks: capTotalTracks(playlist.relationships?.tracks?.meta?.total ?? tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
+                }
             }
         };
     }
@@ -406,7 +414,12 @@ export default class AppleMusicSource {
         const pages = Math.ceil(total / limit);
         const maxPages = parent.type === 'albums' ? this.albumPageLimit : this.playlistPageLimit;
         const allowed = maxPages > 0 ? Math.min(pages, maxPages) : pages;
-        const artwork = this.parseArtwork(parent.attributes?.artwork);
+        // Album tracks share the album's cover. Playlist tracks come from many
+        // albums and carry their own artwork, so the playlist cover must not
+        // replace it.
+        const artwork = parent.type === 'albums'
+            ? this.parseArtwork(parent.attributes?.artwork)
+            : null;
         const editorialVideo = this.extractVideoUrl(parent.attributes);
         const results = baseTracks
             .map((t) => this.buildTrack(t, artwork, editorialVideo))

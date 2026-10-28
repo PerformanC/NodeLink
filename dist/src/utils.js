@@ -2348,4 +2348,21 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         return [];
     }
 }
-export { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, defaultSanitizer, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getDependencyVersion, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, LogSanitizer, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
+/**
+ * Caps a collection's reported track count at the configured
+ * `playback.maxPlaylistLength`.
+ *
+ * A source may hold more tracks than NodeLink will ever load, so the total it
+ * reports should not exceed what a client can actually receive. An unset,
+ * zero, negative or non-numeric cap means "no cap".
+ *
+ * @param total - Track count as reported by the source.
+ * @param max - Configured `playback.maxPlaylistLength`.
+ * @returns `Math.min(total, max)`, or `total` when there is no usable cap.
+ */
+function capTotalTracks(total, max) {
+    return typeof max === 'number' && Number.isFinite(max) && max > 0
+        ? Math.min(total, max)
+        : total;
+}
+export { applyEnvOverrides, capTotalTracks, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, defaultSanitizer, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getDependencyVersion, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, LogSanitizer, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
