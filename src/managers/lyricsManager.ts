@@ -279,22 +279,14 @@ export default class LyricsManager {
       logger(
         'warn',
         'Lyrics',
-        `Could not re-fetch track information for ${decodedTrack.info.title}`
+        `Could not re-fetch track information for ${decodedTrack.info.title}, using the provided track information instead.`
       )
-      return {
-        loadType: 'error',
-        data: {
-          message:
-            'Could not re-fetch track information before loading lyrics.',
-          severity: 'fault'
-        }
-      }
     }
 
-    const trackInfo = getTrackInfoFromResolve(
-      reliableTrackData,
-      decodedTrack.info
-    )
+    const trackInfo =
+      reliableTrackData.loadType === 'track'
+        ? getTrackInfoFromResolve(reliableTrackData, decodedTrack.info)
+        : decodedTrack.info
 
     if (requestedSource?.trim()) {
       const requestedName = requestedSource.trim().toLowerCase()

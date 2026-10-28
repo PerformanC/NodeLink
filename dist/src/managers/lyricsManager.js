@@ -108,16 +108,11 @@ export default class LyricsManager {
         }
         const reliableTrackData = await this.nodelink.sources.resolve(decodedTrack.info.uri);
         if (reliableTrackData.loadType !== 'track') {
-            logger('warn', 'Lyrics', `Could not re-fetch track information for ${decodedTrack.info.title}`);
-            return {
-                loadType: 'error',
-                data: {
-                    message: 'Could not re-fetch track information before loading lyrics.',
-                    severity: 'fault'
-                }
-            };
+            logger('warn', 'Lyrics', `Could not re-fetch track information for ${decodedTrack.info.title}, using the provided track information instead.`);
         }
-        const trackInfo = getTrackInfoFromResolve(reliableTrackData, decodedTrack.info);
+        const trackInfo = reliableTrackData.loadType === 'track'
+            ? getTrackInfoFromResolve(reliableTrackData, decodedTrack.info)
+            : decodedTrack.info;
         if (requestedSource?.trim()) {
             const requestedName = requestedSource.trim().toLowerCase();
             const requestedLyricsSource = this.lyricsSources.get(requestedName);
