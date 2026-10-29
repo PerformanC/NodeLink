@@ -1,0 +1,321 @@
+import process from 'node:process';
+import discordVoice from '@performanc/voice';
+import { EndReasons } from '../constants.js';
+import { logger } from '../utils.js';
+/**
+ * Connects a player to the existing voice library.
+ * @internal
+ */
+export class PlayerConnection {
+    player;
+    session;
+    nodelink;
+    callbacks;
+    _pendingVoiceUpdate = null;
+    _connStateHandler = () => { };
+    _connPlayHandler = () => { };
+    _connErrorHandler = () => { };
+    _connStuckHandler = () => { };
+    _connSpeakStartHandler = () => { };
+    waitEvent;
+    constructor(player, session, nodelink, callbacks) {
+        this.player = player;
+        this.session = session;
+        this.nodelink = nodelink;
+        this.callbacks = callbacks;
+        this.waitEvent = (event, filter, timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000) => new Promise((resolve, reject) => {
+            logger('debug', 'Player', `waitEvent: Started waiting for '${event}' on guild ${this.player.guildId} (timeout: ${timeout}ms)`);
+            const conn = this.player.connection;
+            if (!conn) {
+                logger('warn', 'Player', `waitEvent: Aborted waiting for '${event}' on guild ${this.player.guildId} (no connection)`);
+                return reject(new Error('No connection available for waitEvent'));
+            }
+            const handler = (_, payload) => {
+                const typedPayload = payload;
+                if (!filter || filter(typedPayload)) {
+                    clearTimeout(timeoutId);
+                    conn.off(event, handler);
+                    logger('debug', 'Player', `waitEvent: Resolved '${event}' for guild ${this.player.guildId}`);
+                    resolve(typedPayload);
+                }
+            };
+            const timeoutId = setTimeout(() => {
+                conn.off(event, handler);
+                logger('warn', 'Player', `waitEvent: Timeout waiting for '${event}' on guild ${this.player.guildId}`);
+                reject(new Error(`Event ${event} timed out after ${timeout}ms for guild ${this.player.guildId}`, event === 'playerStateChange'
+                    ? { cause: 'VOICE_STATE_TIMEOUT' }
+                    : undefined));
+            }, timeout);
+            conn.on(event, handler);
+        });
+    }
+    destroy() {
+        this._pendingVoiceUpdate = null;
+        if (this.player.connection) {
+            try {
+                this.player.connection.removeListener('stateChange', this._connStateHandler);
+                this.player.connection.removeListener('playerStateChange', this._connPlayHandler);
+                this.player.connection.removeListener('error', this._connErrorHandler);
+                this.player.connection.removeListener('stuck', this._connStuckHandler);
+                this.player.connection.removeListener('speakStart', this._connSpeakStartHandler);
+                if (this.nodelink.voiceRelay?.detach) {
+                    this.nodelink.voiceRelay.detach(this.player.connection);
+                }
+                if (this.player.connection.audioStream) {
+                    this.player.connection.stop(EndReasons.CLEANUP);
+                    this.callbacks.cleanupAudioStream('destroy');
+                }
+                this._cleanupSSRCStreams(this.player.connection);
+                this.player.connection.destroy();
+                if (this.player.duckingController) {
+                    this.player.duckingController.destroy();
+                    this.player.duckingController = null;
+                }
+                this.player.connection = null;
+            }
+            catch (err) {
+                const error = err;
+                logger('error', 'internal', `Failed to destroy connection for guild ${this.player.guildId}: ${error.message} `);
+            }
+        }
+    }
+    clearPendingKeyPackage() {
+        const session = this.player.connection?.mlsSession;
+        if (session?._pendingKeyPackage)
+            session._pendingKeyPackage = null;
+    }
+    flush(connection) {
+        connection?.udp?.flush?.();
+    }
+    _getAudioStream() {
+        return (this.player.connection?.audioStream ??
+            null);
+    }
+    _isVoiceReady() {
+        return (this.player.connStatus === 'connected' &&
+            !!this.player.connection?.udpInfo?.secretKey);
+    }
+    _isConnectionReady(state) {
+        return (state.status === 'connected' &&
+            !!this.player.connection?.udpInfo?.secretKey);
+    }
+    _ensureVoiceConnection() {
+        if (this.player.destroying ||
+            this._isVoiceReady() ||
+            this.player.connStatus === 'connecting')
+            return;
+        if (!this.player.voice.sessionId ||
+            !this.player.voice.token ||
+            !this.player.voice.endpoint)
+            return;
+        try {
+            this.player.updateVoice(this.player.voice, true);
+        }
+        catch { }
+    }
+    /**
+     * Establishes the voice connection and attaches event listeners.
+     */
+    _initConnection() {
+        if (this.player.connection || this.player.destroying)
+            return;
+        logger('debug', 'Player', `[Connection] Initializing voice connection for guild ${this.player.guildId} (Session: ${this.session.id})`);
+        this.player.connection = discordVoice.joinVoiceChannel({
+            guildId: this.player.guildId,
+            userId: this.session.userId,
+            channelId: this.player.voice.channelId || this.player.guildId,
+            encryption: this.nodelink.options?.playback.audio?.encryption ?? null
+        });
+        this.player.connection.stuckTimeout =
+            Math.max(this.nodelink.options.playback.trackStuckThresholdMs ?? 10000, 30000) + 5000;
+        const connection = this.player.connection;
+        this._connStateHandler = (_, s) => {
+            logger('debug', 'Player', `Voice connection state change for guild ${this.player.guildId} in session ${this.session.id}: ${s.status}`);
+            if (this._isConnectionReady(s))
+                this._onVoiceReady(connection);
+            this.callbacks.onConnectionState(s);
+        };
+        this.player.connection.on('stateChange', this._connStateHandler);
+        this._connPlayHandler = (_, s) => this.callbacks.onPlaybackState(s);
+        this.player.connection.on('playerStateChange', this._connPlayHandler);
+        this._connErrorHandler = (err) => {
+            const daveRecoveryStarted = err.cause === 'DAVE_RECOVERY_STARTED';
+            logger(daveRecoveryStarted ? 'warn' : 'error', 'Player', `Voice connection error for guild ${this.player.guildId} in session ${this.session.id}:`, err);
+            if (daveRecoveryStarted)
+                return;
+            process.nextTick(() => {
+                if (this.player.destroying)
+                    return;
+                const playerReason = this.player.connection?.playerState?.reason;
+                if (playerReason === 'reconnecting') {
+                    logger('warn', 'Player', `Voice connection error for guild ${this.player.guildId} is a recoverable reconnection (playerState.reason=${playerReason}). Deferring to library.`);
+                    return;
+                }
+                this.callbacks.onError(err);
+            });
+        };
+        this.player.connection.on('error', this._connErrorHandler);
+        this._connStuckHandler = () => {
+            if (this.player.destroying)
+                return;
+            logger('warn', 'Player', `Voice library detected stuck stream for guild ${this.player.guildId}`);
+        };
+        this.player.connection.on('stuck', this._connStuckHandler);
+        // Automatically drain incoming voice streams to prevent memory leaks
+        this._connSpeakStartHandler = (_userId, ssrc) => {
+            if (this.player.destroying || !this.player.connection)
+                return;
+            const stream = this.player.connection.getSpeakStream?.(ssrc);
+            if (stream && !stream.destroyed) {
+                stream.resume();
+            }
+        };
+        this.player.connection.on('speakStart', this._connSpeakStartHandler);
+        if (this.nodelink.voiceRelay?.attach) {
+            this.nodelink.voiceRelay.attach(this.player.connection, this.player.guildId);
+        }
+        // Attach ducking controller to the voice connection
+        if (this.player.duckingController && this.player.connection) {
+            this.player.duckingController.attach(this.player.connection);
+        }
+    }
+    /**
+     * Tears down a dead voice connection and builds a fresh one.
+     *
+     * The voice library keeps per-connection reconnect counters, so reusing a
+     * connection that hit the circuit breaker would trip it again instantly.
+     * A new connection object resets those counters.
+     */
+    _resetVoiceConnection() {
+        const conn = this.player.connection;
+        if (!conn || this.player.destroying)
+            return;
+        this._pendingVoiceUpdate = null;
+        logger('warn', 'Player', `Resetting dead voice connection for guild ${this.player.guildId}`);
+        try {
+            conn.removeListener('stateChange', this._connStateHandler);
+            conn.removeListener('playerStateChange', this._connPlayHandler);
+            conn.removeListener('error', this._connErrorHandler);
+            conn.removeListener('stuck', this._connStuckHandler);
+            conn.removeListener('speakStart', this._connSpeakStartHandler);
+            if (this.nodelink.voiceRelay?.detach) {
+                this.nodelink.voiceRelay.detach(conn);
+            }
+            conn.destroy();
+        }
+        catch { }
+        this.player.connection = null;
+        this.player.connStatus = 'disconnected';
+        this._initConnection();
+    }
+    _cleanupSSRCStreams(conn) {
+        if (!conn?.ssrcs)
+            return;
+        for (const entry of conn.ssrcs.values()) {
+            const s = entry?.stream;
+            if (s && !s.destroyed) {
+                s.resume();
+                s.destroy?.();
+            }
+        }
+    }
+    async _onVoiceReady(connection) {
+        if (this.player.destroying ||
+            this.player.connection !== connection ||
+            this._pendingVoiceUpdate !== connection)
+            return;
+        this._pendingVoiceUpdate = null;
+        if (connection.audioStream && !this.player.isPaused) {
+            connection.unpause?.('reconnected');
+        }
+        if (this.player.track &&
+            !connection.audioStream &&
+            !this.player.isUpdatingTrack) {
+            logger('debug', 'Player', `Voice state updated for guild ${this.player.guildId}, starting pending track.`);
+            await this.callbacks.startPendingTrack().catch((err) => {
+                logger('error', 'Player', `Failed to start pending track during voice update for guild ${this.player.guildId}:`, err);
+            });
+        }
+    }
+    /**
+     * Updates the voice state for this player.
+     *
+     * @param voicePayload - Session/token/endpoint/channel updates.
+     * @param force - Reconnects unless an unchanged handshake is already active.
+     */
+    updateVoice(voicePayload = {}, force = false) {
+        logger('debug', 'Player', `[Action: updateVoice] Method invoked for guild ${this.player.guildId} with force=${force}`);
+        if (this.player.destroying)
+            return;
+        const { sessionId, token, endpoint, channelId } = voicePayload;
+        let changed = false;
+        if (sessionId !== undefined && this.player.voice.sessionId !== sessionId) {
+            this.player.voice.sessionId = sessionId;
+            changed = true;
+        }
+        if (token !== undefined && this.player.voice.token !== token) {
+            this.player.voice.token = token;
+            changed = true;
+        }
+        if (endpoint !== undefined && this.player.voice.endpoint !== endpoint) {
+            this.player.voice.endpoint = endpoint;
+            changed = true;
+        }
+        if (channelId !== undefined && this.player.voice.channelId !== channelId) {
+            this.player.voice.channelId = channelId;
+            changed = true;
+        }
+        if (this.player.voice.sessionId &&
+            this.player.voice.token &&
+            this.player.voice.endpoint) {
+            // The voice library wipes voiceServer/udpInfo when the connection dies
+            // (e.g. reconnect circuit breaker) but keeps matching payload values on
+            // our side, so an identical Discord re-send would hit the early return
+            // below and never reconnect. Bypass the skip when the connection is
+            // down and re-supply state plus an explicit connect instead.
+            // Note: `connecting` is deliberately not dead - a handshake is already
+            // in flight and re-calling connect() would tear it down and restart it.
+            const connectionDead = !this.player.connection ||
+                this.player.connStatus === 'disconnected' ||
+                this.player.connStatus === 'destroyed' ||
+                !this.player.connection.voiceServer ||
+                (this.player.connStatus === 'connected' &&
+                    !this.player.connection.udpInfo?.secretKey);
+            if (!changed && !force && !connectionDead) {
+                logger('debug', 'Player', `Voice state for guild ${this.player.guildId} is unchanged. Skipping update.`);
+                return;
+            }
+            // null here means the connection is still connecting, so its not "dead".
+            if (connectionDead && this.player.connection !== null) {
+                logger('warn', 'Player', `Voice connection is down for guild ${this.player.guildId} (status: ${this.player.connStatus}). Re-supplying voice state and reconnecting.`);
+            }
+            else {
+                logger('debug', 'Player', `Updating voice state for guild ${this.player.guildId}`);
+            }
+            if (!this.player.connection)
+                this._initConnection();
+            const connection = this.player.connection;
+            if (!connection)
+                return;
+            const serverChanged = connection.voiceServer?.token !== this.player.voice.token ||
+                connection.voiceServer?.endpoint !== this.player.voice.endpoint;
+            this._pendingVoiceUpdate = connection;
+            connection.voiceStateUpdate({
+                session_id: this.player.voice.sessionId,
+                channel_id: this.player.voice.channelId ?? undefined
+            });
+            connection.voiceServerUpdate({
+                token: this.player.voice.token,
+                endpoint: this.player.voice.endpoint,
+                channel_id: this.player.voice.channelId ?? undefined
+            });
+            if (this.player.connStatus !== 'connecting' ||
+                (changed && !serverChanged)) {
+                connection.connect(() => this._onVoiceReady(connection));
+            }
+        }
+        else {
+            logger('warn', 'Player', `Incomplete voice update for guild ${this.player.guildId}. Missing sessionId, token, or endpoint.`);
+        }
+    }
+}
