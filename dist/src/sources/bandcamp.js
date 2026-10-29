@@ -8,6 +8,13 @@ const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/;
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/;
 const JSON_LD_REGEX = /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/script>/;
 /**
+ * Markers of Bandcamp's edge bot-challenge page. The challenge is served with
+ * HTTP 200, so a status check alone cannot detect it.
+ */
+const CHALLENGE_PAGE_MARKERS = ['<title>Client Challenge</title>', '/_fs-ch-'];
+const PAGE_FETCH_MAX_ATTEMPTS = 3;
+const PAGE_FETCH_RETRY_DELAY_MS = 1000;
+/**
  * Bandcamp source implementation.
  */
 export default class BandcampSource {
@@ -140,6 +147,16 @@ export default class BandcampSource {
                 logger('warn', 'Sources', `Failed to fetch BandCamp page for: ${url}`);
                 return { loadType: 'empty', data: {} };
             }
+            if (pageData.challenged) {
+                return {
+                    loadType: 'error',
+                    exception: {
+                        message: 'BandCamp served a bot challenge page instead of the track page.',
+                        severity: 'fault',
+                        cause: 'Bot Challenge'
+                    }
+                };
+            }
             const { tralbum, jsonLd } = pageData;
             if (!tralbum?.trackinfo || tralbum.trackinfo.length === 0) {
                 logger('warn', 'Sources', `No 'tralbum' data found on BandCamp for: ${url}`);
@@ -218,31 +235,28 @@ export default class BandcampSource {
      */
     async getTrackUrl(track) {
         try {
-            const { body, error, statusCode } = await makeRequest(track.uri, {
-                method: 'GET',
-                headers: { 'User-Agent': BROWSER_USER_AGENT }
-            });
-            if (error || statusCode !== 200) {
-                return {
-                    loadType: 'error',
-                    exception: {
-                        message: `Failed to fetch track page: ${error ?? statusCode}`,
+            const result = await this.fetchPageHtml(track.uri);
+            if (!result.ok) {
+                const exception = result.reason === 'challenge'
+                    ? {
+                        message: 'BandCamp served a bot challenge page instead of the track page.',
                         severity: 'fault',
-                        cause: 'Request Failed'
+                        cause: 'Bot Challenge'
                     }
-                };
+                    : result.reason === 'unreadable'
+                        ? {
+                            message: 'BandCamp returned an unreadable track page.',
+                            severity: 'fault',
+                            cause: 'Invalid Response'
+                        }
+                        : {
+                            message: result.message.replace('Failed to fetch BandCamp page', 'Failed to fetch track page'),
+                            severity: 'fault',
+                            cause: 'Request Failed'
+                        };
+                return { loadType: 'error', exception };
             }
-            const page = this.getResponseText({ body });
-            if (page === null) {
-                return {
-                    loadType: 'error',
-                    exception: {
-                        message: 'BandCamp returned an unreadable track page.',
-                        severity: 'fault',
-                        cause: 'Invalid Response'
-                    }
-                };
-            }
+            const page = result.page;
             // Try extracting stream URL from the structured tralbum data first.
             const streamUrl = this.extractStreamUrlFromPage(page, track.identifier);
             if (!streamUrl) {
@@ -332,23 +346,91 @@ export default class BandcampSource {
      * Fetches a Bandcamp page and extracts both `data-tralbum` and JSON-LD data.
      *
      * @param url Bandcamp track or album URL.
-     * @returns Parsed page metadata or `null` when extraction fails.
+     * @returns Parsed page metadata, `challenged: true` when Bandcamp kept
+     * serving its bot-challenge page after all retries, or `null` when the
+     * request failed.
      */
     async fetchPageData(url) {
-        const { body, error, statusCode } = await makeRequest(url, {
-            method: 'GET',
-            headers: { 'User-Agent': BROWSER_USER_AGENT }
-        });
-        if (error || statusCode !== 200) {
-            logger('error', 'Sources', `Failed to fetch BandCamp page: ${error ?? statusCode}`);
+        const result = await this.fetchPageHtml(url);
+        if (!result.ok) {
+            if (result.reason === 'challenge') {
+                return {
+                    tralbum: null,
+                    jsonLd: null,
+                    rawPage: result.page ?? '',
+                    challenged: true
+                };
+            }
             return null;
         }
-        const page = this.getResponseText({ body });
-        if (page === null)
-            return null;
-        const tralbum = this.parseTralbumFromPage(page);
-        const jsonLd = this.parseJsonLdFromPage(page);
-        return { tralbum, jsonLd, rawPage: page };
+        const tralbum = this.parseTralbumFromPage(result.page);
+        const jsonLd = this.parseJsonLdFromPage(result.page);
+        return { tralbum, jsonLd, rawPage: result.page };
+    }
+    /**
+     * Downloads a Bandcamp page, detecting the edge bot-challenge page (served
+     * with HTTP 200) and retrying with a short linear backoff when it, a 429, or
+     * a 5xx response is received.
+     *
+     * @param url Bandcamp page URL.
+     * @returns The page HTML, or a description of why it could not be fetched.
+     */
+    async fetchPageHtml(url) {
+        let lastFailure = {
+            ok: false,
+            reason: 'http',
+            message: 'BandCamp page request was not attempted.'
+        };
+        for (let attempt = 1; attempt <= PAGE_FETCH_MAX_ATTEMPTS; attempt++) {
+            const { body, error, statusCode, headers } = await makeRequest(url, {
+                method: 'GET',
+                headers: { 'User-Agent': BROWSER_USER_AGENT }
+            });
+            let retryable = false;
+            if (error || statusCode !== 200) {
+                logger('error', 'Sources', `Failed to fetch BandCamp page: ${error ?? statusCode}`);
+                lastFailure = {
+                    ok: false,
+                    reason: 'http',
+                    message: `Failed to fetch BandCamp page: ${error ?? statusCode}`,
+                    statusCode
+                };
+                retryable =
+                    !error &&
+                        statusCode !== undefined &&
+                        (statusCode === 429 || statusCode >= 500);
+            }
+            else {
+                const page = this.getResponseText({ body });
+                if (page === null) {
+                    return {
+                        ok: false,
+                        reason: 'unreadable',
+                        message: 'BandCamp returned an unreadable page.',
+                        statusCode
+                    };
+                }
+                if (CHALLENGE_PAGE_MARKERS.some((marker) => page.includes(marker))) {
+                    const servedBy = headers?.['x-served-by'];
+                    logger('warn', 'Sources', `BandCamp served a bot challenge for ${url} (attempt ${attempt}/${PAGE_FETCH_MAX_ATTEMPTS}, x-served-by: ${Array.isArray(servedBy) ? servedBy.join(', ') : (servedBy ?? 'unknown')}).`);
+                    lastFailure = {
+                        ok: false,
+                        reason: 'challenge',
+                        message: 'BandCamp served a bot challenge page.',
+                        statusCode,
+                        page
+                    };
+                    retryable = true;
+                }
+                else {
+                    return { ok: true, page };
+                }
+            }
+            if (!retryable || attempt === PAGE_FETCH_MAX_ATTEMPTS)
+                break;
+            await new Promise((resolve) => setTimeout(resolve, PAGE_FETCH_RETRY_DELAY_MS * attempt));
+        }
+        return lastFailure;
     }
     /**
      * Converts parsed Bandcamp metadata into an encoded track payload.

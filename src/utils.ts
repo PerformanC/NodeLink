@@ -1972,6 +1972,17 @@ async function makeRequest(
       session.on('error', fallbackToHttp1)
       session.on('goaway', closeSessionGracefully)
 
+      // HTTP/2 header names must be lowercase, and single-value headers such
+      // as `user-agent` and `content-type` throw ERR_HTTP2_HEADER_SINGLE_VALUE
+      // when the same name appears twice. Normalizing the caller's header
+      // names lets `User-Agent` override the default `user-agent` instead of
+      // colliding with it (which used to abort the HTTP/2 attempt and
+      // silently fall back to HTTP/1).
+      const normalizedCustomHeaders: Record<string, unknown> = {}
+      for (const [headerName, headerValue] of Object.entries(customHeaders)) {
+        normalizedCustomHeaders[headerName.toLowerCase()] = headerValue
+      }
+
       const h2Headers: http2.OutgoingHttpHeaders = {
         ':method': method,
         ':path': currentUrl.pathname + currentUrl.search,
@@ -1982,14 +1993,14 @@ async function makeRequest(
           : 'br, gzip, deflate',
         'user-agent': 'Mozilla/5.0 (Node.js Http2Client)',
         dnt: '1',
-        ...customHeaders
+        ...(normalizedCustomHeaders as http2.OutgoingHttpHeaders)
       }
 
       if (body && !['GET', 'HEAD'].includes(method)) {
-        h2Headers['Content-Type'] =
+        h2Headers['content-type'] =
           typeof body === 'object'
             ? 'application/json'
-            : h2Headers['Content-Type']
+            : h2Headers['content-type']
         if (!disableBodyCompression) h2Headers['content-encoding'] = 'gzip'
       }
 
