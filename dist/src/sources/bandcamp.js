@@ -439,7 +439,7 @@ export default class BandcampSource {
                     type: 'playlist',
                     identifier: String(firstPage.itemId),
                     url: firstPage.itemUrl ?? url,
-                    artworkUrl: this.createArtworkUrl(firstPage.imageId),
+                    artworkUrl: this.createPlaylistArtworkUrl(firstPage.imageId),
                     author: this.normalizeText(firstPage.attribution?.name),
                     totalTracks: capTotalTracks(total, max)
                 },
@@ -826,6 +826,20 @@ export default class BandcampSource {
      * @param artId Artwork identifier exposed by `data-tralbum`.
      * @returns The public image URL or `null` when no artwork exists.
      */
+    /**
+     * Builds the cover URL of a playlist from its `imageId`. Playlist images are
+     * addressed without the `a` prefix used for release art, and are served as
+     * 500px-wide 4:3 WebP.
+     *
+     * @param imageId Playlist image ID from the page data.
+     * @returns The cover URL, or `null` when the playlist has no image.
+     */
+    createPlaylistArtworkUrl(imageId) {
+        if (imageId === undefined || imageId === null || imageId === '') {
+            return null;
+        }
+        return `https://f4.bcbits.com/img/${String(imageId)}_4x3t_500.webp`;
+    }
     createArtworkUrl(artId) {
         if (artId === undefined || artId === null || artId === '') {
             return null;
