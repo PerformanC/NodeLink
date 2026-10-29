@@ -10,7 +10,7 @@ import { URL } from 'node:url';
 import util from 'node:util';
 import zlib from 'node:zlib';
 import packageJson from '../package.json' with { type: 'json' };
-import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from './constants.js';
+import { BROWSER_USER_AGENT, DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from './constants.js';
 import { defaultSanitizer, LogSanitizer } from './utils/sanitizer.js';
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
@@ -1190,7 +1190,7 @@ async function _internalHttp1Request(urlString, options = {}) {
         acceptEncoding.unshift('zstd');
     const reqHeaders = {
         'Accept-Encoding': acceptEncoding.join(', '),
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'User-Agent': BROWSER_USER_AGENT,
         ...customHeaders
     };
     let payloadBuffer = null;

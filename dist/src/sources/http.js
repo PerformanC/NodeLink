@@ -1,5 +1,6 @@
 import { PassThrough, Transform } from 'node:stream';
 import { encodeTrack, getVersion, http1makeRequest, logger } from '../utils.js';
+import { BANDCAMP_TRACK_PATTERN } from './bandcamp.js';
 /**
  * Default user agent for HTTP source requests.
  * @internal
@@ -223,10 +224,14 @@ export default class HttpSource {
                 (data.statusCode || 0) < 400 &&
                 isValidMediaType(headContentType);
             if (!headOk) {
+                // Bandcamp custom domains (and similar CDNs) redirect-loop
+                // non-browser user agents. Only force the NodeLink UA when it is
+                // explicitly configured, letting the helper's browser default
+                // apply otherwise.
                 const getData = await http1makeRequest(url, {
                     method: 'GET',
                     streamOnly: true,
-                    headers: requestHeaders
+                    headers: this.config.userAgent ? requestHeaders : {}
                 });
                 const previewStream = getData?.stream;
                 previewStream?.destroy?.();
@@ -250,6 +255,17 @@ export default class HttpSource {
             const headers = data.headers;
             const contentType = headerToString(headers?.['content-type']);
             if (!isValidMediaType(contentType)) {
+                // Bandcamp pages are HTML, which this source cannot play. Custom
+                // domains resolve through redirects to a `*.bandcamp.com` URL,
+                // so hand the final URL over to the Bandcamp source when loaded.
+                const sources = this.nodelink.sources;
+                const finalUrl = data.finalUrl;
+                if (sources?.sources.has('bandcamp') &&
+                    finalUrl &&
+                    BANDCAMP_TRACK_PATTERN.test(finalUrl)) {
+                    logger('debug', 'HTTP Source', `Delegating Bandcamp page to Bandcamp source: ${finalUrl}`);
+                    return sources.resolve(finalUrl);
+                }
                 return {
                     loadType: 'error',
                     exception: {

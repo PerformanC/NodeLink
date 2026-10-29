@@ -12,6 +12,7 @@ import zlib from 'node:zlib'
 
 import packageJson from '../package.json' with { type: 'json' }
 import {
+  BROWSER_USER_AGENT,
   DEFAULT_MAX_REDIRECTS,
   DISCORD_ID_REGEX,
   REDIRECT_STATUS_CODES,
@@ -1435,8 +1436,7 @@ async function _internalHttp1Request(
 
   const reqHeaders: Record<string, string | number | string[]> = {
     'Accept-Encoding': acceptEncoding.join(', '),
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'User-Agent': BROWSER_USER_AGENT,
     ...customHeaders
   }
 

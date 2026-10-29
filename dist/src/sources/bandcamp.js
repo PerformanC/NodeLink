@@ -1,8 +1,9 @@
 import { PassThrough, pipeline } from 'node:stream';
+import { BROWSER_USER_AGENT } from '../constants.js';
 import { encodeTrack, logger, makeRequest } from '../utils.js';
 const BANDCAMP_BASE_URL = 'https://bandcamp.com';
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`;
-const BANDCAMP_TRACK_PATTERN = /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/;
+export const BANDCAMP_TRACK_PATTERN = /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/;
 const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/;
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/;
 const JSON_LD_REGEX = /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/script>/;
@@ -218,7 +219,8 @@ export default class BandcampSource {
     async getTrackUrl(track) {
         try {
             const { body, error, statusCode } = await makeRequest(track.uri, {
-                method: 'GET'
+                method: 'GET',
+                headers: { 'User-Agent': BROWSER_USER_AGENT }
             });
             if (error || statusCode !== 200) {
                 return {
@@ -334,7 +336,8 @@ export default class BandcampSource {
      */
     async fetchPageData(url) {
         const { body, error, statusCode } = await makeRequest(url, {
-            method: 'GET'
+            method: 'GET',
+            headers: { 'User-Agent': BROWSER_USER_AGENT }
         });
         if (error || statusCode !== 200) {
             logger('error', 'Sources', `Failed to fetch BandCamp page: ${error ?? statusCode}`);

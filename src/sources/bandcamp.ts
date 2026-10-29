@@ -1,4 +1,5 @@
 import { PassThrough, pipeline } from 'node:stream'
+import { BROWSER_USER_AGENT } from '../constants.ts'
 import type {
   BandcampApiSearchResponse,
   BandcampJsonLdData,
@@ -23,7 +24,7 @@ import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
 const BANDCAMP_BASE_URL = 'https://bandcamp.com'
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
-const BANDCAMP_TRACK_PATTERN =
+export const BANDCAMP_TRACK_PATTERN =
   /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/
 const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/
@@ -307,7 +308,8 @@ export default class BandcampSource {
   > {
     try {
       const { body, error, statusCode } = await makeRequest(track.uri, {
-        method: 'GET'
+        method: 'GET',
+        headers: { 'User-Agent': BROWSER_USER_AGENT }
       })
 
       if (error || statusCode !== 200) {
@@ -457,7 +459,8 @@ export default class BandcampSource {
     rawPage: string
   } | null> {
     const { body, error, statusCode } = await makeRequest(url, {
-      method: 'GET'
+      method: 'GET',
+      headers: { 'User-Agent': BROWSER_USER_AGENT }
     })
 
     if (error || statusCode !== 200) {
