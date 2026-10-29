@@ -3,6 +3,8 @@ import { BROWSER_USER_AGENT } from '../constants.ts'
 import type {
   BandcampApiSearchResponse,
   BandcampJsonLdData,
+  BandcampPlaylistTrack,
+  BandcampPlaylistTracklist,
   BandcampTrackBuildInput,
   BandcampTralbumData,
   BandcampTralbumTrack
@@ -20,12 +22,19 @@ import type {
   HttpRequestResult,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
-import { encodeTrack, logger, makeRequest } from '../utils.ts'
+import { capTotalTracks, encodeTrack, logger, makeRequest } from '../utils.ts'
 
 const BANDCAMP_BASE_URL = 'https://bandcamp.com'
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
 export const BANDCAMP_TRACK_PATTERN =
   /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/
+export const BANDCAMP_PLAYLIST_PATTERN =
+  /^https?:\/\/(?:www\.)?bandcamp\.com\/([^/?#]+)\/playlist\/([^/?#]+)/
+const BANDCAMP_PLAYER_API_PATH = '/api/player/2/player_data_web'
+const PLAYLIST_BLOB_ATTRIBUTE_REGEX = /\sdata-blob="([^"]*)"/
+const PLAYLIST_PAGE_TAG_REGEX = /<[a-z][^>]*\sid="PlaylistPage"[^>]*>/i
+const PLAYLIST_MAX_PAGES = 50
+const DEFAULT_MAX_PLAYLIST_LENGTH = 100
 const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/
 const JSON_LD_REGEX =
@@ -69,7 +78,10 @@ export default class BandcampSource {
   /**
    * URL patterns supported by this source.
    */
-  public readonly patterns: RegExp[] = [BANDCAMP_TRACK_PATTERN]
+  public readonly patterns: RegExp[] = [
+    BANDCAMP_TRACK_PATTERN,
+    BANDCAMP_PLAYLIST_PATTERN
+  ]
 
   /**
    * Search prefixes routed to this source.
@@ -214,6 +226,10 @@ export default class BandcampSource {
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
+      if (BANDCAMP_PLAYLIST_PATTERN.test(url)) {
+        return await this.resolvePlaylist(url)
+      }
+
       const pageData = await this.fetchPageData(url)
       if (!pageData) {
         logger('warn', 'Sources', `Failed to fetch BandCamp page for: ${url}`)
@@ -480,6 +496,212 @@ export default class BandcampSource {
         }
       }
     }
+  }
+
+  /**
+   * Resolves a Bandcamp playlist page (`bandcamp.com/<fan>/playlist/<slug>`).
+   *
+   * The first page of tracks is embedded in the `data-blob` attribute of the
+   * `#PlaylistPage` element; the remainder is loaded through the player API
+   * with the opaque `nextCursor` each page returns. Collection stops at
+   * `playback.maxPlaylistLength`. Stream URLs in the payload are signed and
+   * expire, so only track URLs are kept; `getTrackUrl` fetches fresh ones.
+   *
+   * @param url Playlist URL.
+   * @returns A playlist, an empty result, or a structured exception.
+   */
+  private async resolvePlaylist(url: string): Promise<SourceResult> {
+    const pageResult = await this.fetchPageHtml(url)
+
+    if (!pageResult.ok) {
+      if (pageResult.reason === 'challenge') {
+        return {
+          loadType: 'error',
+          exception: {
+            message:
+              'BandCamp served a bot challenge page instead of the playlist page.',
+            severity: 'fault',
+            cause: 'Bot Challenge'
+          }
+        }
+      }
+
+      logger('warn', 'Sources', `Failed to fetch BandCamp playlist: ${url}`)
+      return { loadType: 'empty', data: {} }
+    }
+
+    const firstPage = this.parsePlaylistBlob(pageResult.page)
+    if (!firstPage) {
+      logger('warn', 'Sources', `No playlist data found on BandCamp: ${url}`)
+      return { loadType: 'empty', data: {} }
+    }
+
+    const max = this.getMaxPlaylistLength()
+    const origin = new URL(url).origin
+    const collected: BandcampPlaylistTrack[] = []
+    const seen = new Set<string | number>()
+
+    const addTracks = (items?: BandcampPlaylistTrack[]): void => {
+      for (const item of items ?? []) {
+        if (!item?.url || item.isStreamingDisabled || seen.has(item.id)) {
+          continue
+        }
+        seen.add(item.id)
+        collected.push(item)
+      }
+    }
+
+    addTracks(firstPage.tracks)
+
+    let cursor = firstPage.nextCursor
+    for (
+      let page = 1;
+      cursor != null && collected.length < max && page < PLAYLIST_MAX_PAGES;
+      page++
+    ) {
+      const next = await this.fetchPlaylistPage(origin, firstPage, cursor)
+      if (!next?.tracks?.length) break
+
+      addTracks(next.tracks)
+
+      if (next.nextCursor == null || next.nextCursor === cursor) break
+      cursor = next.nextCursor
+    }
+
+    const tracks = collected.slice(0, max).map((item) =>
+      this.buildTrack({
+        identifier: String(item.id),
+        isSeekable: true,
+        author: this.normalizeText(item.artistName),
+        length: this.toDurationMilliseconds(item.duration),
+        isStream: false,
+        title: this.normalizeText(item.title),
+        uri: item.url,
+        artworkUrl: this.createArtworkUrl(item.artId)
+      })
+    )
+
+    if (tracks.length === 0) {
+      return { loadType: 'empty', data: {} }
+    }
+
+    const total = firstPage.tracksSummary?.totalCount ?? collected.length
+    if (total > tracks.length) {
+      logger(
+        'debug',
+        'Sources',
+        `BandCamp playlist has ${total} tracks; returning ${tracks.length}.`
+      )
+    }
+
+    return {
+      loadType: 'playlist',
+      data: {
+        info: {
+          name: this.normalizeText(firstPage.title) ?? 'Unknown Playlist',
+          selectedTrack: 0
+        },
+        pluginInfo: {
+          type: 'playlist',
+          identifier: String(firstPage.itemId),
+          url: firstPage.itemUrl ?? url,
+          artworkUrl: this.createArtworkUrl(firstPage.imageId),
+          author: this.normalizeText(firstPage.attribution?.name),
+          totalTracks: capTotalTracks(total, max)
+        },
+        tracks
+      }
+    }
+  }
+
+  /**
+   * Extracts the playlist tracklist from the `data-blob` attribute of the
+   * `#PlaylistPage` element. The attribute can sit on a multi-line tag, so the
+   * element is located first and the first `data-blob` on the page is only a
+   * fallback.
+   *
+   * @param page Playlist page HTML.
+   * @returns The tracklist, or `null` when it is missing or malformed.
+   */
+  private parsePlaylistBlob(page: string): BandcampPlaylistTracklist | null {
+    const tag = page.match(PLAYLIST_PAGE_TAG_REGEX)?.[0]
+    const raw =
+      (tag ? tag.match(PLAYLIST_BLOB_ATTRIBUTE_REGEX)?.[1] : undefined) ??
+      page.match(PLAYLIST_BLOB_ATTRIBUTE_REGEX)?.[1]
+    if (!raw) return null
+
+    try {
+      const blob = JSON.parse(this.decodeHtmlEntities(raw)) as {
+        appData?: { tracklist?: BandcampPlaylistTracklist }
+      }
+      const tracklist = blob.appData?.tracklist
+      return tracklist && Array.isArray(tracklist.tracks) ? tracklist : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Loads a further page of playlist tracks from the player API.
+   *
+   * @param origin Site origin of the playlist URL.
+   * @param tracklist First-page tracklist, for the item type and ID.
+   * @param cursor Opaque cursor returned by the previous page.
+   * @returns The next page, or `null` when the request failed.
+   */
+  private async fetchPlaylistPage(
+    origin: string,
+    tracklist: BandcampPlaylistTracklist,
+    cursor: number | string
+  ): Promise<BandcampPlaylistTracklist | null> {
+    try {
+      const response = await makeRequest(
+        `${origin}${BANDCAMP_PLAYER_API_PATH}`,
+        {
+          method: 'POST',
+          disableBodyCompression: true,
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+            'User-Agent': BROWSER_USER_AGENT
+          },
+          body: {
+            item_type: tracklist.itemType,
+            item_id: tracklist.itemId,
+            next_cursor: cursor
+          }
+        }
+      )
+
+      if (response.error || response.statusCode !== 200) {
+        logger(
+          'warn',
+          'Sources',
+          `BandCamp playlist page request failed: ${response.error ?? response.statusCode}`
+        )
+        return null
+      }
+
+      const json = this.getJsonBody<
+        BandcampPlaylistTracklist & { tracklist?: BandcampPlaylistTracklist }
+      >(response.body)
+
+      return json?.tracklist ?? json ?? null
+    } catch (error) {
+      logger(
+        'warn',
+        'Sources',
+        `BandCamp playlist page request threw: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return null
+    }
+  }
+
+  private getMaxPlaylistLength(): number {
+    const limit = this.nodelink.options.playback?.maxPlaylistLength
+
+    return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
+      ? limit
+      : DEFAULT_MAX_PLAYLIST_LENGTH
   }
 
   /**
@@ -773,20 +995,33 @@ export default class BandcampSource {
    * @returns A decoded string safe to use in URLs and titles.
    */
   private decodeHtmlEntities(value: string): string {
-    return value
-      .replaceAll('&quot;', '"')
-      .replaceAll('&#34;', '"')
-      .replaceAll('&#39;', "'")
-      .replaceAll('&#x27;', "'")
-      .replaceAll('&apos;', "'")
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll('&nbsp;', ' ')
-      .replaceAll('&amp;', '&')
-      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
-        String.fromCharCode(parseInt(hex, 16))
-      )
-      .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    // Single pass so an already-decoded `&` can never start a second entity
+    // (`&amp;quot;` must become `&quot;`, not `"`). Code points are decoded
+    // with `fromCodePoint` so characters outside the BMP (emoji) survive.
+    const named: Record<string, string> = {
+      quot: '"',
+      apos: "'",
+      lt: '<',
+      gt: '>',
+      nbsp: ' ',
+      amp: '&'
+    }
+
+    return value.replace(
+      /&(?:#x([0-9a-fA-F]+)|#(\d+)|([a-zA-Z]+));/g,
+      (match, hex?: string, dec?: string, name?: string) => {
+        if (name !== undefined) return named[name] ?? match
+
+        const codePoint = hex !== undefined ? parseInt(hex, 16) : Number(dec)
+        if (!Number.isInteger(codePoint) || codePoint > 0x10ffff) return match
+
+        try {
+          return String.fromCodePoint(codePoint)
+        } catch {
+          return match
+        }
+      }
+    )
   }
 
   /**

@@ -111,3 +111,39 @@ export interface BandcampTrackBuildInput {
   artworkUrl: string | null
   isrc?: string | null
 }
+
+/**
+ * Track entry in a Bandcamp playlist tracklist (the `data-blob` of the
+ * playlist page, and pages from the player API).
+ */
+export interface BandcampPlaylistTrack {
+  /** Bandcamp track ID. */
+  id: number | string
+  title?: string | null
+  artistName?: string | null
+  /** Duration in seconds, possibly fractional. */
+  duration?: number
+  /** Canonical `.../track/<slug>` URL. */
+  url: string
+  artId?: number | string | null
+  isStreamingDisabled?: boolean
+  /** Signed, short-lived stream URL. Not used: expires within a day. */
+  streamUrl?: string
+}
+
+/**
+ * Tracklist object of a Bandcamp playlist: one page of tracks plus the cursor
+ * for the next page.
+ */
+export interface BandcampPlaylistTracklist {
+  itemType?: string
+  itemId?: number | string
+  itemUrl?: string
+  title?: string | null
+  imageId?: number | string | null
+  attribution?: { name?: string | null } | null
+  tracks: BandcampPlaylistTrack[]
+  tracksSummary?: { totalCount?: number } | null
+  /** Opaque cursor, not an offset. `null` on the last page. */
+  nextCursor?: number | string | null
+}
