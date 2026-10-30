@@ -310,7 +310,11 @@ export default class SourcesManager implements SourceManagerLike {
       }
 
       if (result.loadType === 'error') {
-        this.nodelink.statsManager?.incrementSourceFailure?.(sourceName)
+        // A redirect that another source claims is routing, not a failure:
+        // the source that finally resolves it is the one that gets counted.
+        if (!this._getClaimedRedirect(result)) {
+          this.nodelink.statsManager?.incrementSourceFailure?.(sourceName)
+        }
       } else {
         this.nodelink.statsManager?.incrementSourceSuccess?.(sourceName)
       }
@@ -479,20 +483,51 @@ export default class SourcesManager implements SourceManagerLike {
   }
 
   /**
+   * Finds the source whose registered URL pattern claims a URL.
+   * @param url - The URL to look up.
+   * @returns The source name, or `null` when no pattern matches.
+   * @internal
+   */
+  private _findPatternSource(url: string): string | null {
+    for (const entry of this.patternMap) {
+      if (entry.regex.test(url)) return entry.sourceName
+    }
+    return null
+  }
+
+  /**
+   * Checks whether an error result reports a redirect into a URL that a
+   * loaded source claims through its patterns.
+   * @param result - A source result.
+   * @returns The redirect target and its source, or `null`.
+   * @internal
+   */
+  private _getClaimedRedirect(
+    result: SourceResult
+  ): { url: string; sourceName: string } | null {
+    if (result.loadType !== 'error' || !result.redirectedTo) return null
+
+    const sourceName = this._findPatternSource(result.redirectedTo)
+    return sourceName && this.sourceMap.has(sourceName)
+      ? { url: result.redirectedTo, sourceName }
+      : null
+  }
+
+  /**
    * Resolves a URL to a resource using the prioritized pattern map.
+   *
+   * URLs no pattern claims fall back to the generic `http` source. When that
+   * source reports that the URL redirected (custom domains, shortlinks) to a
+   * URL a loaded source claims, the final URL is routed to that source
+   * instead, so hooks and metrics are recorded once, for the source that
+   * actually resolved it.
    * @param url - The resource URL.
    * @returns A promise resolving to a SourceResult.
    * @public
    */
   public async resolve(url: string): Promise<SourceResult> {
-    let sourceName: string | null = null
-
-    for (const entry of this.patternMap) {
-      if (entry.regex.test(url)) {
-        sourceName = entry.sourceName
-        break
-      }
-    }
+    const patternSource = this._findPatternSource(url)
+    let sourceName = patternSource
 
     if (
       !sourceName &&
@@ -515,9 +550,41 @@ export default class SourcesManager implements SourceManagerLike {
 
     logger('debug', 'Sources', `Resolving with ${sourceName} for: ${url}`)
 
+    if (patternSource) {
+      this.nodelink.pluginManager?.callHook('onResolve', url, sourceName)
+
+      return this._instrumentedSourceCall(sourceName, 'resolve', url)
+    }
+
+    // Generic fallback route. The `onResolve` hook fires once the outcome is
+    // known, so a redirect that is re-routed is reported for the final source
+    // only.
+    let result: SourceResult
+    try {
+      result = await this._instrumentedSourceCall(sourceName, 'resolve', url)
+    } catch (error) {
+      this.nodelink.pluginManager?.callHook('onResolve', url, sourceName)
+      throw error
+    }
+
+    const redirect = this._getClaimedRedirect(result)
+    if (redirect) {
+      logger(
+        'debug',
+        'Sources',
+        `${url} redirected to ${redirect.url}, claimed by ${redirect.sourceName}`
+      )
+      return this.resolve(redirect.url)
+    }
+
     this.nodelink.pluginManager?.callHook('onResolve', url, sourceName)
 
-    return this._instrumentedSourceCall(sourceName, 'resolve', url)
+    if (result.loadType === 'error' && 'redirectedTo' in result) {
+      const { redirectedTo: _redirectedTo, ...withoutRedirect } = result
+      return withoutRedirect
+    }
+
+    return result
   }
 
   /**

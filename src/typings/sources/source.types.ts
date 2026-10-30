@@ -485,6 +485,13 @@ export type SourceResult =
         cause?: string
         errors?: unknown[]
       }
+      /**
+       * Set by the generic HTTP source when the URL redirected to a final URL
+       * it cannot play. The SourcesManager re-routes that URL through the
+       * pattern map when a loaded source claims it, and removes this field
+       * from the result otherwise. Never part of a returned result.
+       */
+      redirectedTo?: string
     }
 
 /**

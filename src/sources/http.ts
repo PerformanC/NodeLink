@@ -243,27 +243,6 @@ export default class HttpSource {
   }
 
   /**
-   * Finds a loaded source other than this one whose URL patterns claim a URL.
-   *
-   * Only sources that are enabled in the configuration are loaded, so this
-   * never depends on, or loads, a specific platform's module.
-   *
-   * @param url URL to look up.
-   * @returns The matching source name, or `null` when no other source claims it.
-   */
-  private findOtherSourceFor(url: string): string | null {
-    const loaded = this.nodelink.sources?.sources
-    if (!loaded) return null
-
-    for (const [name, instance] of loaded) {
-      if (name === 'http') continue
-      if (instance.patterns?.some((pattern) => pattern.test(url))) return name
-    }
-
-    return null
-  }
-
-  /**
    * Resolves an HTTP URL into track payload.
    * @param url - Target URL.
    * @returns Resolve result payload.
@@ -336,35 +315,18 @@ export default class HttpSource {
         (headers as Record<string, unknown>)?.['content-type']
       )
       if (!isValidMediaType(contentType)) {
-        // HTML pages cannot be played by this source. When the URL redirected
-        // (custom domains, vanity URLs) to one that another loaded source
-        // claims, hand the final URL over to that source.
+        // This source cannot play the page. When the URL redirected
+        // (custom domains, shortlinks), report where it ended up so the
+        // SourcesManager can route the final URL to the source that claims it.
         const finalUrl = (data as HttpRequestResult).finalUrl
-        const owner =
-          finalUrl && finalUrl !== url
-            ? this.findOtherSourceFor(finalUrl)
-            : null
-
-        if (finalUrl && owner) {
-          logger(
-            'debug',
-            'HTTP Source',
-            `Delegating redirected URL to ${owner} source: ${finalUrl}`
-          )
-          return (
-            this.nodelink.sources?.resolve(finalUrl) ?? {
-              loadType: 'empty',
-              data: {}
-            }
-          )
-        }
 
         return {
           loadType: 'error',
           exception: {
             message: `Unsupported content type: ${contentType}`,
             severity: 'common'
-          }
+          },
+          ...(finalUrl && finalUrl !== url ? { redirectedTo: finalUrl } : {})
         }
       }
 
