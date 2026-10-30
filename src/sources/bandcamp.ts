@@ -21,18 +21,18 @@ import type {
   HttpRequestResult,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
-import { capTotalTracks, encodeTrack, logger, makeRequest } from '../utils.ts'
+import {
+  capTotalTracks,
+  DEFAULT_BROWSER_USER_AGENT,
+  encodeTrack,
+  logger,
+  makeRequest
+} from '../utils.ts'
 
 const BANDCAMP_BASE_URL = 'https://bandcamp.com'
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
 export const BANDCAMP_TRACK_PATTERN =
   /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/
-/**
- * Browser-like User-Agent. Bandcamp serves redirects or bot-challenge pages to
- * clients it does not recognize as a browser.
- */
-const USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
 export const BANDCAMP_PLAYLIST_PATTERN =
   /^https?:\/\/(?:www\.)?bandcamp\.com\/([^/?#]+)\/playlist\/([^/?#]+)/
 const BANDCAMP_PLAYER_API_PATH = '/api/player/2/player_data_web'
@@ -623,7 +623,7 @@ export default class BandcampSource {
           disableBodyCompression: true,
           headers: {
             'Content-Type': 'application/json; charset=UTF-8',
-            'User-Agent': USER_AGENT
+            'User-Agent': DEFAULT_BROWSER_USER_AGENT
           },
           body: {
             item_type: tracklist.itemType,
@@ -701,7 +701,7 @@ export default class BandcampSource {
   ): Promise<{ page: string } | { error: string }> {
     const { body, error, statusCode } = await makeRequest(url, {
       method: 'GET',
-      headers: { 'User-Agent': USER_AGENT }
+      headers: { 'User-Agent': DEFAULT_BROWSER_USER_AGENT }
     })
 
     if (error || statusCode !== 200) {

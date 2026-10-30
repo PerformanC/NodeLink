@@ -46,6 +46,15 @@ import { defaultSanitizer, LogSanitizer } from './utils/sanitizer.ts'
 declare const __BUILD_GIT_INFO__: GitInfo | undefined
 
 /**
+ * Browser-like User-Agent used as the default for HTTP/1 requests, and by
+ * sources whose platform serves bot-challenge pages to clients it does not
+ * recognize as a browser.
+ * @internal
+ */
+export const DEFAULT_BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+
+/**
  * Reference to the runtime NodeLink instance stored on the global object.
  *
  * This indirection keeps the utilities decoupled from the main bootstrap
@@ -1435,8 +1444,7 @@ async function _internalHttp1Request(
 
   const reqHeaders: Record<string, string | number | string[]> = {
     'Accept-Encoding': acceptEncoding.join(', '),
-    'User-Agent':
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'User-Agent': DEFAULT_BROWSER_USER_AGENT,
     ...customHeaders
   }
 
