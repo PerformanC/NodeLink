@@ -302,14 +302,10 @@ export default class HttpSource {
         isValidMediaType(headContentType)
 
       if (!headOk) {
-        // Bandcamp custom domains (and similar CDNs) redirect-loop
-        // non-browser user agents. Only force the NodeLink UA when it is
-        // explicitly configured, letting the helper's browser default
-        // apply otherwise.
         const getData = await http1makeRequest(url, {
           method: 'GET',
           streamOnly: true,
-          headers: this.config.userAgent ? requestHeaders : {}
+          headers: requestHeaders
         })
         const previewStream = getData?.stream as Readable | undefined
         previewStream?.destroy?.()
