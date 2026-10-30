@@ -315,18 +315,12 @@ export default class HttpSource {
         (headers as Record<string, unknown>)?.['content-type']
       )
       if (!isValidMediaType(contentType)) {
-        // This source cannot play the page. When the URL redirected
-        // (custom domains, shortlinks), report where it ended up so the
-        // SourcesManager can route the final URL to the source that claims it.
-        const finalUrl = (data as HttpRequestResult).finalUrl
-
         return {
           loadType: 'error',
           exception: {
             message: `Unsupported content type: ${contentType}`,
             severity: 'common'
-          },
-          ...(finalUrl && finalUrl !== url ? { redirectedTo: finalUrl } : {})
+          }
         }
       }
 
