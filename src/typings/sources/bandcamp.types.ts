@@ -144,6 +144,8 @@ export interface BandcampPlaylistTracklist {
   itemUrl?: string
   title?: string | null
   imageId?: number | string | null
+  /** `true` when `imageId` is a release's art ID rather than a playlist image. */
+  isArt?: boolean
   attribution?: { name?: string | null } | null
   tracks: BandcampPlaylistTrack[]
   tracksSummary?: { totalCount?: number } | null

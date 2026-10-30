@@ -563,7 +563,10 @@ export default class BandcampSource {
             ? { identifier: String(firstPage.itemId) }
             : {}),
           url: firstPage.itemUrl ?? url,
-          artworkUrl: this.createPlaylistArtworkUrl(firstPage.imageId),
+          artworkUrl: this.createPlaylistArtworkUrl(
+            firstPage.imageId,
+            firstPage.isArt
+          ),
           author: this.normalizeText(firstPage.attribution?.name),
           totalTracks: capTotalTracks(total, max)
         },
@@ -981,30 +984,37 @@ export default class BandcampSource {
    * @param artId Artwork identifier exposed by `data-tralbum`.
    * @returns The public image URL or `null` when no artwork exists.
    */
-  /**
-   * Builds the cover URL of a playlist from its `imageId`. Playlist images are
-   * addressed without the `a` prefix used for release art, and are served as
-   * 500px-wide 4:3 WebP.
-   *
-   * @param imageId Playlist image ID from the page data.
-   * @returns The cover URL, or `null` when the playlist has no image.
-   */
-  private createPlaylistArtworkUrl(
-    imageId?: string | number | null
-  ): string | null {
-    if (imageId === undefined || imageId === null || imageId === '') {
-      return null
-    }
-
-    return `https://f4.bcbits.com/img/${String(imageId)}_4x3t_500.webp`
-  }
-
   private createArtworkUrl(artId?: string | number | null): string | null {
     if (artId === undefined || artId === null || artId === '') {
       return null
     }
 
     return `https://f4.bcbits.com/img/a${String(artId)}_10.jpg`
+  }
+
+  /**
+   * Builds the cover URL of a playlist.
+   *
+   * A playlist with an uploaded or generated cover has an `imageId` addressed
+   * without the `a` prefix and served as 500px-wide 4:3 WebP. A playlist using
+   * release art (`isArt`) has an album `art_id` in `imageId` instead, which
+   * only exists as `a<id>_10.jpg`.
+   *
+   * @param imageId Playlist image ID from the page data.
+   * @param isArt Whether `imageId` is a release's art ID.
+   * @returns The cover URL, or `null` when the playlist has no image.
+   */
+  private createPlaylistArtworkUrl(
+    imageId?: string | number | null,
+    isArt?: boolean
+  ): string | null {
+    if (imageId === undefined || imageId === null || imageId === '') {
+      return null
+    }
+
+    if (isArt) return this.createArtworkUrl(imageId)
+
+    return `https://f4.bcbits.com/img/${String(imageId)}_4x3t_500.webp`
   }
 
   /**
