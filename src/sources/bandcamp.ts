@@ -58,13 +58,9 @@ const PAGE_FETCH_RETRY_DELAY_MS = 1000
  */
 type BandcampPageResult =
   | { ok: true; page: string }
-  | {
-      ok: false
-      reason: 'challenge' | 'http' | 'unreadable'
-      message: string
-      statusCode?: number
-      page?: string
-    }
+  | { ok: false; reason: 'challenge'; page: string }
+  | { ok: false; reason: 'http'; statusCode?: number; error?: string }
+  | { ok: false; reason: 'unreadable' }
 
 /**
  * Bandcamp source implementation.
@@ -379,10 +375,7 @@ export default class BandcampSource {
                   cause: 'Invalid Response'
                 }
               : {
-                  message: result.message.replace(
-                    'Failed to fetch BandCamp page',
-                    'Failed to fetch track page'
-                  ),
+                  message: `Failed to fetch track page: ${result.error ?? result.statusCode}`,
                   severity: 'fault' as const,
                   cause: 'Request Failed'
                 }
@@ -730,7 +723,7 @@ export default class BandcampSource {
         return {
           tralbum: null,
           jsonLd: null,
-          rawPage: result.page ?? '',
+          rawPage: result.page,
           challenged: true
         }
       }
@@ -752,11 +745,7 @@ export default class BandcampSource {
    * @returns The page HTML, or a description of why it could not be fetched.
    */
   private async fetchPageHtml(url: string): Promise<BandcampPageResult> {
-    let lastFailure: BandcampPageResult = {
-      ok: false,
-      reason: 'http',
-      message: 'BandCamp page request was not attempted.'
-    }
+    let lastFailure: BandcampPageResult = { ok: false, reason: 'http' }
 
     for (let attempt = 1; attempt <= PAGE_FETCH_MAX_ATTEMPTS; attempt++) {
       const { body, error, statusCode, headers } = await makeRequest(url, {
@@ -772,12 +761,7 @@ export default class BandcampSource {
           'Sources',
           `Failed to fetch BandCamp page: ${error ?? statusCode}`
         )
-        lastFailure = {
-          ok: false,
-          reason: 'http',
-          message: `Failed to fetch BandCamp page: ${error ?? statusCode}`,
-          statusCode
-        }
+        lastFailure = { ok: false, reason: 'http', statusCode, error }
         retryable =
           !error &&
           statusCode !== undefined &&
@@ -786,12 +770,7 @@ export default class BandcampSource {
         const page = this.getResponseText({ body })
 
         if (page === null) {
-          return {
-            ok: false,
-            reason: 'unreadable',
-            message: 'BandCamp returned an unreadable page.',
-            statusCode
-          }
+          return { ok: false, reason: 'unreadable' }
         }
 
         if (CHALLENGE_PAGE_MARKERS.some((marker) => page.includes(marker))) {
@@ -801,13 +780,7 @@ export default class BandcampSource {
             'Sources',
             `BandCamp served a bot challenge for ${url} (attempt ${attempt}/${PAGE_FETCH_MAX_ATTEMPTS}, x-served-by: ${Array.isArray(servedBy) ? servedBy.join(', ') : (servedBy ?? 'unknown')}).`
           )
-          lastFailure = {
-            ok: false,
-            reason: 'challenge',
-            message: 'BandCamp served a bot challenge page.',
-            statusCode,
-            page
-          }
+          lastFailure = { ok: false, reason: 'challenge', page }
           retryable = true
         } else {
           return { ok: true, page }
