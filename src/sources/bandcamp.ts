@@ -551,7 +551,12 @@ export default class BandcampSource {
 
     addTracks(firstPage.tracks)
 
-    let cursor = firstPage.nextCursor
+    // Further pages are addressed by item type and ID; without them the
+    // cursor is useless, so only the first page is returned.
+    let cursor =
+      firstPage.itemType != null && firstPage.itemId != null
+        ? firstPage.nextCursor
+        : undefined
     for (
       let page = 1;
       cursor != null && collected.length < max && page < PLAYLIST_MAX_PAGES;
@@ -575,7 +580,7 @@ export default class BandcampSource {
         isStream: false,
         title: this.normalizeText(item.title),
         uri: item.url,
-        artworkUrl: this.createArtworkUrl(item.artId)
+        artworkUrl: this.createArtworkUrl(item.artId ?? item.album?.artId)
       })
     )
 
@@ -601,7 +606,9 @@ export default class BandcampSource {
         },
         pluginInfo: {
           type: 'playlist',
-          identifier: String(firstPage.itemId),
+          ...(firstPage.itemId != null
+            ? { identifier: String(firstPage.itemId) }
+            : {}),
           url: firstPage.itemUrl ?? url,
           artworkUrl: this.createPlaylistArtworkUrl(firstPage.imageId),
           author: this.normalizeText(firstPage.attribution?.name),

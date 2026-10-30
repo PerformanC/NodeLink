@@ -125,7 +125,10 @@ export interface BandcampPlaylistTrack {
   duration?: number
   /** Canonical `.../track/<slug>` URL. */
   url: string
+  /** Track-specific cover. Absent when the track inherits its album's. */
   artId?: number | string | null
+  /** Parent release, `null` for singles. Its `artId` is the cover fallback. */
+  album?: { artId?: number | string | null } | null
   isStreamingDisabled?: boolean
   /** Signed, short-lived stream URL. Not used: expires within a day. */
   streamUrl?: string
