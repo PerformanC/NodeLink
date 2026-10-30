@@ -20,7 +20,6 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import { encodeTrack, getVersion, http1makeRequest, logger } from '../utils.ts'
-import { BANDCAMP_TRACK_PATTERN } from './bandcamp.ts'
 
 /**
  * Default user agent for HTTP source requests.
@@ -244,6 +243,27 @@ export default class HttpSource {
   }
 
   /**
+   * Finds a loaded source other than this one whose URL patterns claim a URL.
+   *
+   * Only sources that are enabled in the configuration are loaded, so this
+   * never depends on, or loads, a specific platform's module.
+   *
+   * @param url URL to look up.
+   * @returns The matching source name, or `null` when no other source claims it.
+   */
+  private findOtherSourceFor(url: string): string | null {
+    const loaded = this.nodelink.sources?.sources
+    if (!loaded) return null
+
+    for (const [name, instance] of loaded) {
+      if (name === 'http') continue
+      if (instance.patterns?.some((pattern) => pattern.test(url))) return name
+    }
+
+    return null
+  }
+
+  /**
    * Resolves an HTTP URL into track payload.
    * @param url - Target URL.
    * @returns Resolve result payload.
@@ -320,23 +340,27 @@ export default class HttpSource {
         (headers as Record<string, unknown>)?.['content-type']
       )
       if (!isValidMediaType(contentType)) {
-        // Bandcamp pages are HTML, which this source cannot play. Custom
-        // domains resolve through redirects to a `*.bandcamp.com` URL,
-        // so hand the final URL over to the Bandcamp source when loaded.
-        const sources = this.nodelink.sources
+        // HTML pages cannot be played by this source. When the URL redirected
+        // (custom domains, vanity URLs) to one that another loaded source
+        // claims, hand the final URL over to that source.
         const finalUrl = (data as HttpRequestResult).finalUrl
+        const owner =
+          finalUrl && finalUrl !== url
+            ? this.findOtherSourceFor(finalUrl)
+            : null
 
-        if (
-          sources?.sources.has('bandcamp') &&
-          finalUrl &&
-          BANDCAMP_TRACK_PATTERN.test(finalUrl)
-        ) {
+        if (finalUrl && owner) {
           logger(
             'debug',
             'HTTP Source',
-            `Delegating Bandcamp page to Bandcamp source: ${finalUrl}`
+            `Delegating redirected URL to ${owner} source: ${finalUrl}`
           )
-          return sources.resolve(finalUrl)
+          return (
+            this.nodelink.sources?.resolve(finalUrl) ?? {
+              loadType: 'empty',
+              data: {}
+            }
+          )
         }
 
         return {
