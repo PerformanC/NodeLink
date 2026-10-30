@@ -132,19 +132,6 @@ export const REDIRECT_STATUS_CODES = [301, 302, 303, 307, 308] as const
 export const DEFAULT_MAX_REDIRECTS = 5
 
 /**
- * Browser-like User-Agent sent by default with HTTP requests
- *
- * Some platforms (e.g. Bandcamp) serve canonical redirects or challenge
- * pages to requests identified as bots or unknown clients. Sending a
- * browser-like User-Agent avoids those redirects and matches what
- * `http1makeRequest` already sends by default.
- *
- * @public
- */
-export const BROWSER_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
-
-/**
  * Maximum number of concurrent HLS segment downloads
  *
  * Limits the number of HLS media segments that can be downloaded
