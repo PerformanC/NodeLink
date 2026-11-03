@@ -138,15 +138,16 @@ class YouTubeProxyManager {
  */
 export default class YouTubeSource {
     /**
-     * Source test definitions.
+     * Declarative test suite covering all supported YouTube URL types, client variants,
+     * search protocols, recommendations, and playback validation.
      */
     static _TESTS = [
         {
-            id: 'youtube.video.standard',
-            name: 'Standard video playback',
+            id: 'youtube.video.standard_film',
+            name: 'Full-length open movie standard playback',
             input: {
                 type: 'resolve',
-                value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+                value: 'https://www.youtube.com/watch?v=eRsGyueVLvQ'
             },
             matrix: {
                 variants: [
@@ -163,9 +164,54 @@ export default class YouTubeSource {
                     type: 'track'
                 },
                 metadata: {
-                    identifier: { op: 'equals', value: 'dQw4w9WgXcQ' },
-                    title: { op: 'matches', value: 'Never Gonna Give You Up' },
-                    author: { op: 'matches', value: 'Rick Astley' },
+                    identifier: { op: 'equals', value: 'eRsGyueVLvQ' },
+                    title: { op: 'matches', value: 'Sintel' },
+                    author: { op: 'matches', value: 'Blender' },
+                    length: { op: 'between', min: 850000, max: 950000 }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 1000000,
+                    validFormats: [
+                        { container: 'webm', codec: 'opus' },
+                        { container: 'mp4', codec: 'aac' }
+                    ],
+                    decodeToEnd: true
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist'],
+                metadata: {
+                    length: { op: 'at-most', value: 0 }
+                }
+            }
+        },
+        {
+            id: 'youtube.video.standard_music',
+            name: 'Original music video standard playback',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=K4DyBUG242c'
+            },
+            matrix: {
+                variants: [
+                    { id: 'Web', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'IOS' },
+                    { id: 'TV' },
+                    { id: 'AndroidVR' },
+                    { id: 'VisionOs' }
+                ]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'K4DyBUG242c' },
+                    title: { op: 'matches', value: 'On & On' },
+                    author: { op: 'matches', value: 'NoCopyrightSounds' },
                     length: { op: 'between', min: 200000, max: 230000 }
                 },
                 stream: {
@@ -184,6 +230,147 @@ export default class YouTubeSource {
                 metadata: {
                     length: { op: 'at-most', value: 0 }
                 }
+            }
+        },
+        {
+            id: 'youtube.video.short_url',
+            name: 'Shortened URL format resolution (youtu.be)',
+            input: {
+                type: 'resolve',
+                value: 'https://youtu.be/K4DyBUG242c'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'K4DyBUG242c' },
+                    title: { op: 'matches', value: 'On & On' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.video.short_url_alt',
+            name: 'Alternative shortened URL format resolution (youtu.be)',
+            input: {
+                type: 'resolve',
+                value: 'https://youtu.be/7-rXQALDv-4'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: '7-rXQALDv-4' },
+                    title: { op: 'matches', value: 'Sneaky Snitch' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.video.short_url_timestamp',
+            name: 'Shortened URL with timestamp parameter',
+            input: {
+                type: 'resolve',
+                value: 'https://youtu.be/eRsGyueVLvQ?t=15s'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'eRsGyueVLvQ' },
+                    title: { op: 'matches', value: 'Sintel' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.video.complex_query',
+            name: 'Video URL with mixed query and tracking parameters',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=41hv2tW5Lc4&t=30s&feature=shared&si=nodelink_test'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: '41hv2tW5Lc4' },
+                    title: { op: 'matches', value: 'Tears of Steel' },
+                    author: { op: 'matches', value: 'Blender' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.video.complex_query_alt',
+            name: 'Alternative video URL with timestamp and channel parameters',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=eRsGyueVLvQ&t=1m30s&ab_channel=Blender'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'eRsGyueVLvQ' },
+                    title: { op: 'matches', value: 'Sintel' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.video.duplicate_param',
+            name: 'Multiple video ID parameters (preserve first ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=K4DyBUG242c&v=41hv2tW5Lc4'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'K4DyBUG242c' },
+                    title: { op: 'matches', value: 'On & On' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.video.duplicate_param_alt',
+            name: 'Alternative duplicate video ID parameters (preserve first ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=7-rXQALDv-4&v=eRsGyueVLvQ'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: '7-rXQALDv-4' },
+                    title: { op: 'matches', value: 'Sneaky Snitch' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
             }
         },
         {
@@ -227,11 +414,30 @@ export default class YouTubeSource {
             }
         },
         {
-            id: 'youtube.music.track',
-            name: 'YouTube Music playback',
+            id: 'youtube.video.live_route',
+            name: 'Live route URL normalization (/live/)',
             input: {
                 type: 'resolve',
-                value: 'https://music.youtube.com/watch?v=dQw4w9WgXcQ'
+                value: 'https://www.youtube.com/live/qVv6vCqciTM'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'qVv6vCqciTM' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.music.track_ncs',
+            name: 'YouTube Music track resolution and playback',
+            input: {
+                type: 'resolve',
+                value: 'https://music.youtube.com/watch?v=K4DyBUG242c'
             },
             matrix: {
                 variants: [
@@ -244,7 +450,8 @@ export default class YouTubeSource {
                     type: 'track'
                 },
                 metadata: {
-                    identifier: { op: 'equals', value: 'dQw4w9WgXcQ' }
+                    identifier: { op: 'equals', value: 'K4DyBUG242c' },
+                    title: { op: 'matches', value: 'On & On' }
                 },
                 stream: {
                     required: true,
@@ -262,33 +469,35 @@ export default class YouTubeSource {
             }
         },
         {
-            id: 'youtube.video.live',
-            name: 'YouTube Live stream',
-            skip: {
-                reason: 'Archived stream is no longer broadcasting live'
-            },
+            id: 'youtube.music.track_bgm',
+            name: 'YouTube Music background score track resolution',
             input: {
                 type: 'resolve',
-                value: 'https://www.youtube.com/watch?v=jfKfPfyJRdk'
+                value: 'https://music.youtube.com/watch?v=7-rXQALDv-4'
             },
             matrix: {
-                variants: [{ id: 'Web' }, { id: 'IOS' }]
+                variants: [
+                    { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'IOS' }
+                ]
             },
             expect: {
                 result: {
                     type: 'track'
                 },
                 metadata: {
-                    isStream: { op: 'equals', value: true }
+                    identifier: { op: 'equals', value: '7-rXQALDv-4' },
+                    title: { op: 'matches', value: 'Sneaky Snitch' }
                 },
                 stream: {
                     required: true,
-                    download: {
-                        mode: 'window',
-                        maxDurationMs: 10000,
-                        maxBytes: 500000
-                    },
-                    minBytes: 5000
+                    download: 'complete',
+                    minBytes: 500000,
+                    validFormats: [
+                        { container: 'webm', codec: 'opus' },
+                        { container: 'mp4', codec: 'aac' }
+                    ],
+                    decodeToEnd: true
                 }
             },
             forbid: {
@@ -317,16 +526,104 @@ export default class YouTubeSource {
             }
         },
         {
-            id: 'youtube.search.video',
-            name: 'YouTube search query',
+            id: 'youtube.search.video_standard',
+            name: 'YouTube standard search query (ytsearch)',
             input: {
                 type: 'search',
-                value: 'rick astley',
+                value: 'blender foundation sintel open movie',
                 searchType: 'ytsearch'
             },
             expect: {
                 result: {
                     type: 'search'
+                },
+                collection: {
+                    minItems: 1,
+                    maxItems: 50,
+                    selectTrackForStream: 'first'
+                }
+            },
+            forbid: {
+                resultTypes: ['empty']
+            }
+        },
+        {
+            id: 'youtube.search.music',
+            name: 'YouTube Music search query (ytmsearch)',
+            input: {
+                type: 'search',
+                value: 'kevin macleod sneaky snitch',
+                searchType: 'ytmsearch'
+            },
+            expect: {
+                result: {
+                    type: 'search'
+                },
+                collection: {
+                    minItems: 1,
+                    maxItems: 50,
+                    selectTrackForStream: 'first'
+                }
+            },
+            forbid: {
+                resultTypes: ['empty']
+            }
+        },
+        {
+            id: 'youtube.search.video_ncs',
+            name: 'Alternative YouTube standard search query (ytsearch)',
+            input: {
+                type: 'search',
+                value: 'nocopyrightsounds cartoon on & on',
+                searchType: 'ytsearch'
+            },
+            expect: {
+                result: {
+                    type: 'search'
+                },
+                collection: {
+                    minItems: 1,
+                    maxItems: 50,
+                    selectTrackForStream: 'first'
+                }
+            },
+            forbid: {
+                resultTypes: ['empty']
+            }
+        },
+        {
+            id: 'youtube.recommendations_ncs',
+            name: 'YouTube track recommendations query for NCS track (ytrec)',
+            input: {
+                type: 'search',
+                value: 'K4DyBUG242c',
+                searchType: 'ytrec'
+            },
+            expect: {
+                result: {
+                    type: 'playlist'
+                },
+                collection: {
+                    minItems: 1,
+                    maxItems: 50,
+                    selectTrackForStream: 'first'
+                }
+            },
+            forbid: {
+                resultTypes: ['empty']
+            }
+        },
+        {
+            id: 'youtube.recommendations_bgm',
+            name: 'YouTube track recommendations query for BGM track (ytrec)',
+            input: {
+                type: 'search',
+                value: '7-rXQALDv-4',
+                searchType: 'ytrec'
+            },
+            expect: {
+                result: {
+                    type: 'playlist'
                 },
                 collection: {
                     minItems: 1,
