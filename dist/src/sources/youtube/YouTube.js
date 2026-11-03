@@ -1,4 +1,4 @@
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
 import CipherManager from './CipherManager.js';
@@ -137,6 +137,208 @@ class YouTubeProxyManager {
  * @public
  */
 export default class YouTubeSource {
+    /**
+     * Source test definitions.
+     */
+    static _TESTS = [
+        {
+            id: 'youtube.video.standard',
+            name: 'Standard video playback',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+            },
+            matrix: {
+                variants: [
+                    { id: 'Web', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'IOS' },
+                    { id: 'TV' },
+                    { id: 'AndroidVR' },
+                    { id: 'VisionOs' }
+                ]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'dQw4w9WgXcQ' },
+                    title: { op: 'matches', value: 'Never Gonna Give You Up' },
+                    author: { op: 'matches', value: 'Rick Astley' },
+                    length: { op: 'between', min: 200000, max: 230000 }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 1000000,
+                    validFormats: [
+                        { container: 'webm', codec: 'opus' },
+                        { container: 'mp4', codec: 'aac' }
+                    ],
+                    decodeToEnd: true
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist'],
+                metadata: {
+                    length: { op: 'at-most', value: 0 }
+                }
+            }
+        },
+        {
+            id: 'youtube.video.shorts',
+            name: 'YouTube Shorts playback',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/shorts/SysWMs3zfHg'
+            },
+            matrix: {
+                variants: [
+                    { id: 'Web', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'IOS' }
+                ]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'SysWMs3zfHg' },
+                    length: { op: 'at-least', value: 5000 }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 100000,
+                    validFormats: [
+                        { container: 'webm', codec: 'opus' },
+                        { container: 'mp4', codec: 'aac' }
+                    ],
+                    decodeToEnd: true
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist'],
+                metadata: {
+                    length: { op: 'at-most', value: 0 }
+                }
+            }
+        },
+        {
+            id: 'youtube.music.track',
+            name: 'YouTube Music playback',
+            input: {
+                type: 'resolve',
+                value: 'https://music.youtube.com/watch?v=dQw4w9WgXcQ'
+            },
+            matrix: {
+                variants: [
+                    { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+                    { id: 'IOS' }
+                ]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'dQw4w9WgXcQ' }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 1000000,
+                    validFormats: [
+                        { container: 'webm', codec: 'opus' },
+                        { container: 'mp4', codec: 'aac' }
+                    ],
+                    decodeToEnd: true
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.video.live',
+            name: 'YouTube Live stream',
+            skip: {
+                reason: 'Archived stream is no longer broadcasting live'
+            },
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=jfKfPfyJRdk'
+            },
+            matrix: {
+                variants: [{ id: 'Web' }, { id: 'IOS' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    isStream: { op: 'equals', value: true }
+                },
+                stream: {
+                    required: true,
+                    download: {
+                        mode: 'window',
+                        maxDurationMs: 10000,
+                        maxBytes: 500000
+                    },
+                    minBytes: 5000
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'playlist']
+            }
+        },
+        {
+            id: 'youtube.playlist.standard',
+            name: 'YouTube Playlist collection',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI'
+            },
+            expect: {
+                result: {
+                    type: 'playlist'
+                },
+                collection: {
+                    minItems: 2,
+                    maxItems: 500,
+                    selectTrackForStream: 'first'
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'track']
+            }
+        },
+        {
+            id: 'youtube.search.video',
+            name: 'YouTube search query',
+            input: {
+                type: 'search',
+                value: 'rick astley',
+                searchType: 'ytsearch'
+            },
+            expect: {
+                result: {
+                    type: 'search'
+                },
+                collection: {
+                    minItems: 1,
+                    maxItems: 50,
+                    selectTrackForStream: 'first'
+                }
+            },
+            forbid: {
+                resultTypes: ['empty']
+            }
+        }
+    ];
     /** Reference to the global NodeLink context used for configuration, caching, and source delegation. */
     nodelink;
     /** YouTube-specific configuration block from `nodelink.options.sources.youtube`. */
@@ -2604,5 +2806,127 @@ export default class YouTubeSource {
      */
     async handleLiveChat(socket, id) {
         return this.liveChat.handleConnection(socket, id);
+    }
+    /**
+     * Executes an operation for a specific YouTube client variant in complete isolation.
+     * Standardized implementation of SourceVariantHandler.
+     */
+    async executeVariant(variant, track, streamSpec) {
+        const client = this.clients[variant.id];
+        if (!client) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: new Error(`Variant client "${variant.id}" is not available on YouTube source`)
+            };
+        }
+        try {
+            const urlData = await client.getTrackUrl(track, this.ytContext, this.cipherManager, null, null);
+            if (!urlData || urlData.exception) {
+                return {
+                    variant: variant.id,
+                    resolved: false,
+                    error: urlData?.exception?.message || 'Client returned no track URL data'
+                };
+            }
+            const hasUrl = Boolean(urlData.url);
+            const hasSabr = Boolean(urlData.additionalData?.sabr || urlData.protocol === 'sabr');
+            if (!hasUrl && !hasSabr) {
+                return {
+                    variant: variant.id,
+                    resolved: false,
+                    error: 'Client produced neither a direct URL nor SABR stream data'
+                };
+            }
+            let container = 'unknown';
+            let codec = 'unknown';
+            const formatStr = typeof urlData.format === 'string' ? urlData.format.toLowerCase() : '';
+            if (formatStr.includes('webm') ||
+                (urlData.itag && [249, 250, 251].includes(urlData.itag))) {
+                container = 'webm';
+                codec = 'opus';
+            }
+            else if (formatStr.includes('mp4') ||
+                formatStr.includes('m4a') ||
+                (urlData.itag && [139, 140, 18].includes(urlData.itag))) {
+                container = 'mp4';
+                codec = 'aac';
+            }
+            else if (hasSabr) {
+                container = 'webm';
+                codec = 'opus';
+            }
+            if (!streamSpec?.required) {
+                return {
+                    variant: variant.id,
+                    resolved: true,
+                    track: urlData.newTrack?.info || track,
+                    container,
+                    codec
+                };
+            }
+            if (hasSabr) {
+                return {
+                    variant: variant.id,
+                    resolved: true,
+                    skipped: true,
+                    skipReason: 'SABR streaming skipped for now',
+                    track: urlData.newTrack?.info || track,
+                    container: 'webm',
+                    codec: 'opus'
+                };
+            }
+            const clientUa = client.getClient?.(this.ytContext)?.client?.userAgent ||
+                (typeof client.userAgent === 'string' ? client.userAgent : undefined);
+            const userAgent = typeof clientUa === 'string'
+                ? clientUa
+                : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+            const res = await fetch(urlData.url, {
+                headers: {
+                    'User-Agent': userAgent
+                }
+            });
+            const headersRecord = {};
+            res.headers.forEach((val, key) => {
+                headersRecord[key.toLowerCase()] = val;
+            });
+            if (res.status !== 200 && res.status !== 206) {
+                const text = await res.text();
+                return {
+                    variant: variant.id,
+                    resolved: true,
+                    track: urlData.newTrack?.info || track,
+                    httpStatus: res.status,
+                    headers: headersRecord,
+                    error: `HTTP ${res.status}: ${text.slice(0, 300)}`
+                };
+            }
+            const cl = headersRecord['content-length'];
+            const cr = headersRecord['content-range'];
+            const contentLength = cl ? Number.parseInt(cl, 10) : undefined;
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: urlData.newTrack?.info || track,
+                stream: res.body
+                    ? Readable.fromWeb(res.body)
+                    : undefined,
+                httpStatus: res.status,
+                headers: headersRecord,
+                contentLength: Number.isFinite(contentLength)
+                    ? contentLength
+                    : undefined,
+                contentRange: cr,
+                container,
+                codec
+            };
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: err instanceof Error ? err : String(err)
+            };
+        }
     }
 }
