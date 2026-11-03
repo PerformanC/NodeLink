@@ -44,7 +44,7 @@ const REQUEST_HEADERS = {
   'user-agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
 }
-const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/
+const STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\s]+/
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/
 const JSON_LD_REGEX =
   /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/script>/
@@ -160,6 +160,7 @@ export default class BandcampSource {
       const request = await makeRequest(BANDCAMP_SEARCH_API_URL, {
         method: 'POST',
         disableBodyCompression: true,
+        headers: REQUEST_HEADERS,
         body: {
           search_text: query,
           search_filter: 't',
@@ -823,12 +824,9 @@ export default class BandcampSource {
       }
     }
 
-    // Fallback: regex scan of the full page.
-    const decodedPage = this.decodeHtmlEntities(page)
-    // Fix: The regex must allow `&` to capture the token parameters.
-    const streamUrlMatch = decodedPage.match(
-      /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\s]+/
-    )
+    // Fallback: regex scan of the full page. The pattern must allow `&` to
+    // capture the token parameters of the decoded URL.
+    const streamUrlMatch = this.decodeHtmlEntities(page).match(STREAM_URL_REGEX)
     return streamUrlMatch ? streamUrlMatch[0] : null
   }
 
