@@ -158,7 +158,7 @@ export interface SourceTestCase {
   /** Expected conditions that MUST be satisfied for the test to pass. */
   expect: {
     result: {
-      type: 'track' | 'playlist' | 'search' | 'empty'
+      type: 'track' | 'playlist' | 'search' | 'empty' | 'error'
     }
 
     /** Metadata assertions strictly typed against TrackInfo fields. */

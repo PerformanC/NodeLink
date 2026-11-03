@@ -459,6 +459,11 @@ export interface SoundCloudApiTrack {
   snippet?: boolean
 
   /**
+   * Track licensing or geo-restriction policy (e.g. 'ALLOW', 'BLOCK', 'SNIP').
+   */
+  policy?: 'ALLOW' | 'BLOCK' | 'MONETIZE' | 'SNIP' | string
+
+  /**
    * Allow additional unknown properties.
    */
   [key: string]: unknown

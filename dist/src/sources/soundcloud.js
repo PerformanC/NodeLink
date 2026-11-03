@@ -6,9 +6,12 @@ const BASE_URL = 'https://api-v2.soundcloud.com';
 const SOUNDCLOUD_URL = 'https://soundcloud.com';
 const ASSET_PATTERN = /https:\/\/a-v2\.sndcdn\.com\/assets\/[a-zA-Z0-9-]+\.js/g;
 const CLIENT_ID_PATTERN = /(?:[?&/]?(?:client_id)[\s:=&]*"?|"data":{"id":")([A-Za-z0-9]{32})"?/;
-const TRACK_PATTERN = /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s?]+(\?.*)?$/;
+const TRACK_PATTERN = /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[^/\s]+\/(?:sets\/)?[^/\s?]+(?:\/[^/\s?]+)?(\?.*)?$/;
+const USER_PATTERN = /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[a-zA-Z0-9-_]+(?:\/(?:tracks|popular-tracks))?\/?(?:\?.*)?$/;
 const SEARCH_URL_PATTERN = /^https?:\/\/(?:www\.)?soundcloud\.com\/search(?:\/(sounds|people|albums|sets))?(?:\?|$)/;
 const SHORT_URL_PATTERN = /^https?:\/\/(?:www\.)?on\.soundcloud\.com\/[A-Za-z0-9]+\/?(?:\?.*)?$/;
+const EMBED_PATTERN = /^https?:\/\/(?:w|player|p)\.soundcloud\.com\/(?:player(?:\.swf)?\/?|\?)\??.*url=.+/;
+const API_URL_PATTERN = /^https?:\/\/api(?:-v2)?\.soundcloud\.com\/(?:tracks|playlists)\/[0-9]+/;
 const BATCH_SIZE = 50;
 const DEFAULT_PRIORITY = 85;
 export default class SoundCloudSource {
@@ -16,7 +19,14 @@ export default class SoundCloudSource {
         this.nodelink = nodelink;
         this.baseUrl = BASE_URL;
         this.searchTerms = ['scsearch'];
-        this.patterns = [TRACK_PATTERN, SEARCH_URL_PATTERN, SHORT_URL_PATTERN];
+        this.patterns = [
+            TRACK_PATTERN,
+            USER_PATTERN,
+            SEARCH_URL_PATTERN,
+            SHORT_URL_PATTERN,
+            EMBED_PATTERN,
+            API_URL_PATTERN
+        ];
         this.priority = DEFAULT_PRIORITY;
         this.clientId = nodelink.options?.sources?.soundcloud?.clientId ?? null;
     }
@@ -290,7 +300,10 @@ export default class SoundCloudSource {
         for (let i = 0; i < collection.length && results.length < max; i++) {
             const item = collection[i];
             if (item?.kind === 'track') {
-                results.push(this._buildTrack(item));
+                const trackItem = item;
+                if (trackItem.policy === 'BLOCK')
+                    continue;
+                results.push(this._buildTrack(trackItem));
             }
             else if (item?.kind === 'user') {
                 const info = {
@@ -383,6 +396,31 @@ export default class SoundCloudSource {
                 return this._buildError(err instanceof Error ? err.message : 'Unknown error');
             }
         }
+        if (url.includes('://m.soundcloud.com')) {
+            url = url.replace('://m.soundcloud.com', '://soundcloud.com');
+        }
+        if (url.includes('://api-v2.soundcloud.com')) {
+            url = url.replace('://api-v2.soundcloud.com', '://api.soundcloud.com');
+        }
+        if (EMBED_PATTERN.test(url)) {
+            try {
+                const parsedUrl = new URL(url);
+                const targetUrl = parsedUrl.searchParams.get('url');
+                if (targetUrl) {
+                    const secretToken = parsedUrl.searchParams.get('secret_token');
+                    if (secretToken && !targetUrl.includes('secret_token')) {
+                        const separator = targetUrl.includes('?') ? '&' : '?';
+                        url = `${targetUrl}${separator}secret_token=${secretToken}`;
+                    }
+                    else {
+                        url = targetUrl;
+                    }
+                }
+            }
+            catch (err) {
+                this._logError('Embed URL expansion failed', err);
+            }
+        }
         const searchMatch = url.match(SEARCH_URL_PATTERN);
         if (searchMatch) {
             return this._resolveSearchUrl(url, searchMatch[1]);
@@ -400,13 +438,27 @@ export default class SoundCloudSource {
             if (!body?.kind)
                 return this._buildError('Invalid response');
             if (body.kind === 'track') {
+                const trackBody = body;
+                if (trackBody.policy === 'BLOCK') {
+                    return {
+                        loadType: 'error',
+                        exception: {
+                            message: 'This track is not available in your country (geo-blocked policy: BLOCK).',
+                            severity: 'common',
+                            cause: 'GeoBlocked'
+                        }
+                    };
+                }
                 return {
                     loadType: 'track',
-                    data: this._buildTrack(body)
+                    data: this._buildTrack(trackBody)
                 };
             }
             if (body.kind === 'playlist') {
                 return await this._resolvePlaylist(body);
+            }
+            if (body.kind === 'user') {
+                return await this._resolveUser(body);
             }
             return { loadType: 'empty', data: {} };
         }
@@ -433,6 +485,42 @@ export default class SoundCloudSource {
         }
         catch (err) {
             this._logError('Search URL resolve failed', err);
+            return this._buildError(err instanceof Error ? err.message : 'Unknown error');
+        }
+    }
+    async _resolveUser(user) {
+        try {
+            const reqUrl = `${BASE_URL}/users/${user.id}/tracks?client_id=${this.clientId ?? ''}&limit=${BATCH_SIZE}`;
+            const req = await http1makeRequest(reqUrl);
+            if (req.error || req.statusCode !== 200) {
+                return this._buildError(req.error?.message ??
+                    `Status: ${req.statusCode}`);
+            }
+            const body = req.body;
+            const collection = body?.collection ?? [];
+            const tracks = [];
+            for (const track of collection) {
+                if (!track?.id || track.policy === 'BLOCK')
+                    continue;
+                tracks.push(this._buildTrack(track));
+            }
+            if (tracks.length === 0) {
+                return { loadType: 'empty', data: {} };
+            }
+            return {
+                loadType: 'playlist',
+                data: {
+                    info: {
+                        name: `${user.username ?? 'SoundCloud User'}'s Tracks`,
+                        selectedTrack: 0
+                    },
+                    pluginInfo: {},
+                    tracks
+                }
+            };
+        }
+        catch (err) {
+            this._logError('Failed to resolve user tracks', err);
             return this._buildError(err instanceof Error ? err.message : 'Unknown error');
         }
     }
@@ -473,7 +561,7 @@ export default class SoundCloudSource {
         }
         const tracks = complete
             .slice(0, limit)
-            .filter((t) => t.title)
+            .filter((t) => t.title && t.policy !== 'BLOCK')
             .map((t) => this._buildTrack(t));
         return {
             loadType: 'playlist',
@@ -514,7 +602,10 @@ export default class SoundCloudSource {
         for (let i = 0; i < collection.length && tracks.length < max; i++) {
             const item = collection[i];
             if (item?.kind === 'track') {
-                tracks.push(this._buildTrack(item));
+                const trackItem = item;
+                if (trackItem.policy === 'BLOCK')
+                    continue;
+                tracks.push(this._buildTrack(trackItem));
             }
         }
         return tracks;
@@ -598,7 +689,10 @@ export default class SoundCloudSource {
             return this._buildException(err instanceof Error ? err.message : 'Unknown error');
         }
     }
-    async _selectTranscoding(body) {
+    async _selectTranscoding(body, targetVariant) {
+        if (body.policy === 'BLOCK') {
+            return this._buildException('This track is not available in your country (geo-blocked policy: BLOCK)');
+        }
         const transcodings = (body.media?.transcodings ?? []).filter((transcoding) => {
             const protocol = transcoding.format?.protocol ?? 'progressive';
             return protocol === 'progressive' || protocol === 'hls';
@@ -630,28 +724,61 @@ export default class SoundCloudSource {
             }
             return this._buildException('No transcodings available');
         }
-        const progressiveMp3 = transcodings.find((t) => t.format?.protocol === 'progressive' &&
-            t.format?.mime_type?.includes('mpeg'));
-        const progressiveAac = transcodings.find((t) => t.format?.protocol === 'progressive' &&
-            t.format?.mime_type?.includes('aac'));
-        const hlsAacHigh = transcodings.find((t) => t.format?.protocol === 'hls' &&
-            (t.format?.mime_type?.includes('aac') ||
-                t.format?.mime_type?.includes('mp4')) &&
-            (t.quality === 'hq' ||
-                t.preset?.includes('160') ||
-                t.url?.includes('160')));
-        const hlsAacStandard = transcodings.find((t) => t.format?.protocol === 'hls' &&
-            (t.format?.mime_type?.includes('aac') ||
-                t.format?.mime_type?.includes('mp4')));
-        const anyHls = transcodings.find((t) => t.format?.protocol === 'hls');
-        const anyProgressive = transcodings.find((t) => t.format?.protocol === 'progressive');
-        const selected = progressiveMp3 ||
-            progressiveAac ||
-            hlsAacHigh ||
-            hlsAacStandard ||
-            anyProgressive ||
-            anyHls ||
-            transcodings[0];
+        let selected;
+        if (targetVariant) {
+            if (targetVariant === 'progressive_mp3') {
+                selected = transcodings.find((t) => t.format?.protocol === 'progressive' &&
+                    t.format?.mime_type?.includes('mpeg'));
+            }
+            else if (targetVariant === 'hls_aac') {
+                selected =
+                    transcodings.find((t) => t.format?.protocol === 'hls' &&
+                        (t.format?.mime_type?.includes('aac') ||
+                            t.format?.mime_type?.includes('mp4')) &&
+                        (t.quality === 'hq' ||
+                            t.preset?.includes('160') ||
+                            t.url?.includes('160'))) ||
+                        transcodings.find((t) => t.format?.protocol === 'hls' &&
+                            (t.format?.mime_type?.includes('aac') ||
+                                t.format?.mime_type?.includes('mp4')));
+            }
+            else if (targetVariant === 'hls_opus') {
+                selected = transcodings.find((t) => t.format?.protocol === 'hls' &&
+                    t.format?.mime_type?.includes('opus'));
+            }
+            else if (targetVariant === 'hls_mp3') {
+                selected = transcodings.find((t) => t.format?.protocol === 'hls' &&
+                    t.format?.mime_type?.includes('mpeg'));
+            }
+            if (!selected) {
+                return this._buildException(`Variant ${targetVariant} not available for track ${body.id}`);
+            }
+        }
+        else {
+            const progressiveMp3 = transcodings.find((t) => t.format?.protocol === 'progressive' &&
+                t.format?.mime_type?.includes('mpeg'));
+            const progressiveAac = transcodings.find((t) => t.format?.protocol === 'progressive' &&
+                t.format?.mime_type?.includes('aac'));
+            const hlsAacHigh = transcodings.find((t) => t.format?.protocol === 'hls' &&
+                (t.format?.mime_type?.includes('aac') ||
+                    t.format?.mime_type?.includes('mp4')) &&
+                (t.quality === 'hq' ||
+                    t.preset?.includes('160') ||
+                    t.url?.includes('160')));
+            const hlsAacStandard = transcodings.find((t) => t.format?.protocol === 'hls' &&
+                (t.format?.mime_type?.includes('aac') ||
+                    t.format?.mime_type?.includes('mp4')));
+            const anyHls = transcodings.find((t) => t.format?.protocol === 'hls');
+            const anyProgressive = transcodings.find((t) => t.format?.protocol === 'progressive');
+            selected =
+                progressiveMp3 ||
+                    progressiveAac ||
+                    hlsAacHigh ||
+                    hlsAacStandard ||
+                    anyProgressive ||
+                    anyHls ||
+                    transcodings[0];
+        }
         if (!selected?.url) {
             return this._buildException('No valid transcoding found');
         }
@@ -710,6 +837,62 @@ export default class SoundCloudSource {
             additionalData: { format }
         };
     }
+    async executeVariant(variant, track, streamSpec) {
+        const trackUrl = `${BASE_URL}/tracks/${track.identifier}?client_id=${this.clientId ?? ''}`;
+        const req = await http1makeRequest(trackUrl);
+        if (req.error || req.statusCode !== 200) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: req.error
+                    ? (req.error.message ??
+                        'API request failed')
+                    : `HTTP ${req.statusCode}`
+            };
+        }
+        const body = req.body;
+        if (body.policy === 'BLOCK') {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: 'GeoBlocked: Track policy is BLOCK'
+            };
+        }
+        const transcodingResult = await this._selectTranscoding(body, variant.id);
+        if (transcodingResult.exception || !transcodingResult.url) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: transcodingResult.exception?.message ??
+                    'No matching transcoding found for variant'
+            };
+        }
+        let stream;
+        if (streamSpec?.required) {
+            const streamRes = await this.loadStream(track, transcodingResult.url, transcodingResult.protocol, transcodingResult.additionalData);
+            if (streamRes.stream) {
+                stream = streamRes.stream;
+            }
+        }
+        const container = transcodingResult.format === 'mp3'
+            ? 'MP3'
+            : transcodingResult.format === 'opus'
+                ? 'Ogg'
+                : 'MP4';
+        const codec = transcodingResult.format === 'mp3'
+            ? 'MP3'
+            : transcodingResult.format === 'opus'
+                ? 'Opus'
+                : 'AAC';
+        return {
+            variant: variant.id,
+            resolved: true,
+            container,
+            codec,
+            stream,
+            httpStatus: 200
+        };
+    }
     async loadStream(_track, url, protocol, additionalData) {
         if (protocol === 'progressive') {
             const stream = new PassThrough();
@@ -718,7 +901,7 @@ export default class SoundCloudSource {
         }
         else if (protocol === 'hls') {
             let type = additionalData?.format;
-            if (type === 'aac_hls') {
+            if (type === 'aac_hls' || type === 'opus') {
                 type = 'fmp4-buffered';
             }
             else if (type === 'mp3') {
@@ -813,4 +996,382 @@ export default class SoundCloudSource {
             }
         };
     }
+    static _TESTS = [
+        {
+            id: 'soundcloud.track.standard_hls_aac',
+            name: 'Standard track with HLS AAC stream validation (Cartoon - On & On)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/nocopyrightsounds/cartoon-on-on-ft-daniel-levi-ncs-release'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '213991857' },
+                    title: { op: 'matches', value: 'On & On' },
+                    author: { op: 'matches', value: 'NCS' },
+                    sourceName: { op: 'equals', value: 'soundcloud' }
+                },
+                stream: {
+                    required: true,
+                    minBytes: 32768,
+                    download: {
+                        mode: 'window',
+                        maxDurationMs: 10000,
+                        maxBytes: 262144
+                    },
+                    validFormats: [{ container: 'MP4', codec: 'AAC' }]
+                }
+            },
+            matrix: {
+                variants: [
+                    {
+                        id: 'hls_aac',
+                        label: 'SoundCloud HLS AAC Stream'
+                    }
+                ]
+            }
+        },
+        {
+            id: 'soundcloud.track.progressive_mp3',
+            name: 'Track with progressive MP3 audio decoding (House Beat 1)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/audiosoundbites/house-beat-1-124bpm'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '167857163' },
+                    title: { op: 'matches', value: 'House Music Drum Loop 1' },
+                    sourceName: { op: 'equals', value: 'soundcloud' }
+                },
+                stream: {
+                    required: true,
+                    minBytes: 32768,
+                    download: 'complete',
+                    validFormats: [{ container: 'MP3', codec: 'MP3' }]
+                }
+            },
+            matrix: {
+                variants: [
+                    {
+                        id: 'progressive_mp3',
+                        label: 'SoundCloud Progressive MP3 Stream'
+                    }
+                ]
+            }
+        },
+        {
+            id: 'soundcloud.track.secondary_electronic',
+            name: 'Secondary electronic track (Elektronomia - Sky High)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/elektronomia/elektronomia-sky-high'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '300585048' },
+                    title: { op: 'matches', value: 'Sky High' },
+                    author: { op: 'matches', value: 'Elektronomia' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.alan_walker_fade',
+            name: 'Electronic track (Alan Walker - Fade)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/alanwalker/alan-walker-fade'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '163522130' },
+                    title: { op: 'matches', value: 'Fade' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.deaf_kev_invincible',
+            name: 'Electronic track (Deaf Kev - Invincible)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/officialdeafkev/invincible-out-now-on-nocopyrightsounds'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '205462333' },
+                    title: { op: 'matches', value: 'Invincible' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.tracking_params',
+            name: 'Track URL with share tracking parameters',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/nocopyrightsounds/cartoon-on-on-ft-daniel-levi-ncs-release?si=4175330e7ca14e08bfba24aa96e0018d&utm_source=clipboard'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '213991857' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.mobile_url',
+            name: 'Mobile soundcloud URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://m.soundcloud.com/nocopyrightsounds/cartoon-on-on-ft-daniel-levi-ncs-release'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '213991857' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.api_v1_url',
+            name: 'Direct API v1 track permalink',
+            input: {
+                type: 'resolve',
+                value: 'https://api.soundcloud.com/tracks/213991857'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '213991857' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.api_v2_url',
+            name: 'Direct API v2 track URL',
+            input: {
+                type: 'resolve',
+                value: 'https://api-v2.soundcloud.com/tracks/213991857'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '213991857' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.embed_player',
+            name: 'SoundCloud embed player iframe widget URL',
+            input: {
+                type: 'resolve',
+                value: 'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F213991857'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '213991857' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.embed_player_secret_token',
+            name: 'SoundCloud embed player with secret token query parameter',
+            input: {
+                type: 'resolve',
+                value: 'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F213991857&secret_token=s-ziYey'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: { op: 'equals', value: '213991857' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.playlist.set_album',
+            name: 'Playlist set resolution (NCS x Geometry Dash)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/nocopyrightsounds/sets/ncs-x-geometry-dash-volume-1'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: {
+                    minItems: 10,
+                    maxItems: 100
+                },
+                metadata: {
+                    author: { op: 'matches', value: 'NCS' }
+                }
+            }
+        },
+        {
+            id: 'soundcloud.playlist.mobile_set',
+            name: 'Mobile playlist set resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://m.soundcloud.com/nocopyrightsounds/sets/ncs-x-geometry-dash-volume-1'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: {
+                    minItems: 10
+                }
+            }
+        },
+        {
+            id: 'soundcloud.playlist.api_permalink',
+            name: 'Direct API playlist permalink',
+            input: {
+                type: 'resolve',
+                value: 'https://api.soundcloud.com/playlists/1975069052'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: {
+                    minItems: 10
+                }
+            }
+        },
+        {
+            id: 'soundcloud.playlist.embed_widget',
+            name: 'Embed player playlist widget URL',
+            input: {
+                type: 'resolve',
+                value: 'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Fplaylists%2F1975069052'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: {
+                    minItems: 10
+                }
+            }
+        },
+        {
+            id: 'soundcloud.artist.profile',
+            name: 'Artist user profile tracks collection (NCS profile)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/nocopyrightsounds'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: {
+                    minItems: 5
+                }
+            }
+        },
+        {
+            id: 'soundcloud.artist.tracks_route',
+            name: 'Artist user tracks route collection',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/nocopyrightsounds/tracks'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: {
+                    minItems: 5
+                }
+            }
+        },
+        {
+            id: 'soundcloud.search.query_prefix',
+            name: 'Prefix search query (scsearch)',
+            input: {
+                type: 'search',
+                value: 'alan walker fade',
+                searchType: 'scsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: {
+                    minItems: 1
+                }
+            }
+        },
+        {
+            id: 'soundcloud.search.url_sounds',
+            name: 'SoundCloud search URL sounds route',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/search/sounds?q=elektronomia%20sky%20high'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: {
+                    minItems: 1
+                }
+            }
+        },
+        {
+            id: 'soundcloud.search.url_sets',
+            name: 'SoundCloud search URL sets route',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/search/sets?q=nocopyrightsounds'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: {
+                    minItems: 1
+                }
+            }
+        },
+        {
+            id: 'soundcloud.search.url_albums',
+            name: 'SoundCloud search URL albums route',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/search/albums?q=geometry%20dash'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: {
+                    minItems: 1
+                }
+            }
+        },
+        {
+            id: 'soundcloud.search.url_people',
+            name: 'SoundCloud search URL people route',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/search/people?q=nocopyrightsounds'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: {
+                    minItems: 1
+                }
+            }
+        },
+        {
+            id: 'soundcloud.track.non_existent',
+            name: 'Non-existent track URL gracefully returns empty',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/nocopyrightsounds/this-track-definitely-does-not-exist-999999'
+            },
+            expect: {
+                result: { type: 'empty' }
+            }
+        },
+        {
+            id: 'soundcloud.track.geoblocked',
+            name: 'Geo-blocked track policy BLOCK returns error (Dua Lipa - New Rules)',
+            input: {
+                type: 'resolve',
+                value: 'https://soundcloud.com/dualipa/new-rules'
+            },
+            expect: {
+                result: { type: 'error' }
+            }
+        }
+    ];
 }

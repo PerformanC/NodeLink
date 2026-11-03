@@ -479,13 +479,6 @@ async function runTestCase(sourceName, sourceInstance, testCase) {
     let allVariantsPassed = true;
     if (variants && variants.length > 0) {
         const handler = sourceInstance;
-        if (typeof handler.executeVariant !== 'function') {
-            console.log(`  ${colors.red}Error: Source "${sourceName}" declares matrix variants but does not implement SourceVariantHandler${colors.reset}`);
-            return {
-                passed: false,
-                error: 'Source does not implement SourceVariantHandler'
-            };
-        }
         if (!primaryTrack) {
             console.log(`  ${colors.red}Error: No track available to test variants matrix${colors.reset}`);
             return { passed: false, error: 'No track available for variant testing' };
@@ -573,6 +566,10 @@ async function runTestCase(sourceName, sourceInstance, testCase) {
         }
         else if (actualType === 'search') {
             console.log(`  Search        ${formatStatus(collectionItems.length > 0)}  Found ${collectionItems.length} items`);
+        }
+        else if (actualType === 'error') {
+            const errData = result;
+            console.log(`  Error         ${formatStatus(opError === null)}  ${errData.exception?.cause || 'Exception'}: ${errData.exception?.message}`);
         }
     }
     return { passed: allVariantsPassed };

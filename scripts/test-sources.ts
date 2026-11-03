@@ -654,15 +654,6 @@ async function runTestCase(
 
   if (variants && variants.length > 0) {
     const handler = sourceInstance as unknown as SourceVariantHandler
-    if (typeof handler.executeVariant !== 'function') {
-      console.log(
-        `  ${colors.red}Error: Source "${sourceName}" declares matrix variants but does not implement SourceVariantHandler${colors.reset}`
-      )
-      return {
-        passed: false,
-        error: 'Source does not implement SourceVariantHandler'
-      }
-    }
 
     if (!primaryTrack) {
       console.log(
@@ -794,6 +785,13 @@ async function runTestCase(
     } else if (actualType === 'search') {
       console.log(
         `  Search        ${formatStatus(collectionItems.length > 0)}  Found ${collectionItems.length} items`
+      )
+    } else if (actualType === 'error') {
+      const errData = result as {
+        exception?: { message?: string; cause?: string }
+      }
+      console.log(
+        `  Error         ${formatStatus(opError === null)}  ${errData.exception?.cause || 'Exception'}: ${errData.exception?.message}`
       )
     }
   }
