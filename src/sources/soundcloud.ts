@@ -11,8 +11,10 @@ import {
   type SoundCloudCachedUrlResult,
   type SoundCloudNodeLinkContext,
   type SoundCloudParsedSearch,
+  type SoundCloudPlaybackMode,
   type SoundCloudSearchType,
-  type SoundCloudStreamUrlResult
+  type SoundCloudStreamUrlResult,
+  type SoundCloudTrackPluginInfo
 } from '../typings/sources/soundcloud.types.ts'
 import type {
   SourceResult,
@@ -68,7 +70,7 @@ interface SoundCloudSourceState {
 interface SoundCloudTrackDataResult {
   encoded: string
   info: TrackInfo
-  pluginInfo: Record<string, unknown>
+  pluginInfo: SoundCloudTrackPluginInfo
 }
 
 export default class SoundCloudSource
@@ -645,6 +647,27 @@ export default class SoundCloudSource
             }
           }
         }
+
+        const hasOnlyDrm =
+          Array.isArray(trackBody.media?.transcodings) &&
+          trackBody.media.transcodings.length > 0 &&
+          trackBody.media.transcodings.every(
+            (t) =>
+              t.format?.protocol === 'cbc-encrypted-hls' ||
+              t.format?.protocol === 'ctr-encrypted-hls'
+          )
+        if (hasOnlyDrm) {
+          return {
+            loadType: 'error',
+            exception: {
+              message:
+                'Track only provides DRM-protected SoundCloud streams, which are not supported.',
+              severity: 'common',
+              cause: 'DRMProtected'
+            }
+          }
+        }
+
         return {
           loadType: 'track',
           data: this._buildTrack(trackBody)
@@ -722,7 +745,7 @@ export default class SoundCloudSource
       const tracks: SoundCloudTrackDataResult[] = []
 
       for (const track of collection) {
-        if (!track?.id || track.policy === 'BLOCK') continue
+        if (!track?.id) continue
         tracks.push(this._buildTrack(track))
       }
 
@@ -795,7 +818,7 @@ export default class SoundCloudSource
 
     const tracks = complete
       .slice(0, limit)
-      .filter((t) => t.title && t.policy !== 'BLOCK')
+      .filter((t) => t.title)
       .map((t) => this._buildTrack(t))
 
     return {
@@ -858,7 +881,24 @@ export default class SoundCloudSource
     return tracks
   }
 
+  /**
+   * Constructs an encoded track payload from raw SoundCloud track metadata.
+   *
+   * @param item - Raw track object from SoundCloud API.
+   * @returns Encoded track data with regional availability in pluginInfo.
+   */
   _buildTrack(item: SoundCloudApiTrack): SoundCloudTrackDataResult {
+    const policy =
+      item.policy ??
+      (item.media?.transcodings?.some((t) => t.snipped) ? 'SNIP' : 'ALLOW')
+
+    let playback: SoundCloudPlaybackMode = 'FULL'
+    if (policy === 'BLOCK') {
+      playback = 'BLOCK'
+    } else if (policy === 'SNIP' || item.snippet) {
+      playback = 'PARTIAL'
+    }
+
     const info: TrackEncodeInput = {
       title: item.title ?? 'Unknown',
       author: item.user?.username ?? 'Unknown',
@@ -877,7 +917,10 @@ export default class SoundCloudSource
     return {
       encoded: encodeTrack(info),
       info: this._toTrackInfo(info),
-      pluginInfo: {}
+      pluginInfo: {
+        policy,
+        playback
+      }
     }
   }
 
@@ -974,7 +1017,9 @@ export default class SoundCloudSource
   ): Promise<SoundCloudStreamUrlResult> {
     if (body.policy === 'BLOCK') {
       return this._buildException(
-        'This track is not available in your country (geo-blocked policy: BLOCK)'
+        'This track is not available in your country (geo-blocked policy: BLOCK)',
+        'GeoBlocked',
+        'common'
       )
     }
 
@@ -1011,7 +1056,9 @@ export default class SoundCloudSource
       )
       if (hasDrm) {
         return this._buildException(
-          'Track only provides DRM-protected SoundCloud streams, which are not supported'
+          'Track only provides DRM-protected SoundCloud streams, which are not supported',
+          'DRMProtected',
+          'common'
         )
       }
       if (body.media?.transcodings?.length) {
@@ -1150,9 +1197,15 @@ export default class SoundCloudSource
 
     if (
       finalUrl.includes('cf-preview-media.sndcdn.com') ||
-      finalUrl.includes('/preview/')
+      finalUrl.includes('/preview/') ||
+      selected.snipped ||
+      body.policy === 'SNIP'
     ) {
-      return this._buildException('Track only has preview URL')
+      return this._buildException(
+        'Track only has preview URL (30s snippet)',
+        'SnippedPreview',
+        'common'
+      )
     }
 
     const mimeType = selected.format?.mime_type?.toLowerCase() ?? ''
@@ -1204,6 +1257,13 @@ export default class SoundCloudSource
         variant: variant.id,
         resolved: false,
         error: 'GeoBlocked: Track policy is BLOCK'
+      }
+    }
+    if (body.policy === 'SNIP') {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: 'SnippedPreview: Track only provides snippet preview'
       }
     }
 
@@ -1367,12 +1427,16 @@ export default class SoundCloudSource
     }
   }
 
-  _buildException(message: string): TrackUrlResult {
+  _buildException(
+    message: string,
+    cause = 'Unknown',
+    severity: 'fault' | 'common' = 'fault'
+  ): TrackUrlResult {
     return {
       exception: {
         message,
-        severity: 'fault',
-        cause: 'Unknown'
+        severity,
+        cause
       }
     }
   }
@@ -1760,6 +1824,47 @@ export default class SoundCloudSource
       input: {
         type: 'resolve',
         value: 'https://soundcloud.com/dualipa/new-rules'
+      },
+      expect: {
+        result: { type: 'error' }
+      }
+    },
+    {
+      id: 'soundcloud.track.short_url',
+      name: 'Shortened on.soundcloud.com URL resolution (1nonly - meaningless love)',
+      input: {
+        type: 'resolve',
+        value: 'https://on.soundcloud.com/cFmn4pTY62rfa1cIVs'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: /meaningless love/i },
+          author: { op: 'matches', value: /1nonly/i }
+        }
+      }
+    },
+    {
+      id: 'soundcloud.track.snippet_preview',
+      name: 'Restricted snippet preview track with partial playback (Linkin Park - Numb)',
+      input: {
+        type: 'resolve',
+        value: 'https://soundcloud.com/linkinpark/numb'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: /Numb/i },
+          author: { op: 'matches', value: /LINKIN PARK/i }
+        }
+      }
+    },
+    {
+      id: 'soundcloud.track.geoblocked_slayr_toxic',
+      name: 'Geo-blocked / DRM restricted track policy BLOCK (slayr - Toxic)',
+      input: {
+        type: 'resolve',
+        value: 'https://soundcloud.com/slayr/toxic'
       },
       expect: {
         result: { type: 'error' }

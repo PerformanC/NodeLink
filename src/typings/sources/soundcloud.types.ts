@@ -158,6 +158,24 @@ export interface SoundCloudApiTranscoding {
    * @example 'aac_160'
    */
   preset?: string
+
+  /**
+   * Whether this transcoding is a 30-second snippet preview.
+   *
+   * True for tracks restricted by policy SNIP (e.g. SoundCloud Go+ tracks for non-subscribers).
+   *
+   * @example true
+   */
+  snipped?: boolean
+
+  /**
+   * Transcoding duration in milliseconds.
+   *
+   * For snippet streams, this is typically 30000ms (30 seconds).
+   *
+   * @example 30000
+   */
+  duration?: number
 }
 
 /**
@@ -460,11 +478,93 @@ export interface SoundCloudApiTrack {
 
   /**
    * Track licensing or geo-restriction policy (e.g. 'ALLOW', 'BLOCK', 'SNIP').
+   *
+   * Dictates whether the audio can be streamed in full, as a preview snippet,
+   * or is prohibited from streaming in the current region.
+   *
+   * @example 'ALLOW'
+   * @example 'BLOCK'
    */
-  policy?: 'ALLOW' | 'BLOCK' | 'MONETIZE' | 'SNIP' | string
+  policy?: SoundCloudPolicy
 
   /**
    * Allow additional unknown properties.
+   */
+  [key: string]: unknown
+}
+
+/**
+ * Track licensing or geo-restriction policy returned by SoundCloud API v2.
+ *
+ * - `'ALLOW'` - Unrestricted track available for full streaming.
+ * - `'MONETIZE'` - Monetized track available for full streaming under partner terms.
+ * - `'SNIP'` - Restricted track only providing a 30-second snippet preview to non-subscribers.
+ * - `'BLOCK'` - Geo-blocked track prohibited from playback in the client's country/region.
+ *
+ * @public
+ */
+export type SoundCloudPolicy = 'ALLOW' | 'BLOCK' | 'MONETIZE' | 'SNIP' | string
+
+/**
+ * Normalized regional playback availability mode for a SoundCloud track.
+ *
+ * Indicates whether the track can be streamed in full, partially as a snippet,
+ * or is completely blocked in the host environment's territory.
+ *
+ * - `'FULL'` - Audio can be streamed completely (policy is ALLOW or MONETIZE).
+ * - `'PARTIAL'` - Only a short preview or snippet is accessible (policy is SNIP).
+ * - `'BLOCK'` - Audio is geo-blocked and cannot be played (policy is BLOCK).
+ *
+ * @example
+ * ```typescript
+ * if (track.pluginInfo?.playback === 'BLOCK') {
+ *   console.log('Track is geo-blocked in current region');
+ * }
+ * ```
+ *
+ * @public
+ */
+export type SoundCloudPlaybackMode = 'FULL' | 'PARTIAL' | 'BLOCK'
+
+/**
+ * Metadata stored in `track.pluginInfo` for resolved SoundCloud tracks.
+ *
+ * Provides runtime information about regional restrictions, licensing policies,
+ * and playback feasibility for bots and clients.
+ *
+ * @example
+ * ```typescript
+ * const pluginInfo: SoundCloudTrackPluginInfo = {
+ *   policy: 'BLOCK',
+ *   playback: 'BLOCK'
+ * };
+ * ```
+ *
+ * @public
+ */
+export interface SoundCloudTrackPluginInfo {
+  /**
+   * Raw SoundCloud licensing or geo-restriction policy string.
+   *
+   * Common values include:
+   * - `'ALLOW'` - Full playback permitted.
+   * - `'MONETIZE'` - Full playback permitted under monetization rules.
+   * - `'SNIP'` - 30-second preview snippet only.
+   * - `'BLOCK'` - Geo-blocked track in the current region.
+   */
+  policy?: SoundCloudPolicy
+
+  /**
+   * Normalized playback availability mode computed by NodeLink.
+   *
+   * - `'FULL'` - Complete audio stream is accessible.
+   * - `'PARTIAL'` - Snippet preview only (e.g. SoundCloud Go+ track).
+   * - `'BLOCK'` - Track is region-locked or blocked from streaming.
+   */
+  playback?: SoundCloudPlaybackMode
+
+  /**
+   * Allow additional dynamic plugin or metadata fields.
    */
   [key: string]: unknown
 }
