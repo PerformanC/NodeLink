@@ -2832,7 +2832,7 @@ class StreamAudioResource extends BaseAudioResource {
       INFO: MP4 can contain AAC, ALAC or Opus. Select its codec after
         demuxing, even when the MIME parameters already name a codec.
       SOURCES:
-        - https://github.com/gpac/mp4box.js#sample-extraction
+        - https://github.com/gpac/mp4box.js#onreadyinfo
     */
     const normalizedType = _isMp4Format(type.toLowerCase())
       ? SupportedFormats.AAC
