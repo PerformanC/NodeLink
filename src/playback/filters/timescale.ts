@@ -12,6 +12,16 @@ const FLOAT_DENOMINATOR = 32768
 const FLOAT_TO_INT_SCALE = 32767
 const EMPTY_BUFFER = Buffer.alloc(0)
 
+/*
+  INFO: Bound positive factors to 0.25–4 so stretching and resampling
+    cannot turn one chunk into unbounded synchronous work. Nonpositive
+    values still mean silence; nonfinite values use the neutral factor.
+*/
+const normalizeFactor = (value = 1): number => {
+  if (!Number.isFinite(value)) return 1
+  return value <= 0 ? value : Math.max(0.25, Math.min(4, value))
+}
+
 /**
  * Concatenates multiple Float32Arrays into one.
  * @param chunks - Array of Float32Arrays.
@@ -98,9 +108,9 @@ export default class Timescale extends AnimatableFilter {
   }
 
   protected override onConfigChanged(config: Record<string, number>): void {
-    const speed = config.speed ?? 1.0
-    const pitch = config.pitch ?? 1.0
-    const rate = config.rate ?? 1.0
+    const speed = normalizeFactor(config.speed)
+    const pitch = normalizeFactor(config.pitch)
+    const rate = normalizeFactor(config.rate)
 
     const bypass = speed === 1.0 && pitch === 1.0 && rate === 1.0
     const silence = speed <= 0 || pitch <= 0 || rate <= 0
