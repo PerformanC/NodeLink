@@ -532,7 +532,7 @@ class BaseAudioResource {
             pipe.abort?.();
             pipe.unpipe?.();
             pipe.cleanup?.();
-            pipe.removeAllListeners?.();
+            // Keep pipeline listeners for pending error and close events.
             pipe.destroy?.();
         }
         this.pipes.length = 0;
@@ -1200,31 +1200,43 @@ class AACDecoderStream extends Transform {
     async _processPendingChunks() {
         if (!this.isDecoderReady || this.pendingChunks.length === 0)
             return;
-        for (const item of this.pendingChunks) {
+        while (this.pendingChunks.length > 0) {
+            const item = this.pendingChunks.shift();
             await this._decodeChunk(item.chunk, item.encoding, item.callback);
         }
-        this.pendingChunks = [];
     }
     _findADTSFrame() {
         const buffer = this.ringBuffer.peek(this.ringBuffer.length);
         if (!buffer)
             return null;
-        const buf = buffer;
-        for (let i = 0; i < buf.length - 7; i++) {
-            const syncword = ((buf[i] ?? 0) << 4) | ((buf[i + 1] ?? 0) >> 4);
-            if (syncword === 0xfff) {
-                const frameLength = (((buf[i + 3] ?? 0) & 0x03) << 11) |
-                    ((buf[i + 4] ?? 0) << 3) |
-                    (((buf[i + 5] ?? 0) >> 5) & 0x07);
-                if (buf.length >= i + frameLength) {
-                    return {
-                        start: i,
-                        end: i + frameLength,
-                        frame: buf.subarray(i, i + frameLength)
-                    };
-                }
+        for (let offset = 0; offset + 7 <= buffer.length; offset++) {
+            const flags = buffer[offset + 1] ?? 0;
+            const samplingIndex = ((buffer[offset + 2] ?? 0) >> 2) & 0x0f;
+            if (buffer[offset] !== 0xff ||
+                (flags & 0xf0) !== 0xf0 ||
+                (flags & 0x06) !== 0 ||
+                samplingIndex >= 13) {
+                continue;
             }
+            const headerLength = (flags & 1) === 0 ? 9 : 7;
+            const frameLength = (((buffer[offset + 3] ?? 0) & 0x03) << 11) |
+                ((buffer[offset + 4] ?? 0) << 3) |
+                (((buffer[offset + 5] ?? 0) >> 5) & 0x07);
+            if (frameLength <= headerLength)
+                continue;
+            // Wait for the rest of this frame instead of scanning its payload.
+            if (offset + frameLength > buffer.length) {
+                this.ringBuffer.skip(offset);
+                return null;
+            }
+            return {
+                start: offset,
+                end: offset + frameLength,
+                frame: buffer.subarray(offset, offset + frameLength)
+            };
         }
+        // Retain a partial header for the next chunk.
+        this.ringBuffer.skip(Math.max(0, buffer.length - 6));
         return null;
     }
     _transform(chunk, encoding, callback) {
@@ -2444,13 +2456,13 @@ class StreamAudioResource extends BaseAudioResource {
         const wrappedSource = inputStream._sourceStream;
         wrappedSource?.on?.('finishBuffering', forwardFinishBuffering);
         inputStream.on('error', (err) => {
-            emitResourceError(this.stream, err);
+            this.stream?.destroy(err);
         });
         if (this.pipes) {
             for (const pipe of this.pipes) {
                 if (pipe !== this.stream) {
                     pipe.on?.('error', (err) => {
-                        emitResourceError(this.stream, err);
+                        this.stream?.destroy(err);
                     });
                 }
             }
