@@ -208,6 +208,8 @@ export interface FMP4StreamState {
  * Metadata provided by seekable streams.
  */
 export interface SeekableStreamMeta {
+  /** Detected MIME type returned by the seek library. */
+  contentType: string
   /** Optional codec information. */
   codec?: {
     /** The container format (e.g., 'mp4', 'mpegts'). */
@@ -426,7 +428,7 @@ export interface SymphoniaDecoderStreamOptions extends TransformOptions {
 export interface AACDecoderStreamOptions extends TransformOptions {
   /** Desired resampling quality. */
   resamplingQuality?: ResamplingQuality
-  state?: { isAlac: boolean }
+  state?: { isPcm: boolean }
 }
 
 /**

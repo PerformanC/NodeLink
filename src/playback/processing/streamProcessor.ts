@@ -526,11 +526,11 @@ async function _buildMp4SeekOptions(
     })
 
     const info = readyInfo as MP4BoxInfo | null
-    const audioTrack = info?.tracks.find((t: MP4BoxTrack) =>
-      t.codec?.startsWith('mp4a')
+    const audioTrack = info?.tracks.find(
+      (t: MP4BoxTrack) => t.codec?.startsWith('mp4a') || t.codec === 'Opus'
     )
     if (!audioTrack) {
-      throw new Error('No AAC track found in MP4/M4A')
+      throw new Error('No supported track found in MP4/M4A')
     }
 
     mp4.setExtractionOptions(audioTrack.id, null, { nbSamples: 1 })
@@ -1505,7 +1505,7 @@ class AACDecoderStream extends Transform {
   private resamplerCreationPromise: Promise<ResamplerLike> | null
   private static readonly MAX_PENDING_CHUNKS = 200
 
-  private state: { isAlac: boolean } | null
+  private state: { isPcm: boolean } | null
 
   constructor(options: AACDecoderStreamOptions) {
     super({
@@ -1698,7 +1698,7 @@ class AACDecoderStream extends Transform {
     encoding: BufferEncoding,
     callback: TransformCallback
   ): void {
-    if (this.state?.isAlac) {
+    if (this.state?.isPcm) {
       this.push(chunk)
       callback()
       return
@@ -1811,7 +1811,7 @@ class AACDecoderStream extends Transform {
   }
 
   override _flush(callback: TransformCallback): void {
-    if (this.state?.isAlac) {
+    if (this.state?.isPcm) {
       callback()
       return
     }
@@ -1933,12 +1933,12 @@ class MP4ToAACStream extends Transform {
   private _prefetchDone: boolean
   private _opts: MP4ToAACStreamOptions
   private _initPromise: Promise<void> | null
-  private state: { isAlac: boolean } | null
-  private symphoniaDecoder: SymphoniaDecoderStream | null
+  private state: { isPcm: boolean } | null
+  private pcmDecoder: SymphoniaDecoderStream | OpusDecoder | null
   private headerChunks: Buffer[]
 
   constructor(
-    options: MP4ToAACStreamOptions & { state?: { isAlac: boolean } } = {}
+    options: MP4ToAACStreamOptions & { state?: { isPcm: boolean } } = {}
   ) {
     super({ ...options, highWaterMark: AUDIO_CONFIG.highWaterMark })
 
@@ -1950,7 +1950,7 @@ class MP4ToAACStream extends Transform {
     this._prefetchDone = false
     this._initPromise = null
     this.state = options.state ?? null
-    this.symphoniaDecoder = null
+    this.pcmDecoder = null
     this.headerChunks = []
   }
 
@@ -1973,8 +1973,8 @@ class MP4ToAACStream extends Transform {
   abort(): void {
     this._aborted = true
     this._cleanupMp4Box()
-    if (this.symphoniaDecoder) {
-      this.symphoniaDecoder.abort?.()
+    if (this.pcmDecoder instanceof SymphoniaDecoderStream) {
+      this.pcmDecoder.abort?.()
     }
   }
 
@@ -2003,64 +2003,73 @@ class MP4ToAACStream extends Transform {
 
       const audioTrack = info.tracks.find(
         (t: MP4BoxTrack) =>
-          t.codec?.startsWith('mp4a') || t.codec?.startsWith('alac')
+          t.codec?.startsWith('mp4a') ||
+          t.codec?.startsWith('alac') ||
+          t.codec === 'Opus'
       )
       if (!audioTrack) {
         throw new Error('No supported track found in MP4')
       }
 
-      if (audioTrack.codec?.startsWith('alac')) {
-        if (this.state) this.state.isAlac = true
-        this._cleanupMp4Box()
-        this.symphoniaDecoder = new SymphoniaDecoderStream({
-          codecRegistryHint: 'm4a'
-        })
-        this.symphoniaDecoder.on('data', (pcm: Buffer) => {
+      const isAlac = audioTrack.codec?.startsWith('alac')
+      if (isAlac || audioTrack.codec === 'Opus') {
+        /* INFO: These decoders emit PCM, so the AAC stage must pass it through. */
+        if (this.state) this.state.isPcm = true
+        this.pcmDecoder = isAlac
+          ? new SymphoniaDecoderStream({ codecRegistryHint: 'm4a' })
+          : new OpusDecoder({
+              rate: AUDIO_CONFIG.sampleRate,
+              channels: AUDIO_CONFIG.channels
+            })
+        this.pcmDecoder.on('data', (pcm: Buffer) => {
           this.push(pcm)
         })
-        this.symphoniaDecoder.on('error', (err) => {
-          emitResourceError(this, err)
+        this.pcmDecoder.on('error', (err: Error) => {
+          this.destroy(err)
         })
-        const fullBuffer = Buffer.concat(this.headerChunks)
-        const reordered = reorderMp4Boxes(fullBuffer)
-        this.headerChunks = []
-        this.symphoniaDecoder.write(reordered)
+        if (isAlac) {
+          this._cleanupMp4Box()
+          const fullBuffer = Buffer.concat(this.headerChunks)
+          this.headerChunks = []
+          this.pcmDecoder.write(reorderMp4Boxes(fullBuffer))
+          return
+        }
       } else {
         this.audioConfig = this._getAudioConfig(audioTrack)
-        this.headerChunks = []
+      }
+      this.headerChunks = []
 
-        this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
-          nbSamples: 50
-        })
+      this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
+        nbSamples: 50
+      })
 
-        if (typeof this._opts.seekTimeSec === 'number') {
-          const mp4boxFile = this.mp4boxFile as unknown as {
-            seek: (time: number, async: boolean) => MP4BoxSeekResult
-          }
-          const seekRes = mp4boxFile.seek(
-            this._opts.seekTimeSec,
-            true
-          ) as MP4BoxSeekResult
-          const expectedOffset = _seekOffset(seekRes)
+      if (typeof this._opts.seekTimeSec === 'number') {
+        const mp4boxFile = this.mp4boxFile as unknown as {
+          seek: (time: number, async: boolean) => MP4BoxSeekResult
+        }
+        const seekRes = mp4boxFile.seek(
+          this._opts.seekTimeSec,
+          true
+        ) as MP4BoxSeekResult
+        const expectedOffset = _seekOffset(seekRes)
 
-          if (
-            typeof this._opts.baseFileStart === 'number' &&
-            this._opts.baseFileStart !== expectedOffset
-          ) {
-            logger(
-              'warn',
-              'MP4ToAACStream',
-              `MP4 seek mismatch: stream starts at ${this._opts.baseFileStart} but MP4Box requested ${expectedOffset}`
-            )
-          }
-
-          if (typeof this._opts.baseFileStart !== 'number') {
-            this.offset = expectedOffset
-          }
+        if (
+          typeof this._opts.baseFileStart === 'number' &&
+          this._opts.baseFileStart !== expectedOffset
+        ) {
+          logger(
+            'warn',
+            'MP4ToAACStream',
+            `MP4 seek mismatch: stream starts at ${this._opts.baseFileStart} but MP4Box requested ${expectedOffset}`
+          )
         }
 
-        this.mp4boxFile.start()
+        if (typeof this._opts.baseFileStart !== 'number') {
+          this.offset = expectedOffset
+        }
       }
+
+      this.mp4boxFile.start()
     }
 
     this.mp4boxFile.onSamples = (
@@ -2071,7 +2080,14 @@ class MP4ToAACStream extends Transform {
       if (this._aborted || !this.mp4boxFile) return
       if (!samples?.length) return
 
-      for (const sample of samples) this._emitSampleWithADTS(sample)
+      for (const sample of samples) {
+        if (this.pcmDecoder) {
+          /* INFO: MP4 Opus samples are packets, so they need no ADTS header. */
+          this.pcmDecoder.write(Buffer.from(sample.data))
+        } else {
+          this._emitSampleWithADTS(sample)
+        }
+      }
 
       const last: unknown = samples[samples.length - 1]
       if (last && typeof last === 'object' && 'number' in last) {
@@ -2174,13 +2190,13 @@ class MP4ToAACStream extends Transform {
       return
     }
 
-    if (this.symphoniaDecoder) {
-      this.symphoniaDecoder.write(chunk)
+    if (this.pcmDecoder && !this.mp4boxFile) {
+      this.pcmDecoder.write(chunk)
       callback()
       return
     }
 
-    if (!this.audioConfig) this.headerChunks.push(chunk)
+    if (!this.audioConfig && !this.pcmDecoder) this.headerChunks.push(chunk)
 
     try {
       await this._initMp4Box()
@@ -2208,23 +2224,15 @@ class MP4ToAACStream extends Transform {
   }
 
   override _flush(callback: TransformCallback): void {
-    const decoderInstance = this
-      .symphoniaDecoder as SymphoniaDecoderStream | null
-    if (decoderInstance) {
-      decoderInstance.end(callback)
-      return
-    }
-
     if (!this._aborted && this.mp4boxFile) {
       try {
         this.mp4boxFile.flush()
       } catch {}
     }
 
-    const decoderInstanceAfter = this
-      .symphoniaDecoder as SymphoniaDecoderStream | null
-    if (decoderInstanceAfter) {
-      decoderInstanceAfter.end(callback)
+    if (this.pcmDecoder) {
+      this._cleanupMp4Box()
+      this.pcmDecoder.end(callback)
       return
     }
 
@@ -2239,9 +2247,9 @@ class MP4ToAACStream extends Transform {
     this._aborted = true
     this._cleanupMp4Box()
     this.headerChunks = []
-    if (this.symphoniaDecoder) {
-      this.symphoniaDecoder.destroy()
-      this.symphoniaDecoder = null
+    if (this.pcmDecoder) {
+      this.pcmDecoder.destroy()
+      this.pcmDecoder = null
     }
     super._destroy(err, callback)
   }
@@ -2820,7 +2828,15 @@ class StreamAudioResource extends BaseAudioResource {
 
     const resamplingQuality =
       nodelink.options.playback.audio?.resamplingQuality || 'fastest'
-    const normalizedType = normalizeFormat(type)
+    /*
+      INFO: MP4 can contain AAC, ALAC or Opus. Select its codec after
+        demuxing, even when the MIME parameters already name a codec.
+      SOURCES:
+        - https://github.com/gpac/mp4box.js#sample-extraction
+    */
+    const normalizedType = _isMp4Format(type.toLowerCase())
+      ? SupportedFormats.AAC
+      : normalizeFormat(type)
 
     this.pipes = [stream]
 
@@ -2913,7 +2929,7 @@ class StreamAudioResource extends BaseAudioResource {
     const lowerType = type.toLowerCase()
     const _aacStream = stream
     const streams: (Readable | Transform)[] = [stream]
-    const state = { isAlac: false }
+    const state = { isPcm: false }
 
     if (_isFmp4Format(lowerType)) {
       const bufferMode = lowerType.includes('fmp4-buffered')
@@ -3341,7 +3357,11 @@ export const createSeekeableAudioResource = async (
   enableCrossfade: boolean = false
 ): Promise<StreamAudioResource | ErrorResponse> => {
   try {
-    const hinted = String(player.streamInfo?.format ?? '').toLowerCase()
+    /* INFO: Source format objects describe a rendition, not a MIME type. */
+    const hinted =
+      typeof player.streamInfo?.format === 'string'
+        ? player.streamInfo.format.toLowerCase()
+        : ''
     const ext = _extFromUrl(url)
     const containerGuess = hinted || ext
     const seekProxy = _extractSeekProxy(player.streamInfo)
@@ -3419,12 +3439,19 @@ export const createSeekeableAudioResource = async (
       if (err) emitResourceError(passthroughStream, err)
     })
 
-    const format = meta.codec?.container || player.streamInfo?.format
+    /*
+      INFO: seekable-stream may omit codec metadata for MP4 but still
+        report contentType. Extensionless URLs can also lack a format
+        hint, so use that detected MIME type to select the decoder.
+      SOURCES:
+        - @ecliptia/seekable-stream/src/index.js
+    */
+    const format = meta.codec?.container || hinted || meta.contentType
 
     return new StreamAudioResource(
       guildId,
       passthroughStream,
-      format as string,
+      format,
       nodelink,
       initialFilters,
       volume,
@@ -3450,14 +3477,17 @@ export const createPCMStream = (
 ): Transform => {
   const resamplingQuality =
     nodelink.options.playback.audio?.resamplingQuality || 'fastest'
-  const normalizedType = normalizeFormat(type)
+  /* INFO: Keep MP4 codec selection in the demuxer, as in playback. */
+  const normalizedType = _isMp4Format(type.toLowerCase())
+    ? SupportedFormats.AAC
+    : normalizeFormat(type)
 
   const streams: (Readable | Transform)[] = [stream]
 
   switch (normalizedType) {
     case SupportedFormats.AAC: {
       const lowerType = type.toLowerCase()
-      const state = { isAlac: false }
+      const state = { isPcm: false }
 
       if (_isFmp4Format(lowerType)) {
         const bufferMode = lowerType.includes('fmp4-buffered')
