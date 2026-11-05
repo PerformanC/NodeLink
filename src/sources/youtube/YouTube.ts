@@ -3880,6 +3880,10 @@ export default class YouTubeSource implements SourceVariantHandler {
             result.error ||
             (result.statusCode !== 200 && result.statusCode !== 206)
           ) {
+            /* INFO: Release rejected responses before retrying or refreshing the URL. */
+            const responseStream = result.stream as Readable | undefined
+            responseStream?.destroy()
+
             if (result.statusCode === 416) {
               if (totalBytesReceived >= totalContentLength) {
                 logger(

@@ -2841,6 +2841,9 @@ export default class YouTubeSource {
                     this.reportProxyStatus(proxyToUse, !result.error && result.statusCode === 206, result.statusCode || 0, Date.now() - fetchStartTime);
                     if (result.error ||
                         (result.statusCode !== 200 && result.statusCode !== 206)) {
+                        /* INFO: Release rejected responses before retrying or refreshing the URL. */
+                        const responseStream = result.stream;
+                        responseStream?.destroy();
                         if (result.statusCode === 416) {
                             if (totalBytesReceived >= totalContentLength) {
                                 logger('debug', 'YouTube', `HTTP 416 Range Not Satisfiable at ${totalBytesReceived}/${totalContentLength} bytes -- stream completed`);
