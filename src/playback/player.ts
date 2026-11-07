@@ -2106,7 +2106,7 @@ export class Player {
    * Starts playback for the provided track payload.
    *
    * @param payload - Track data plus playback options.
-   * @param payload.noReplace - When true, keeps current track if already playing.
+   * @param payload.noReplace - When true, keeps the currently loaded track.
    * @param payload.startTime - Initial seek position in milliseconds.
    * @param payload.endTime - Optional end time to truncate playback.
    * @returns True when the request is accepted (actual start is async).
@@ -2125,6 +2125,15 @@ export class Player {
       'Player',
       `[Action: play] Method invoked for guild ${this.guildId} with track ${info.identifier}`
     )
+    /* INFO: replaces even an identical track unless noReplace protects the loaded track, including pending playback. Compatibility reasons. */
+    if (noReplace && this.track) {
+      logger(
+        'debug',
+        'Player',
+        `play() aborted for guild ${this.guildId} due to noReplace=true and a loaded track`
+      )
+      return false
+    }
     return new Promise((resolve) => {
       this.isUpdatingTrack = true
 
@@ -2145,31 +2154,6 @@ export class Player {
           endTime,
           track: info
         })
-
-        const isAlreadyPlaying =
-          (!!this.track?.info.identifier &&
-            this.track.info.identifier === info.identifier) ||
-          (!!this.track?.encoded && this.track.encoded === encoded)
-
-        if (this.track && this.connection?.audioStream && isAlreadyPlaying) {
-          logger(
-            'info',
-            'Player',
-            `play() for guild ${this.guildId} adopted (already playing/transitioning ${info.identifier})`
-          )
-          this.isUpdatingTrack = false
-          return resolve(true)
-        }
-
-        if (noReplace && this.track && this.connection?.audioStream) {
-          logger(
-            'debug',
-            'Player',
-            `play() aborted for guild ${this.guildId} due to noReplace=true and player is active`
-          )
-          this.isUpdatingTrack = false
-          return resolve(false)
-        }
 
         if (this.track) {
           this._emitTrackEnd(EndReasons.REPLACED)
@@ -3285,10 +3269,10 @@ export class Player {
   }
 
   /**
-   * Applies audio filters to the active stream.
+   * Stores audio filters and applies them to any active stream.
    *
    * @param filters - Filter payload that replaces the active filter set.
-   * @returns True when filters applied; false if player inactive.
+   * @returns True when filters accepted; false if player is being destroyed.
    */
   public setFilters(filters: FiltersState): boolean {
     logger(
@@ -3296,11 +3280,11 @@ export class Player {
       'Player',
       `[Action: setFilters] Method invoked for guild ${this.guildId}`
     )
-    if (this.destroying || !this.track) {
+    if (this.destroying) {
       logger(
         'debug',
         'Player',
-        `[Action: setFilters] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`
+        `[Action: setFilters] Aborted for guild ${this.guildId}: player is being destroyed`
       )
       return false
     }
@@ -3400,6 +3384,7 @@ export class Player {
       }
     }
 
+    /* INFO: Idle players retain accepted filters so the next audio resource inherits them. */
     this.filters = { ...this.filters, filters: newFilterSettings }
 
     if (this.connection?.audioStream) {
