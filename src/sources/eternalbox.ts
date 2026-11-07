@@ -182,19 +182,19 @@ export default class EternalboxSource implements SourceInstance {
 
     this.patterns = [
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/jukebox_go\\.html\\?id=([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/jukebox_go\\.html\\?id=([A-Za-z0-9]+)(?:[#&].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/analysis\\/analyse\\/([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/analysis\\/analyse\\/([A-Za-z0-9]+)(?:[/?#].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)(?:[/?#].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)\\/location`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)\\/location(?:[/?#].*)?$`,
         'i'
       )
     ]
@@ -259,6 +259,10 @@ export default class EternalboxSource implements SourceInstance {
    * @public
    */
   public async resolve(url: string): Promise<SourceResult> {
+    if (!this.patterns.some((pattern) => pattern.test(url))) {
+      return { loadType: 'empty', data: {} }
+    }
+
     const id = this._extractId(url)
     if (!id) return { loadType: 'empty', data: {} }
 
@@ -475,7 +479,14 @@ export default class EternalboxSource implements SourceInstance {
   ): Promise<EternalboxPayload | null> {
     const url = `${baseUrl}/api/analysis/analyse/${id}`
     const res = await http1makeRequest(url, {
-      headers: this._buildApiHeaders()
+      headers: this._buildApiHeaders(),
+      shouldFollowRedirect: (nextUrl) => {
+        try {
+          return this._isAllowedHost(new URL(nextUrl).hostname)
+        } catch {
+          return false
+        }
+      }
     })
     if (res.statusCode !== 200) return null
     return res.body as EternalboxPayload
@@ -608,6 +619,35 @@ export default class EternalboxSource implements SourceInstance {
   }
 
   /**
+   * Validates whether a candidate hostname belongs to allowed Eternalbox mirrors.
+   * @internal
+   */
+  private _isAllowedHost(candidate: string): boolean {
+    const host = candidate.toLowerCase()
+    const allowed = new Set([
+      'eternalboxmirror.xyz',
+      'www.eternalboxmirror.xyz',
+      'eternalbox.floriegl.tech',
+      'www.eternalbox.floriegl.tech',
+      'eternal.floriegl.tech',
+      'www.eternal.floriegl.tech',
+      'forever.reheated.org',
+      'www.forever.reheated.org',
+      'jukebox.justdavi.dev',
+      'www.jukebox.justdavi.dev',
+      'eternalbox.dev',
+      'www.eternalbox.dev'
+    ])
+    try {
+      const configuredHost = new URL(this.baseUrl).hostname.toLowerCase()
+      if (configuredHost) allowed.add(configuredHost)
+    } catch {
+      // ignore
+    }
+    return allowed.has(host)
+  }
+
+  /**
    * Extracts the origin base URL from an input URL.
    * @internal
    */
@@ -615,7 +655,12 @@ export default class EternalboxSource implements SourceInstance {
     try {
       if (typeof input !== 'string') return this.baseUrl
       const url = new URL(input)
-      if (url.protocol.startsWith('http')) return url.origin
+      if (
+        (url.protocol === 'https:' || url.protocol === 'http:') &&
+        this._isAllowedHost(url.hostname)
+      ) {
+        return url.origin
+      }
     } catch {
       // ignore
     }
@@ -682,7 +727,14 @@ export default class EternalboxSource implements SourceInstance {
     const url = `${baseUrl}/api/audio/jukebox/${id}/location`
     try {
       const res = await http1makeRequest(url, {
-        headers: this._buildApiHeaders()
+        headers: this._buildApiHeaders(),
+        shouldFollowRedirect: (nextUrl) => {
+          try {
+            return this._isAllowedHost(new URL(nextUrl).hostname)
+          } catch {
+            return false
+          }
+        }
       })
       if (res.statusCode !== 200) return null
       return (res.body as { url?: string })?.url || null

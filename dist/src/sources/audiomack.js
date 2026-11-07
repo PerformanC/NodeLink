@@ -2,11 +2,11 @@ import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const AUDIOMACK_PATTERNS = [
-    /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/song\/[^/]+(?:\?.*)?$/i,
-    /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/album\/[^/]+(?:\?.*)?$/i,
-    /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/playlist\/[^/]+(?:\?.*)?$/i,
-    /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+(?:\/)?(?:\?.*)?$/i,
-    /https?:\/\/(?:www\.)?audiomack\.com\/search(?:\?.*)?$/i
+    /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/song\/[^/]+(?:\?.*)?$/i,
+    /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/album\/[^/]+(?:\?.*)?$/i,
+    /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/playlist\/[^/]+(?:\?.*)?$/i,
+    /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+(?:\/)?(?:\?.*)?$/i,
+    /^https?:\/\/(?:www\.)?audiomack\.com\/search(?:\?.*)?$/i
 ];
 const API_BASE = 'https://api.audiomack.com/v1';
 const CONSUMER_KEY = 'audiomack-web';

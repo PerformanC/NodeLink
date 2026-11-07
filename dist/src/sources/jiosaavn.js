@@ -59,7 +59,7 @@ export default class JioSaavnSource {
         this.searchTerms = ['jssearch'];
         this.recommendationTerm = ['jsrec'];
         this.patterns = [
-            /https?:\/\/(?:www\.)?jiosaavn\.com\/(?:(?<type>album|featured|song|s\/playlist|artist)\/)(?:[^/]+\/)(?<id>[A-Za-z0-9_,-]+)/
+            /^https?:\/\/(?:www\.)?jiosaavn\.com\/(?:(?<type>album|featured|song|s\/playlist|artist)\/)(?:[^/]+\/)(?<id>[A-Za-z0-9_,-]+)/
         ];
         this.priority = 60;
         this.playlistLoadLimit =

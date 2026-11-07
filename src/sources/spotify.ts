@@ -144,8 +144,8 @@ export default class SpotifySource implements SourceInstance {
    * @public
    */
   public readonly patterns = [
-    /https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?(track|album|playlist|artist|episode|show)\/([a-zA-Z0-9]+)/,
-    /https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?local\/[^?#]+/
+    /^https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?(track|album|playlist|artist|episode|show)\/([a-zA-Z0-9]+)/,
+    /^https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?local\/[^?#]+/
   ]
 
   /**
@@ -1499,7 +1499,9 @@ export default class SpotifySource implements SourceInstance {
         )
         if (
           playlistResult.loadType === 'playlist' &&
-          Array.isArray((playlistResult.data as { tracks?: TrackData[] }).tracks) &&
+          Array.isArray(
+            (playlistResult.data as { tracks?: TrackData[] }).tracks
+          ) &&
           (playlistResult.data as { tracks: TrackData[] }).tracks.length > 0
         ) {
           return playlistResult

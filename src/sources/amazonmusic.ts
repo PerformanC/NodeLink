@@ -147,8 +147,8 @@ export default class AmazonMusicSource implements SourceInstance {
    * @public
    */
   public readonly patterns = [
-    /https?:\/\/music\.amazon\.[a-z.]+\/(?:.*\/)?(track|album|playlist|artist)s?\/([a-z0-9]+)/i,
-    /https?:\/\/(?:www\.)?amazon\.[a-z.]+\/dp\/([a-z0-9]+)/i
+    /^https?:\/\/music\.amazon\.[a-z.]+\/(?:.*\/)?(track|album|playlist|artist)s?\/([a-z0-9]+)(?:[/?#].*)?$/i,
+    /^https?:\/\/(?:www\.)?amazon\.[a-z.]+\/dp\/([a-z0-9]+)(?:[/?#].*)?$/i
   ]
 
   /**
@@ -322,6 +322,28 @@ export default class AmazonMusicSource implements SourceInstance {
   }
 
   /**
+   * Validates whether a candidate URL belongs to Amazon domains.
+   * @internal
+   */
+  private _isAmazonUrl(candidate: URL | string): boolean {
+    try {
+      const parsed =
+        typeof candidate === 'string' ? new URL(candidate) : candidate
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return false
+      }
+      const host = parsed.hostname.toLowerCase()
+      return (
+        host.startsWith('music.amazon.') ||
+        host.startsWith('amazon.') ||
+        host.startsWith('www.amazon.')
+      )
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Resolves an Amazon Music URL to its corresponding audio resource.
    * Handles individual tracks, albums, playlists, and artist profiles.
    * @param url - The canonical Amazon Music or Retail URL.
@@ -330,6 +352,8 @@ export default class AmazonMusicSource implements SourceInstance {
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
+      if (!this._isAmazonUrl(url)) return { loadType: 'empty', data: {} }
+
       const pattern1 = this.patterns[0]
       const pattern2 = this.patterns[1]
       if (!pattern1 || !pattern2) return { loadType: 'empty', data: {} }
@@ -592,11 +616,13 @@ export default class AmazonMusicSource implements SourceInstance {
     url: string,
     targetId?: string
   ): Promise<SourceResult | null> {
+    if (!this._isAmazonUrl(url)) return null
     const origin = this.extractOrigin(url)
 
     try {
       const { body, statusCode } = await http1makeRequest(url, {
-        headers: { 'User-Agent': BOT_USER_AGENT }
+        headers: { 'User-Agent': BOT_USER_AGENT },
+        shouldFollowRedirect: (nextUrl) => this._isAmazonUrl(nextUrl)
       })
       if (statusCode !== 200 || typeof body !== 'string') return null
 

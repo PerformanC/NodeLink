@@ -22,11 +22,11 @@ import {
 } from '../utils.ts'
 
 const AUDIOMACK_PATTERNS: RegExp[] = [
-  /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/song\/[^/]+(?:\?.*)?$/i,
-  /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/album\/[^/]+(?:\?.*)?$/i,
-  /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/playlist\/[^/]+(?:\?.*)?$/i,
-  /https?:\/\/(?:www\.)?audiomack\.com\/[^/]+(?:\/)?(?:\?.*)?$/i,
-  /https?:\/\/(?:www\.)?audiomack\.com\/search(?:\?.*)?$/i
+  /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/song\/[^/]+(?:\?.*)?$/i,
+  /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/album\/[^/]+(?:\?.*)?$/i,
+  /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+\/playlist\/[^/]+(?:\?.*)?$/i,
+  /^https?:\/\/(?:www\.)?audiomack\.com\/[^/]+(?:\/)?(?:\?.*)?$/i,
+  /^https?:\/\/(?:www\.)?audiomack\.com\/search(?:\?.*)?$/i
 ]
 
 const API_BASE = 'https://api.audiomack.com/v1'

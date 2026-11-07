@@ -28,7 +28,7 @@ export default class TelegramSource {
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.patterns = [
-            /https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/([^/]+)\/(\d+)/
+            /^https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/([^/?#]+)\/(\d+)(?:\/|[?#].*)?$/i
         ];
         this.searchTerms = [];
         this.priority = 80;
@@ -52,6 +52,22 @@ export default class TelegramSource {
         return { loadType: 'empty', data: {} };
     }
     /**
+     * Validates whether a candidate URL belongs to Telegram domains.
+     *
+     * @param candidate - Candidate URL or string to validate.
+     * @returns `true` when the host matches official Telegram domains.
+     */
+    _isTelegramUrl(candidate) {
+        try {
+            const parsed = typeof candidate === 'string' ? new URL(candidate) : candidate;
+            return ((parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+                ['t.me', 'telegram.me', 'telegram.dog'].includes(parsed.hostname.toLowerCase()));
+        }
+        catch {
+            return false;
+        }
+    }
+    /**
      * Resolves a Telegram message URL into one or more playable tracks.
      *
      * @param url - Candidate Telegram message URL.
@@ -64,17 +80,27 @@ export default class TelegramSource {
         if (!match?.[1] || !match[2]) {
             return { loadType: 'empty', data: {} };
         }
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(url);
+        }
+        catch {
+            return { loadType: 'empty', data: {} };
+        }
+        if (!this._isTelegramUrl(parsedUrl)) {
+            return { loadType: 'empty', data: {} };
+        }
         const channelId = match[1];
         const messageId = match[2];
-        const embedUrl = new URL(url);
-        embedUrl.searchParams.set('embed', '1');
+        const embedUrl = new URL(`https://${parsedUrl.hostname}/${encodeURIComponent(channelId)}/${encodeURIComponent(messageId)}?embed=1`);
         try {
             const { body, error, statusCode } = await http1makeRequest(embedUrl.toString(), {
                 method: 'GET',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                     'Accept-Encoding': 'identity'
-                }
+                },
+                shouldFollowRedirect: (nextUrl) => this._isTelegramUrl(nextUrl)
             });
             if (error || statusCode !== 200 || typeof body !== 'string') {
                 return {

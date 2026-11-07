@@ -28,8 +28,8 @@ export default class TumblrSource {
     this.nodelink = nodelink
     this.config = nodelink.options
     this.patterns = [
-      /https?:\/\/([^/?#&]+)\.tumblr\.com\/(?:post|video|([a-zA-Z\d-]+))\/(\d+)/i,
-      /https?:\/\/(?:www\.)?tumblr\.com\/([^/]+)\/(\d+)/i
+      /^https?:\/\/([^/?#&]+)\.tumblr\.com\/(?:post|video|([a-zA-Z\d-]+))\/(\d+)(?:\/|[?#].*)?$/i,
+      /^https?:\/\/(?:www\.)?tumblr\.com\/([^/?#&]+)\/(\d+)(?:\/|[?#].*)?$/i
     ]
     this.priority = 60
   }
@@ -116,13 +116,30 @@ export default class TumblrSource {
     return this._buildTrackData(info, { directUrl })
   }
 
+  private _isTumblrUrl(candidate: URL | string): boolean {
+    try {
+      const parsed =
+        typeof candidate === 'string' ? new URL(candidate) : candidate
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return false
+      }
+      const host = parsed.hostname.toLowerCase()
+      return host === 'tumblr.com' || host.endsWith('.tumblr.com')
+    } catch {
+      return false
+    }
+  }
+
   public async resolve(url: string): Promise<TumblrResolveResult> {
+    if (!this._isTumblrUrl(url)) return { loadType: 'empty', data: {} }
+
     const info = this._extractInfo(url)
     if (!info) return { loadType: 'empty', data: {} }
 
     try {
       const { body, statusCode } = await http1makeRequest(url, {
-        headers: { 'User-Agent': TUMBLR_USER_AGENT }
+        headers: { 'User-Agent': TUMBLR_USER_AGENT },
+        shouldFollowRedirect: (nextUrl) => this._isTumblrUrl(nextUrl)
       })
 
       const html = typeof body === 'string' ? body : String(body || '')

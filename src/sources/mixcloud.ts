@@ -74,9 +74,9 @@ export default class MixcloudSource {
     this.nodelink = nodelink
     this.config = nodelink.options
     this.patterns = [
-      /https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/(?!stream|uploads|favorites|listens|playlists)(?<slug>[^/]+)\/?/i,
-      /https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/playlists\/(?<playlist>[^/]+)\/?/i,
-      /https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<id>[^/]+)\/(?<type>uploads|favorites|listens|stream)?\/?/i
+      /^https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/(?!stream|uploads|favorites|listens|playlists)(?<slug>[^/]+)\/?/i,
+      /^https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/playlists\/(?<playlist>[^/]+)\/?/i,
+      /^https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<id>[^/]+)\/(?<type>uploads|favorites|listens|stream)?\/?/i
     ]
     this.searchTerms = ['mcsearch']
     this.priority = 90
