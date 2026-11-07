@@ -163,6 +163,13 @@ export default class LocalSource {
      */
     detectLocalAudioType(filePath, extension = '') {
         try {
+            if (!fs.existsSync(filePath)) {
+                return this.mapExtensionToType(extension);
+            }
+            const stat = fs.statSync(filePath);
+            if (!stat.isFile()) {
+                return this.mapExtensionToType(extension);
+            }
             const header = this.readMagicBytes(filePath);
             const detectedType = this.detectTypeByMagic(header);
             if (detectedType) {
@@ -437,15 +444,28 @@ export default class LocalSource {
      * @param track - Decoded local track information.
      * @returns Local protocol descriptor used by the playback pipeline.
      */
-    getTrackUrl(track) {
+    async getTrackUrl(track) {
+        const { filePath, isTraversal } = await this.resolveValidPath(track.uri || '');
+        if (isTraversal) {
+            logger('warn', 'Sources', `Path traversal attempt blocked in getTrackUrl: "${track.uri}"`);
+            return {
+                url: '',
+                protocol: 'local',
+                format: 'arbitrary',
+                exception: {
+                    message: 'Path traversal is not allowed.',
+                    severity: 'common'
+                }
+            };
+        }
         const extension = path
-            .extname(track.uri || '')
+            .extname(filePath)
             .slice(1)
             .toLowerCase();
         const metadata = this.getTrackMetadata(track);
-        const streamType = metadata?.streamType ?? this.detectLocalAudioType(track.uri, extension);
+        const streamType = metadata?.streamType ?? this.detectLocalAudioType(filePath, extension);
         return {
-            url: track.uri,
+            url: filePath,
             protocol: 'local',
             format: streamType
         };
@@ -468,6 +488,10 @@ export default class LocalSource {
         if (isTraversal) {
             logger('warn', 'Sources', `Path traversal attempt blocked in loadStream: "${decodedTrack.uri}"`);
             throw new Error('Path traversal is not allowed.');
+        }
+        const stats = await fs.promises.stat(filePath).catch(() => null);
+        if (!stats || !stats.isFile()) {
+            throw new Error('Local file not found or is not a regular file.');
         }
         const extension = path.extname(filePath).slice(1).toLowerCase();
         const metadata = this.getTrackMetadata(decodedTrack);

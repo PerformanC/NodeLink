@@ -816,11 +816,28 @@ export default class NicoVideoSource {
       }
     }
 
+    const videoId =
+      track.identifier && /^[a-zA-Z0-9_-]+$/.test(track.identifier)
+        ? track.identifier
+        : this.getVideoId(track.uri || '')
+
+    if (!videoId) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: 'Invalid NicoVideo identifier or URL.',
+          severity: 'common'
+        }
+      }
+    }
+
+    const watchUrl = `https://www.nicovideo.jp/watch/${videoId}?responseType=json`
+
     const {
       body: pageData,
       error,
       statusCode
-    } = await http1makeRequest(`${track.uri}?responseType=json`, {
+    } = await http1makeRequest(watchUrl, {
       headers: this.buildHeaders()
     })
 

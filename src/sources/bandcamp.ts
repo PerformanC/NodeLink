@@ -464,6 +464,20 @@ export default class BandcampSource {
     | (TrackUrlResult & { url: string; protocol: 'https'; format: 'mp3' })
     | SourceResult
   > {
+    if (
+      !track.uri ||
+      (!BANDCAMP_TRACK_PATTERN.test(track.uri) &&
+        !BANDCAMP_PLAYLIST_PATTERN.test(track.uri))
+    ) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: 'Invalid Bandcamp track URI.',
+          severity: 'common'
+        }
+      }
+    }
+
     try {
       const { body, error, statusCode } = await makeRequest(track.uri, {
         method: 'GET',
@@ -545,11 +559,29 @@ export default class BandcampSource {
     )
 
     try {
+      const parsedUrl = new URL(url)
+      const isAllowedHost =
+        parsedUrl.hostname.endsWith('.bcbits.com') ||
+        parsedUrl.hostname === 'bcbits.com' ||
+        parsedUrl.hostname.endsWith('.bandcamp.com') ||
+        parsedUrl.hostname === 'bandcamp.com'
+
+      if (!isAllowedHost) {
+        throw new Error('Invalid Bandcamp stream URL destination.')
+      }
+
+      const validReferer =
+        decodedTrack.uri &&
+        (BANDCAMP_TRACK_PATTERN.test(decodedTrack.uri) ||
+          BANDCAMP_PLAYLIST_PATTERN.test(decodedTrack.uri))
+          ? decodedTrack.uri
+          : BANDCAMP_BASE_URL
+
       const response = await makeRequest(url, {
         method: 'GET',
         streamOnly: true,
         headers: {
-          Referer: decodedTrack.uri
+          Referer: validReferer
         }
       })
 

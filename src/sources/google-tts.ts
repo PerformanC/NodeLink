@@ -346,8 +346,25 @@ export default class GoogleTTSSource {
       }
     }
 
+    let url = track.uri
+    if (track.identifier?.startsWith('gtts:')) {
+      url = this.buildUrl(track.identifier.slice(5))
+    } else {
+      try {
+        const parsed = new URL(track.uri)
+        if (
+          parsed.hostname !== 'translate.google.com' ||
+          parsed.pathname !== '/translate_tts'
+        ) {
+          url = this.buildUrl(track.title.replace(/^TTS:\s*/, ''))
+        }
+      } catch {
+        url = this.buildUrl(track.title.replace(/^TTS:\s*/, ''))
+      }
+    }
+
     const result: GoogleTtsTrackUrlResult = {
-      url: track.uri,
+      url,
       protocol: 'https',
       format: 'mp3'
     }
@@ -392,6 +409,14 @@ export default class GoogleTTSSource {
     )
 
     try {
+      const parsed = new URL(url)
+      if (
+        parsed.hostname !== 'translate.google.com' ||
+        parsed.pathname !== '/translate_tts'
+      ) {
+        throw new Error('Invalid Google TTS URL destination.')
+      }
+
       const response = await makeRequest(url, {
         method: 'GET',
         streamOnly: true,
