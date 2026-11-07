@@ -15,9 +15,11 @@ import type {
   SpotifyArtist,
   SpotifyGraphQLAlbumResponse,
   SpotifyGraphQLArtistResponse,
+  SpotifyGraphQLEpisodeResponse,
   SpotifyGraphQLOperation,
   SpotifyGraphQLPlaylistResponse,
   SpotifyGraphQLSearchResponse,
+  SpotifyGraphQLShowResponse,
   SpotifyGraphQLTrack,
   SpotifyMetadataResponse,
   SpotifyPagingObject,
@@ -86,6 +88,18 @@ const QUERIES = {
     name: 'queryArtistOverview',
     hash: 'ae0e2958a4ab645b35ca19ac04d0495ae12d9c5d7b7286217674801a9aab281a'
   },
+  getEpisodeOrChapter: {
+    name: 'getEpisodeOrChapter',
+    hash: '5f77db47e5a2ce6680330bb61317aa09e17ddd1d189513cb218e7cd3e43288be'
+  },
+  queryPodcastEpisodes: {
+    name: 'queryPodcastEpisodes',
+    hash: '3539d746cf882f3909660de40b4ef472b3f5893a0761d617c282541de5d412c5'
+  },
+  queryBookChapters: {
+    name: 'queryBookChapters',
+    hash: '8f342d1c624755901657fa65cbb80dd3bacbcca2f6d802f570ae3269d59a403e'
+  },
   getRecommendations: {
     name: 'internalLinkRecommenderTrack',
     hash: 'c77098ee9d6ee8ad3eb844938722db60570d040b49f41f5ec6e7be9160a7c86b'
@@ -141,12 +155,13 @@ export default class SpotifySource implements SourceInstance {
 
   /**
    * Regular expression patterns for Spotify URLs and URIs.
-   * Supports standard resource URLs, embed URLs, legacy user playlists, and URI schemes.
+   * Supports standard resource URLs, embed URLs, legacy user playlists, URI schemes, and short links.
    * @public
    */
   public readonly patterns = [
-    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?(?:embed\/)?(?:user\/[^/?#]+\/)?|spotify:)(track|album|playlist|artist|episode|show)(?:\/|:)([a-zA-Z0-9]+)/,
-    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?local\/|spotify:local:)[^?#]+/
+    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:(?:intl-[a-zA-Z0-9_-]+|embed)\/)*(?:user\/[^/?#]+\/)?|spotify:(?:user:[^:]+:)?)(track|album|playlist|artist|episode|show|audiobook|chapter)(?:\/|:)([a-zA-Z0-9]+)/,
+    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z0-9_-]+\/)?local\/|spotify:local:)[^?#]+/,
+    /^https?:\/\/(?:spotify\.link|spotify\.app\.link)\/[a-zA-Z0-9]+/
   ]
 
   /**
@@ -1060,6 +1075,9 @@ export default class SpotifySource implements SourceInstance {
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
+      const shortLinkPattern = this.patterns[2]
+      if (shortLinkPattern?.test(url)) return await this._resolveShortLink(url)
+
       const localPattern = this.patterns[1]
       if (localPattern?.test(url)) return await this._resolveLocalTrack(url)
 
@@ -1096,7 +1114,7 @@ export default class SpotifySource implements SourceInstance {
 
   /**
    * Internal dispatcher for resource resolution.
-   * @param type - Resource type (track, album, playlist, artist, episode, show).
+   * @param type - Resource type (track, album, playlist, artist, episode, chapter, show, audiobook).
    * @param id - Spotify resource identifier.
    * @returns Resolution result.
    * @internal
@@ -1115,14 +1133,11 @@ export default class SpotifySource implements SourceInstance {
       case 'artist':
         return await this._resolveArtist(id)
       case 'episode':
+      case 'chapter':
+        return await this._resolveEpisode(id, type as 'episode' | 'chapter')
       case 'show':
-        return {
-          loadType: 'error',
-          exception: {
-            message: 'Episodes and podcasts are not supported.',
-            severity: 'common'
-          }
-        }
+      case 'audiobook':
+        return await this._resolveShow(id, type as 'show' | 'audiobook')
       default:
         return { loadType: 'empty', data: {} }
     }
@@ -1518,6 +1533,629 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
+   * Resolves Spotify shortlinks (spotify.link / spotify.app.link) by capturing redirects.
+   *
+   * @param url - Short URL.
+   * @returns Resolution result from destination URL.
+   * @internal
+   */
+  private async _resolveShortLink(url: string): Promise<SourceResult> {
+    let targetUrl: string | null = null
+    try {
+      await http1makeRequest(url, {
+        method: 'HEAD',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        shouldFollowRedirect: (nextUrl) => {
+          targetUrl = nextUrl.href
+          return false
+        }
+      })
+    } catch {
+      // shouldFollowRedirect = false aborts follow
+    }
+
+    if (!targetUrl) {
+      try {
+        const res = await http1makeRequest(url, {
+          method: 'GET',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          },
+          shouldFollowRedirect: (nextUrl) => {
+            targetUrl = nextUrl.href
+            return false
+          }
+        })
+        if (!targetUrl && res.statusCode === 200 && res.body) {
+          const bodyStr =
+            typeof res.body === 'string' ? res.body : res.body.toString()
+          const ogMatch =
+            bodyStr.match(
+              /<meta\s+(?:property|name)=["']og:url["']\s+content=["'](https?:\/\/[^"']+)["']/i
+            ) ||
+            bodyStr.match(
+              /<link\s+rel=["']canonical["']\s+href=["'](https?:\/\/[^"']+)["']/i
+            )
+          if (ogMatch?.[1]) {
+            targetUrl = ogMatch[1]
+          }
+        }
+      } catch {
+        // shouldFollowRedirect abort
+      }
+    }
+
+    if (targetUrl && targetUrl !== url) {
+      return await this.resolve(targetUrl)
+    }
+
+    return { loadType: 'empty', data: {} }
+  }
+
+  /**
+   * Resolves a podcast episode or audiobook chapter using the Pathfinder GraphQL API
+   * with Spotify embed metadata and oEmbed fallbacks.
+   *
+   * @param id - Spotify Episode or Chapter identifier.
+   * @param kind - Resource classification ('episode' or 'chapter').
+   * @returns Resolution result.
+   * @internal
+   */
+  private async _resolveEpisode(
+    id: string,
+    kind: 'episode' | 'chapter' = 'episode'
+  ): Promise<SourceResult> {
+    try {
+      await this._ensureToken('anonymous')
+
+      if (this.anonymousToken) {
+        const data =
+          await this._internalApiRequest<SpotifyGraphQLEpisodeResponse>(
+            QUERIES.getEpisodeOrChapter,
+            { uri: `spotify:episode:${id}` }
+          )
+
+        const ep = data?.episodeUnionV2
+        if (ep && ep.__typename !== 'NotFound' && ep.name) {
+          const title = ep.name
+          const showName =
+            ep.podcastV2?.data?.name ||
+            ep.audiobookV2?.data?.name ||
+            'Unknown Podcast'
+          const duration = ep.duration?.totalMilliseconds ?? 0
+          const artworkUrl =
+            this._pickLargestImage(
+              ep.coverArt?.sources?.map((s) => ({
+                url: s.url,
+                width: s.width ?? undefined
+              }))
+            ) || null
+          const explicit = ep.contentRating?.label === 'EXPLICIT'
+          const previewUrl = ep.audio?.items?.[0]?.url || null
+
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: true,
+            author: showName,
+            length: duration,
+            isStream: false,
+            position: 0,
+            title,
+            uri: `https://open.spotify.com/${kind}/${id}?explicit=${explicit}`,
+            artworkUrl,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+
+          return {
+            loadType: 'track',
+            data: {
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: kind,
+                show: showName,
+                previewUrl
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 1: Embed metadata extraction
+      const embedUrl = `https://open.spotify.com/embed/${kind}/${id}`
+      const res = await http1makeRequest(embedUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      })
+
+      if (res.statusCode === 200 && res.body) {
+        const html =
+          typeof res.body === 'string' ? res.body : res.body.toString()
+        const nextDataMatch = html.match(
+          /<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/
+        )
+        if (nextDataMatch?.[1]) {
+          const parsed = JSON.parse(nextDataMatch[1]) as {
+            props?: {
+              pageProps?: {
+                state?: {
+                  data?: {
+                    entity?: {
+                      name?: string
+                      title?: string
+                      subtitle?: string
+                      duration?: number
+                      duration_ms?: number
+                      isExplicit?: boolean
+                      audioPreview?: { url?: string }
+                      visualIdentity?: { image?: Array<{ url: string; maxWidth?: number }> }
+                      relatedEntityCoverArt?: Array<{ url: string; maxWidth?: number }>
+                    }
+                  }
+                }
+              }
+            }
+          }
+          const entity = parsed?.props?.pageProps?.state?.data?.entity
+          if (entity && (entity.name || entity.title)) {
+            const title = entity.name || entity.title || 'Unknown Episode'
+            const showName = entity.subtitle || 'Unknown Podcast'
+            const duration =
+              typeof entity.duration === 'number'
+                ? entity.duration
+                : typeof entity.duration_ms === 'number'
+                  ? entity.duration_ms
+                  : 0
+            const artworkUrl =
+              this._pickLargestImage(
+                entity.visualIdentity?.image?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              this._pickLargestImage(
+                entity.relatedEntityCoverArt?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              null
+            const explicit = Boolean(entity.isExplicit)
+
+            const info: TrackInfo = {
+              identifier: id,
+              isSeekable: true,
+              author: showName,
+              length: duration,
+              isStream: false,
+              position: 0,
+              title,
+              uri: `https://open.spotify.com/${kind}/${id}?explicit=${explicit}`,
+              artworkUrl,
+              isrc: null,
+              sourceName: 'spotify'
+            }
+
+            return {
+              loadType: 'track',
+              data: {
+                encoded: encodeTrack({ ...info, details: [] }),
+                info,
+                pluginInfo: {
+                  type: kind,
+                  show: showName,
+                  previewUrl: entity.audioPreview?.url || null
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 2: oEmbed endpoint
+      const oembedRes = await http1makeRequest(
+        `https://open.spotify.com/oembed?url=https://open.spotify.com/${kind}/${id}`
+      )
+      if (oembedRes.statusCode === 200 && oembedRes.body) {
+        const body =
+          typeof oembedRes.body === 'string'
+            ? (JSON.parse(oembedRes.body) as { title?: string; thumbnail_url?: string })
+            : (oembedRes.body as { title?: string; thumbnail_url?: string })
+        if (body?.title) {
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: true,
+            author: 'Spotify Podcast',
+            length: 0,
+            isStream: false,
+            position: 0,
+            title: body.title,
+            uri: `https://open.spotify.com/${kind}/${id}`,
+            artworkUrl: body.thumbnail_url || null,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+
+          return {
+            loadType: 'track',
+            data: {
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: kind,
+                show: 'Spotify Podcast',
+                previewUrl: null
+              }
+            }
+          }
+        }
+      }
+
+      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
+   * Resolves a podcast show or audiobook using the Pathfinder GraphQL API
+   * with Spotify embed metadata and oEmbed fallbacks.
+   *
+   * @param id - Spotify Show or Audiobook identifier.
+   * @param kind - Resource classification ('show' or 'audiobook').
+   * @returns Resolution result.
+   * @internal
+   */
+  private async _resolveShow(
+    id: string,
+    kind: 'show' | 'audiobook' = 'show'
+  ): Promise<SourceResult> {
+    try {
+      await this._ensureToken('anonymous')
+      const maxTracks =
+        this.nodelink.options.playback?.maxPlaylistLength ?? 1000
+
+      if (this.anonymousToken) {
+        let op =
+          kind === 'audiobook'
+            ? QUERIES.queryBookChapters
+            : QUERIES.queryPodcastEpisodes
+        let data =
+          await this._internalApiRequest<SpotifyGraphQLShowResponse>(op, {
+            uri: `spotify:show:${id}`,
+            offset: 0,
+            limit: Math.min(maxTracks, 100)
+          })
+
+        if (
+          kind === 'show' &&
+          data?.podcastUnionV2?.__typename === 'Audiobook'
+        ) {
+          op = QUERIES.queryBookChapters
+          data = await this._internalApiRequest<SpotifyGraphQLShowResponse>(
+            op,
+            {
+              uri: `spotify:show:${id}`,
+              offset: 0,
+              limit: Math.min(maxTracks, 100)
+            }
+          )
+        }
+
+        const show = data?.podcastUnionV2
+        if (show && show.__typename !== 'NotFound' && show.name) {
+          const showName = show.name
+          const showArtwork =
+            this._pickLargestImage(
+              show.coverArt?.sources?.map((s) => ({
+                url: s.url,
+                width: s.width ?? undefined
+              }))
+            ) || null
+
+          const isAudiobook = show.__typename === 'Audiobook'
+          const initialItems = isAudiobook
+            ? show.chaptersV2?.items ?? []
+            : show.episodesV2?.items ?? []
+          const totalCount = isAudiobook
+            ? show.chaptersV2?.totalCount ?? initialItems.length
+            : show.episodesV2?.totalCount ?? initialItems.length
+
+          const tracks: TrackData[] = []
+
+          const parseItem = (it: (typeof initialItems)[number]): void => {
+            const ep = it.entity?.data
+            if (!ep || !ep.name) return
+            const epUri = ep.uri || it.entity?._uri || ''
+            const epId = ep.id || epUri.split(':').pop() || id
+            const epKind = ep.__typename === 'Chapter' ? 'chapter' : 'episode'
+            const epArtwork =
+              this._pickLargestImage(
+                ep.coverArt?.sources?.map((s) => ({
+                  url: s.url,
+                  width: s.width ?? undefined
+                }))
+              ) || showArtwork
+            const explicit = ep.contentRating?.label === 'EXPLICIT'
+            const previewUrl =
+              ep.audio?.items?.[0]?.url ||
+              ep.previewPlayback?.audioPreview?.cdnUrl ||
+              ep.audioPreview?.url ||
+              null
+
+            const info: TrackInfo = {
+              identifier: epId,
+              isSeekable: true,
+              author:
+                ep.podcastV2?.data?.name ||
+                ep.audiobookV2?.data?.name ||
+                showName,
+              length: ep.duration?.totalMilliseconds ?? 0,
+              isStream: false,
+              position: 0,
+              title: ep.name,
+              uri: `https://open.spotify.com/${epKind}/${epId}?explicit=${explicit}`,
+              artworkUrl: epArtwork,
+              isrc: null,
+              sourceName: 'spotify'
+            }
+
+            tracks.push({
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: epKind,
+                show: showName,
+                previewUrl
+              }
+            })
+          }
+
+          for (const it of initialItems) {
+            parseItem(it)
+            if (tracks.length >= maxTracks) break
+          }
+
+          let offset = initialItems.length
+          while (tracks.length < maxTracks && offset < totalCount) {
+            const limit = Math.min(maxTracks - tracks.length, 100)
+            const pageData =
+              await this._internalApiRequest<SpotifyGraphQLShowResponse>(op, {
+                uri: `spotify:show:${id}`,
+                offset,
+                limit
+              })
+            const pageItems = isAudiobook
+              ? pageData?.podcastUnionV2?.chaptersV2?.items ?? []
+              : pageData?.podcastUnionV2?.episodesV2?.items ?? []
+            if (!pageItems.length) break
+
+            for (const it of pageItems) {
+              parseItem(it)
+              if (tracks.length >= maxTracks) break
+            }
+            offset += pageItems.length
+          }
+
+          if (tracks.length > 0) {
+            return {
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: showName,
+                  selectedTrack: 0
+                },
+                tracks,
+                pluginInfo: {
+                  type: isAudiobook ? 'audiobook' : 'show',
+                  identifier: id,
+                  url: `https://open.spotify.com/${isAudiobook ? 'audiobook' : 'show'}/${id}`,
+                  author: showName,
+                  totalTracks: totalCount
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 1: Embed metadata extraction
+      const embedUrl = `https://open.spotify.com/embed/${kind}/${id}`
+      const res = await http1makeRequest(embedUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      })
+
+      if (res.statusCode === 200 && res.body) {
+        const html =
+          typeof res.body === 'string' ? res.body : res.body.toString()
+        const nextDataMatch = html.match(
+          /<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/
+        )
+        if (nextDataMatch?.[1]) {
+          const parsed = JSON.parse(nextDataMatch[1]) as {
+            props?: {
+              pageProps?: {
+                state?: {
+                  data?: {
+                    entity?: {
+                      id?: string
+                      name?: string
+                      title?: string
+                      subtitle?: string
+                      duration?: number
+                      duration_ms?: number
+                      isExplicit?: boolean
+                      audioPreview?: { url?: string }
+                      visualIdentity?: { image?: Array<{ url: string; maxWidth?: number }> }
+                      relatedEntityCoverArt?: Array<{ url: string; maxWidth?: number }>
+                    }
+                  }
+                }
+              }
+            }
+          }
+          const entity = parsed?.props?.pageProps?.state?.data?.entity
+          if (entity && (entity.name || entity.title)) {
+            const title = entity.name || entity.title || 'Unknown Episode'
+            const showName = entity.subtitle || 'Unknown Podcast'
+            const epId = entity.id || id
+            const duration =
+              typeof entity.duration === 'number'
+                ? entity.duration
+                : typeof entity.duration_ms === 'number'
+                  ? entity.duration_ms
+                  : 0
+            const artworkUrl =
+              this._pickLargestImage(
+                entity.visualIdentity?.image?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              this._pickLargestImage(
+                entity.relatedEntityCoverArt?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              null
+            const explicit = Boolean(entity.isExplicit)
+
+            const info: TrackInfo = {
+              identifier: epId,
+              isSeekable: true,
+              author: showName,
+              length: duration,
+              isStream: false,
+              position: 0,
+              title,
+              uri: `https://open.spotify.com/episode/${epId}?explicit=${explicit}`,
+              artworkUrl,
+              isrc: null,
+              sourceName: 'spotify'
+            }
+
+            const trackData: TrackData = {
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: 'episode',
+                show: showName,
+                previewUrl: entity.audioPreview?.url || null
+              }
+            }
+
+            return {
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: `${showName} (Latest Episode)`,
+                  selectedTrack: 0
+                },
+                tracks: [trackData],
+                pluginInfo: {
+                  type: kind,
+                  identifier: id,
+                  url: `https://open.spotify.com/${kind}/${id}`,
+                  author: showName,
+                  totalTracks: 1
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 2: oEmbed endpoint
+      const oembedRes = await http1makeRequest(
+        `https://open.spotify.com/oembed?url=https://open.spotify.com/${kind}/${id}`
+      )
+      if (oembedRes.statusCode === 200 && oembedRes.body) {
+        const body =
+          typeof oembedRes.body === 'string'
+            ? (JSON.parse(oembedRes.body) as {
+                title?: string
+                thumbnail_url?: string
+              })
+            : (oembedRes.body as {
+                title?: string
+                thumbnail_url?: string
+              })
+
+        if (body?.title) {
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: true,
+            author: body.title,
+            length: 0,
+            isStream: false,
+            position: 0,
+            title: body.title,
+            uri: `https://open.spotify.com/${kind}/${id}`,
+            artworkUrl: body.thumbnail_url || null,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+
+          const trackData: TrackData = {
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: {
+              type: kind,
+              show: body.title,
+              previewUrl: null
+            }
+          }
+
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: body.title,
+                selectedTrack: 0
+              },
+              tracks: [trackData],
+              pluginInfo: {
+                type: kind,
+                identifier: id,
+                url: `https://open.spotify.com/${kind}/${id}`,
+                author: body.title,
+                totalTracks: 1
+              }
+            }
+          }
+        }
+      }
+
+      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
    * Resolves a playback URL by delegating to alternative sources.
    * Deduplicates concurrent in-flight delegation requests for the same track.
    *
@@ -1563,6 +2201,16 @@ export default class SpotifySource implements SourceInstance {
       )
       if (res.loadType !== 'search' || !res.data.length) {
         res = await sm.searchWithDefault(query)
+      }
+      if (res.loadType !== 'search' || !res.data.length) {
+        const cleanedTitle = track.title
+          .replace(/[|#]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        const fallbackQuery = `${track.author} ${cleanedTitle}`
+        if (fallbackQuery !== query) {
+          res = await sm.searchWithDefault(fallbackQuery)
+        }
       }
       if (res.loadType !== 'search' || !res.data.length) {
         return {
@@ -2008,6 +2656,139 @@ export default class SpotifySource implements SourceInstance {
         result: { type: 'playlist' },
         collection: {
           minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.episode.standard',
+      name: 'Standard HTTPS Episode resolution (Café Com Crime #204)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/episode/4RYJrq9SflTVb5Mmt6SZzH'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4RYJrq9SflTVb5Mmt6SZzH' },
+          title: { op: 'matches', value: 'ESTRANGULADOR DE VELHINHAS' },
+          author: { op: 'matches', value: 'Café Com Crime' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.episode.uri',
+      name: 'Spotify URI Episode format resolution (spotify:episode:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:episode:4RYJrq9SflTVb5Mmt6SZzH'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4RYJrq9SflTVb5Mmt6SZzH' },
+          title: { op: 'matches', value: 'ESTRANGULADOR DE VELHINHAS' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.show.standard',
+      name: 'Standard HTTPS Show/Podcast resolution (The Daily Podcast)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/show/0F9gK0W6WXJSomup66hq03'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.show.uri',
+      name: 'Spotify URI Show/Podcast format resolution (spotify:show:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:show:0F9gK0W6WXJSomup66hq03'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.legacy_uri',
+      name: 'Spotify Legacy User Playlist URI resolution (spotify:user:USER:playlist:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:user:filtr.br:playlist:5HmZtuuIDMtIy21kylqhx6'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.audiobook.standard',
+      name: 'Standard HTTPS Audiobook resolution (É para o meu bem)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/audiobook/4qZuZTP75A5J1o5vilMrYG'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.audiobook.uri',
+      name: 'Spotify URI Audiobook format resolution (spotify:audiobook:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:audiobook:4qZuZTP75A5J1o5vilMrYG'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.chapter.standard',
+      name: 'Standard HTTPS Chapter resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/chapter/0aSCVEDpxaoHjIEzUcsXbz'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '0aSCVEDpxaoHjIEzUcsXbz' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.chapter.uri',
+      name: 'Spotify URI Chapter format resolution (spotify:chapter:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:chapter:0aSCVEDpxaoHjIEzUcsXbz'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '0aSCVEDpxaoHjIEzUcsXbz' },
+          sourceName: { op: 'equals', value: 'spotify' }
         }
       }
     }

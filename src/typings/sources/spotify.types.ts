@@ -351,3 +351,127 @@ export interface SpotifyGraphQLArtistResponse {
     }
   }
 }
+
+/**
+ * Episode and chapter resolution response from the Spotify Pathfinder (GraphQL) API.
+ * @public
+ */
+export interface SpotifyGraphQLEpisodeResponse {
+  episodeUnionV2?: {
+    __typename: string
+    id?: string
+    name?: string
+    duration?: { totalMilliseconds: number }
+    coverArt?: {
+      sources?: Array<{
+        url: string
+        width?: number | null
+        height?: number | null
+      }>
+    }
+    podcastV2?: {
+      data?: {
+        name?: string
+      }
+    }
+    audiobookV2?: {
+      data?: {
+        name?: string
+      }
+    }
+    audio?: {
+      items?: Array<{ url: string }>
+    }
+    contentRating?: {
+      label?: string
+    }
+  }
+}
+
+/**
+ * Item data for show episodes and audiobook chapters in the Pathfinder GraphQL API.
+ * @public
+ */
+export interface SpotifyGraphQLShowItemData {
+  __typename?: string
+  id?: string
+  name?: string
+  uri?: string
+  duration?: { totalMilliseconds: number }
+  coverArt?: {
+    sources?: Array<{
+      url: string
+      width?: number | null
+      height?: number | null
+    }>
+  }
+  podcastV2?: {
+    data?: {
+      name?: string
+    }
+  }
+  audiobookV2?: {
+    data?: {
+      name?: string
+    }
+  }
+  audio?: {
+    items?: Array<{ url: string }>
+  }
+  previewPlayback?: {
+    audioPreview?: {
+      cdnUrl?: string
+    }
+  }
+  audioPreview?: {
+    url?: string
+  }
+  contentRating?: {
+    label?: string
+  }
+}
+
+/**
+ * Show, podcast, and audiobook resolution response from the Spotify Pathfinder (GraphQL) API.
+ * @public
+ */
+export interface SpotifyGraphQLShowResponse {
+  podcastUnionV2?: {
+    __typename: string
+    id?: string
+    name?: string
+    uri?: string
+    coverArt?: {
+      sources?: Array<{
+        url: string
+        width?: number | null
+        height?: number | null
+      }>
+    }
+    episodesV2?: {
+      __typename?: string
+      totalCount: number
+      pagingInfo?: { nextOffset?: number | null }
+      items: Array<{
+        uid?: string
+        entity?: {
+          _uri?: string
+          data?: SpotifyGraphQLShowItemData
+        }
+      }>
+    }
+    chaptersV2?: {
+      __typename?: string
+      totalCount: number
+      pagingInfo?: { nextOffset?: number | null }
+      items: Array<{
+        uid?: string
+        entity?: {
+          _uri?: string
+          data?: SpotifyGraphQLShowItemData
+        }
+      }>
+    }
+  }
+}
+
