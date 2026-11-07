@@ -1,5 +1,5 @@
 import { logger, makeRequest } from '../../../utils.js';
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
+import { BaseClient, buildTrack, checkURLType, extractPlaylistSelection, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube Music (WEB_REMIX) client implementation.
  *
@@ -188,17 +188,19 @@ export default class WebRemix extends BaseClient {
                 return await this._handlePlayerResponse(playerResponse, sourceName, videoId);
             }
             case YOUTUBE_CONSTANTS.PLAYLIST: {
-                const listIdMatch = url.match(/[?&]list=([\w-]+)/);
-                if (!listIdMatch?.[1]) {
+                const { playlistId, videoId: currentVideoId, targetIndex } = extractPlaylistSelection(url);
+                if (!playlistId) {
                     return { loadType: 'empty', data: {} };
                 }
-                const playlistId = listIdMatch[1];
                 const body = {
                     context: this.getClient(context),
                     playlistId,
                     enablePersistentPlaylistPanel: true,
                     isAudioOnly: true
                 };
+                if (currentVideoId) {
+                    body.videoId = currentVideoId;
+                }
                 const { body: resRaw, statusCode } = await makeRequest('https://music.youtube.com/youtubei/v1/next', {
                     method: 'POST',
                     body,
@@ -213,7 +215,7 @@ export default class WebRemix extends BaseClient {
                     return { loadType: 'empty', data: {} };
                 }
                 const res = resRaw;
-                return await this._handlePlaylistResponse(playlistId, null, res, sourceName, context);
+                return await this._handlePlaylistResponse(playlistId, currentVideoId, res, sourceName, context, targetIndex);
             }
             default:
                 return { loadType: 'empty', data: {} };

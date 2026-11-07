@@ -126,6 +126,8 @@ export interface SourceTestCollectionSpec {
   expectedItems?: Partial<Record<keyof TrackInfo, SourceTestMatcher>>[]
   /** Which item to select for the stream test, if stream is enabled. */
   selectTrackForStream?: 'first' | 'last' | number
+  /** Expected selected track index in the playlist. */
+  expectedSelectedTrack?: number | SourceTestMatcher
 }
 
 /**

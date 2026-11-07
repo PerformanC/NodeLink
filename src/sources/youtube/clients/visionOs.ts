@@ -29,6 +29,7 @@ import {
   BaseClient,
   buildTrack,
   checkURLType,
+  extractPlaylistSelection,
   YOUTUBE_CONSTANTS
 } from '../common.ts'
 
@@ -312,9 +313,13 @@ export default class VisionOs extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
 
-        if (!playlistIdMatch?.[1]) {
+        if (!playlistId) {
           logger(
             'error',
             'YouTube-VisionOS',
@@ -329,10 +334,6 @@ export default class VisionOs extends BaseClient {
             }
           }
         }
-
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
 
         const requestBody: Record<string, unknown> = {
           context: this.getClient(context),
@@ -375,7 +376,9 @@ export default class VisionOs extends BaseClient {
           playlistId,
           currentVideoId,
           playlistResponse,
-          sourceName
+          sourceName,
+          context,
+          targetIndex
         )
       }
 

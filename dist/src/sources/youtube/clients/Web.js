@@ -12,7 +12,7 @@
  * @module YouTubeWebClient
  */
 import { logger, makeRequest } from '../../../utils.js';
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
+import { BaseClient, buildTrack, checkURLType, extractPlaylistSelection, YOUTUBE_CONSTANTS } from '../common.js';
 import { poTokenManager } from '../sabr/potoken.js';
 /**
  * YouTube WEB innertube client.
@@ -192,8 +192,8 @@ export default class Web extends BaseClient {
                 return await this._handlePlayerResponse(playerResponse, sourceName, videoId);
             }
             case YOUTUBE_CONSTANTS.PLAYLIST: {
-                const playlistIdMatch = url.match(/[?&]list=([\w-]+)/);
-                if (!playlistIdMatch?.[1]) {
+                const { playlistId, videoId: currentVideoId, targetIndex } = extractPlaylistSelection(url);
+                if (!playlistId) {
                     logger('error', 'youtube-web', `Could not parse playlist ID from URL: ${url}`);
                     return {
                         loadType: 'error',
@@ -204,9 +204,6 @@ export default class Web extends BaseClient {
                         }
                     };
                 }
-                const playlistId = playlistIdMatch[1];
-                const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
-                const currentVideoId = videoIdMatch?.[1] ?? null;
                 const requestBody = {
                     context: this.getClient(context),
                     playlistId,
@@ -239,7 +236,7 @@ export default class Web extends BaseClient {
                         }
                     };
                 }
-                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName);
+                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName, context, targetIndex);
             }
             default:
                 return { loadType: 'empty', data: {} };

@@ -568,9 +568,22 @@ async function runTestCase(
   if (actualType === 'track') {
     primaryTrack = (result as { data: TrackData }).data?.info ?? null
   } else if (actualType === 'playlist') {
-    collectionItems =
-      (result as { data: { tracks: TrackData[] } }).data?.tracks ?? []
-    primaryTrack = collectionItems[0]?.info ?? null
+    const plData = (
+      result as {
+        data: { tracks: TrackData[]; info?: { selectedTrack?: number } }
+      }
+    ).data
+    collectionItems = plData?.tracks ?? []
+    const selectedIdx = plData?.info?.selectedTrack
+    if (
+      typeof selectedIdx === 'number' &&
+      selectedIdx >= 0 &&
+      collectionItems[selectedIdx]
+    ) {
+      primaryTrack = collectionItems[selectedIdx]?.info ?? null
+    } else {
+      primaryTrack = collectionItems[0]?.info ?? null
+    }
   } else if (actualType === 'search') {
     collectionItems = (result as { data: TrackData[] }).data ?? []
     primaryTrack = collectionItems[0]?.info ?? null
@@ -601,6 +614,29 @@ async function runTestCase(
       return {
         passed: false,
         error: `Collection items ${collectionItems.length} > maxItems ${colSpec.maxItems}`
+      }
+    }
+
+    if (colSpec.expectedSelectedTrack !== undefined) {
+      const plData = (
+        result as {
+          data: { info?: { selectedTrack?: number } }
+        }
+      ).data
+      const actualSelected = plData?.info?.selectedTrack
+      const matcher: SourceTestMatcher =
+        typeof colSpec.expectedSelectedTrack === 'number'
+          ? { op: 'equals', value: colSpec.expectedSelectedTrack }
+          : colSpec.expectedSelectedTrack
+      const { pass, details } = evaluateMatcher(matcher, actualSelected)
+      if (!pass) {
+        console.log(
+          `  SelectedTrack ${formatStatus(false)}   ${details}`
+        )
+        return {
+          passed: false,
+          error: `SelectedTrack: ${details}`
+        }
       }
     }
 
@@ -767,7 +803,19 @@ async function runTestCase(
       }
     }
   } else {
-    if (primaryTrack) {
+    if (actualType === 'playlist') {
+      const plData = result as {
+        data: { info: { name: string; selectedTrack?: number } }
+      }
+      console.log(
+        `  Playlist      ${formatStatus(opError === null)}  ${colors.white}${plData.data.info.name}${colors.reset} (${collectionItems.length} tracks, selected: ${plData.data.info.selectedTrack ?? 0})`
+      )
+      if (primaryTrack) {
+        console.log(
+          `  Selected      ${formatStatus(true)}  ${colors.white}${primaryTrack.title}${colors.reset} [${colors.gray}${primaryTrack.identifier}${colors.reset}]`
+        )
+      }
+    } else if (primaryTrack) {
       console.log(
         `  Resolve       ${formatStatus(opError === null)}  ${colors.gray}${opMs}ms${colors.reset}`
       )
@@ -776,11 +824,6 @@ async function runTestCase(
       )
       console.log(
         `  Identifier          ${colors.gray}${primaryTrack.identifier}${colors.reset}`
-      )
-    } else if (actualType === 'playlist') {
-      const plData = result as { data: { info: { name: string } } }
-      console.log(
-        `  Playlist      ${formatStatus(opError === null)}  ${colors.white}${plData.data.info.name}${colors.reset} (${collectionItems.length} tracks)`
       )
     } else if (actualType === 'search') {
       console.log(
@@ -808,6 +851,7 @@ async function main(): Promise<void> {
 
   const { config: configObj } = await loadBootstrapConfig()
   const targetArg = process.argv[2]?.toLowerCase()
+  const filterArg = process.argv[3]?.toLowerCase()
 
   const rawSources = configObj.sources ?? {}
   const filteredSources: Record<string, unknown> = {}
@@ -876,11 +920,19 @@ async function main(): Promise<void> {
       continue
     }
 
+    const activeTests = filterArg
+      ? tests.filter(
+          (t) =>
+            t.id.toLowerCase().includes(filterArg) ||
+            t.name.toLowerCase().includes(filterArg)
+        )
+      : tests
+
     logSource(
-      `Running ${tests.length} declarative test cases for "${sourceName}"...`
+      `Running ${activeTests.length} declarative test cases for "${sourceName}"...`
     )
 
-    for (const testCase of tests) {
+    for (const testCase of activeTests) {
       totalTests++
       const result = await runTestCase(sourceName, instance, testCase)
       if (result.passed) {

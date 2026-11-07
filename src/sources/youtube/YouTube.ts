@@ -593,6 +593,56 @@ export default class YouTubeSource implements SourceVariantHandler {
       }
     },
     {
+      id: 'youtube.playlist.selected_track_with_index',
+      name: 'YouTube Playlist with selected video ID and index parameter',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/watch?v=eHKoKmM-IgQ&list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=2'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 2,
+          maxItems: 50,
+          expectedSelectedTrack: 1
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'eHKoKmM-IgQ' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
+      id: 'youtube.playlist.music_selected_track',
+      name: 'YouTube Music playlist with selected video ID',
+      input: {
+        type: 'resolve',
+        value:
+          'https://music.youtube.com/watch?v=MMvlxSupSVE&list=PLWmSicW7P1ks'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 20,
+          maxItems: 150,
+          expectedSelectedTrack: { op: 'at-least', value: 0 }
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'MMvlxSupSVE' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
       id: 'youtube.search.video_standard',
       name: 'YouTube standard search query (ytsearch)',
       input: {
@@ -1515,6 +1565,10 @@ export default class YouTubeSource implements SourceVariantHandler {
                 fallbackUrl = `https://www.youtube.com/playlist?list=${listId}`
                 if (videoId) {
                   fallbackUrl += `&v=${videoId}`
+                }
+                const indexMatch = url.match(/[?&]index=(\d+)/)
+                if (indexMatch) {
+                  fallbackUrl += `&index=${indexMatch[1]}`
                 }
               } else {
                 fallbackUrl = `https://www.youtube.com/watch?v=${videoId}`

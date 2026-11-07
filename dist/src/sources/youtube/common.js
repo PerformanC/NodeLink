@@ -1475,6 +1475,106 @@ export function checkURLType(url, type) {
     return YOUTUBE_CONSTANTS.UNKNOWN;
 }
 /**
+ * Extracts playlist ID, selected video ID, and 0-based target index from a YouTube URL.
+ *
+ * @param url - YouTube URL
+ * @returns Playlist selection parameters
+ * @public
+ */
+export function extractPlaylistSelection(url) {
+    let playlistId = null;
+    let videoId = null;
+    let targetIndex = null;
+    try {
+        const parsed = new URL(url);
+        const listParam = parsed.searchParams.get('list');
+        if (listParam && /^[\w-]+$/.test(listParam)) {
+            playlistId = listParam;
+        }
+        const vParam = parsed.searchParams.get('v');
+        if (vParam && /^[\w-]+$/.test(vParam)) {
+            videoId = vParam;
+        }
+        else if (parsed.hostname === 'youtu.be' ||
+            parsed.hostname.endsWith('.youtu.be')) {
+            const pathId = parsed.pathname.slice(1).split('/')[0];
+            if (pathId && /^[\w-]+$/.test(pathId)) {
+                videoId = pathId;
+            }
+        }
+        else if (parsed.pathname.startsWith('/embed/') ||
+            parsed.pathname.startsWith('/v/') ||
+            parsed.pathname.startsWith('/shorts/') ||
+            parsed.pathname.startsWith('/live/')) {
+            const segments = parsed.pathname.split('/').filter(Boolean);
+            const candidate = segments[1];
+            if (candidate && /^[\w-]+$/.test(candidate)) {
+                videoId = candidate;
+            }
+        }
+        const indexParam = parsed.searchParams.get('index');
+        if (indexParam && /^\d+$/.test(indexParam)) {
+            const parsedNum = parseInt(indexParam, 10);
+            if (parsedNum >= 1) {
+                targetIndex = parsedNum - 1;
+            }
+            else {
+                targetIndex = 0;
+            }
+        }
+    }
+    catch {
+        const listMatch = url.match(/[?&]list=([\w-]+)/);
+        if (listMatch?.[1])
+            playlistId = listMatch[1];
+        const vMatch = url.match(/[?&]v=([\w-]+)/);
+        if (vMatch?.[1]) {
+            videoId = vMatch[1];
+        }
+        else {
+            const shortMatch = url.match(/(?:youtu\.be\/|(?:\/(?:embed|v|shorts|live)\/))([\w-]+)/);
+            if (shortMatch?.[1])
+                videoId = shortMatch[1];
+        }
+        const indexMatch = url.match(/[?&]index=(\d+)/);
+        if (indexMatch?.[1]) {
+            const parsedNum = parseInt(indexMatch[1], 10);
+            if (parsedNum >= 1) {
+                targetIndex = parsedNum - 1;
+            }
+            else {
+                targetIndex = 0;
+            }
+        }
+    }
+    return { playlistId, videoId, targetIndex };
+}
+/**
+ * Resolves the 0-based selected track index from tracks, matching video ID or target index.
+ * @internal
+ */
+function resolveSelectedTrackIndex(tracks, currentVideoId, targetIndex) {
+    if (typeof targetIndex === 'number' &&
+        targetIndex >= 0 &&
+        targetIndex < tracks.length &&
+        currentVideoId &&
+        tracks[targetIndex]?.info?.identifier === currentVideoId) {
+        return targetIndex;
+    }
+    if (currentVideoId) {
+        const foundIndex = tracks.findIndex((t) => t.info?.identifier === currentVideoId);
+        if (foundIndex !== -1) {
+            return foundIndex;
+        }
+    }
+    if (typeof targetIndex === 'number' &&
+        targetIndex >= 0 &&
+        targetIndex < tracks.length) {
+        return targetIndex;
+    }
+    return 0;
+}
+/**
  * Fetches encryptedHostFlags for a video by inspecting the embed page.
  * @param videoId - YouTube video ID
  * @returns encryptedHostFlags string or null
@@ -1761,7 +1861,7 @@ export class BaseClient {
      * Handles an innertube next response for playlists.
      * @internal
      */
-    async _handlePlaylistResponse(playlistId, currentVideoId, playlistResponseRaw, sourceName, _context) {
+    async _handlePlaylistResponse(playlistId, currentVideoId, playlistResponseRaw, sourceName, _context, targetIndex) {
         if (!playlistResponseRaw || typeof playlistResponseRaw !== 'object') {
             return { loadType: 'empty', data: {} };
         }
@@ -1806,7 +1906,6 @@ export class BaseClient {
             return { loadType: 'empty', data: {} };
         }
         const tracks = [];
-        let selectedTrack = 0;
         const maxLength = this.config.playback?.maxPlaylistLength || 100;
         if (sourceName === 'ytmusic') {
             playlistContent = playlistContent.filter((item) => getItemValue(item, ['playlistPanelVideoRenderer.videoId']));
@@ -1855,9 +1954,6 @@ export class BaseClient {
                 });
                 if (track) {
                     tracks.push(track);
-                    if (currentVideoId && track.info.identifier === currentVideoId) {
-                        selectedTrack = i;
-                    }
                 }
             }
             catch (err) {
@@ -1868,6 +1964,7 @@ export class BaseClient {
             logger('info', `youtube-${this.name}`, `No valid tracks parsed from playlist ${playlistId}.`);
             return { loadType: 'empty', data: {} };
         }
+        const selectedTrack = resolveSelectedTrackIndex(tracks, currentVideoId, targetIndex);
         let playlistTitle = 'Unknown Playlist';
         if (plData?.title) {
             playlistTitle = plData.title;
@@ -1899,7 +1996,7 @@ export class BaseClient {
      * Handles an innertube browse response for playlists.
      * @internal
      */
-    async _handleBrowsePlaylistResponse(playlistId, browseResponseRaw, sourceName, _context) {
+    async _handleBrowsePlaylistResponse(playlistId, browseResponseRaw, sourceName, _context, currentVideoId, targetIndex) {
         if (!browseResponseRaw || typeof browseResponseRaw !== 'object') {
             return { loadType: 'empty', data: {} };
         }
@@ -2006,10 +2103,11 @@ export class BaseClient {
                 playlistTitle = editableMusicTitle.runs[0].text;
             }
         }
+        const selectedTrack = resolveSelectedTrackIndex(tracks, currentVideoId, targetIndex);
         return {
             loadType: 'playlist',
             data: {
-                info: { name: playlistTitle, selectedTrack: 0 },
+                info: { name: playlistTitle, selectedTrack },
                 pluginInfo: {},
                 tracks
             }
@@ -2299,8 +2397,8 @@ export class BaseClient {
                 return await this._handlePlayerResponse(playerResult.body, sourceName, videoId, context);
             }
             case YOUTUBE_CONSTANTS.PLAYLIST: {
-                const playlistIdMatch = url.match(/[?&]list=([\w-]+)/);
-                if (!playlistIdMatch?.[1]) {
+                const { playlistId, videoId: currentVideoId, targetIndex } = extractPlaylistSelection(url);
+                if (!playlistId) {
                     logger('error', `youtube-${this.name}`, `Could not parse playlist ID from URL: ${url}`);
                     return {
                         loadType: 'error',
@@ -2311,21 +2409,22 @@ export class BaseClient {
                         }
                     };
                 }
-                const playlistId = playlistIdMatch[1];
-                const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
-                const currentVideoId = videoIdMatch?.[1] ?? null;
                 const headers = this.oauth ? await this.oauth.getAuthHeaders() : {};
+                const requestBody = {
+                    context: { client: this.getClient(context) },
+                    playlistId,
+                    contentCheckOk: true,
+                    racyCheckOk: true
+                };
+                if (currentVideoId) {
+                    requestBody.videoId = currentVideoId;
+                }
                 const playlistResponse = await makeRequest(`${apiEndpoint}/youtubei/v1/next`, {
                     headers: {
                         'User-Agent': this.getClient(context).client.userAgent,
                         ...headers
                     },
-                    body: {
-                        context: { client: this.getClient(context) },
-                        playlistId,
-                        contentCheckOk: true,
-                        racyCheckOk: true
-                    },
+                    body: requestBody,
                     method: 'POST',
                     disableBodyCompression: true,
                     proxy: this.getProxy()
@@ -2345,7 +2444,7 @@ export class BaseClient {
                         }
                     };
                 }
-                return await this._handlePlaylistResponse(playlistId, currentVideoId, plBody ?? {}, sourceName, context);
+                return await this._handlePlaylistResponse(playlistId, currentVideoId, plBody ?? {}, sourceName, context, targetIndex);
             }
             default:
                 return { loadType: 'empty', data: {} };

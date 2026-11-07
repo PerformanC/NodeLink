@@ -2038,6 +2038,137 @@ export function checkURLType(
 }
 
 /**
+ * Result of extracting playlist selection parameters from a URL.
+ * @public
+ */
+export interface YouTubePlaylistSelection {
+  playlistId: string | null
+  videoId: string | null
+  targetIndex: number | null
+}
+
+/**
+ * Extracts playlist ID, selected video ID, and 0-based target index from a YouTube URL.
+ *
+ * @param url - YouTube URL
+ * @returns Playlist selection parameters
+ * @public
+ */
+export function extractPlaylistSelection(
+  url: string
+): YouTubePlaylistSelection {
+  let playlistId: string | null = null
+  let videoId: string | null = null
+  let targetIndex: number | null = null
+
+  try {
+    const parsed = new URL(url)
+    const listParam = parsed.searchParams.get('list')
+    if (listParam && /^[\w-]+$/.test(listParam)) {
+      playlistId = listParam
+    }
+
+    const vParam = parsed.searchParams.get('v')
+    if (vParam && /^[\w-]+$/.test(vParam)) {
+      videoId = vParam
+    } else if (
+      parsed.hostname === 'youtu.be' ||
+      parsed.hostname.endsWith('.youtu.be')
+    ) {
+      const pathId = parsed.pathname.slice(1).split('/')[0]
+      if (pathId && /^[\w-]+$/.test(pathId)) {
+        videoId = pathId
+      }
+    } else if (
+      parsed.pathname.startsWith('/embed/') ||
+      parsed.pathname.startsWith('/v/') ||
+      parsed.pathname.startsWith('/shorts/') ||
+      parsed.pathname.startsWith('/live/')
+    ) {
+      const segments = parsed.pathname.split('/').filter(Boolean)
+      const candidate = segments[1]
+      if (candidate && /^[\w-]+$/.test(candidate)) {
+        videoId = candidate
+      }
+    }
+
+    const indexParam = parsed.searchParams.get('index')
+    if (indexParam && /^\d+$/.test(indexParam)) {
+      const parsedNum = parseInt(indexParam, 10)
+      if (parsedNum >= 1) {
+        targetIndex = parsedNum - 1
+      } else {
+        targetIndex = 0
+      }
+    }
+  } catch {
+    const listMatch = url.match(/[?&]list=([\w-]+)/)
+    if (listMatch?.[1]) playlistId = listMatch[1]
+
+    const vMatch = url.match(/[?&]v=([\w-]+)/)
+    if (vMatch?.[1]) {
+      videoId = vMatch[1]
+    } else {
+      const shortMatch = url.match(
+        /(?:youtu\.be\/|(?:\/(?:embed|v|shorts|live)\/))([\w-]+)/
+      )
+      if (shortMatch?.[1]) videoId = shortMatch[1]
+    }
+
+    const indexMatch = url.match(/[?&]index=(\d+)/)
+    if (indexMatch?.[1]) {
+      const parsedNum = parseInt(indexMatch[1], 10)
+      if (parsedNum >= 1) {
+        targetIndex = parsedNum - 1
+      } else {
+        targetIndex = 0
+      }
+    }
+  }
+
+  return { playlistId, videoId, targetIndex }
+}
+
+/**
+ * Resolves the 0-based selected track index from tracks, matching video ID or target index.
+ * @internal
+ */
+function resolveSelectedTrackIndex(
+  tracks: readonly YouTubeTrackData[],
+  currentVideoId?: string | null,
+  targetIndex?: number | null
+): number {
+  if (
+    typeof targetIndex === 'number' &&
+    targetIndex >= 0 &&
+    targetIndex < tracks.length &&
+    currentVideoId &&
+    tracks[targetIndex]?.info?.identifier === currentVideoId
+  ) {
+    return targetIndex
+  }
+
+  if (currentVideoId) {
+    const foundIndex = tracks.findIndex(
+      (t) => t.info?.identifier === currentVideoId
+    )
+    if (foundIndex !== -1) {
+      return foundIndex
+    }
+  }
+
+  if (
+    typeof targetIndex === 'number' &&
+    targetIndex >= 0 &&
+    targetIndex < tracks.length
+  ) {
+    return targetIndex
+  }
+
+  return 0
+}
+
+/**
  * Fetches encryptedHostFlags for a video by inspecting the embed page.
  * @param videoId - YouTube video ID
  * @returns encryptedHostFlags string or null
@@ -2465,7 +2596,8 @@ export abstract class BaseClient {
     currentVideoId: string | null,
     playlistResponseRaw: unknown,
     sourceName: string,
-    _context?: YouTubeContext
+    _context?: YouTubeContext,
+    targetIndex?: number | null
   ): Promise<SourceResult> {
     if (!playlistResponseRaw || typeof playlistResponseRaw !== 'object') {
       return { loadType: 'empty', data: {} }
@@ -2548,7 +2680,6 @@ export abstract class BaseClient {
     }
 
     const tracks: YouTubeTrackData[] = []
-    let selectedTrack = 0
     const maxLength =
       (this.config.playback?.maxPlaylistLength as number | undefined) || 100
 
@@ -2620,9 +2751,6 @@ export abstract class BaseClient {
         )
         if (track) {
           tracks.push(track as YouTubeTrackData)
-          if (currentVideoId && track.info.identifier === currentVideoId) {
-            selectedTrack = i
-          }
         }
       } catch (err: unknown) {
         logger(
@@ -2641,6 +2769,12 @@ export abstract class BaseClient {
       )
       return { loadType: 'empty', data: {} }
     }
+
+    const selectedTrack = resolveSelectedTrackIndex(
+      tracks,
+      currentVideoId,
+      targetIndex
+    )
 
     let playlistTitle = 'Unknown Playlist'
     if (plData?.title) {
@@ -2693,7 +2827,9 @@ export abstract class BaseClient {
     playlistId: string,
     browseResponseRaw: unknown,
     sourceName: string,
-    _context?: YouTubeContext
+    _context?: YouTubeContext,
+    currentVideoId?: string | null,
+    targetIndex?: number | null
   ): Promise<SourceResult> {
     if (!browseResponseRaw || typeof browseResponseRaw !== 'object') {
       return { loadType: 'empty', data: {} }
@@ -2874,10 +3010,16 @@ export abstract class BaseClient {
       }
     }
 
+    const selectedTrack = resolveSelectedTrackIndex(
+      tracks,
+      currentVideoId,
+      targetIndex
+    )
+
     return {
       loadType: 'playlist',
       data: {
-        info: { name: playlistTitle, selectedTrack: 0 },
+        info: { name: playlistTitle, selectedTrack },
         pluginInfo: {},
         tracks
       }
@@ -3352,8 +3494,12 @@ export abstract class BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!playlistIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           logger(
             'error',
             `youtube-${this.name}`,
@@ -3369,11 +3515,17 @@ export abstract class BaseClient {
           }
         }
 
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
-
         const headers = this.oauth ? await this.oauth.getAuthHeaders() : {}
+        const requestBody: Record<string, unknown> = {
+          context: { client: this.getClient(context) },
+          playlistId,
+          contentCheckOk: true,
+          racyCheckOk: true
+        }
+        if (currentVideoId) {
+          requestBody.videoId = currentVideoId
+        }
+
         const playlistResponse = await makeRequest(
           `${apiEndpoint}/youtubei/v1/next`,
           {
@@ -3381,12 +3533,7 @@ export abstract class BaseClient {
               'User-Agent': this.getClient(context).client.userAgent,
               ...headers
             },
-            body: {
-              context: { client: this.getClient(context) },
-              playlistId,
-              contentCheckOk: true,
-              racyCheckOk: true
-            },
+            body: requestBody,
             method: 'POST',
             disableBodyCompression: true,
             proxy: this.getProxy()
@@ -3421,7 +3568,8 @@ export abstract class BaseClient {
           currentVideoId,
           plBody ?? {},
           sourceName,
-          context
+          context,
+          targetIndex
         )
       }
 

@@ -416,9 +416,17 @@ async function runTestCase(sourceName, sourceInstance, testCase) {
         primaryTrack = result.data?.info ?? null;
     }
     else if (actualType === 'playlist') {
-        collectionItems =
-            result.data?.tracks ?? [];
-        primaryTrack = collectionItems[0]?.info ?? null;
+        const plData = result.data;
+        collectionItems = plData?.tracks ?? [];
+        const selectedIdx = plData?.info?.selectedTrack;
+        if (typeof selectedIdx === 'number' &&
+            selectedIdx >= 0 &&
+            collectionItems[selectedIdx]) {
+            primaryTrack = collectionItems[selectedIdx]?.info ?? null;
+        }
+        else {
+            primaryTrack = collectionItems[0]?.info ?? null;
+        }
     }
     else if (actualType === 'search') {
         collectionItems = result.data ?? [];
@@ -441,6 +449,21 @@ async function runTestCase(sourceName, sourceInstance, testCase) {
                 passed: false,
                 error: `Collection items ${collectionItems.length} > maxItems ${colSpec.maxItems}`
             };
+        }
+        if (colSpec.expectedSelectedTrack !== undefined) {
+            const plData = result.data;
+            const actualSelected = plData?.info?.selectedTrack;
+            const matcher = typeof colSpec.expectedSelectedTrack === 'number'
+                ? { op: 'equals', value: colSpec.expectedSelectedTrack }
+                : colSpec.expectedSelectedTrack;
+            const { pass, details } = evaluateMatcher(matcher, actualSelected);
+            if (!pass) {
+                console.log(`  SelectedTrack ${formatStatus(false)}   ${details}`);
+                return {
+                    passed: false,
+                    error: `SelectedTrack: ${details}`
+                };
+            }
         }
         if (colSpec.selectTrackForStream === 'last' && collectionItems.length > 0) {
             primaryTrack = collectionItems[collectionItems.length - 1]?.info ?? null;
@@ -555,14 +578,17 @@ async function runTestCase(sourceName, sourceInstance, testCase) {
         }
     }
     else {
-        if (primaryTrack) {
+        if (actualType === 'playlist') {
+            const plData = result;
+            console.log(`  Playlist      ${formatStatus(opError === null)}  ${colors.white}${plData.data.info.name}${colors.reset} (${collectionItems.length} tracks, selected: ${plData.data.info.selectedTrack ?? 0})`);
+            if (primaryTrack) {
+                console.log(`  Selected      ${formatStatus(true)}  ${colors.white}${primaryTrack.title}${colors.reset} [${colors.gray}${primaryTrack.identifier}${colors.reset}]`);
+            }
+        }
+        else if (primaryTrack) {
             console.log(`  Resolve       ${formatStatus(opError === null)}  ${colors.gray}${opMs}ms${colors.reset}`);
             console.log(`  Track         ${formatStatus(primaryTrack !== null)}  ${colors.white}${primaryTrack.title}${colors.reset}`);
             console.log(`  Identifier          ${colors.gray}${primaryTrack.identifier}${colors.reset}`);
-        }
-        else if (actualType === 'playlist') {
-            const plData = result;
-            console.log(`  Playlist      ${formatStatus(opError === null)}  ${colors.white}${plData.data.info.name}${colors.reset} (${collectionItems.length} tracks)`);
         }
         else if (actualType === 'search') {
             console.log(`  Search        ${formatStatus(collectionItems.length > 0)}  Found ${collectionItems.length} items`);
@@ -582,6 +608,7 @@ async function main() {
     printStartupBanner(version, false);
     const { config: configObj } = await loadBootstrapConfig();
     const targetArg = process.argv[2]?.toLowerCase();
+    const filterArg = process.argv[3]?.toLowerCase();
     const rawSources = configObj.sources ?? {};
     const filteredSources = {};
     for (const [key, val] of Object.entries(rawSources)) {
@@ -635,8 +662,12 @@ async function main() {
             }
             continue;
         }
-        logSource(`Running ${tests.length} declarative test cases for "${sourceName}"...`);
-        for (const testCase of tests) {
+        const activeTests = filterArg
+            ? tests.filter((t) => t.id.toLowerCase().includes(filterArg) ||
+                t.name.toLowerCase().includes(filterArg))
+            : tests;
+        logSource(`Running ${activeTests.length} declarative test cases for "${sourceName}"...`);
+        for (const testCase of activeTests) {
             totalTests++;
             const result = await runTestCase(sourceName, instance, testCase);
             if (result.passed) {

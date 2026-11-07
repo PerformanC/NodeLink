@@ -24,7 +24,12 @@ import type {
 } from '../../../typings/sources/youtube.types.ts'
 import type { HttpProxyConfig } from '../../../typings/utils.types.ts'
 import { logger, makeRequest } from '../../../utils.ts'
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.ts'
+import {
+  BaseClient,
+  checkURLType,
+  extractPlaylistSelection,
+  YOUTUBE_CONSTANTS
+} from '../common.ts'
 
 /**
  * YouTube TVHTML5 innertube client.
@@ -190,8 +195,12 @@ export default class TV_DOWN extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!playlistIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           logger(
             'error',
             'YouTube-TV_DOWN',
@@ -206,10 +215,6 @@ export default class TV_DOWN extends BaseClient {
             }
           }
         }
-
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
 
         const requestBody: Record<string, unknown> = {
           context: this.getClient(context),
@@ -253,7 +258,8 @@ export default class TV_DOWN extends BaseClient {
           currentVideoId,
           playlistResponse,
           sourceName,
-          context
+          context,
+          targetIndex
         )
       }
 

@@ -31,6 +31,7 @@ import {
   BaseClient,
   buildTrack,
   checkURLType,
+  extractPlaylistSelection,
   YOUTUBE_CONSTANTS
 } from '../common.ts'
 
@@ -284,17 +285,23 @@ export default class Music extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const listIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!listIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           return { loadType: 'empty', data: {} }
         }
-        const playlistId = listIdMatch[1]
 
-        const body = {
+        const body: Record<string, unknown> = {
           context: this.getClient(context),
           playlistId,
           enablePersistentPlaylistPanel: true,
           isAudioOnly: true
+        }
+        if (currentVideoId) {
+          body.videoId = currentVideoId
         }
 
         const { body: res, statusCode } = await makeRequest(
@@ -317,10 +324,11 @@ export default class Music extends BaseClient {
 
         return await this._handlePlaylistResponse(
           playlistId,
-          null,
+          currentVideoId,
           res,
           sourceName,
-          context
+          context,
+          targetIndex
         )
       }
 
