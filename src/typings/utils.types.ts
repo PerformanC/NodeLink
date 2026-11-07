@@ -105,6 +105,8 @@ export interface HttpRequestOptions {
   disableBodyCompression?: boolean
   /** Maximum number of redirects to follow. */
   maxRedirects?: number
+  /** Validates a redirect target before following it. Returning false aborts the redirect. */
+  shouldFollowRedirect?: (nextUrl: URL, currentUrl: URL) => boolean
   /** Local interface address to bind to. */
   localAddress?: string
   /** Custom HTTP agent override. */

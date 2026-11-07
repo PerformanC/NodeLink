@@ -6,7 +6,7 @@ const GENIUS_HEADERS = {
     'Cache-Control': 'no-cache',
     Pragma: 'no-cache'
 };
-const GENIUS_PATTERN = /https?:\/\/(?:www\.)?genius\.com\/(?:videos|a\/)?([\w-]+)/;
+const GENIUS_PATTERN = /^https?:\/\/(?:www\.)?genius\.com\/(?:(?:videos|a)\/)?(?!(?:videos|a)(?:[/?#]|$))([\w-]+)\/?(?:[?#].*)?$/;
 const PRELOADED_STATE_REGEX = /<script[^>]*>\s*window\.__PRELOADED_STATE__\s*=\s*JSON\.parse\((.+?)\);\s*<\/script>/s;
 /**
  * Genius source implementation.
@@ -56,6 +56,9 @@ export default class GeniusSource {
     async search(_query) {
         return { loadType: 'empty', data: {} };
     }
+    isLinkMatch(link) {
+        return this.parseGeniusUrl(link) !== null;
+    }
     /**
      * Resolves a Genius article or video page into a playlist of delegated media
      * candidates, or a single fallback track when no media embeds can be parsed.
@@ -64,15 +67,16 @@ export default class GeniusSource {
      * @returns A playlist, an empty payload, or a structured exception.
      */
     async resolve(url) {
-        const match = url.match(GENIUS_PATTERN);
-        if (!match) {
+        const targetUrl = this.parseGeniusUrl(url);
+        if (!targetUrl) {
             return { loadType: 'empty', data: {} };
         }
         try {
-            const { body, error, statusCode } = await http1makeRequest(url, {
+            const { body, error, statusCode } = await http1makeRequest(targetUrl.href, {
                 method: 'GET',
                 headers: GENIUS_HEADERS,
-                disableBodyCompression: true
+                disableBodyCompression: true,
+                shouldFollowRedirect: (nextUrl) => this.isGeniusUrl(nextUrl)
             });
             if (error || statusCode !== 200) {
                 throw new Error(error ?? `Genius returned status ${statusCode}`);
@@ -125,7 +129,7 @@ export default class GeniusSource {
                     identifier: `genius:${songId}`,
                     title,
                     author: artist,
-                    uri: url,
+                    uri: targetUrl.href,
                     artworkUrl,
                     length: 0,
                     isSeekable: true,
@@ -282,12 +286,30 @@ export default class GeniusSource {
             return trackInfo;
         }
     }
+    parseGeniusUrl(rawUrl) {
+        try {
+            const parsed = new URL(rawUrl);
+            return this.isGeniusUrl(parsed) ? parsed : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    isGeniusUrl(url) {
+        return ((url.protocol === 'https:' || url.protocol === 'http:') &&
+            (url.hostname === 'genius.com' || url.hostname === 'www.genius.com') &&
+            url.port === '' &&
+            url.username === '' &&
+            url.password === '' &&
+            GENIUS_PATTERN.test(url.href));
+    }
     /**
-     * Extracts the Genius preloaded state from the page HTML and narrows it to
-     * the subset used by this source.
+     * Extracts the Genius preloaded state from the page HTML.
      *
-     * @param html Raw Genius page HTML.
-     * @returns A narrowed preloaded state or `null` when the payload cannot be parsed.
+     * Genius embeds its state as a serialized JSON string literal passed to
+     * `JSON.parse(...)`. Single-quoted literals are normalized to valid JSON
+     * string syntax and decoded with two native `JSON.parse` passes so page
+     * content is never evaluated as code.
      */
     extractPreloadedState(html) {
         const scriptMatch = html.match(PRELOADED_STATE_REGEX);
@@ -296,15 +318,45 @@ export default class GeniusSource {
             return null;
         }
         try {
-            const parseFunction = new Function(`return JSON.parse(${jsonParseArg})`);
-            const payload = parseFunction();
-            return this.toPreloadedState(payload);
+            const payload = this.parsePreloadedJson(jsonParseArg);
+            return payload ? this.toPreloadedState(payload) : null;
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            logger('debug', 'Genius', `JavaScript execution failed: ${message}`);
+            logger('debug', 'Genius', `Failed to parse preloaded state: ${message}`);
             return null;
         }
+    }
+    parsePreloadedJson(rawArgument) {
+        const literal = rawArgument.trim();
+        const quote = literal[0];
+        if ((quote !== "'" && quote !== '"') ||
+            literal.length < 2 ||
+            literal[literal.length - 1] !== quote) {
+            return null;
+        }
+        let hasUnescapedQuote = false;
+        const normalized = literal.slice(1, -1).replace(/\\.|['"]/g, (token) => {
+            if (token === quote) {
+                hasUnescapedQuote = true;
+                return token;
+            }
+            if (token === "\\'") {
+                return "'";
+            }
+            if (token === '"') {
+                return '\\"';
+            }
+            return token;
+        });
+        if (hasUnescapedQuote) {
+            return null;
+        }
+        const serializedJson = JSON.parse(`"${normalized}"`);
+        if (typeof serializedJson !== 'string') {
+            return null;
+        }
+        return JSON.parse(serializedJson);
     }
     /**
      * Narrows an arbitrary parsed value to the minimal Genius preloaded-state

@@ -1165,6 +1165,77 @@ setInterval(() => {
         http2FailedHosts.clear();
     }
 }, 6 * 60 * 60 * 1000).unref();
+const CROSS_ORIGIN_SENSITIVE_HEADERS = /^(?:authorization|cookie|proxy-authorization)$/i;
+/**
+ * Validates and prepares the next request in an HTTP redirect chain.
+ *
+ * Enforces redirect depth limits, blocks HTTPS-to-HTTP downgrades and non-HTTP
+ * schemes, runs the caller's `shouldFollowRedirect` predicate before any
+ * network connection is made to the target, and strips credentials when
+ * crossing origins.
+ * @internal
+ */
+function resolveRedirect(currentUrl, location, responseStatus, respHeaders, options) {
+    const { method = 'GET', headers: customHeaders = {}, body, maxRedirects = DEFAULT_MAX_REDIRECTS, _redirectsFollowed = 0, shouldFollowRedirect } = options;
+    if (_redirectsFollowed >= maxRedirects) {
+        throw new Error(`Too many redirects (${maxRedirects}) for ${currentUrl.href}`);
+    }
+    const nextUrl = new URL(location, currentUrl);
+    if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
+        throw new Error(`Unsupported redirect protocol "${nextUrl.protocol}" for ${nextUrl.href}`);
+    }
+    if (currentUrl.protocol === 'https:' && nextUrl.protocol === 'http:') {
+        throw new Error(`Refusing HTTPS to HTTP redirect downgrade from ${currentUrl.href} to ${nextUrl.href}`);
+    }
+    if (shouldFollowRedirect && !shouldFollowRedirect(nextUrl, currentUrl)) {
+        throw new Error(`Redirect to ${nextUrl.href} is not allowed`);
+    }
+    let nextMethod = method;
+    let nextBody = body;
+    if (method === 'HEAD') {
+        nextMethod = 'HEAD';
+        nextBody = undefined;
+    }
+    else if (responseStatus === 303 ||
+        ((responseStatus === 301 || responseStatus === 302) &&
+            method !== 'GET' &&
+            method !== 'HEAD')) {
+        nextMethod = 'GET';
+        nextBody = undefined;
+    }
+    const isSameOrigin = nextUrl.origin === currentUrl.origin;
+    const nextHeaders = {};
+    for (const [key, value] of Object.entries(customHeaders)) {
+        if (!isSameOrigin && CROSS_ORIGIN_SENSITIVE_HEADERS.test(key)) {
+            continue;
+        }
+        if (value !== undefined) {
+            nextHeaders[key] = value;
+        }
+    }
+    const setCookie = respHeaders['set-cookie'];
+    if (isSameOrigin && setCookie) {
+        const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+        const existingCookie = String(nextHeaders.cookie || nextHeaders.Cookie || '');
+        const newCookies = cookies.map((c) => String(c).split(';')[0]).join('; ');
+        nextHeaders.cookie = existingCookie
+            ? `${existingCookie}; ${newCookies}`
+            : newCookies;
+    }
+    return {
+        url: nextUrl.href,
+        options: {
+            ...options,
+            _redirectsFollowed: _redirectsFollowed + 1,
+            method: nextMethod,
+            body: nextBody,
+            headers: nextHeaders,
+            disableBodyCompression: nextBody
+                ? options.disableBodyCompression
+                : undefined
+        }
+    };
+}
 /**
  * Internal HTTP/1 request handler with redirect and decompression support.
  *
@@ -1178,7 +1249,7 @@ setInterval(() => {
 async function _internalHttp1Request(urlString, options = {}) {
     const { method = 'GET', headers: customHeaders = {}, body, timeout = Math.max(1, options.timeout ?? 30000), streamOnly = false, disableBodyCompression = false, maxRedirects = DEFAULT_MAX_REDIRECTS, maxResponseBodyBytes = DEFAULT_MAX_RESPONSE_BODY_BYTES, localAddress, agent: customAgent, _redirectsFollowed = 0 } = options;
     const actualLocalAddress = localAddress ?? runtime.nodelink?.routePlanner?.getIP?.() ?? undefined;
-    if (_redirectsFollowed >= maxRedirects) {
+    if (_redirectsFollowed > maxRedirects) {
         throw new Error(`Too many redirects (${maxRedirects}) for ${urlString}`);
     }
     const currentUrl = new URL(urlString);
@@ -1252,36 +1323,14 @@ async function _internalHttp1Request(urlString, options = {}) {
             if (REDIRECT_STATUS_CODES.includes(responseStatus) &&
                 location) {
                 res.resume();
-                const nextUrl = new URL(location, currentUrl).href;
-                const isGetRedirect = [301, 302, 303].includes(responseStatus);
-                let nextMethod = method;
-                let nextBody = body;
-                if (method === 'HEAD') {
-                    nextMethod = 'HEAD';
-                    nextBody = undefined;
+                cleanupReq();
+                try {
+                    const redirect = resolveRedirect(currentUrl, location, responseStatus, respHeaders, options);
+                    resolve(http1makeRequest(redirect.url, redirect.options));
                 }
-                else if (isGetRedirect) {
-                    nextMethod = 'GET';
-                    nextBody = undefined;
+                catch (err) {
+                    reject(err);
                 }
-                const nextHeaders = { ...customHeaders };
-                const setCookie = respHeaders['set-cookie'];
-                if (setCookie) {
-                    const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
-                    const existingCookie = String(nextHeaders.cookie || nextHeaders.Cookie || '');
-                    const newCookies = cookies.map((c) => c.split(';')[0]).join('; ');
-                    nextHeaders.cookie = existingCookie
-                        ? `${existingCookie}; ${newCookies}`
-                        : newCookies;
-                }
-                const nextOptions = {
-                    ...options,
-                    _redirectsFollowed: _redirectsFollowed + 1,
-                    method: nextMethod,
-                    body: nextBody,
-                    headers: nextHeaders
-                };
-                resolve(http1makeRequest(nextUrl, nextOptions));
                 return;
             }
             const isNoBodyResponse = method === 'HEAD' ||
@@ -1535,7 +1584,7 @@ async function makeRequest(urlString, options, nodelink) {
             logger('debug', 'Network', `[${logId}] Body: ${bodySnippet}${bodySnippet.length === 200 ? '...' : ''}`);
         }
     }
-    if (_redirectsFollowed >= maxRedirects) {
+    if (_redirectsFollowed > maxRedirects) {
         return Promise.reject(new Error(`Too many redirects (${maxRedirects}) for ${urlString}`));
     }
     if (options.network?.proxy) {
@@ -1547,6 +1596,7 @@ async function makeRequest(urlString, options, nodelink) {
         !body &&
         !localAddress &&
         !options.network?.proxy &&
+        !options.shouldFollowRedirect &&
         (method === 'GET' || method === 'HEAD')) {
         let t = null;
         try {
@@ -1681,37 +1731,20 @@ async function makeRequest(urlString, options, nodelink) {
                     ? locationHeader[0]
                     : locationHeader;
                 if (REDIRECT_STATUS_CODES.includes((statusCode ?? 0)) &&
-                    location) {
-                    const newLocation = new URL(location, urlString).href;
-                    let nextMethod = method;
-                    let nextBody = body;
-                    if (method === 'HEAD') {
-                        nextMethod = 'HEAD';
-                        nextBody = undefined;
-                    }
-                    else if ((statusCode === 301 || statusCode === 302) &&
-                        ['POST', 'PUT', 'DELETE'].includes(method)) {
-                        nextMethod = 'GET';
-                        nextBody = undefined;
-                    }
-                    else if (statusCode === 303) {
-                        nextMethod = 'GET';
-                        nextBody = undefined;
-                    }
+                    location &&
+                    currentUrl) {
                     if (!reqClosed) {
                         reqClosed = true;
                         req.close(http2.constants.NGHTTP2_NO_ERROR);
                     }
                     closeSessionGracefully();
-                    return resolve(makeRequest(newLocation, {
-                        ...options,
-                        method: nextMethod,
-                        body: nextBody,
-                        _redirectsFollowed: _redirectsFollowed + 1,
-                        disableBodyCompression: nextBody
-                            ? disableBodyCompression
-                            : undefined
-                    }, finalNodeLink));
+                    try {
+                        const redirect = resolveRedirect(currentUrl, location, statusCode ?? 0, headers, options);
+                        return resolve(makeRequest(redirect.url, redirect.options, finalNodeLink));
+                    }
+                    catch (err) {
+                        return reject(err);
+                    }
                 }
                 const isNoBodyResponse = method === 'HEAD' ||
                     statusCode === 204 ||
