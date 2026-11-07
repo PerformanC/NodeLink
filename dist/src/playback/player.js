@@ -505,6 +505,8 @@ export class Player {
                 const nextStreamInfo = this.nextStreamInfo;
                 this._emitTrackEnd(EndReasons.GAPLESS);
                 this.track = nextTrack;
+                this._isRecovering = false;
+                this._isSeeking = false;
                 this.nextTrack = null;
                 this.nextResource = null;
                 this.streamInfo = nextStreamInfo;
@@ -675,6 +677,8 @@ export class Player {
         }
         this.nextResourceIsCrossfade = false;
         this.track = null;
+        this._isRecovering = false;
+        this._isSeeking = false;
         this.holoTrack = null;
         this.isPaused = false;
         this.position = 0;
@@ -1120,8 +1124,12 @@ export class Player {
                     }
                     const isStream = this.track.info.isStream;
                     const recoveryPosition = isStream ? 0 : this._lastPosition;
+                    const recoveryTrack = this.track;
                     this.seek(recoveryPosition, this.track.endTime, true)
                         .then((success) => {
+                        /* INFO: Recovery belongs to the track that started it, even when the replacement plays the same song. */
+                        if (this.destroying || this.track !== recoveryTrack)
+                            return;
                         if (success) {
                             logger('info', 'Player', `Player for guild ${this.guildId} recovered successfully.`);
                         }
@@ -1138,6 +1146,8 @@ export class Player {
                         this._isRecovering = false;
                     })
                         .catch((err) => {
+                        if (this.destroying || this.track !== recoveryTrack)
+                            return;
                         logger('error', 'Player', `Player for guild ${this.guildId} recovery attempt threw an error: ${err.message}. Stopping track.`);
                         this.emitEvent(GatewayEvents.TRACK_STUCK, {
                             guildId: this.guildId,
@@ -1324,12 +1334,20 @@ export class Player {
     async _startPlayback(startTime = 0) {
         if (!this.track)
             return false;
+        const playbackTrack = this.track;
         const trackInfo = {
             ...this.track.info,
             audioTrackId: this.track.audioTrackId
         };
-        const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this._isRecovering);
-        if (!this.track)
+        const urlData = await this.nodelink.sources
+            .getTrackUrl(trackInfo, undefined, this._isRecovering)
+            .catch((error) => {
+            if (this.destroying || this.track !== playbackTrack)
+                return null;
+            throw error;
+        });
+        /* INFO: URL resolution may finish after a replacement track has already started. */
+        if (!urlData || this.destroying || this.track !== playbackTrack)
             return false;
         if (urlData.newTrack?.info &&
             urlData.newTrack.info.identifier !== trackInfo.identifier) {
@@ -1347,8 +1365,12 @@ export class Player {
             this._onError(err);
             return false;
         }
-        const result = await this._connectAndPlayStream(urlData, startTime, 'start-playback', 'trackStartArm', `Playing resource for guild ${this.guildId}`);
-        if (!result)
+        const result = await this._connectAndPlayStream(urlData, startTime, 'start-playback', 'trackStartArm', `Playing resource for guild ${this.guildId}`).catch((error) => {
+            if (this.destroying || this.track !== playbackTrack)
+                return false;
+            throw error;
+        });
+        if (this.destroying || this.track !== playbackTrack || !result)
             return false;
         this._fading('trackEndSchedule', { startPosition: startTime || 0 });
         this._stuckTime = 0;
@@ -1385,11 +1407,11 @@ export class Player {
             if (this.sponsorBlock.enabled) {
                 logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Initiating segment fetch for video ${videoId}`);
                 const { fetchSponsorBlockSegments } = await import('../utils.js');
+                if (this.destroying || this.track !== playbackTrack)
+                    return false;
                 fetchSponsorBlockSegments(videoId, this.sponsorBlock.categories, this.sponsorBlock.actionTypes, sbConfig?.api)
                     .then((segments) => {
-                    if (this.destroying ||
-                        !this.track ||
-                        this.track.info.identifier !== videoId) {
+                    if (this.destroying || this.track !== playbackTrack) {
                         logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Ignoring fetched segments for ${videoId} (track changed or player destroyed)`);
                         return;
                     }
@@ -1457,6 +1479,9 @@ export class Player {
                     this._cleanupCurrentAudioStream('track-replaced');
                 }
                 this._lastStreamDataTime = 0;
+                /* INFO: New tracks start with their own operation state; stale callbacks no longer reset these flags. */
+                this._isRecovering = false;
+                this._isSeeking = false;
                 this.track = {
                     encoded,
                     info,
@@ -1471,6 +1496,7 @@ export class Player {
                     this.isUpdatingTrack = false;
                     return resolve(true);
                 }
+                const playbackTrack = this.track;
                 this._startPlayback(startTime !== undefined
                     ? startTime === 0 && this.position < 1000
                         ? 0
@@ -1478,7 +1504,8 @@ export class Player {
                     : 0)
                     .catch((err) => this._onError(err))
                     .finally(() => {
-                    this.isUpdatingTrack = false;
+                    if (this.track === playbackTrack)
+                        this.isUpdatingTrack = false;
                 });
                 return resolve(true);
             }
@@ -1620,7 +1647,8 @@ export class Player {
             return false;
         }
         finally {
-            this._isSeeking = false;
+            if (this.track === seekTrack)
+                this._isSeeking = false;
         }
     }
     /**
@@ -1714,10 +1742,17 @@ export class Player {
      * Seeks using seekable-stream helper for compatible sources.
      */
     async _seekeableSeek(position, endTime) {
+        if (!this.track)
+            return false;
+        const seekTrack = this.track;
         if (this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
+            if (this.destroying || this.track !== seekTrack)
+                return false;
         }
         await getStreamProcessor();
+        if (this.destroying || this.track !== seekTrack)
+            return false;
         const seekResourceFactory = createSeekeableAudioResource;
         if (!seekResourceFactory) {
             return this._legacySeek(position, endTime);
@@ -1748,6 +1783,8 @@ export class Player {
                             audioTrackId: this.track?.audioTrackId
                         };
                     const fresh = await this.nodelink.sources.getTrackUrl(youtubeTrackInfo, undefined, true);
+                    if (this.destroying || this.track !== seekTrack)
+                        return false;
                     if (!fresh.exception && fresh.url && this.track) {
                         const oldUrl = url;
                         this.streamInfo = {
@@ -1765,9 +1802,16 @@ export class Player {
                     logger('debug', 'Player', `YouTube URL refresh for seek threw: ${e.message}`);
                 }
             }
+            if (this.destroying || this.track !== seekTrack)
+                return false;
             if (!url)
                 return false;
             const resourceResult = await seekResourceFactory(this.guildId, url, position, endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer, this._getCrossfadeConfig() !== null);
+            if (this.destroying || this.track !== seekTrack) {
+                if (!('exception' in resourceResult))
+                    resourceResult.destroy();
+                return false;
+            }
             if (resourceResult.exception) {
                 const exception = resourceResult.exception;
                 logger('error', 'Player', `Seekeable resource creation failed for guild ${this.guildId}: ${exception.message}. Falling back to old method.`);
@@ -1788,6 +1832,10 @@ export class Player {
             this._resetAudioConsumptionBaseline(position);
             const oldStream = this.connection?.play(resource);
             await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
+            if (this.destroying || this.track !== seekTrack) {
+                resource.destroy();
+                return false;
+            }
             if (oldStream) {
                 oldStream.destroy();
             }
@@ -1804,6 +1852,9 @@ export class Player {
             return true;
         }
         catch (e) {
+            /* INFO: A failed seek for the previous track must not start a legacy seek on its replacement. */
+            if (this.destroying || this.track !== seekTrack)
+                return false;
             const err = e;
             logger('error', 'Player', `An unexpected error occurred during seekeable seek for guild ${this.guildId}: ${err.message}. Falling back to old method.`);
             this.emitEvent(GatewayEvents.TRACK_EXCEPTION, {
@@ -1824,6 +1875,7 @@ export class Player {
     async _legacySeek(position, endTime) {
         if (!this.track)
             return false;
+        const seekTrack = this.track;
         if (position < 0 ||
             (this.track.info.length > 0 && position > this.track.info.length))
             return false;
@@ -1835,7 +1887,7 @@ export class Player {
             audioTrackId: this.track.audioTrackId
         };
         const urlData = await this.nodelink.sources.getTrackUrl(trackInfo, undefined, this._isRecovering);
-        if (!this.track)
+        if (this.destroying || this.track !== seekTrack)
             return false;
         this.streamInfo = { ...urlData, trackInfo: this.track.info };
         if (urlData.exception) {
@@ -1853,11 +1905,19 @@ export class Player {
             }
             catch { }
         }
+        if (this.destroying || this.track !== seekTrack)
+            return false;
         if (!this.connection || !this._isVoiceReady()) {
             this._onError(new Error(`Voice connection timed out for guild ${this.guildId} (missing UDP info).`, { cause: 'VOICE_CONNECTION_TIMEOUT' }));
             return false;
         }
         const fetched = await this._fetchResource(this.track.info, urlData, position);
+        /* INFO: A resource fetched for the old track must be released without replacing the current pipeline. */
+        if (this.destroying || this.track !== seekTrack) {
+            if (!('exception' in fetched))
+                fetched.stream.destroy();
+            return false;
+        }
         if ('exception' in fetched) {
             const err = new Error(fetched.exception.message);
             this._onError(err);
@@ -1881,6 +1941,8 @@ export class Player {
             });
         }
         await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
+        if (this.destroying || this.track !== seekTrack)
+            return false;
         this._lyricsBasePosition = position;
         this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0;
         return true;
@@ -3384,6 +3446,8 @@ export class Player {
             this._crossfadeCurrentResource.destroy();
         }
         this.track = promotedTrack;
+        this._isRecovering = false;
+        this._isSeeking = false;
         this.nextTrack = null;
         this.nextResource = null;
         this.nextStreamInfo = null;

@@ -20,6 +20,14 @@ import { logger } from '../utils.ts'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+/* INFO: Player state and voice connections live on one worker; retrying elsewhere cannot recover that state. */
+const PLAYER_STATE_COMMANDS = new Set([
+  'playerCommand',
+  'createPlayer',
+  'destroyPlayer',
+  'restorePlayer'
+])
+
 /**
  * Cluster worker with NodeLink playback metadata.
  * @internal
@@ -538,6 +546,13 @@ export default class WorkerManager {
       if (request.workerId === workerId) {
         clearTimeout(request.timeout)
         this.pendingRequests.delete(requestId)
+
+        if (PLAYER_STATE_COMMANDS.has(request.type)) {
+          request.reject(
+            new Error(`Worker ${workerId} exited before completing request`)
+          )
+          continue
+        }
 
         if (request.retryCount < this.maxRetries) {
           logger(
@@ -1941,6 +1956,7 @@ export default class WorkerManager {
     isFast: boolean,
     timeoutOverride?: number
   ): void {
+    const ownsPlayerState = PLAYER_STATE_COMMANDS.has(type)
     const requestId = crypto.randomBytes(16).toString('hex')
     const timeoutMs =
       typeof timeoutOverride === 'number' &&
@@ -1977,7 +1993,9 @@ export default class WorkerManager {
         }
 
         setTimeout(() => {
-          const newWorker = this.getBestWorker() || worker
+          const newWorker = ownsPlayerState
+            ? worker
+            : this.getBestWorker() || worker
           this._executeCommand(
             newWorker,
             type,
@@ -2024,6 +2042,15 @@ export default class WorkerManager {
         clearTimeout(timeout)
         this.pendingRequests.delete(requestId)
 
+        if (ownsPlayerState) {
+          reject(
+            new Error(
+              `Worker ${worker.id} disconnected before completing player command`
+            )
+          )
+          return
+        }
+
         if (retryCount < this.maxRetries) {
           const newWorker = this.getBestWorker()
           if (newWorker) {
@@ -2054,6 +2081,11 @@ export default class WorkerManager {
         )
         let attempts = 0
         const checkReady = setInterval(() => {
+          /* INFO: A timed-out or exited request must not be sent later by its old readiness poll. */
+          if (!this.pendingRequests.has(requestId)) {
+            clearInterval(checkReady)
+            return
+          }
           attempts++
           if (
             this.workerReady.has(worker.id) ||
@@ -2086,7 +2118,9 @@ export default class WorkerManager {
                 nodelink.statsManager.incrementCommandRetry(type)
               }
               setTimeout(() => {
-                const newWorker = this.getBestWorker() || worker
+                const newWorker = ownsPlayerState
+                  ? worker
+                  : this.getBestWorker() || worker
                 this._executeCommand(
                   newWorker,
                   type,
@@ -2128,7 +2162,7 @@ export default class WorkerManager {
           nodelink.statsManager.incrementCommandRetry(type)
         }
         setTimeout(() => {
-          const newWorker = this.getBestWorker()
+          const newWorker = ownsPlayerState ? worker : this.getBestWorker()
           if (newWorker) {
             this._executeCommand(
               newWorker,

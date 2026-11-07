@@ -9,6 +9,13 @@ import v8 from 'node:v8';
 import { logger } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+/* INFO: Player state and voice connections live on one worker; retrying elsewhere cannot recover that state. */
+const PLAYER_STATE_COMMANDS = new Set([
+    'playerCommand',
+    'createPlayer',
+    'destroyPlayer',
+    'restorePlayer'
+]);
 const getGlobalNodelink = () => globalThis.nodelink;
 const getErrorMessage = (error) => error instanceof Error ? error.message : String(error);
 const isWorkerStatsPacket = (value) => typeof value === 'object' &&
@@ -254,6 +261,10 @@ export default class WorkerManager {
             if (request.workerId === workerId) {
                 clearTimeout(request.timeout);
                 this.pendingRequests.delete(requestId);
+                if (PLAYER_STATE_COMMANDS.has(request.type)) {
+                    request.reject(new Error(`Worker ${workerId} exited before completing request`));
+                    continue;
+                }
                 if (request.retryCount < this.maxRetries) {
                     logger('debug', 'Cluster', `Retrying command after worker ${workerId} exit (attempt ${request.retryCount + 1})`);
                     setTimeout(() => {
@@ -1336,6 +1347,7 @@ export default class WorkerManager {
         });
     }
     _executeCommand(worker, type, payload, resolve, reject, retryCount, isFast, timeoutOverride) {
+        const ownsPlayerState = PLAYER_STATE_COMMANDS.has(type);
         const requestId = crypto.randomBytes(16).toString('hex');
         const timeoutMs = typeof timeoutOverride === 'number' &&
             Number.isFinite(timeoutOverride) &&
@@ -1358,7 +1370,9 @@ export default class WorkerManager {
                     nodelink.statsManager.incrementCommandRetry(type);
                 }
                 setTimeout(() => {
-                    const newWorker = this.getBestWorker() || worker;
+                    const newWorker = ownsPlayerState
+                        ? worker
+                        : this.getBestWorker() || worker;
                     this._executeCommand(newWorker, type, payload, resolve, reject, retryCount + 1, isFast, timeoutOverride);
                 }, 500);
             }
@@ -1388,6 +1402,10 @@ export default class WorkerManager {
             if (!worker.isConnected() && !this.commandSockets.has(worker.id)) {
                 clearTimeout(timeout);
                 this.pendingRequests.delete(requestId);
+                if (ownsPlayerState) {
+                    reject(new Error(`Worker ${worker.id} disconnected before completing player command`));
+                    return;
+                }
                 if (retryCount < this.maxRetries) {
                     const newWorker = this.getBestWorker();
                     if (newWorker) {
@@ -1406,6 +1424,11 @@ export default class WorkerManager {
                 logger('debug', 'Cluster', `Waiting for worker ${worker.id} to be ready before sending ${type}`);
                 let attempts = 0;
                 const checkReady = setInterval(() => {
+                    /* INFO: A timed-out or exited request must not be sent later by its old readiness poll. */
+                    if (!this.pendingRequests.has(requestId)) {
+                        clearInterval(checkReady);
+                        return;
+                    }
                     attempts++;
                     if (this.workerReady.has(worker.id) ||
                         (!worker.isConnected() && !this.commandSockets.has(worker.id))) {
@@ -1430,7 +1453,9 @@ export default class WorkerManager {
                                 nodelink.statsManager.incrementCommandRetry(type);
                             }
                             setTimeout(() => {
-                                const newWorker = this.getBestWorker() || worker;
+                                const newWorker = ownsPlayerState
+                                    ? worker
+                                    : this.getBestWorker() || worker;
                                 this._executeCommand(newWorker, type, payload, resolve, reject, retryCount + 1, isFast, timeoutOverride);
                             }, 500);
                         }
@@ -1455,7 +1480,7 @@ export default class WorkerManager {
                     nodelink.statsManager.incrementCommandRetry(type);
                 }
                 setTimeout(() => {
-                    const newWorker = this.getBestWorker();
+                    const newWorker = ownsPlayerState ? worker : this.getBestWorker();
                     if (newWorker) {
                         this._executeCommand(newWorker, type, payload, resolve, reject, retryCount + 1, isFast, timeoutOverride);
                     }
