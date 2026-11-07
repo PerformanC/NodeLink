@@ -574,6 +574,75 @@ export default class YouTubeSource {
             }
         },
         {
+            id: 'youtube.playlist.short_url_with_index',
+            name: 'Short youtu.be link with playlist and index parameter',
+            input: {
+                type: 'resolve',
+                value: 'https://youtu.be/eHKoKmM-IgQ?list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=2'
+            },
+            expect: {
+                result: {
+                    type: 'playlist'
+                },
+                collection: {
+                    minItems: 2,
+                    maxItems: 50,
+                    expectedSelectedTrack: 1
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'eHKoKmM-IgQ' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'track']
+            }
+        },
+        {
+            id: 'youtube.playlist.conflict_video_priority',
+            name: 'Video ID takes precedence over conflicting index parameter',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/watch?v=eHKoKmM-IgQ&list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=15'
+            },
+            expect: {
+                result: {
+                    type: 'playlist'
+                },
+                collection: {
+                    minItems: 2,
+                    maxItems: 50,
+                    expectedSelectedTrack: 1
+                },
+                metadata: {
+                    identifier: { op: 'equals', value: 'eHKoKmM-IgQ' }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'track']
+            }
+        },
+        {
+            id: 'youtube.playlist.invalid_index_fallback',
+            name: 'Out-of-bounds index falls back safely to initial track',
+            input: {
+                type: 'resolve',
+                value: 'https://www.youtube.com/playlist?list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=9999'
+            },
+            expect: {
+                result: {
+                    type: 'playlist'
+                },
+                collection: {
+                    minItems: 2,
+                    maxItems: 50,
+                    expectedSelectedTrack: 0
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'track']
+            }
+        },
+        {
             id: 'youtube.search.video_standard',
             name: 'YouTube standard search query (ytsearch)',
             input: {
