@@ -3478,8 +3478,13 @@ export class Player {
     if (this.destroying) return
 
     const { sessionId, token, endpoint, channelId } = voicePayload
+    const channelChanged =
+      channelId != null &&
+      this.voice.channelId != null &&
+      this.voice.channelId !== channelId
 
     let changed = false
+    let serverChanged = false
     if (sessionId !== undefined && this.voice.sessionId !== sessionId) {
       this.voice.sessionId = sessionId
       changed = true
@@ -3487,14 +3492,31 @@ export class Player {
     if (token !== undefined && this.voice.token !== token) {
       this.voice.token = token
       changed = true
+      serverChanged = true
     }
     if (endpoint !== undefined && this.voice.endpoint !== endpoint) {
       this.voice.endpoint = endpoint
       changed = true
+      serverChanged = true
     }
     if (channelId !== undefined && this.voice.channelId !== channelId) {
       this.voice.channelId = channelId
       changed = true
+    }
+
+    /*
+      INFO: Channel state can arrive before fresh server credentials. Reconnecting
+        now would pair the new DAVE group with the previous channel's server.
+      SOURCES:
+        - https://docs.discord.com/developers/topics/voice-connections#retrieving-voice-server-information
+    */
+    if (channelChanged && !serverChanged && this.connection && !force) {
+      logger(
+        'debug',
+        'Player',
+        `Waiting for updated voice server credentials after channel move for guild ${this.guildId}`
+      )
+      return
     }
 
     if (this.voice.sessionId && this.voice.token && this.voice.endpoint) {
