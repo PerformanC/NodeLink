@@ -117,16 +117,15 @@ if (isMainThread) {
     const taskQueue = createHeadQueue();
     let lastScaleUpAt = 0;
     let nextThreadId = initialThreadCount + 1;
-    const inheritedExecArgv = process.execArgv || [];
     nodelink.logger('info', 'SourceWorker', `Starting ${initialThreadCount}/${maxThreadCount} micro-worker(s) for API tasks...`);
     const createMicroWorker = (threadNumber) => {
+        /* INFO: Default inheritance supports V8 flags that explicit execArgv rejects. */
         const worker = new Worker(__filename, {
             workerData: {
                 config,
                 silentLogs: specConfig.silentLogs ?? false,
                 threadId: threadNumber
-            },
-            ...(inheritedExecArgv.length > 0 ? { execArgv: inheritedExecArgv } : {})
+            }
         });
         worker.ready = false;
         worker.load = 0;

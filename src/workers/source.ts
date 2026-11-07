@@ -201,7 +201,6 @@ if (isMainThread) {
   const taskQueue = createHeadQueue<TaskData>()
   let lastScaleUpAt = 0
   let nextThreadId = initialThreadCount + 1
-  const inheritedExecArgv = process.execArgv || []
 
   nodelink.logger(
     'info',
@@ -210,13 +209,13 @@ if (isMainThread) {
   )
 
   const createMicroWorker = (threadNumber: number): void => {
+    /* INFO: Default inheritance supports V8 flags that explicit execArgv rejects. */
     const worker = new Worker(__filename, {
       workerData: {
         config,
         silentLogs: specConfig.silentLogs ?? false,
         threadId: threadNumber
-      } satisfies WorkerData,
-      ...(inheritedExecArgv.length > 0 ? { execArgv: inheritedExecArgv } : {})
+      } satisfies WorkerData
     }) as MicroWorker
 
     worker.ready = false
