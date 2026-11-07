@@ -26,6 +26,7 @@ import type {
   SpotifyTokenType,
   SpotifyTrack
 } from '../typings/sources/spotify.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import {
   capTotalTracks,
   encodeTrack,
@@ -139,13 +140,13 @@ export default class SpotifySource implements SourceInstance {
   public readonly recommendationTerm = ['sprec']
 
   /**
-   * Regular expression patterns for Spotify URLs.
-   * Supports standard resource URLs and local file formats.
+   * Regular expression patterns for Spotify URLs and URIs.
+   * Supports standard resource URLs, embed URLs, legacy user playlists, and URI schemes.
    * @public
    */
   public readonly patterns = [
-    /^https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?(track|album|playlist|artist|episode|show)\/([a-zA-Z0-9]+)/,
-    /^https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?local\/[^?#]+/
+    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?(?:embed\/)?(?:user\/[^/?#]+\/)?|spotify:)(track|album|playlist|artist|episode|show)(?:\/|:)([a-zA-Z0-9]+)/,
+    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?local\/|spotify:local:)[^?#]+/
   ]
 
   /**
@@ -204,6 +205,18 @@ export default class SpotifySource implements SourceInstance {
     SpotifyTokenType,
     ReturnType<typeof setTimeout>
   >()
+
+  /**
+   * Prevents duplicate in-flight resolve calls for the same URL or URI.
+   * @internal
+   */
+  private inFlightResolves = new Map<string, Promise<SourceResult>>()
+
+  /**
+   * Prevents duplicate in-flight track delegation lookups.
+   * @internal
+   */
+  private inFlightTrackUrls = new Map<string, Promise<TrackUrlResult>>()
 
   /**
    * Creates a new SpotifySource instance.
@@ -470,7 +483,7 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
-   * Cleans up all pending timers.
+   * Cleans up all pending timers and in-flight operations.
    * @public
    */
   public cleanup(): void {
@@ -478,6 +491,8 @@ export default class SpotifySource implements SourceInstance {
       clearTimeout(timer)
     }
     this.tokenRefreshTimers.clear()
+    this.inFlightResolves.clear()
+    this.inFlightTrackUrls.clear()
   }
 
   /**
@@ -549,12 +564,22 @@ export default class SpotifySource implements SourceInstance {
               : null
         if (next) return this._apiRequest<T>(path, next, options, retry + 1)
 
-        const wait = Number.parseInt(
+        const rawWait = Number.parseInt(
           (res.headers as Record<string, string> | undefined)?.[
             'retry-after'
           ] || '5',
           10
         )
+        const wait = Number.isFinite(rawWait) ? rawWait : 5
+        if (wait > 10) {
+          logger(
+            'warn',
+            'Spotify',
+            `Rate limited on ${path} with excessive Retry-After (${wait}s). Skipping retry.`
+          )
+          return null
+        }
+
         logger(
           'warn',
           'Spotify',
@@ -665,6 +690,7 @@ export default class SpotifySource implements SourceInstance {
     id: string
   ): Promise<SpotifyMetadataResponse | null> {
     const hex = this._base62ToHex(id)
+    if (!hex) return null
     const url = `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`
     const body = await this._apiRequest<unknown>(url, 'mobile', {
       responseType: 'buffer'
@@ -688,14 +714,19 @@ export default class SpotifySource implements SourceInstance {
   /**
    * Transforms a Spotify Base62 identifier into a 32-character hex string.
    * @param id - Base62 encoded ID.
-   * @returns Hex string.
+   * @returns Hex string or empty string if identifier contains invalid characters.
    * @internal
    */
   private _base62ToHex(id: string): string {
+    if (!/^[0-9a-zA-Z]+$/.test(id)) return ''
     const alpha =
       '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
     let bn = 0n
-    for (const char of id) bn = bn * 62n + BigInt(alpha.indexOf(char))
+    for (const char of id) {
+      const idx = alpha.indexOf(char)
+      if (idx === -1) return ''
+      bn = bn * 62n + BigInt(idx)
+    }
     return bn.toString(16).padStart(32, '0')
   }
 
@@ -711,8 +742,9 @@ export default class SpotifySource implements SourceInstance {
     item: SpotifyGraphQLTrack,
     artwork: string | null = null
   ): TrackData | null {
-    if (!item.uri || this._isLocalTrack(item)) return null
+    if (!item || !item.uri || !item.name || this._isLocalTrack(item)) return null
     const id = item.uri.split(':').pop() || ''
+    if (!id) return null
     const explicit =
       item.contentRating?.label === 'EXPLICIT' || item.explicit === true
     const info: TrackInfo = {
@@ -729,8 +761,8 @@ export default class SpotifySource implements SourceInstance {
       uri: `https://open.spotify.com/track/${id}?explicit=${explicit}`,
       artworkUrl:
         artwork ||
-        item.albumOfTrack?.coverArt?.sources?.[0]?.url ||
-        item.album?.images?.[0]?.url ||
+        this._pickLargestImage(item.albumOfTrack?.coverArt?.sources) ||
+        this._pickLargestImage(item.album?.images) ||
         null,
       isrc: item.externalIds?.isrc || null,
       sourceName: 'spotify'
@@ -754,17 +786,22 @@ export default class SpotifySource implements SourceInstance {
     item: SpotifyTrack,
     artwork: string | null = null
   ): TrackData | null {
-    if (!item.id || this._isLocalTrack(item)) return null
+    if (!item || !item.id || !item.name || this._isLocalTrack(item)) return null
     const info: TrackInfo = {
       identifier: item.id,
       isSeekable: true,
-      author: item.artists.map((a) => a.name).join(', ') || 'Unknown',
-      length: item.duration_ms,
+      author:
+        item.artists?.map((a) => a?.name).filter(Boolean).join(', ') ||
+        'Unknown',
+      length: typeof item.duration_ms === 'number' ? item.duration_ms : 0,
       isStream: false,
       position: 0,
       title: item.name,
-      uri: `${item.external_urls.spotify}?explicit=${item.explicit}`,
-      artworkUrl: artwork || item.album?.images?.[0]?.url || null,
+      uri: `${item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`}?explicit=${Boolean(item.explicit)}`,
+      artworkUrl:
+        artwork ||
+        this._pickLargestImage(item.album?.images) ||
+        null,
       isrc: item.external_ids?.isrc || null,
       sourceName: 'spotify'
     }
@@ -795,7 +832,7 @@ export default class SpotifySource implements SourceInstance {
 
     try {
       const limit = Math.min(
-        Math.max(this.nodelink.options.search.maxResults ?? 10, 1),
+        Math.max(this.nodelink.options.search?.maxResults ?? 10, 1),
         50
       )
 
@@ -1023,36 +1060,28 @@ export default class SpotifySource implements SourceInstance {
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
+      const localPattern = this.patterns[1]
+      if (localPattern?.test(url)) return await this._resolveLocalTrack(url)
+
       const pattern = this.patterns[0]
-      if (this.patterns[1]?.test(url)) return await this._resolveLocalTrack(url)
       if (!pattern) return { loadType: 'empty', data: {} }
 
-      const match = url.match(this.patterns[0] as RegExp)
+      const match = url.match(pattern)
       if (!match) return { loadType: 'empty', data: {} }
 
       const [, type, id] = match
-      if (!id) return { loadType: 'empty', data: {} }
+      if (!type || !id) return { loadType: 'empty', data: {} }
 
-      switch (type) {
-        case 'track':
-          return await this._resolveTrack(id)
-        case 'album':
-          return await this._resolveAlbum(id)
-        case 'playlist':
-          return await this._resolvePlaylist(id)
-        case 'artist':
-          return await this._resolveArtist(id)
-        case 'episode':
-        case 'show':
-          return {
-            loadType: 'error',
-            exception: {
-              message: 'Episodes and podcasts are not supported.',
-              severity: 'common'
-            }
-          }
-        default:
-          return { loadType: 'empty', data: {} }
+      const inflight = this.inFlightResolves.get(url)
+      if (inflight) return await inflight
+
+      const resolvePromise = this._executeResolve(type, id)
+      this.inFlightResolves.set(url, resolvePromise)
+
+      try {
+        return await resolvePromise
+      } finally {
+        this.inFlightResolves.delete(url)
       }
     } catch (e) {
       return {
@@ -1062,6 +1091,40 @@ export default class SpotifySource implements SourceInstance {
           severity: 'fault'
         }
       }
+    }
+  }
+
+  /**
+   * Internal dispatcher for resource resolution.
+   * @param type - Resource type (track, album, playlist, artist, episode, show).
+   * @param id - Spotify resource identifier.
+   * @returns Resolution result.
+   * @internal
+   */
+  private async _executeResolve(
+    type: string,
+    id: string
+  ): Promise<SourceResult> {
+    switch (type) {
+      case 'track':
+        return await this._resolveTrack(id)
+      case 'album':
+        return await this._resolveAlbum(id)
+      case 'playlist':
+        return await this._resolvePlaylist(id)
+      case 'artist':
+        return await this._resolveArtist(id)
+      case 'episode':
+      case 'show':
+        return {
+          loadType: 'error',
+          exception: {
+            message: 'Episodes and podcasts are not supported.',
+            severity: 'common'
+          }
+        }
+      default:
+        return { loadType: 'empty', data: {} }
     }
   }
 
@@ -1123,7 +1186,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolveAlbum(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
+      (this.nodelink.options.playback?.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Album'
 
@@ -1248,7 +1311,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolvePlaylist(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
+      (this.nodelink.options.playback?.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Playlist'
     let author = ''
@@ -1385,7 +1448,11 @@ export default class SpotifySource implements SourceInstance {
           includePrerelease: false
         }
       )
-      if (data?.artistUnion) {
+      if (
+        data?.artistUnion &&
+        data.artistUnion.__typename !== 'NotFound' &&
+        data.artistUnion.profile?.name
+      ) {
         const tracks = (data.artistUnion.discography?.topTracks?.items || [])
           .map((it) => this._buildTrackFromInternal(it.track))
           .filter(Boolean) as TrackData[]
@@ -1397,7 +1464,51 @@ export default class SpotifySource implements SourceInstance {
               selectedTrack: 0
             },
             tracks,
-            pluginInfo: {}
+            pluginInfo: {
+              type: 'artist',
+              identifier: id,
+              url: `https://open.spotify.com/artist/${id}`,
+              author: data.artistUnion.profile.name,
+              totalTracks: tracks.length
+            }
+          }
+        }
+      }
+    }
+
+    if (this.accessToken) {
+      const res = await this._apiRequest<{ tracks?: SpotifyTrack[] }>(
+        `/artists/${id}/top-tracks?market=${this.market}`,
+        'official'
+      )
+      if (res?.tracks && res.tracks.length > 0) {
+        let artistName = 'Unknown Artist'
+        const meta = await this._apiRequest<SpotifyArtist>(
+          `/artists/${id}`,
+          'official'
+        )
+        if (meta?.name) artistName = meta.name
+
+        const tracks = res.tracks
+          .map((t) => this._buildTrack(t))
+          .filter(Boolean) as TrackData[]
+        if (tracks.length > 0) {
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: `${artistName}'s Top Tracks`,
+                selectedTrack: 0
+              },
+              tracks,
+              pluginInfo: {
+                type: 'artist',
+                identifier: id,
+                url: `https://open.spotify.com/artist/${id}`,
+                author: artistName,
+                totalTracks: tracks.length
+              }
+            }
           }
         }
       }
@@ -1408,12 +1519,34 @@ export default class SpotifySource implements SourceInstance {
 
   /**
    * Resolves a playback URL by delegating to alternative sources.
+   * Deduplicates concurrent in-flight delegation requests for the same track.
    *
    * @param track - Metadata of the Spotify track.
    * @returns Delegated stream URL result.
    * @public
    */
   public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
+    const cacheKey = track.identifier || track.uri
+    const inflight = this.inFlightTrackUrls.get(cacheKey)
+    if (inflight) return await inflight
+
+    const trackUrlPromise = this._executeGetTrackUrl(track)
+    this.inFlightTrackUrls.set(cacheKey, trackUrlPromise)
+
+    try {
+      return await trackUrlPromise
+    } finally {
+      this.inFlightTrackUrls.delete(cacheKey)
+    }
+  }
+
+  /**
+   * Internal executor for track URL resolution via delegation.
+   * @internal
+   */
+  private async _executeGetTrackUrl(
+    track: TrackInfo
+  ): Promise<TrackUrlResult> {
     const sm = this.nodelink.sources
     if (!sm) {
       return {
@@ -1517,7 +1650,7 @@ export default class SpotifySource implements SourceInstance {
 
     try {
       const maxTracks =
-        (this.nodelink.options.playback.maxPlaylistLength as number) || 50
+        (this.nodelink.options.playback?.maxPlaylistLength as number) || 50
       const limit = Math.min(Math.max(maxTracks, 1), 50)
 
       const data = await this._internalApiRequest<{
@@ -1640,15 +1773,243 @@ export default class SpotifySource implements SourceInstance {
     const artists = (it as SpotifyGraphQLTrack).artists?.items
     if (artists) {
       return (
-        artists.map((a) => a.profile?.name || a.name).join(', ') || 'Unknown'
+        artists
+          .map((a) => a?.profile?.name || a?.name)
+          .filter(Boolean)
+          .join(', ') || 'Unknown'
       )
     }
     const first = (it as SpotifyGraphQLTrack).firstArtist?.items?.[0]
     if (first) return first.profile?.name || 'Unknown'
 
     const official = (it as SpotifyTrack).artists
-    if (official) return official.map((a) => a.name).join(', ')
+    if (official) {
+      return (
+        official
+          .map((a) => a?.name)
+          .filter(Boolean)
+          .join(', ') || 'Unknown'
+      )
+    }
 
     return 'Unknown'
   }
+
+  /**
+   * Declarative test suite for Spotify source resolution and query variants.
+   * @public
+   */
+  public static readonly _TESTS: readonly SourceTestCase[] = [
+    {
+      id: 'spotify.track.standard',
+      name: 'Standard HTTPS Track resolution (Billie Eilish - ocean eyes)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/track/4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4eoOQgFQ0rLMKNP8KcUNWc' },
+          title: { op: 'matches', value: 'ocean eyes' },
+          author: { op: 'matches', value: 'Billie Eilish' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.track.uri',
+      name: 'Spotify URI Track format resolution (spotify:track:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:track:4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4eoOQgFQ0rLMKNP8KcUNWc' },
+          title: { op: 'matches', value: 'ocean eyes' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.track.localized',
+      name: 'Localized Regional URL Track resolution (/intl-pt/track/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/intl-pt/track/4IpaCWsYoiRLG4CihCt1Pd'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4IpaCWsYoiRLG4CihCt1Pd' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.track.embed',
+      name: 'Embed URL Track resolution (/embed/track/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/embed/track/6dOtVTDdiauQNBQEDOtlAB'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '6dOtVTDdiauQNBQEDOtlAB' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.album.standard',
+      name: 'Standard HTTPS Album resolution (Billie Eilish - HIT ME HARD AND SOFT)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/album/7aJuG4TFXa2hmE4z1yxc3n'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 10,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.album.uri',
+      name: 'Spotify URI Album format resolution (spotify:album:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:album:7aJuG4TFXa2hmE4z1yxc3n'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 10,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.standard',
+      name: 'Small playlist resolution (5 tracks)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/playlist/0Gf1aUizIT2TLKlu2qYlh2'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 5,
+          maxItems: 5
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.legacy_user',
+      name: 'Legacy user playlist URL format (/user/<username>/playlist/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/user/filtr.br/playlist/5HmZtuuIDMtIy21kylqhx6'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.paginated',
+      name: 'Multi-page paginated playlist (101 tracks capped by playback limit)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/playlist/5YFtKCsIIxyzCMZiZ29JDj'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 100,
+          maxItems: 101
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.uri',
+      name: 'Spotify URI Playlist format resolution (spotify:playlist:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:playlist:1QscjgKRfrGpiDFMyT9rwO'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.artist.top_tracks',
+      name: 'Artist top tracks resolution (Billie Eilish)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/artist/6qqNVTkY8uBg9cP3Jd7DAH'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 5,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.artist.uri',
+      name: 'Spotify URI Artist format resolution (spotify:artist:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:artist:6qqNVTkY8uBg9cP3Jd7DAH'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 5,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.search.track',
+      name: 'Search track query prefix (spsearch:)',
+      input: {
+        type: 'search',
+        value: 'ocean eyes billie eilish',
+        searchType: 'spsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.recommendations',
+      name: 'Recommendations seed query prefix (sprec:)',
+      input: {
+        type: 'search',
+        value: '4eoOQgFQ0rLMKNP8KcUNWc',
+        searchType: 'sprec'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    }
+  ]
 }
