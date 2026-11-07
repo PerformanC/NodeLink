@@ -100,6 +100,22 @@ const QUERIES = {
     name: 'queryBookChapters',
     hash: '8f342d1c624755901657fa65cbb80dd3bacbcca2f6d802f570ae3269d59a403e'
   },
+  fetchExtractedColors: {
+    name: 'fetchExtractedColors',
+    hash: '36e90fcaea00d47c695fce31874efeb2519b97d4cd0ee1abfb4f8dc9348596ea'
+  },
+  similarAlbumsBasedOnThisTrack: {
+    name: 'similarAlbumsBasedOnThisTrack',
+    hash: '1d1f93a737498adca2c892c73af87fc0b052afe4e1a33c989540c32413dfae17'
+  },
+  searchSuggestions: {
+    name: 'searchSuggestions',
+    hash: 'f244254b94c0e824d458ac216e0f8406a73f2f69a9ff52831a2f78fa774ff6ce'
+  },
+  fetchLibraryTracks: {
+    name: 'fetchLibraryTracks',
+    hash: '087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240'
+  },
   getRecommendations: {
     name: 'internalLinkRecommenderTrack',
     hash: 'c77098ee9d6ee8ad3eb844938722db60570d040b49f41f5ec6e7be9160a7c86b'
@@ -145,13 +161,13 @@ export default class SpotifySource implements SourceInstance {
    * Prefixes that identify search queries for this source.
    * @public
    */
-  public readonly searchTerms = ['spsearch']
+  public readonly searchTerms = ['spsearch', 'spsuggest']
 
   /**
    * Prefix for recommendation (inspired-by) requests.
    * @public
    */
-  public readonly recommendationTerm = ['sprec']
+  public readonly recommendationTerm = ['sprec', 'spsimilar']
 
   /**
    * Regular expression patterns for Spotify URLs and URIs.
@@ -159,7 +175,7 @@ export default class SpotifySource implements SourceInstance {
    * @public
    */
   public readonly patterns = [
-    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:(?:intl-[a-zA-Z0-9_-]+|embed)\/)*(?:user\/[^/?#]+\/)?|spotify:(?:user:[^:]+:)?)(track|album|playlist|artist|episode|show|audiobook|chapter)(?:\/|:)([a-zA-Z0-9]+)/,
+    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:(?:intl-[a-zA-Z0-9_-]+|embed)\/)*(?:user\/[^/?#]+\/)?|spotify:(?:user:[^:]+:)?)(track|album|playlist|artist|episode|show|audiobook|chapter|details|all|colors?|similar|collection)(?:\/|:)([a-zA-Z0-9_-]+)/,
     /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z0-9_-]+\/)?local\/|spotify:local:)[^?#]+/,
     /^https?:\/\/(?:spotify\.link|spotify\.app\.link)\/[a-zA-Z0-9]+/
   ]
@@ -654,6 +670,7 @@ export default class SpotifySource implements SourceInstance {
    *
    * @param operation - Name and SHA256 hash of the query.
    * @param variables - Input parameters for the GraphQL query.
+   * @param tier - Authentication tier to use (defaults to anonymous).
    * @param retry - Internal retry counter.
    * @returns Resolves to typed data or null if errors were returned.
    * @internal
@@ -661,11 +678,12 @@ export default class SpotifySource implements SourceInstance {
   private async _internalApiRequest<T>(
     operation: SpotifyGraphQLOperation,
     variables: Record<string, unknown>,
+    tier: SpotifyTokenType = 'anonymous',
     retry = 0
   ): Promise<T | null> {
     const res = await this._apiRequest<{ data?: T; errors?: Array<unknown> }>(
       SPOTIFY_INTERNAL_API_URL,
-      'anonymous',
+      tier,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -842,8 +860,12 @@ export default class SpotifySource implements SourceInstance {
     term?: string,
     type = 'track'
   ): Promise<SourceResult> {
+    if (term === 'spsuggest' || query.startsWith('spsuggest:'))
+      return await this._resolveSearchSuggestions(query.replace(/^spsuggest:/, '').trim())
+    if (term === 'spsimilar' || query.startsWith('spsimilar:'))
+      return await this._resolveSimilar(query.replace(/^spsimilar:/, '').trim())
     if (term && this.recommendationTerm.includes(term))
-      return this.getRecommendations(query)
+      return await this.getRecommendations(query)
 
     try {
       const limit = Math.min(
@@ -1126,6 +1148,18 @@ export default class SpotifySource implements SourceInstance {
     switch (type) {
       case 'track':
         return await this._resolveTrack(id)
+      case 'details':
+      case 'all':
+      case 'color':
+      case 'colors':
+        return await this._resolveTrack(id, {
+          extractColors: true,
+          forceDetails: true
+        })
+      case 'similar':
+        return await this._resolveSimilar(id)
+      case 'collection':
+        return await this._resolveCollection(id)
       case 'album':
         return await this._resolveAlbum(id)
       case 'playlist':
@@ -1147,34 +1181,77 @@ export default class SpotifySource implements SourceInstance {
    * Resolves a track ID using internal and official tiers.
    *
    * @param id - Track identifier.
+   * @param options - Resolution options (e.g. force color extraction or details).
    * @returns Resolution result.
    * @internal
    */
-  private async _resolveTrack(id: string): Promise<SourceResult> {
+  private async _resolveTrack(
+    id: string,
+    options?: { extractColors?: boolean; forceDetails?: boolean }
+  ): Promise<SourceResult> {
     if (this.anonymousToken || this.config.sp_dc) {
       const data = await this._internalApiRequest<{
-        trackUnion: SpotifyGraphQLTrack & { __typename: string }
+        trackUnion: SpotifyGraphQLTrack & {
+          __typename: string
+          playcount?: string | number
+        }
       }>(QUERIES.getTrack, { uri: `spotify:track:${id}` })
       if (data?.trackUnion && data.trackUnion.__typename !== 'NotFound') {
         const track = this._buildTrackFromInternal(data.trackUnion)
         if (track) {
+          if (data.trackUnion.playcount) {
+            track.pluginInfo.playcount = data.trackUnion.playcount
+          }
+
+          const shouldExtractColors =
+            options?.extractColors ||
+            options?.forceDetails ||
+            this.config.extractColors === true
+
+          const tasks: Promise<void>[] = []
+
           if (this.mobileToken) {
-            const cv = await fetchCanvas(
-              `spotify:track:${id}`,
-              this.mobileToken
+            tasks.push(
+              fetchCanvas(`spotify:track:${id}`, this.mobileToken)
+                .then((cv) => {
+                  if (cv?.data?.canvasesList?.[0])
+                    track.pluginInfo.canvas = {
+                      canvasesList: [cv.data.canvasesList[0]]
+                    }
+                })
+                .catch(() => {})
             )
-            if (cv?.data?.canvasesList?.[0])
-              track.pluginInfo.canvas = {
-                canvasesList: [cv.data.canvasesList[0]]
-              }
           }
+
           if (!track.info.isrc) {
-            const meta = await this._fetchTrackMetadata(id)
-            if (meta?.external_id?.[0]?.id) {
-              track.info.isrc = meta.external_id[0].id
-              track.encoded = encodeTrack({ ...track.info, details: [] })
-            }
+            tasks.push(
+              this._fetchTrackMetadata(id)
+                .then((meta) => {
+                  if (meta?.external_id?.[0]?.id) {
+                    track.info.isrc = meta.external_id[0].id
+                    track.encoded = encodeTrack({ ...track.info, details: [] })
+                  }
+                })
+                .catch(() => {})
+            )
           }
+
+          if (shouldExtractColors && track.info.artworkUrl) {
+            tasks.push(
+              this._fetchArtworkColors(track.info.artworkUrl)
+                .then((colors) => {
+                  if (colors) {
+                    track.pluginInfo.colors = colors
+                  }
+                })
+                .catch(() => {})
+            )
+          }
+
+          if (tasks.length > 0) {
+            await Promise.all(tasks)
+          }
+
           return { loadType: 'track', data: track }
         }
       }
@@ -2348,6 +2425,375 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
+   * Resolves similar albums or recommendations based on a track identifier.
+   *
+   * @param seed - Track identifier or URI.
+   * @returns Playlist containing similar albums or recommended tracks.
+   * @internal
+   */
+  private async _resolveSimilar(seed: string): Promise<SourceResult> {
+    await this._ensureToken('anonymous')
+    if (!this.anonymousToken) return { loadType: 'empty', data: {} }
+
+    let id = seed.trim()
+    if (id.startsWith('spotify:similar:')) {
+      id = id.split(':')[2] || id
+    } else if (id.startsWith('spotify:track:')) {
+      id = id.split(':')[2] || id
+    } else if (id.includes('/track/')) {
+      const match = id.match(/\/track\/([A-Za-z0-9]+)/)
+      if (match?.[1]) id = match[1]
+    }
+
+    try {
+      const data = await this._internalApiRequest<{
+        seoRecommendedTrackAlbum?: {
+          items?: Array<{
+            data: {
+              __typename: string
+              name: string
+              uri: string
+              coverArt?: {
+                sources?: Array<{
+                  url: string
+                  width?: number
+                  height?: number
+                }>
+              }
+              artists?: {
+                items?: Array<{ profile?: { name: string }; uri?: string }>
+              }
+            }
+          }>
+        }
+      }>(QUERIES.similarAlbumsBasedOnThisTrack, {
+        uri: `spotify:track:${id}`,
+        limit: 10
+      })
+
+      const items = data?.seoRecommendedTrackAlbum?.items || []
+      if (items.length > 0) {
+        const tracks: TrackData[] = []
+        for (const item of items) {
+          const a = item.data
+          if (!a || !a.name) continue
+          const albumId = a.uri?.split(':').pop() || ''
+          const artistName =
+            a.artists?.items
+              ?.map((it) => it.profile?.name)
+              .filter(Boolean)
+              .join(', ') || 'Unknown'
+          const artwork = this._pickLargestImage(a.coverArt?.sources) || null
+
+          const info: TrackInfo = {
+            title: a.name,
+            author: artistName,
+            length: 0,
+            identifier: albumId,
+            isSeekable: false,
+            isStream: false,
+            uri: `https://open.spotify.com/album/${albumId}`,
+            artworkUrl: artwork,
+            isrc: null,
+            sourceName: 'spotify',
+            position: 0
+          }
+
+          tracks.push({
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: { type: 'album' }
+          })
+        }
+
+        if (tracks.length > 0) {
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: `Similar to ${id}`,
+                selectedTrack: 0
+              },
+              tracks,
+              pluginInfo: {
+                type: 'similar',
+                identifier: id
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      logger(
+        'debug',
+        'Spotify',
+        `similarAlbumsBasedOnThisTrack failed for ${id}: ${(e as Error).message}`
+      )
+    }
+
+    return await this.getRecommendations(id)
+  }
+
+  /**
+   * Resolves query autocomplete suggestions via the Pathfinder searchSuggestions query.
+   *
+   * @param query - Search term.
+   * @returns Search results containing autocomplete suggestions and top entities.
+   * @internal
+   */
+  private async _resolveSearchSuggestions(
+    query: string
+  ): Promise<SourceResult> {
+    await this._ensureToken('anonymous')
+    if (!this.anonymousToken) return { loadType: 'empty', data: {} }
+
+    try {
+      const data = await this._internalApiRequest<{
+        searchV2?: {
+          topResultsV2?: {
+            itemsV2?: Array<{
+              __typename?: string
+              item?: {
+                __typename?: string
+                data?: {
+                  __typename?: string
+                  id?: string
+                  name?: string
+                  text?: string
+                  uri?: string
+                  duration?: { totalMilliseconds?: number }
+                  artists?: { items?: Array<{ profile?: { name: string } }> }
+                  coverArt?: {
+                    sources?: Array<{
+                      url: string
+                      width?: number
+                      height?: number
+                    }>
+                  }
+                  albumOfTrack?: {
+                    coverArt?: {
+                      sources?: Array<{
+                        url: string
+                        width?: number
+                        height?: number
+                      }>
+                    }
+                  }
+                }
+              }
+            }>
+          }
+        }
+      }>(QUERIES.searchSuggestions, { query })
+
+      const items = data?.searchV2?.topResultsV2?.itemsV2 || []
+      const tracks: TrackData[] = []
+
+      for (const h of items) {
+        const item = h.item
+        if (!item) continue
+
+        if (item.__typename === 'SearchAutoCompleteEntity') {
+          const text = item.data?.text || ''
+          const uri = item.data?.uri || ''
+          const identifier = uri.split(':').pop() || text
+          const info: TrackInfo = {
+            identifier,
+            isSeekable: false,
+            author: 'Spotify Suggestion',
+            length: 0,
+            isStream: false,
+            position: 0,
+            title: text,
+            uri: uri.startsWith('spotify:')
+              ? `https://open.spotify.com/search/${encodeURIComponent(text)}`
+              : uri,
+            artworkUrl: null,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+          tracks.push({
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: { type: 'suggestion', query: text }
+          })
+        } else if (item.data?.name) {
+          const d = item.data
+          const id = d.id || d.uri?.split(':').pop() || ''
+          const author =
+            d.artists?.items
+              ?.map((a) => a.profile?.name)
+              .filter(Boolean)
+              .join(', ') || 'Unknown'
+          const artwork =
+            this._pickLargestImage(d.albumOfTrack?.coverArt?.sources) ||
+            this._pickLargestImage(d.coverArt?.sources) ||
+            null
+          const duration = d.duration?.totalMilliseconds ?? 0
+          const itemType = d.__typename?.toLowerCase() || 'track'
+
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: itemType === 'track',
+            author,
+            length: duration,
+            isStream: false,
+            position: 0,
+            title: d.name || 'Unknown',
+            uri: d.uri?.startsWith('spotify:track:')
+              ? `https://open.spotify.com/track/${id}`
+              : `https://open.spotify.com/search/${encodeURIComponent(d.name || '')}`,
+            artworkUrl: artwork,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+          tracks.push({
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: { type: itemType }
+          })
+        }
+      }
+
+      return tracks.length > 0
+        ? {
+            loadType: 'search',
+            data: tracks
+          }
+        : { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
+   * Resolves the user's liked songs/collection tracks.
+   * Requires an authenticated session via sp_dc.
+   *
+   * @param id - Collection identifier (e.g. 'tracks', 'your-episodes').
+   * @returns Playlist containing user library tracks.
+   * @internal
+   */
+  private async _resolveCollection(id: string): Promise<SourceResult> {
+    if (!this.config.sp_dc && !this.mobileToken) {
+      return {
+        loadType: 'error',
+        exception: {
+          message:
+            'Accessing Spotify user collection requires sp_dc cookie authentication.',
+          severity: 'common'
+        }
+      }
+    }
+
+    try {
+      const data = await this._internalApiRequest<{
+        me?: {
+          library?: {
+            tracks?: {
+              totalCount?: number
+              items?: Array<{
+                track?: {
+                  data?: SpotifyGraphQLTrack
+                }
+              }>
+            }
+          }
+        }
+      }>(
+        QUERIES.fetchLibraryTracks,
+        { offset: 0, limit: 50 },
+        this.mobileToken ? 'mobile' : 'anonymous'
+      )
+
+      const items = data?.me?.library?.tracks?.items || []
+      const tracks: TrackData[] = []
+
+      for (const it of items) {
+        const trackData = it.track?.data
+        if (!trackData) continue
+        const track = this._buildTrackFromInternal(trackData)
+        if (track) tracks.push(track)
+      }
+
+      if (tracks.length > 0) {
+        return {
+          loadType: 'playlist',
+          data: {
+            info: {
+              name: 'Liked Songs',
+              selectedTrack: 0
+            },
+            tracks,
+            pluginInfo: {
+              type: 'collection',
+              identifier: id,
+              totalTracks:
+                data?.me?.library?.tracks?.totalCount ?? tracks.length
+            }
+          }
+        }
+      }
+
+      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
+   * Extracts dominant color palette from album artwork using Pathfinder.
+   *
+   * @param artworkUrl - Image URL of the artwork.
+   * @returns Color palette or null if extraction fails.
+   * @internal
+   */
+  private async _fetchArtworkColors(
+    artworkUrl: string | null
+  ): Promise<{ dark?: string; light?: string; raw?: string } | null> {
+    if (!artworkUrl) return null
+    const match =
+      artworkUrl.match(/\/image\/([a-f0-9]{32,40})/i) ||
+      artworkUrl.match(/spotify:image:([a-f0-9]{32,40})/i)
+    if (!match?.[1]) return null
+
+    try {
+      const data = await this._internalApiRequest<{
+        extractedColors?: Array<{
+          colorDark?: { hex?: string }
+          colorLight?: { hex?: string }
+          colorRaw?: { hex?: string }
+        }>
+      }>(QUERIES.fetchExtractedColors, {
+        imageUris: [`spotify:image:${match[1]}`]
+      })
+
+      const palette = data?.extractedColors?.[0]
+      if (!palette) return null
+
+      return {
+        dark: palette.colorDark?.hex,
+        light: palette.colorLight?.hex,
+        raw: palette.colorRaw?.hex
+      }
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * Maps local metadata to a catalog-matched TrackData object.
    * @internal
    */
@@ -2789,6 +3235,66 @@ export default class SpotifySource implements SourceInstance {
         metadata: {
           identifier: { op: 'equals', value: '0aSCVEDpxaoHjIEzUcsXbz' },
           sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.details.uri',
+      name: 'Spotify URI Details format with palette extraction (spotify:details:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:details:4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4eoOQgFQ0rLMKNP8KcUNWc' },
+          title: { op: 'matches', value: 'ocean eyes' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.similar.uri',
+      name: 'Spotify URI Similar format resolution (spotify:similar:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:similar:4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.search.suggest',
+      name: 'Spotify Autocomplete suggestions prefix (spsuggest:)',
+      input: {
+        type: 'search',
+        value: 'ocean eyes',
+        searchType: 'spsuggest'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.search.similar',
+      name: 'Spotify Similar recommendations prefix (spsimilar:)',
+      input: {
+        type: 'search',
+        value: '4eoOQgFQ0rLMKNP8KcUNWc',
+        searchType: 'spsimilar'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
         }
       }
     }

@@ -211,6 +211,9 @@ export interface SpotifySourceConfig {
 
   /** The 'sp_dc' cookie for mobile token generation. */
   sp_dc: string
+
+  /** If true, extracts cover art color palettes for single tracks. Default: false. */
+  extractColors?: boolean
 }
 
 /**
