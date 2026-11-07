@@ -1,6 +1,5 @@
 import crypto from 'node:crypto'
 import { PassThrough, type Readable } from 'node:stream'
-import vm from 'node:vm'
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import type { BilibiliSourceConfig } from '../typings/config/config.types.ts'
 import type {
@@ -68,15 +67,15 @@ export default class BilibiliSource implements SourceInstance {
    * @public
    */
   public readonly patterns = [
-    /https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[a-zA-Z0-9]+|av\d+)/,
-    /https?:\/\/(?:www\.)?bilibili\.com\/bangumi\/play\/(ep|ss)(\d+)/,
-    /https?:\/\/(?:www\.)?bilibili\.com\/audio\/(au|am)(\d+)/,
-    /https?:\/\/live\.bilibili\.com\/(\d+)/,
-    /https?:\/\/space\.bilibili\.com\/(\d+)/,
-    /^https?:\/\/b23\.tv\/.+/i,
-    /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?video\/(\d+|BV[a-zA-Z0-9]+|av\d+)/,
-    /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?play\/(\d+)(?:\/(\d+))?/,
-    /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?space\/(\d+)/
+    /^https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[a-zA-Z0-9]+|av\d+)/,
+    /^https?:\/\/(?:www\.)?bilibili\.com\/bangumi\/play\/(ep|ss)(\d+)/,
+    /^https?:\/\/(?:www\.)?bilibili\.com\/audio\/(au|am)(\d+)/,
+    /^https?:\/\/live\.bilibili\.com\/(\d+)/,
+    /^https?:\/\/space\.bilibili\.com\/(\d+)/,
+    /^https?:\/\/(?:www\.)?b23\.tv\/.+/i,
+    /^https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?video\/(\d+|BV[a-zA-Z0-9]+|av\d+)/,
+    /^https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?play\/(\d+)(?:\/(\d+))?/,
+    /^https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?space\/(\d+)/
   ]
 
   /**
@@ -411,19 +410,54 @@ export default class BilibiliSource implements SourceInstance {
    */
   public async resolveShortUrl(shortUrl: string): Promise<string> {
     try {
-      const res = await makeRequest(shortUrl, {
+      const parsed = new URL(shortUrl)
+      if (
+        (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+        (parsed.hostname !== 'b23.tv' && parsed.hostname !== 'www.b23.tv')
+      ) {
+        return shortUrl
+      }
+
+      const res = await makeRequest(parsed.href, {
         method: 'GET',
         headers: HEADERS,
         maxRedirects: 3,
         timeout: 5000,
-        proxy: this.config.network?.proxy
+        proxy: this.config.network?.proxy,
+        shouldFollowRedirect: (nextUrl) => {
+          return (
+            (nextUrl.protocol === 'https:' || nextUrl.protocol === 'http:') &&
+            (nextUrl.hostname === 'b23.tv' ||
+              nextUrl.hostname === 'www.b23.tv' ||
+              nextUrl.hostname === 'bilibili.com' ||
+              nextUrl.hostname.endsWith('.bilibili.com') ||
+              nextUrl.hostname === 'bilibili.tv' ||
+              nextUrl.hostname.endsWith('.bilibili.tv'))
+          )
+        }
       })
 
       if (typeof res.body === 'string') {
         const match = res.body.match(
           /rel=["']canonical["'][^>]+href=["']([^"']+)["']/
         )
-        if (match?.[1]) return match[1]
+        if (match?.[1]) {
+          try {
+            const canonicalUrl = new URL(match[1])
+            if (
+              (canonicalUrl.protocol === 'https:' ||
+                canonicalUrl.protocol === 'http:') &&
+              (canonicalUrl.hostname === 'bilibili.com' ||
+                canonicalUrl.hostname.endsWith('.bilibili.com') ||
+                canonicalUrl.hostname === 'bilibili.tv' ||
+                canonicalUrl.hostname.endsWith('.bilibili.tv'))
+            ) {
+              return canonicalUrl.href
+            }
+          } catch {
+            return shortUrl
+          }
+        }
       }
       return shortUrl
     } catch (error) {
@@ -569,6 +603,53 @@ export default class BilibiliSource implements SourceInstance {
   }
 
   /**
+   * Validates if a parsed URL targets an official Bilibili TV domain.
+   * @internal
+   */
+  private _isBilibiliTvUrl(url: URL): boolean {
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      (url.hostname === 'bilibili.tv' || url.hostname === 'www.bilibili.tv') &&
+      url.port === '' &&
+      url.username === '' &&
+      url.password === ''
+    )
+  }
+
+  /**
+   * Safely parses JSON state from a Bilibili TV webpage without code evaluation.
+   * @internal
+   */
+  private _parseInitialState(rawState: string): Record<string, unknown> | null {
+    try {
+      let trimmed = rawState.trim()
+      if (trimmed.endsWith(';')) {
+        trimmed = trimmed.slice(0, -1).trim()
+      }
+      const parsed = JSON.parse(trimmed) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+      return null
+    } catch {
+      try {
+        const start = rawState.indexOf('{')
+        const end = rawState.lastIndexOf('}')
+        if (start !== -1 && end > start) {
+          const jsonSub = rawState.slice(start, end + 1)
+          const parsed = JSON.parse(jsonSub) as unknown
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>
+          }
+        }
+      } catch {
+        return null
+      }
+      return null
+    }
+  }
+
+  /**
    * Extracts initial state from a Bilibili TV webpage.
    * @param url - Webpage URL.
    * @returns Parsed state object or null.
@@ -578,14 +659,20 @@ export default class BilibiliSource implements SourceInstance {
     url: string
   ): Promise<Record<string, unknown> | null> {
     try {
-      const res = await http1makeRequest(url, {
+      const parsedUrl = new URL(url)
+      if (!this._isBilibiliTvUrl(parsedUrl)) {
+        return null
+      }
+
+      const res = await http1makeRequest(parsedUrl.href, {
         method: 'GET',
         headers: {
           ...HEADERS,
           'Accept-Language': 'en-US,en;q=0.9',
           Referer: 'https://www.bilibili.tv/'
         },
-        proxy: this.config.network?.proxy
+        proxy: this.config.network?.proxy,
+        shouldFollowRedirect: (nextUrl) => this._isBilibiliTvUrl(nextUrl)
       })
 
       const html = String(res.body || '')
@@ -593,13 +680,7 @@ export default class BilibiliSource implements SourceInstance {
         /<script>\s*window\.__initialState\s*=\s*([\s\S]*?)<\/script>/i
       )
       if (stateMatch?.[1]) {
-        const context = { window: {} }
-        vm.createContext(context)
-        vm.runInContext(`window.__initialState = ${stateMatch[1]}`, context)
-        return (
-          (context.window as { __initialState?: Record<string, unknown> })
-            .__initialState ?? null
-        )
+        return this._parseInitialState(stateMatch[1])
       }
       return null
     } catch {
@@ -615,7 +696,7 @@ export default class BilibiliSource implements SourceInstance {
    * @public
    */
   public async resolve(url: string): Promise<SourceResult> {
-    if (url.includes('b23.tv')) {
+    if (/^https?:\/\/(?:www\.)?b23\.tv\//i.test(url)) {
       url = await this.resolveShortUrl(url)
     }
 
