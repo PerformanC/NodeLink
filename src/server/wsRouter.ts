@@ -145,7 +145,7 @@ function _handleProfilerUpgrade(
   const endpoint = context.options.cluster?.endpoint || {}
   const patchEnabled = endpoint.patchEnabled === true
   const allowExternal = endpoint.allowExternalPatch === true
-  const expectedCode = endpoint.code || 'CAPYBARA'
+  const expectedCode = endpoint.code || ''
 
   const providedCode =
     url.searchParams.get('code') ||
@@ -162,7 +162,13 @@ function _handleProfilerUpgrade(
     return
   }
 
-  if (!_isAuthorized(providedCode, expectedCode)) {
+  const serverPassword = context.options.server.password
+  const authHeader = _getHeader(request.headers, 'authorization')
+  const isServerAuth =
+    authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`
+  const isCodeAuth = _isAuthorized(providedCode, expectedCode)
+
+  if (!isServerAuth && !isCodeAuth) {
     reject('Invalid or missing profiler authentication code.')
     return
   }

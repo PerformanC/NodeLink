@@ -287,11 +287,22 @@ async function requestHandler(nodelink, req, res) {
             previousEnd(...args);
         };
     }
-    if (!isMetricsEndpoint && !isProfilerEndpoint) {
+    if (!isMetricsEndpoint) {
         const authHeader = getHeaderValue(headerAccess.authorization);
         const serverPassword = nodelink.options.server.password;
-        const isAuthValid = authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`;
-        if (!isAuthValid) {
+        const endpointConfig = nodelink.options.cluster?.endpoint;
+        const profilerCode = endpointConfig?.code;
+        const isServerAuthValid = authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`;
+        const isProfilerAuthValid = isProfilerEndpoint &&
+            endpointConfig?.patchEnabled === true &&
+            typeof profilerCode === 'string' &&
+            profilerCode.length > 0 &&
+            (authHeader === profilerCode ||
+                authHeader === `Bearer ${profilerCode}` ||
+                getHeaderValue(headerAccess['x-nodelink-code']) === profilerCode ||
+                getHeaderValue(headerAccess['x-worker-code']) === profilerCode ||
+                parsedUrl.searchParams.get('code') === profilerCode);
+        if (!isServerAuthValid && !isProfilerAuthValid) {
             nodelink.admissionManager.recordAuthFailure(remoteAddress);
             logger('warn', 'Server', `Unauthorized connection attempt from ${clientAddress} - Invalid password provided: ${authHeader || 'None'}`);
             res.__traceReason =

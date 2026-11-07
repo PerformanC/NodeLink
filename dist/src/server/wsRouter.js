@@ -82,7 +82,7 @@ function _handleProfilerUpgrade(context, request, socket, head, clientAddress, i
     const endpoint = context.options.cluster?.endpoint || {};
     const patchEnabled = endpoint.patchEnabled === true;
     const allowExternal = endpoint.allowExternalPatch === true;
-    const expectedCode = endpoint.code || 'CAPYBARA';
+    const expectedCode = endpoint.code || '';
     const providedCode = url.searchParams.get('code') ||
         _getHeader(request.headers, 'x-nodelink-code') ||
         _getHeader(request.headers, 'x-worker-code');
@@ -94,7 +94,11 @@ function _handleProfilerUpgrade(context, request, socket, head, clientAddress, i
         reject('External profiler socket access is blocked.');
         return;
     }
-    if (!_isAuthorized(providedCode, expectedCode)) {
+    const serverPassword = context.options.server.password;
+    const authHeader = _getHeader(request.headers, 'authorization');
+    const isServerAuth = authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`;
+    const isCodeAuth = _isAuthorized(providedCode, expectedCode);
+    if (!isServerAuth && !isCodeAuth) {
         reject('Invalid or missing profiler authentication code.');
         return;
     }

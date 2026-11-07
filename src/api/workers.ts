@@ -170,7 +170,7 @@ function getEndpointConfig(
   const code =
     typeof endpoint?.code === 'string' && endpoint.code.length > 0
       ? endpoint.code
-      : 'CAPYBARA'
+      : ''
 
   return {
     patchEnabled: endpoint?.patchEnabled === true,
@@ -349,8 +349,20 @@ function handlePatch(
     return
   }
 
+  const serverPassword = nodelink.options.server.password
+  const authHeader = req.headers?.authorization
+  const isServerAuth =
+    authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`
+
   const payload = getPatchPayload(req.body)
-  if (payload.code !== endpointConfig.code) {
+  const isCodeAuth =
+    typeof endpointConfig.code === 'string' &&
+    endpointConfig.code.length > 0 &&
+    typeof payload.code === 'string' &&
+    payload.code.length > 0 &&
+    payload.code === endpointConfig.code
+
+  if (!isServerAuth && !isCodeAuth) {
     sendErrorResponse(
       req,
       res,

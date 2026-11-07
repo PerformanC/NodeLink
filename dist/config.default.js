@@ -61,9 +61,9 @@ export const config = {
             cpuPenaltyLimit: 0.85
         },
         endpoint: {
-            patchEnabled: true,
+            patchEnabled: false,
             allowExternalPatch: false,
-            code: 'CAPYBARA'
+            code: ''
         }
     },
     logging: {

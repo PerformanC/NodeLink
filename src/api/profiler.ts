@@ -989,7 +989,7 @@ function getEndpointConfig(nodelink: ProfilerRuntime): ProfilerEndpointConfig {
   const code =
     typeof endpoint.code === 'string' && endpoint.code.length > 0
       ? endpoint.code
-      : 'CAPYBARA'
+      : ''
 
   return {
     patchEnabled: endpoint.patchEnabled === true,
@@ -1161,8 +1161,21 @@ function validateAccess(
     }
   }
 
-  if (suppliedCode !== endpointConfig.code) {
-    return { ok: false, error: 'Invalid profiler code.' }
+  const serverPassword = nodelink.options.server.password
+  const authHeader = req.headers?.authorization
+  const isServerAuth =
+    authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`
+
+  if (isServerAuth) {
+    return { ok: true }
+  }
+
+  if (
+    !endpointConfig.code ||
+    !suppliedCode ||
+    suppliedCode !== endpointConfig.code
+  ) {
+    return { ok: false, error: 'Invalid or missing profiler code.' }
   }
 
   return { ok: true }
@@ -2279,6 +2292,16 @@ async function handler(
     }
 
     const action = parsedUrl.searchParams.get('action') || 'status'
+    if (action !== 'status') {
+      return sendErrorResponse(
+        req,
+        res,
+        405,
+        'Method Not Allowed',
+        'State-changing diagnostic actions require POST method.',
+        parsedUrl.pathname
+      )
+    }
     return handleRequest(runtime, req, res, parsedUrl, action, bodyPayload)
   }
 

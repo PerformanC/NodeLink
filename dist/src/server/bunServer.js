@@ -141,7 +141,7 @@ export function createBunServer(context, getRequestHandler) {
                 const allowExternalPatch = endpoint.allowExternalPatch === true;
                 const expectedCode = typeof endpoint.code === 'string' && endpoint.code.length > 0
                     ? endpoint.code
-                    : 'CAPYBARA';
+                    : '';
                 const providedCode = url.searchParams.get('code') ||
                     req.headers.get('x-nodelink-code') ||
                     req.headers.get('x-worker-code');
@@ -157,7 +157,16 @@ export function createBunServer(context, getRequestHandler) {
                         statusText: 'Forbidden'
                     });
                 }
-                if (!providedCode || providedCode !== expectedCode) {
+                const serverPassword = context.options.server.password;
+                const authHeader = req.headers.get('authorization');
+                const isServerAuth = authHeader === serverPassword ||
+                    authHeader === `Bearer ${serverPassword}`;
+                const isCodeAuth = typeof expectedCode === 'string' &&
+                    expectedCode.length > 0 &&
+                    typeof providedCode === 'string' &&
+                    providedCode.length > 0 &&
+                    providedCode === expectedCode;
+                if (!isServerAuth && !isCodeAuth) {
                     return new Response('Invalid or missing profiler code.', {
                         status: 403,
                         statusText: 'Forbidden'

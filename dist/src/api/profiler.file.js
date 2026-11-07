@@ -23,7 +23,7 @@ function getEndpointConfig(nodelink) {
     const endpoint = nodelink.options.cluster?.endpoint;
     const code = typeof endpoint?.code === 'string' && endpoint.code.length > 0
         ? endpoint.code
-        : 'CAPYBARA';
+        : '';
     return {
         patchEnabled: endpoint?.patchEnabled === true,
         allowExternalPatch: endpoint?.allowExternalPatch === true,
@@ -116,6 +116,17 @@ export async function resolveWorkspacePath(rawPath, cwd = process.cwd()) {
     if (realRelativePath === '..' ||
         realRelativePath.startsWith(`..${path.sep}`) ||
         path.isAbsolute(realRelativePath)) {
+        return null;
+    }
+    const normalizedRel = realRelativePath.replace(/\\/g, '/');
+    const isAllowedDir = normalizedRel.startsWith('src/') || normalizedRel.startsWith('dist/');
+    if (!isAllowedDir) {
+        return null;
+    }
+    const basename = path.basename(realPath).toLowerCase();
+    if (basename.includes('config') ||
+        basename.startsWith('.env') ||
+        basename.endsWith('.env')) {
         return null;
     }
     return realPath;
@@ -211,8 +222,16 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'External access to profiler file endpoint is blocked.', parsedUrl.pathname);
         return;
     }
+    const serverPassword = nodelink.options.server.password;
+    const authHeader = req.headers?.authorization;
+    const isServerAuth = authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`;
     const code = getSuppliedCode(req, parsedUrl);
-    if (code !== endpointConfig.code) {
+    const isCodeAuth = typeof endpointConfig.code === 'string' &&
+        endpointConfig.code.length > 0 &&
+        typeof code === 'string' &&
+        code.length > 0 &&
+        code === endpointConfig.code;
+    if (!isServerAuth && !isCodeAuth) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'Invalid or missing profiler code.', parsedUrl.pathname);
         return;
     }

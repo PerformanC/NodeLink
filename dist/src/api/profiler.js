@@ -47,7 +47,7 @@ function getEndpointConfig(nodelink) {
     const endpoint = nodelink.options?.cluster?.endpoint || {};
     const code = typeof endpoint.code === 'string' && endpoint.code.length > 0
         ? endpoint.code
-        : 'CAPYBARA';
+        : '';
     return {
         patchEnabled: endpoint.patchEnabled === true,
         allowExternalPatch: endpoint.allowExternalPatch === true,
@@ -197,8 +197,16 @@ function validateAccess(nodelink, req, suppliedCode) {
             error: 'External access to profiler endpoint is blocked.'
         };
     }
-    if (suppliedCode !== endpointConfig.code) {
-        return { ok: false, error: 'Invalid profiler code.' };
+    const serverPassword = nodelink.options.server.password;
+    const authHeader = req.headers?.authorization;
+    const isServerAuth = authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`;
+    if (isServerAuth) {
+        return { ok: true };
+    }
+    if (!endpointConfig.code ||
+        !suppliedCode ||
+        suppliedCode !== endpointConfig.code) {
+        return { ok: false, error: 'Invalid or missing profiler code.' };
     }
     return { ok: true };
 }
@@ -1104,6 +1112,9 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
             return handleSseStream(runtime, req, res, parsedUrl, bodyPayload);
         }
         const action = parsedUrl.searchParams.get('action') || 'status';
+        if (action !== 'status') {
+            return sendErrorResponse(req, res, 405, 'Method Not Allowed', 'State-changing diagnostic actions require POST method.', parsedUrl.pathname);
+        }
         return handleRequest(runtime, req, res, parsedUrl, action, bodyPayload);
     }
     if (req.method === 'POST') {
