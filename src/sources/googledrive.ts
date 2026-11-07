@@ -43,9 +43,9 @@ export default class GoogleDriveSource implements SourceInstance {
   public readonly nodelink: WorkerNodeLink
   public readonly searchTerms = ['gdsearch']
   public readonly patterns = [
-    /https?:\/\/(?:docs|drive|drive\.usercontent)\.google\.com\/(?:(?:uc|open|download)\?.*?id=|file\/d\/)([a-zA-Z0-9_-]{28,})/,
-    /https?:\/\/video\.google\.com\/get_player\?.*?docid=([a-zA-Z0-9_-]{28,})/,
-    /https?:\/\/(?:docs|drive)\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]{28,})/
+    /^https?:\/\/(?:docs|drive|drive\.usercontent)\.google\.com\/(?:(?:uc|open|download)\?.*?id=|file\/d\/)([a-zA-Z0-9_-]{28,})/,
+    /^https?:\/\/video\.google\.com\/get_player\?.*?docid=([a-zA-Z0-9_-]{28,})/,
+    /^https?:\/\/(?:docs|drive)\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]{28,})/
   ]
   public readonly priority = 90
 
@@ -86,16 +86,39 @@ export default class GoogleDriveSource implements SourceInstance {
     return `SAPISIDHASH ${timestamp}_${hashStr}`
   }
 
+  private _isGoogleDriveUrl(url: URL): boolean {
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      /^(?:(?:docs|drive|drive\.usercontent|video)\.google\.com)$/i.test(
+        url.hostname
+      ) &&
+      url.port === '' &&
+      url.username === '' &&
+      url.password === ''
+    )
+  }
+
   private async _getCookiesAndAuthHeader(
     url: string,
     origin: string
   ): Promise<{ cookieHeader: string; authHeader: string | null }> {
-    const res = await makeRequest(url, {
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(url)
+      if (!this._isGoogleDriveUrl(parsedUrl)) {
+        return { cookieHeader: '', authHeader: null }
+      }
+    } catch {
+      return { cookieHeader: '', authHeader: null }
+    }
+
+    const res = await makeRequest(parsedUrl.href, {
       method: 'GET',
       headers: {
         'User-Agent': this.userAgent,
         'Accept-Language': 'en-US,en;q=0.5'
-      }
+      },
+      shouldFollowRedirect: (nextUrl) => this._isGoogleDriveUrl(nextUrl)
     })
 
     let cookiesStr = ''
@@ -260,6 +283,15 @@ export default class GoogleDriveSource implements SourceInstance {
   }
 
   public async resolve(url: string): Promise<SourceResult> {
+    try {
+      const parsedUrl = new URL(url)
+      if (!this._isGoogleDriveUrl(parsedUrl)) {
+        return { loadType: 'empty', data: null }
+      }
+    } catch {
+      return { loadType: 'empty', data: null }
+    }
+
     const folderPattern = this.patterns[2]
     const folderMatch = folderPattern ? url.match(folderPattern) : null
     if (folderMatch?.[1]) {
@@ -400,19 +432,25 @@ export default class GoogleDriveSource implements SourceInstance {
         }
       }
 
+      const parsedUrl = new URL(url)
+      if (!this._isGoogleDriveUrl(parsedUrl)) {
+        return { loadType: 'empty', data: {} }
+      }
+
       const origin = 'https://drive.google.com'
       const { cookieHeader, authHeader } = await this._getCookiesAndAuthHeader(
-        url,
+        parsedUrl.href,
         origin
       )
 
-      const webpage = await makeRequest(url, {
+      const webpage = await makeRequest(parsedUrl.href, {
         method: 'GET',
         headers: {
           'User-Agent': this.userAgent,
           'Accept-Language': 'en-US,en;q=0.5',
           Cookie: cookieHeader
-        }
+        },
+        shouldFollowRedirect: (nextUrl) => this._isGoogleDriveUrl(nextUrl)
       })
       if (typeof webpage.body !== 'string')
         throw new Error('Failed to load folder page')

@@ -53,11 +53,11 @@ export default class VKMusicSource {
      * @public
      */
     patterns = [
-        /vk\.(?:com|ru)\/.*?[?&]z=audio_playlist(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
-        /vk\.(?:com|ru)\/(?:music\/(?:playlist|album)\/)(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
-        /vk\.(?:com|ru)\/audio(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/)(?<hash>[a-z0-9]+))?/i,
-        /vk\.(?:com|ru)\/artist\/(?<id>[^/?#\s&]+)/i,
-        /vk\.(?:com|ru)\/audios(?<id>-?\d+)/i
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/.*?[?&]z=audio_playlist(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/(?:music\/(?:playlist|album)\/)(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/audio(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/)(?<hash>[a-z0-9]+))?/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/artist\/(?<id>[^/?#\s&]+)/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/audios(?<id>-?\d+)/i
     ];
     /**
      * Priority score for source selection.
@@ -337,14 +337,30 @@ export default class VKMusicSource {
         return this._scrapePlaylist(url);
     }
     /**
+     * Validates if a parsed URL targets an official VK domain.
+     * @internal
+     */
+    _isVkUrl(url) {
+        return ((url.protocol === 'https:' || url.protocol === 'http:') &&
+            /^(?:(?:www\.|m\.)?vk\.(?:com|ru))$/i.test(url.hostname) &&
+            url.port === '' &&
+            url.username === '' &&
+            url.password === '');
+    }
+    /**
      * Scrapes track metadata from a VK web page.
      * @internal
      */
     async _scrapePlaylist(url) {
         try {
-            const res = await http1makeRequest(url, {
+            const parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+            if (!this._isVkUrl(parsedUrl)) {
+                return { loadType: 'empty', data: {} };
+            }
+            const res = await http1makeRequest(parsedUrl.href, {
                 headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-                proxy: this.config.network?.proxy ?? this.config.proxy
+                proxy: this.config.network?.proxy ?? this.config.proxy,
+                shouldFollowRedirect: (nextUrl) => this._isVkUrl(nextUrl)
             });
             if (res.statusCode !== 200)
                 throw new Error(`HTTP ${res.statusCode}`);
@@ -422,9 +438,14 @@ export default class VKMusicSource {
      */
     async _scrapeTrack(url) {
         try {
-            const res = await http1makeRequest(url, {
+            const parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+            if (!this._isVkUrl(parsedUrl)) {
+                return { loadType: 'empty', data: {} };
+            }
+            const res = await http1makeRequest(parsedUrl.href, {
                 headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-                proxy: this.config.network?.proxy ?? this.config.proxy
+                proxy: this.config.network?.proxy ?? this.config.proxy,
+                shouldFollowRedirect: (nextUrl) => this._isVkUrl(nextUrl)
             });
             if (res.statusCode !== 200)
                 throw new Error(`HTTP ${res.statusCode}`);
