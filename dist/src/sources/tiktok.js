@@ -39,6 +39,46 @@ function firstString(list) {
  */
 export default class TiktokSource {
     /**
+     * Declarative test suite for validating TikTok source behavior.
+     */
+    static _TESTS = [
+        {
+            id: 'tiktok.video.stream',
+            name: 'TikTok standard video playback',
+            input: {
+                type: 'resolve',
+                value: 'https://www.tiktok.com/@scout2015/video/6718335390845095173'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    author: {
+                        op: 'matches',
+                        value: 'Scout'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'tiktok'
+                    }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 100000,
+                    validFormats: [{ container: 'mp4', codec: 'aac' }]
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'error']
+            }
+        }
+    ];
+    /**
      * Runtime worker context.
      */
     nodelink;
@@ -58,7 +98,9 @@ export default class TiktokSource {
         this.nodelink = nodelink;
         this.patterns = [
             /^https?:\/\/(?:www\.)?tiktok\.com\/@[\w.-]+\/video\/(\d+)/i,
+            /^https?:\/\/(?:www\.)?tiktok\.com\/t\/([\w-]+)/i,
             /^https?:\/\/(?:www\.)?vm\.tiktok\.com\/([\w-]+)/i,
+            /^https?:\/\/(?:www\.)?vt\.tiktok\.com\/([\w-]+)/i,
             /^https?:\/\/(?:www\.)?m\.tiktok\.com\/([\w-]+)/i
         ];
         this.priority = 60;
@@ -90,8 +132,24 @@ export default class TiktokSource {
      * @returns A track result, an empty payload, or a structured exception.
      */
     async resolve(url, _type) {
-        const match = url.match(VIDEO_ID_RE);
-        const videoId = match?.[1];
+        let targetUrl = url;
+        let match = targetUrl.match(VIDEO_ID_RE);
+        let videoId = match?.[1];
+        if (!videoId) {
+            try {
+                const headRes = await fetch(targetUrl, {
+                    method: 'HEAD',
+                    redirect: 'follow',
+                    headers: { 'User-Agent': USER_AGENT }
+                });
+                targetUrl = headRes.url;
+                match = targetUrl.match(VIDEO_ID_RE);
+                videoId = match?.[1];
+            }
+            catch {
+                // Continue and check if videoId resolved
+            }
+        }
         if (!videoId)
             return { loadType: 'empty', data: {} };
         try {
@@ -192,7 +250,7 @@ export default class TiktokSource {
      * @param trackInfo - Decoded TikTok track information.
      * @param _itag - Unused itag placeholder kept for source-manager compatibility.
      * @param _isRecovering - Whether this is a recovery attempt.
-     * @returns Direct playback URL metadata or a structured exception.
+     * @returns Direct playback URL metadata or throws an error.
      */
     async getTrackUrl(trackInfo, _itag, _isRecovering) {
         const pluginInfo = trackInfo
@@ -211,55 +269,121 @@ export default class TiktokSource {
                     return { url, protocol: 'https', format: 'mp4' };
             }
         }
-        return {
-            url: undefined,
-            protocol: undefined,
-            format: undefined,
-            exception: {
-                message: 'No playable URL for TikTok track',
-                severity: 'fault'
-            }
-        };
+        throw new Error('No playable URL for TikTok track');
     }
     /**
      * Loads the MP4 stream for a TikTok video.
      *
      * Proxies the direct playback URL through a `PassThrough` stream.
-     * @param track - Decoded track information.
+     * @param _track - Decoded track information.
      * @param url - Resolved playback URL.
      * @param _protocol - Optional protocol hint (unused).
      * @param _additionalData - Optional additional data (unused).
-     * @returns A readable stream or a structured exception.
+     * @returns A readable stream or throws an error.
      */
     async loadStream(_track, url, _protocol, _additionalData) {
-        try {
-            const response = await http1makeRequest(url, {
-                method: 'GET',
-                streamOnly: true,
-                headers: {
-                    'User-Agent': USER_AGENT,
-                    Referer: 'https://www.tiktok.com/'
-                }
-            });
-            if (response.error || !response.stream) {
-                throw new Error(response.error || 'No stream returned');
+        const response = await http1makeRequest(url, {
+            method: 'GET',
+            streamOnly: true,
+            headers: {
+                'User-Agent': USER_AGENT,
+                Referer: 'https://www.tiktok.com/'
             }
-            const stream = new PassThrough();
-            response.stream.on('data', (chunk) => stream.write(chunk));
-            response.stream.on('end', () => {
+        });
+        if (response.error || !response.stream) {
+            throw new Error(response.error || 'No stream returned');
+        }
+        const stream = new PassThrough();
+        const upstream = response.stream;
+        upstream.on('data', (chunk) => {
+            if (!stream.write(chunk)) {
+                upstream.pause();
+            }
+        });
+        stream.on('drain', () => {
+            if (!stream.destroyed) {
+                upstream.resume();
+            }
+        });
+        upstream.on('end', () => {
+            if (!stream.writableEnded) {
                 stream.emit('finishBuffering');
                 stream.end();
-            });
-            response.stream.on('error', (err) => stream.destroy(err));
-            return { stream, type: 'video/mp4' };
+            }
+        });
+        upstream.on('error', (err) => {
+            if (!stream.destroyed) {
+                stream.destroy(err);
+            }
+        });
+        return { stream, type: 'video/mp4' };
+    }
+    /**
+     * Executes a specific variant for testing.
+     *
+     * @param variant - The test variant to execute.
+     * @param track - The track information.
+     * @param streamSpec - Optional stream validation specifications.
+     * @returns A result object detailing resolution and stream state.
+     */
+    async executeVariant(variant, track, streamSpec) {
+        let urlData;
+        try {
+            urlData = await this.getTrackUrl(track);
         }
-        catch (e) {
-            const message = e instanceof Error ? e.message : String(e);
+        catch (err) {
             return {
-                stream: undefined,
-                type: undefined,
-                exception: { message, severity: 'fault' }
+                variant: variant.id,
+                resolved: false,
+                error: err instanceof Error
+                    ? err.message
+                    : 'Failed to resolve track streaming URL'
             };
         }
+        if (!urlData.url) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: 'Failed to resolve track streaming URL'
+            };
+        }
+        const container = 'mp4';
+        const codec = 'aac';
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: urlData.newTrack?.info || track,
+                container,
+                codec
+            };
+        }
+        let streamResult;
+        try {
+            streamResult = await this.loadStream(track, urlData.url, urlData.protocol, urlData.additionalData);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: err instanceof Error ? err.message : 'Failed to load audio stream'
+            };
+        }
+        if (!streamResult.stream) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: 'Failed to load audio stream'
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track: urlData.newTrack?.info || track,
+            stream: streamResult.stream,
+            container,
+            codec,
+            httpStatus: 200
+        };
     }
 }
