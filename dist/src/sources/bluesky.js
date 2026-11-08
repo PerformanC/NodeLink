@@ -7,6 +7,158 @@ import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js'
  */
 export default class BlueskySource {
     /**
+     * Declarative test cases used to validate the Bluesky source.
+     */
+    static _TESTS = [
+        {
+            id: 'bluesky.post.stream',
+            name: 'Bluesky post HLS video stream playback',
+            input: {
+                type: 'resolve',
+                value: 'https://bsky.app/profile/blueroseemperor.bsky.social/post/3mzt4a5cnm224'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'september and october'
+                    },
+                    author: {
+                        op: 'matches',
+                        value: 'Blue'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bluesky'
+                    }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 100000,
+                    validFormats: [
+                        { container: 'mpegts', codec: 'aac' },
+                        { container: 'mov,mp4,m4a,3gp,3g2,mj2', codec: 'aac' }
+                    ],
+                    decodeToEnd: true
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'error']
+            }
+        },
+        {
+            id: 'bluesky.post.did',
+            name: 'Bluesky post resolution using author DID in URL',
+            input: {
+                type: 'resolve',
+                value: 'https://bsky.app/profile/did:plc:fsb2zuleovwteqhsqgb3tzmc/post/3mzt4a5cnm224'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'september and october'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bluesky'
+                    }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'error']
+            }
+        },
+        {
+            id: 'bluesky.post.at_uri',
+            name: 'Bluesky post resolution using AT URI protocol scheme',
+            input: {
+                type: 'resolve',
+                value: 'at://blueroseemperor.bsky.social/app.bsky.feed.post/3mzt4a5cnm224'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'september and october'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bluesky'
+                    }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'error']
+            }
+        },
+        {
+            id: 'bluesky.post.main_dev',
+            name: 'Bluesky post resolution on main.bsky.dev hostname',
+            input: {
+                type: 'resolve',
+                value: 'https://main.bsky.dev/profile/blueroseemperor.bsky.social/post/3mzt4a5cnm224'
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'september and october'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bluesky'
+                    }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'error']
+            }
+        },
+        {
+            id: 'bluesky.search',
+            name: 'Bluesky keyword search for playable video post',
+            input: {
+                type: 'search',
+                value: 'look at this cool ass video though',
+                searchType: 'bksearch'
+            },
+            expect: {
+                result: {
+                    type: 'search'
+                },
+                collection: {
+                    minItems: 1
+                },
+                metadata: {
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bluesky'
+                    }
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'error']
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -204,7 +356,7 @@ export default class BlueskySource {
      * @returns Fully qualified public API URL.
      */
     buildThreadUrl(handle, id) {
-        return `https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=at://${handle}/app.bsky.feed.post/${id}&depth=0`;
+        return `https://api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=at://${handle}/app.bsky.feed.post/${id}&depth=0`;
     }
     /**
      * Builds the encoded track payload for a Bluesky post.
@@ -270,7 +422,7 @@ export default class BlueskySource {
      */
     async search(query) {
         logger('debug', 'Bluesky', `Searching for: ${query}`);
-        const searchUrl = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}` +
+        const searchUrl = `https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}` +
             `&limit=${this.config.maxSearchResults ?? 10}`;
         const response = await makeRequest(searchUrl, { method: 'GET' });
         const searchResponse = this.getSearchResponse(response.body);
@@ -317,7 +469,6 @@ export default class BlueskySource {
         const reference = this.parsePostReference(decodedTrack.uri);
         if (!reference) {
             return {
-                loadType: 'error',
                 exception: {
                     message: 'Invalid Bluesky track URI',
                     severity: 'common'
@@ -329,7 +480,6 @@ export default class BlueskySource {
         const post = threadResponse?.thread?.post;
         if (response.error || !post) {
             return {
-                loadType: 'error',
                 exception: {
                     message: 'Failed to fetch Bluesky post for streaming',
                     severity: 'fault'
@@ -339,7 +489,6 @@ export default class BlueskySource {
         const embed = this.getPlayableEmbed(post);
         if (!embed) {
             return {
-                loadType: 'error',
                 exception: {
                     message: 'No media found in Bluesky post',
                     severity: 'common'
@@ -363,7 +512,6 @@ export default class BlueskySource {
             };
         }
         return {
-            loadType: 'error',
             exception: {
                 message: 'This Bluesky post does not contain a direct video or audio stream.',
                 severity: 'common'
@@ -400,7 +548,6 @@ export default class BlueskySource {
         });
         if (response.error || !response.stream) {
             return {
-                loadType: 'error',
                 exception: {
                     message: `Failed to load Bluesky stream: ${response.error || 'No stream object returned.'}`,
                     severity: 'fault'
@@ -409,7 +556,6 @@ export default class BlueskySource {
         }
         if (response.statusCode !== 200) {
             return {
-                loadType: 'error',
                 exception: {
                     message: `Failed to load Bluesky stream: status ${response.statusCode}`,
                     severity: 'fault'
@@ -441,5 +587,57 @@ export default class BlueskySource {
             }
         });
         return { stream, type: 'mp4' };
+    }
+    /**
+     * Executes a test variant for Bluesky source testing.
+     *
+     * @param variant - Test variant definition.
+     * @param track - Resolved track info.
+     * @param streamSpec - Optional stream validation specification.
+     * @returns Test variant result payload.
+     */
+    async executeVariant(variant, track, streamSpec) {
+        const urlData = await this.getTrackUrl(track);
+        if (!urlData || 'exception' in urlData || !urlData.url) {
+            const errorMsg = urlData && 'exception' in urlData && urlData.exception?.message
+                ? urlData.exception.message
+                : 'Failed to resolve track streaming URL';
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: errorMsg
+            };
+        }
+        const container = typeof urlData.format === 'string' ? urlData.format : 'mpegts';
+        const codec = 'aac';
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track,
+                container,
+                codec
+            };
+        }
+        const streamResult = await this.loadStream(track, urlData.url, urlData.protocol);
+        if (!('stream' in streamResult) || !streamResult.stream) {
+            const errorMsg = 'exception' in streamResult && streamResult.exception?.message
+                ? streamResult.exception.message
+                : 'Failed to load audio stream';
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: errorMsg
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track,
+            stream: streamResult.stream,
+            container,
+            codec,
+            httpStatus: 200
+        };
     }
 }
