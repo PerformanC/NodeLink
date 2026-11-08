@@ -5,12 +5,24 @@ import { parse as parsePlaylist } from '../playback/hls/PlaylistParser.ts'
 import type { GaanaSourceConfig } from '../typings/config/config.types.ts'
 import type { HLSSegment } from '../typings/playback/hls.types.ts'
 import type {
+  GaanaLoadStreamResult,
+  GaanaTrackPluginInfo
+} from '../typings/sources/gaana.types.ts'
+import type {
+  SourceInstance,
   SourceResult,
+  TrackData,
   TrackInfo,
-  TrackStreamResult,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   TrackEncodeInput
@@ -33,7 +45,185 @@ const HLS_BASE_URL = 'https://vodhlsgaana-ebw.akamaized.net/'
  * Gaana source implementation.
  * @public
  */
-export default class GaanaSource {
+export default class GaanaSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating Gaana source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'gaana.track.stream',
+      name: 'Gaana native audio streaming',
+      input: {
+        type: 'resolve',
+        value: 'https://gaana.com/song/ishq-d-e-fanniyar-female'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: { op: 'matches', value: 'Ishq De Fanniyar' },
+          author: { op: 'matches', value: 'Jyotica Tangri' },
+          sourceName: { op: 'equals', value: 'gaana' }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 500000,
+          validFormats: [{ container: 'mpegts', codec: 'aac' }],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'gaana.track.localized',
+      name: 'Gaana localized song URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://gaana.com/hindi/song/ishq-d-e-fanniyar-female'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: { op: 'matches', value: 'Ishq De Fanniyar' },
+          author: { op: 'matches', value: 'Jyotica Tangri' },
+          sourceName: { op: 'equals', value: 'gaana' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'gaana.track.mobile',
+      name: 'Gaana mobile song URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://m.gaana.com/song/ishq-d-e-fanniyar-female'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: { op: 'matches', value: 'Ishq De Fanniyar' },
+          sourceName: { op: 'equals', value: 'gaana' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'gaana.track.popular',
+      name: 'Gaana popular track resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://gaana.com/song/tum-hi-ho'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: { op: 'matches', value: 'Tum Hi Ho' },
+          sourceName: { op: 'equals', value: 'gaana' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'gaana.album.resolve',
+      name: 'Gaana album resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://gaana.com/album/fukrey-returns'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 5
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'gaana.playlist.resolve',
+      name: 'Gaana playlist resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://gaana.com/playlist/gaana-dj-hindi-top-50-1'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 10
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'gaana.artist.resolve',
+      name: 'Gaana artist top tracks resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://gaana.com/artist/jyotica-tangri'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 3
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'gaana.search',
+      name: 'Gaana search queries (gnsearch)',
+      input: {
+        type: 'search',
+        value: 'Ishq De Fanniyar Female',
+        searchType: 'gnsearch'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -95,7 +285,7 @@ export default class GaanaSource {
     this.config = sourceConfig
     this.searchTerms = ['gnsearch', 'gaanasearch']
     this.patterns = [
-      /^@?(?:https?:\/\/)?(?:www\.)?gaana\.com\/(?<type>song|album|playlist|artist)\/(?<seokey>[\w-]+)(?:[?#].*)?$/
+      /^@?(?:https?:\/\/)?(?:(?:www|m)\.)?gaana\.com\/(?:[a-z]{2,10}\/)?(?<type>song|album|playlist|artist)\/(?<seokey>[\w-]+)\/?(?:[?#].*)?$/i
     ]
     this.priority = 70
 
@@ -228,6 +418,68 @@ export default class GaanaSource {
   }
 
   /**
+   * Executes a test variant for declarative test runner.
+   * @param variant - Test variant definition.
+   * @param track - Resolved canonical track info.
+   * @param streamSpec - Optional stream validation specifications.
+   * @returns Variant test execution result.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    const urlData = await this.getTrackUrl(track)
+    if (!urlData || 'exception' in urlData || !urlData.url) {
+      const errorMsg =
+        urlData && 'exception' in urlData && urlData.exception?.message
+          ? urlData.exception.message
+          : 'Failed to resolve track streaming URL'
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: errorMsg
+      }
+    }
+
+    const container = 'mpegts'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    const streamResult = await this.loadStream(
+      track,
+      urlData.url,
+      urlData.protocol,
+      urlData.additionalData
+    )
+    if (!('stream' in streamResult)) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: streamResult.exception?.message || 'Failed to load audio stream'
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec
+    }
+  }
+
+  /**
    * Resolves playback URL for a Gaana track.
    * @param decodedTrack - Decoded track metadata.
    * @returns Direct stream or mirror fallback payload.
@@ -244,9 +496,24 @@ export default class GaanaSource {
       >
       const pluginInfo = this.asRecord(decodedTrackRecord.pluginInfo)
       const pluginTrackId = this.asString(pluginInfo?.trackId)
-      const trackId = pluginTrackId || decodedTrack.identifier
-      if (trackId && /^\d+$/.test(String(trackId))) {
-        const streamInfo = await this.fetchDirectStream(String(trackId))
+      let trackId = pluginTrackId || decodedTrack.identifier
+
+      if (trackId && !/^\d+$/.test(trackId)) {
+        const songResult = await this.getSong(trackId)
+        if (songResult.loadType === 'track') {
+          const songData = songResult.data as {
+            info: TrackInfo
+            pluginInfo?: Record<string, unknown>
+          }
+          const numericId = this.asString(songData.pluginInfo?.trackId)
+          if (numericId && /^\d+$/.test(numericId)) {
+            trackId = numericId
+          }
+        }
+      }
+
+      if (trackId && /^\d+$/.test(trackId)) {
+        const streamInfo = await this.fetchDirectStream(trackId)
         if (streamInfo) return streamInfo
       }
     } catch (error) {
@@ -339,15 +606,16 @@ export default class GaanaSource {
     url: string,
     protocol?: string,
     additionalData?: TrackUrlResult['additionalData']
-  ): Promise<
-    TrackStreamResult | { exception: { message: string; severity: string } }
-  > {
+  ): Promise<GaanaLoadStreamResult> {
     const proxy = this.getProxyConfig()
+    const isHls =
+      protocol === 'hls' || url.includes('.m3u8') || url.includes('/hls/')
 
-    if (protocol === 'hls') {
+    if (isHls) {
       const additional = this.asRecord(additionalData) || {}
       const stream = new HLSHandler(url, {
         type: 'mpegts',
+        strategy: 'segmented',
         localAddress: this.nodelink.routePlanner?.getIP?.(),
         startTime: this.asNumber(additional.startTime) || 0,
         headers: this.getHeaders(),
@@ -472,7 +740,7 @@ export default class GaanaSource {
       tracks,
       'album',
       `https://gaana.com/album/${seokey}`,
-      this.asString(album.atw) || null,
+      this.extractArtwork(album),
       this.asString(
         this.asRecord(this.asArrayRecords(album.artist)[0])?.name
       ) || null
@@ -498,7 +766,7 @@ export default class GaanaSource {
       tracks,
       'playlist',
       `https://gaana.com/playlist/${seokey}`,
-      this.asString(playlist.atw) || null
+      this.extractArtwork(playlist)
     )
   }
 
@@ -541,7 +809,7 @@ export default class GaanaSource {
       merged,
       'artist',
       `https://gaana.com/artist/${seokey}`,
-      this.asString(firstArtist.artwork_bio) || null
+      this.extractArtwork(firstArtist)
     )
   }
 
@@ -569,15 +837,7 @@ export default class GaanaSource {
           ? this.mapTrack(item)
           : this.mapEntityTrack(item)
       )
-      .filter(
-        (
-          item
-        ): item is {
-          encoded: string
-          info: TrackInfo
-          pluginInfo: Record<string, unknown>
-        } => item !== null
-      )
+      .filter((item): item is TrackData => item !== null)
       .slice(0, this.getLoadLimit(type))
 
     const infoName = type === 'artist' ? `${name}'s Top Tracks` : name
@@ -596,29 +856,37 @@ export default class GaanaSource {
    * @param track - Raw Gaana track object.
    * @returns Encoded track payload.
    */
-  private mapTrack(track: Record<string, unknown>): {
-    encoded: string
-    info: TrackInfo
-    pluginInfo: Record<string, unknown>
-  } | null {
+  private mapTrack(track: Record<string, unknown>): TrackData | null {
     const title = this.asString(track.track_title) || this.asString(track.name)
     if (!title) return null
 
-    const duration = (this.asNumber(track.duration) ?? 0) * 1000
-    const artist = track.artist
-    const author = Array.isArray(artist)
-      ? artist
-          .map((item) => this.asString(this.asRecord(item)?.name))
-          .filter((item): item is string => Boolean(item))
-          .join(', ')
-      : this.asString(this.asRecord(artist)?.name) || 'Unknown Artist'
+    const durationSeconds = this.asNumber(track.duration) ?? 0
+    const duration = Math.round(durationSeconds * 1000)
 
-    const identifier =
-      this.asString(track.track_id) || this.asString(track.seokey) || ''
+    let author = 'Unknown Artist'
+    if (Array.isArray(track.artist)) {
+      const names = track.artist
+        .map((item) => this.asString(this.asRecord(item)?.name))
+        .filter((item): item is string => Boolean(item))
+      if (names.length > 0) author = names.join(', ')
+    } else if (track.artist && typeof track.artist === 'object') {
+      author =
+        this.asString(this.asRecord(track.artist)?.name) || 'Unknown Artist'
+    } else if (
+      typeof track.artist === 'string' &&
+      track.artist.trim().length > 0
+    ) {
+      author = track.artist.trim()
+    }
+
+    const trackIdStr = this.asString(track.track_id)
+    const seokey = this.asString(track.seokey)
+    const identifier = trackIdStr || seokey || ''
     if (!identifier) return null
 
-    const seokey = this.asString(track.seokey)
     const uri = seokey ? `https://gaana.com/song/${seokey}` : ''
+    const artworkUrl = this.extractArtwork(track)
+    const isrc = this.asString(track.isrc) || null
 
     const info: TrackInfo = {
       identifier,
@@ -629,23 +897,73 @@ export default class GaanaSource {
       position: 0,
       title,
       uri,
-      artworkUrl:
-        this.asString(track.artwork_large) || this.asString(track.atw) || null,
-      isrc: this.asString(track.isrc) || null,
+      artworkUrl,
+      isrc,
       sourceName: 'gaana'
+    }
+
+    const artists = this.asArrayRecords(track.artist).map((art) => ({
+      id: this.asString(art.artist_id) || undefined,
+      name: this.asString(art.name) || undefined,
+      seokey: this.asString(art.seokey) || undefined,
+      artwork: this.extractArtwork(art) || undefined
+    }))
+
+    const composers = this.asArrayRecords(track.composer).map((comp) => ({
+      id: this.asString(comp.composer_id) || undefined,
+      name: this.asString(comp.name) || undefined,
+      seokey: this.asString(comp.seokey) || undefined
+    }))
+
+    const lyricists = this.asArrayRecords(track.lyricist).map((lyr) => ({
+      id: this.asString(lyr.e_id) || undefined,
+      name: this.asString(lyr.name) || undefined,
+      seokey: this.asString(lyr.seokey) || undefined
+    }))
+
+    const genreSet = new Set<string>()
+    for (const g of this.asArrayRecords(track.gener)) {
+      const gName = this.asString(g.name)
+      if (gName) genreSet.add(gName)
+    }
+    for (const t of this.asArrayRecords(track.tags)) {
+      const tName = this.asString(t.tag_name)
+      if (tName) genreSet.add(tName)
+    }
+
+    const parentalWarning = this.asNumber(track.parental_warning)
+    const isPremiumRaw =
+      this.asNumber(track.is_premium) ?? this.asNumber(track.premium_content)
+    const albumSeokey = this.asString(track.albumseokey)
+
+    const pluginInfo: GaanaTrackPluginInfo = {
+      trackId: trackIdStr || null,
+      albumId: this.asString(track.album_id) || null,
+      albumName: this.asString(track.album_title) || null,
+      albumUrl: albumSeokey ? `https://gaana.com/album/${albumSeokey}` : null,
+      artists: artists.length > 0 ? artists : undefined,
+      composers: composers.length > 0 ? composers : undefined,
+      lyricists: lyricists.length > 0 ? lyricists : undefined,
+      genres: genreSet.size > 0 ? Array.from(genreSet) : undefined,
+      language: this.asString(track.language) || null,
+      releaseDate: this.asString(track.release_date) || null,
+      isrc,
+      label: this.asString(track.vendor_name) || null,
+      playCount: this.asString(track.play_ct) || this.asNumber(track.play_ct),
+      favoriteCount:
+        this.asNumber(track.total_favourite_count) ??
+        this.asNumber(track.favorite_count),
+      explicit: parentalWarning !== null ? parentalWarning > 0 : false,
+      isPremium: isPremiumRaw !== null ? isPremiumRaw > 0 : false,
+      youtubeId: this.asString(track.youtube_id) || null,
+      lyricsUrl: this.asString(track.lyrics_url) || null
     }
 
     const encodedInput: TrackEncodeInput = { ...info, details: [] }
     return {
       encoded: encodeTrack(encodedInput),
       info,
-      pluginInfo: {
-        trackId: this.asString(track.track_id) || null,
-        albumName: this.asString(track.album_title) || null,
-        albumUrl: this.asString(track.albumseokey)
-          ? `https://gaana.com/album/${this.asString(track.albumseokey)}`
-          : null
-      }
+      pluginInfo
     }
   }
 
@@ -654,11 +972,7 @@ export default class GaanaSource {
    * @param json - Raw entity payload.
    * @returns Encoded track payload.
    */
-  private mapEntityTrack(json: Record<string, unknown>): {
-    encoded: string
-    info: TrackInfo
-    pluginInfo: Record<string, unknown>
-  } | null {
+  private mapEntityTrack(json: Record<string, unknown>): TrackData | null {
     const getEntityValue = (key: string): unknown => {
       const entities = this.asArrayRecords(json.entity_info)
       return entities.find((item) => this.asString(item.key) === key)?.value
@@ -667,29 +981,95 @@ export default class GaanaSource {
     const title = this.asString(json.name) || ''
     if (!title) return null
 
-    const duration = (this.asNumber(getEntityValue('duration')) ?? 0) * 1000
+    const durationSeconds =
+      this.asNumber(getEntityValue('duration')) ??
+      this.asNumber(json.duration) ??
+      0
+    const duration = Math.round(durationSeconds * 1000)
+
     const artistsRaw = getEntityValue('artist')
-    const artists = Array.isArray(artistsRaw)
-      ? artistsRaw
-          .map((item) => this.asString(this.asRecord(item)?.name))
-          .filter((item): item is string => Boolean(item))
-          .join(', ')
-      : ''
-    const identifier = this.asString(json.entity_id) || ''
-    const seokey = this.asString(json.seokey) || ''
-    if (!identifier || !seokey) return null
+    let author = 'Unknown Artist'
+    if (Array.isArray(artistsRaw)) {
+      const names = artistsRaw
+        .map((item) => this.asString(this.asRecord(item)?.name))
+        .filter((item): item is string => Boolean(item))
+      if (names.length > 0) author = names.join(', ')
+    } else if (artistsRaw && typeof artistsRaw === 'object') {
+      author =
+        this.asString(this.asRecord(artistsRaw)?.name) || 'Unknown Artist'
+    } else if (typeof artistsRaw === 'string' && artistsRaw.trim().length > 0) {
+      author = artistsRaw.trim()
+    }
+
+    const trackIdStr =
+      this.asString(json.entity_id) || this.asString(json.track_id)
+    const seokey = this.asString(json.seokey)
+    const identifier = trackIdStr || seokey || ''
+    if (!identifier) return null
+
+    const artworkUrl = this.extractArtwork(json)
+    const isrc = this.asString(getEntityValue('isrc')) || null
+
+    const albumRaw = getEntityValue('album')
+    const firstAlbum = Array.isArray(albumRaw)
+      ? this.asRecord(albumRaw[0])
+      : this.asRecord(albumRaw)
+    const albumName =
+      this.asString(firstAlbum?.name) || this.asString(json.album_title) || null
+    const albumSeokey =
+      this.asString(firstAlbum?.album_seokey) ||
+      this.asString(json.albumseokey) ||
+      null
+    const albumId =
+      this.asString(firstAlbum?.album_id) ||
+      this.asString(json.album_id) ||
+      null
+
+    const parentalWarning = this.asNumber(getEntityValue('parental_warning'))
+    const isPremiumRaw =
+      this.asNumber(getEntityValue('is_premium')) ??
+      this.asNumber(json.premium_content)
+
+    const genreSet = new Set<string>()
+    for (const t of this.asArrayRecords(getEntityValue('tags'))) {
+      const tName = this.asString(t.tag_name)
+      if (tName) genreSet.add(tName)
+    }
+
+    const pluginInfo: GaanaTrackPluginInfo = {
+      trackId: trackIdStr || null,
+      albumId,
+      albumName,
+      albumUrl: albumSeokey ? `https://gaana.com/album/${albumSeokey}` : null,
+      genres: genreSet.size > 0 ? Array.from(genreSet) : undefined,
+      language:
+        this.asString(json.language) ||
+        this.asString(getEntityValue('secondary_language')) ||
+        null,
+      isrc,
+      playCount:
+        this.asString(getEntityValue('play_ct')) ||
+        this.asNumber(getEntityValue('play_ct')),
+      favoriteCount:
+        this.asNumber(json.favorite_count) ??
+        this.asNumber(getEntityValue('total_favourite_count')),
+      explicit: parentalWarning !== null ? parentalWarning > 0 : false,
+      isPremium: isPremiumRaw !== null ? isPremiumRaw > 0 : false,
+      youtubeId: this.asString(getEntityValue('youtube_id')) || null,
+      lyricsUrl: this.asString(getEntityValue('lyrics_url')) || null
+    }
 
     const info: TrackInfo = {
       identifier,
       isSeekable: true,
-      author: artists,
+      author,
       length: duration,
       isStream: false,
       position: 0,
       title,
-      uri: `https://gaana.com/song/${seokey}`,
-      artworkUrl: this.asString(json.atw) || null,
-      isrc: this.asString(getEntityValue('isrc')) || null,
+      uri: seokey ? `https://gaana.com/song/${seokey}` : '',
+      artworkUrl,
+      isrc,
       sourceName: 'gaana'
     }
 
@@ -697,7 +1077,7 @@ export default class GaanaSource {
     return {
       encoded: encodeTrack(encodedInput),
       info,
-      pluginInfo: {} as Record<string, unknown>
+      pluginInfo
     }
   }
 
@@ -710,11 +1090,7 @@ export default class GaanaSource {
   private mapCollectionResult(
     item: Record<string, unknown>,
     type: string
-  ): {
-    encoded: string
-    info: TrackInfo
-    pluginInfo: Record<string, unknown>
-  } | null {
+  ): TrackData | null {
     const title =
       this.asString(item.ti) || this.asString(item.name) || 'Unknown'
     const seokey = this.asString(item.seo) || ''
@@ -729,7 +1105,7 @@ export default class GaanaSource {
       position: 0,
       title,
       uri,
-      artworkUrl: this.asString(item.aw) || this.asString(item.atw) || null,
+      artworkUrl: this.extractArtwork(item),
       isrc: null,
       sourceName: 'gaana'
     }
@@ -955,7 +1331,12 @@ export default class GaanaSource {
 
       await new Promise<void>((resolve, reject) => {
         stream.on('data', (chunk) => {
-          if (!outputStream.destroyed) outputStream.write(chunk)
+          if (!outputStream.destroyed) {
+            if (!outputStream.write(chunk)) stream.pause()
+          }
+        })
+        outputStream.on('drain', () => {
+          stream.resume()
         })
         stream.once('end', () => resolve())
         stream.once('error', reject)
@@ -977,13 +1358,7 @@ export default class GaanaSource {
    * @param identifiers - Song identifiers.
    * @returns Track payload list.
    */
-  private async getTracks(identifiers: string[]): Promise<
-    Array<{
-      encoded: string
-      info: TrackInfo
-      pluginInfo: Record<string, unknown>
-    }>
-  > {
+  private async getTracks(identifiers: string[]): Promise<TrackData[]> {
     if (identifiers.length === 0) return []
 
     const tracks = await Promise.all(
@@ -995,15 +1370,7 @@ export default class GaanaSource {
       })
     )
 
-    return tracks.filter(
-      (
-        item
-      ): item is {
-        encoded: string
-        info: TrackInfo
-        pluginInfo: Record<string, unknown>
-      } => item !== null
-    )
+    return tracks.filter((item): item is TrackData => item !== null)
   }
 
   /**
@@ -1256,7 +1623,10 @@ export default class GaanaSource {
    * @returns String or null.
    */
   private asString(value: unknown): string | null {
-    return typeof value === 'string' ? value : null
+    if (typeof value === 'string') return value
+    if (typeof value === 'number' && Number.isFinite(value))
+      return String(value)
+    return null
   }
 
   /**
@@ -1265,7 +1635,34 @@ export default class GaanaSource {
    * @returns Number or null.
    */
   private asNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim()
+      if (trimmed.length === 0) return null
+      const parsed = Number(trimmed)
+      return Number.isFinite(parsed) ? parsed : null
+    }
+    return null
+  }
+
+  /**
+   * Extracts artwork URL and ensures HTTPS protocol.
+   * @param record - Entity or track object.
+   * @returns HTTPS artwork URL or null.
+   */
+  private extractArtwork(record: Record<string, unknown>): string | null {
+    const raw =
+      this.asString(record.artwork_large) ||
+      this.asString(record.atw) ||
+      this.asString(record.artwork_medium) ||
+      this.asString(record.artwork_web) ||
+      this.asString(record.artwork_bio) ||
+      this.asString(record.artwork) ||
+      this.asString(record.aw)
+    if (!raw) return null
+    return raw.replace(/^http:\/\//i, 'https://')
   }
 
   /**
