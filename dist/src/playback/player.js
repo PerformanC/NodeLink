@@ -414,10 +414,13 @@ export class Player {
                 guildId: this.guildId,
                 voice: structuredClone(this.voice)
             });
-            if (this.track && this.isPaused && this.connection?.audioStream) {
-                this.isPaused = false;
+            if (this.track && !this.isPaused && this.connection?.audioStream) {
                 this.connection.unpause?.('reconnected');
-                logger('debug', 'Player', `Unpaused track on reconnection for guild ${this.guildId}`);
+                logger('debug', 'Player', `Resumed audio transmission on reconnection for guild ${this.guildId}`);
+            }
+            else if (this.track && this.isPaused && this.connection?.audioStream) {
+                this.connection.pause?.('requested');
+                logger('debug', 'Player', `Preserved paused state on reconnection for guild ${this.guildId}`);
             }
         }
         else if (state.status === 'connecting') {
@@ -552,6 +555,11 @@ export class Player {
             !this._isSeeking &&
             (['requested', 'reconnected', 'unpaused'].includes(state.reason ?? '') ||
                 this._pendingTrackStartFade)) {
+            if (this.isPaused &&
+                (state.reason === 'reconnected' || state.reason === 'unpaused')) {
+                this.connection?.pause?.('requested');
+                return;
+            }
             const wasResuming = this._isResuming;
             this._isResuming = false;
             this.isPaused = false;
@@ -562,7 +570,7 @@ export class Player {
                 });
                 this._pausedAtPosition = undefined;
             }
-            else if (!this._isRestoring) {
+            else if (!this._isRestoring && state.reason !== 'reconnected') {
                 this._lyricsBasePackets =
                     this.connection?.statistics?.packetsExpected ?? 0;
                 this._fading('trackStart');
@@ -2474,8 +2482,13 @@ export class Player {
             this.connection?.connect(async () => {
                 if (this.destroying)
                     return;
-                if (this.connection?.audioStream && !this.isPaused) {
-                    this.connection.unpause?.('reconnected');
+                if (this.connection?.audioStream) {
+                    if (!this.isPaused) {
+                        this.connection.unpause?.('reconnected');
+                    }
+                    else {
+                        this.connection.pause?.('requested');
+                    }
                 }
                 if (this.track &&
                     !this.connection?.audioStream &&
