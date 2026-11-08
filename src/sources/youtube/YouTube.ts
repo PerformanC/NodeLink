@@ -863,6 +863,25 @@ export default class YouTubeSource implements SourceVariantHandler {
       forbid: {
         resultTypes: ['empty', 'error']
       }
+    },
+    {
+      id: 'youtube.url.browse_album',
+      name: 'YouTube Music browse album URL resolution (/browse/MPREb_...)',
+      input: {
+        type: 'resolve',
+        value: 'https://music.youtube.com/browse/MPREb_9NVCyyrFYjX'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
     }
   ]
   /** Reference to the global NodeLink context used for configuration, caching, and source delegation. */
@@ -943,9 +962,9 @@ export default class YouTubeSource implements SourceVariantHandler {
     this.searchTerms = ['ytsearch', 'ytmsearch']
     this.recommendationTerm = ['ytrec']
     this.patterns = [
-      /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|live\/[\w-]+|results\?(?:[^#]*&)?(?:search_query|q)=[^&#]+)|youtu\.be\/[\w-]+)/,
+      /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|live\/[\w-]+|results\?(?:[^#]*&)?(?:search_query|q)=[^&#]+|browse\/[\w-]+)|youtu\.be\/[\w-]+)/,
       /^https?:\/\/(?:www\.|m\.)?youtube\.com\/shorts\/[\w-]+/,
-      /^https?:\/\/music\.youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|search\?(?:[^#]*&)?(?:q|search_query)=[^&#]+)/
+      /^https?:\/\/music\.youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|search\?(?:[^#]*&)?(?:q|search_query)=[^&#]+|browse\/[\w-]+)/
     ]
 
     this.priority = 100
@@ -1508,6 +1527,93 @@ export default class YouTubeSource implements SourceVariantHandler {
             `Resolved YouTube search URL to query: "${query}"`
           )
           return await this.search(query, 'ytsearch')
+        }
+      }
+
+      if (
+        (parsedUrl.hostname === 'music.youtube.com' ||
+          parsedUrl.hostname === 'www.youtube.com' ||
+          parsedUrl.hostname === 'youtube.com' ||
+          parsedUrl.hostname === 'm.youtube.com') &&
+        parsedUrl.pathname.startsWith('/browse/')
+      ) {
+        const browseId = parsedUrl.pathname
+          .slice('/browse/'.length)
+          .split('/')[0]
+        if (browseId) {
+          logger(
+            'debug',
+            'YouTube',
+            `Resolving YouTube browse URL with browseId: "${browseId}"`
+          )
+
+          if (browseId.startsWith('VL')) {
+            const playlistId = browseId.slice(2)
+            const targetUrl =
+              parsedUrl.hostname === 'music.youtube.com'
+                ? `https://music.youtube.com/playlist?list=${playlistId}`
+                : `https://www.youtube.com/playlist?list=${playlistId}`
+            return await this.resolve(targetUrl, type)
+          }
+
+          const isMusic = parsedUrl.hostname === 'music.youtube.com'
+          const clientContext = isMusic
+            ? (this.clients.WebRemix?.getClient(this.ytContext) ??
+              this.clients.Web?.getClient(this.ytContext))
+            : this.clients.Web?.getClient(this.ytContext)
+
+          const endpoint = isMusic
+            ? 'https://music.youtube.com/youtubei/v1/browse'
+            : 'https://www.youtube.com/youtubei/v1/browse'
+
+          const proxy = this.getProxy()
+          const startedAt = Date.now()
+          const { body, statusCode } = await makeRequest(endpoint, {
+            method: 'POST',
+            body: {
+              context: clientContext,
+              browseId
+            },
+            headers: {
+              'User-Agent': clientContext?.client?.userAgent || '',
+              'X-Goog-Api-Format-Version': '2'
+            },
+            disableBodyCompression: true,
+            proxy: proxy as unknown as HttpProxyConfig
+          })
+
+          this.reportProxyStatus(
+            proxy,
+            statusCode === 200,
+            statusCode ?? 0,
+            Date.now() - startedAt
+          )
+
+          if (statusCode === 200 && body && typeof body === 'object') {
+            const typedBody = body as Record<string, unknown>
+            const microformat = typedBody.microformat as
+              | { microformatDataRenderer?: { urlCanonical?: string } }
+              | undefined
+            const canonicalUrl =
+              microformat?.microformatDataRenderer?.urlCanonical
+
+            if (canonicalUrl && canonicalUrl !== url) {
+              return await this.resolve(canonicalUrl, type)
+            }
+
+            const bodyStr = JSON.stringify(body)
+            const playlistMatch = bodyStr.match(
+              /"watchPlaylistEndpoint":\s*\{\s*"playlistId":\s*"([^"]+)"/
+            )
+            if (playlistMatch?.[1]) {
+              const targetUrl = isMusic
+                ? `https://music.youtube.com/playlist?list=${playlistMatch[1]}`
+                : `https://www.youtube.com/playlist?list=${playlistMatch[1]}`
+              return await this.resolve(targetUrl, type)
+            }
+          }
+
+          return { loadType: 'empty', data: {} }
         }
       }
     } catch {
