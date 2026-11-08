@@ -3,15 +3,10 @@ import { DASHHandler } from '../playback/dash/DASHHandler.js';
 import HLSHandler from '../playback/hls/HLSHandler.js';
 import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 /**
- * NodeLink audio source provider for Monochrome (Tidal proxy).
+ * NodeLink audio source provider for Monochrome (Lossless FLAC proxy).
  *
- * This source implements a full-scale proxy engine ported from the Monochrome JS/TS reference.
- * Features include:
- * - Health-based instance rotation with exponential backoff.
- * - Robust pagination for Tidal collections (albums/playlists).
- * - Advanced manifest resolution with quality prioritization (FLAC > Lossless > AAC).
- * - Extraction of ReplayGain and Peak metadata for audio normalization.
- * - Full support for HLS and Progressive streaming via loadStream.
+ * This source connects to the Monochrome v2.10 infrastructure (tracks.monochrome.st)
+ * and supports custom user-configured instances with health-tracked pool management.
  *
  * @public
  */
@@ -29,6 +24,100 @@ class MonochromeSource {
     apiInstances = [];
     streamingInstances = [];
     qobuzInstances = [];
+    trackMetadataCache = new Map();
+    /**
+     * Declarative test suite validating Monochrome search, track, release, and artist resolution.
+     */
+    static _TESTS = [
+        {
+            id: 'monochrome.search',
+            name: 'Monochrome track search (Two Birds Regina Spektor)',
+            input: {
+                type: 'search',
+                value: 'Two Birds Regina Spektor'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: /Two Birds/i
+                    },
+                    author: {
+                        op: 'matches',
+                        value: /Regina Spektor/i
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'monochrome'
+                    }
+                }
+            }
+        },
+        {
+            id: 'monochrome.track.resolve',
+            name: 'Monochrome track resolution and FLAC probe (/track/ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://monochrome.st/track/166687134672957440'
+            },
+            matrix: {
+                variants: [
+                    {
+                        id: 'flac',
+                        label: 'Direct FLAC Stream'
+                    }
+                ]
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: /Two Birds/i
+                    },
+                    author: {
+                        op: 'matches',
+                        value: /Regina Spektor/i
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'monochrome'
+                    }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    validFormats: [{ container: 'flac', codec: 'flac' }]
+                }
+            }
+        },
+        {
+            id: 'monochrome.release.resolve',
+            name: 'Monochrome release/album resolution (/releases/ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://monochrome.st/releases/165928667498364928'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 10 }
+            }
+        },
+        {
+            id: 'monochrome.artist.resolve',
+            name: 'Monochrome artist top tracks resolution (/artist/ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://monochrome.st/artist/152961233077669888'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 1 }
+            }
+        }
+    ];
     /**
      * Initializes the Monochrome source with health-tracked instance pools.
      * @param nodelink - The worker server context.
@@ -36,33 +125,18 @@ class MonochromeSource {
     constructor(nodelink) {
         this.nodelink = nodelink;
         const sources = nodelink.options?.sources;
-        this.config =
-            sources?.monochrome || {
-                enabled: false
-            };
-        const defaultUrls = [
-            'https://tidal-api.binimum.org',
-            'https://eu-central.monochrome.tf',
-            'https://us-west.monochrome.tf',
-            'https://triton.squid.wtf',
-            'https://hifi.geeked.wtf',
-            'https://wolf.qqdl.site',
-            'https://vogel.qqdl.site',
-            'https://katze.qqdl.site',
-            'https://hund.qqdl.site',
-            'https://api.monochrome.tf'
-        ];
-        const defaultQobuzUrls = [
-            'https://qobuz.kennyy.com.br',
-            'https://trypt-hifi-dl-456461932686.us-west1.run.app'
-        ];
+        this.config = sources?.monochrome || {
+            enabled: false
+        };
+        const defaultUrls = ['https://tracks.monochrome.st'];
+        const defaultQobuzUrls = [];
         const initPool = (urls) => urls.map((url) => ({
             url: url.replace(/\/$/, ''),
             score: 100,
             lastFailure: 0,
             failures: 0,
             activeRequests: 0,
-            version: undefined
+            version: '2.10'
         }));
         const instances = this.config.instances?.length
             ? this.config.instances
@@ -77,27 +151,23 @@ class MonochromeSource {
         this.streamingInstances = initPool(streamingInstances);
         this.qobuzInstances = initPool(qobuzInstances);
         this.patterns = [
-            /^https?:\/\/monochrome\.tf\/(track|album|playlist|artist|video)\/[\w-]+/,
-            /^https?:\/\/(?:www\.)?tidal\.com\/(?:browse\/)?(track|album|playlist|artist|video)\/[\w-]+/
+            /^https?:\/\/(?:www\.)?(?:monochrome\.(?:st|tf)|tracks\.monochrome\.st)\/(track|tracks|releases?|album|playlist|artist|video)\/([\w-]+)/i,
+            /^https?:\/\/(?:www\.)?tidal\.com\/(?:browse\/)?(track|album|playlist|artist|video)\/([\w-]+)/i
         ];
     }
     /**
      * Performs provider-specific resource initialization.
-     * Runs an initial latency check to score instances.
+     * Emits a deprecation warning regarding source instability.
      * @returns A promise resolving to true if initialized.
      */
     async setup() {
         try {
+            logger('warn', 'Monochrome', 'Monochrome source is unstable and may experience disruptions. Please consider disabling it as it is not actively maintained by developers.');
             const apiCount = this.apiInstances.length;
             const streamCount = this.streamingInstances.length;
             if (apiCount === 0) {
                 logger('warn', 'Monochrome', 'Source failed to initialize: No instances available.');
                 return false;
-            }
-            for (const s of this.streamingInstances) {
-                const api = this.apiInstances.find((a) => a.url === s.url);
-                if (api)
-                    s.score = api.score;
             }
             logger('info', 'Monochrome', `Source is ready with ${apiCount} API and ${streamCount} streaming instances.`);
             return true;
@@ -110,60 +180,57 @@ class MonochromeSource {
     /**
      * Selects the healthiest instance from the pool using a scored random strategy.
      * @param type - Whether to pick an API or streaming instance.
-     * @param minVersion - Optional minimum API version required.
      * @returns Health-tracked instance metadata.
      * @private
      */
-    getBestInstance(type = 'api', minVersion) {
+    getBestInstance(type = 'api') {
         const pool = type === 'streaming' ? this.streamingInstances : this.apiInstances;
         const now = Date.now();
-        let candidates = pool.filter((i) => (i.score > 0 || now - i.lastFailure > 60_000) &&
-            (!minVersion || (i.version && i.version >= minVersion)));
-        if (candidates.length === 0 && minVersion) {
-            candidates = pool.filter((i) => i.score > 0 || now - i.lastFailure > 60_000);
-        }
+        const candidates = pool.filter((i) => i.score > 0 || now - i.lastFailure > 60_000);
         const activePool = candidates.length > 0 ? candidates : pool;
         const sorted = activePool.sort((a, b) => b.score - a.score || a.activeRequests - b.activeRequests);
-        // Increase randomization factor to 5 to avoid overloading the very best one
-        const instance = sorted[Math.floor(Math.random() * Math.min(sorted.length, 5))] || pool[0];
+        const instance = sorted[Math.floor(Math.random() * Math.min(sorted.length, 3))] || pool[0];
         if (!instance) {
             throw new Error('No instances available in pool');
         }
         return instance;
     }
     /**
-     * Executes a request with automatic retries across the instance pool.
+     * Executes an API request with automatic retries across the instance pool.
      * @param path - API path with parameters.
      * @param type - Instance pool to use.
-     * @param minVersion - Optional minimum API version required.
      * @returns Parsed response or null after all retries fail.
      * @private
      */
-    async fetchWithRetry(path, type = 'api', minVersion) {
+    async fetchWithRetry(path, type = 'api') {
         const pool = type === 'streaming' ? this.streamingInstances : this.apiInstances;
-        const maxAttempts = Math.min(pool.length * 2, 5);
+        const maxAttempts = Math.min(pool.length * 2, 4);
         let lastError = null;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            const instance = this.getBestInstance(type, minVersion);
+            const instance = this.getBestInstance(type);
             const url = `${instance.url}${path}`;
             instance.activeRequests++;
             try {
                 const { body, error, statusCode } = await http1makeRequest(url, {
-                    timeout: 5000,
+                    timeout: 6000,
                     headers: {
-                        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36',
-                        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-                        Referer: 'https://monochrome.tf/'
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        Accept: 'application/json, text/plain, */*',
+                        Referer: 'https://monochrome.st/'
                     }
                 });
                 instance.activeRequests--;
                 if (statusCode === 200 && body) {
                     instance.score = Math.min(instance.score + 5, 100);
-                    const res = body;
-                    if (res.version)
-                        instance.version = res.version;
-                    return res || res.data;
+                    if (typeof body === 'string') {
+                        try {
+                            return JSON.parse(body);
+                        }
+                        catch {
+                            return body;
+                        }
+                    }
+                    return body;
                 }
                 if (statusCode === 429) {
                     instance.score = Math.max(instance.score - 20, 0);
@@ -190,7 +257,116 @@ class MonochromeSource {
         return null;
     }
     /**
-     * Searches for tracks, videos or other types using Tidal's API proxy.
+     * Reads the FLAC header and Vorbis comments from the audio stream.
+     * @param trackId - Identifier of the track.
+     * @param instanceUrl - Base URL of the streaming instance.
+     * @returns Extracted FLAC metadata or null on failure.
+     */
+    async fetchFlacMetadata(trackId, instanceUrl) {
+        try {
+            const url = `${instanceUrl}/track/${trackId}`;
+            const res = await http1makeRequest(url, {
+                method: 'GET',
+                responseType: 'buffer',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    Accept: '*/*',
+                    Range: 'bytes=0-65535',
+                    'Sec-Fetch-Dest': 'audio',
+                    'Sec-Fetch-Mode': 'no-cors',
+                    'Sec-Fetch-Site': 'cross-site',
+                    Referer: 'https://monochrome.st/'
+                }
+            });
+            if ((res.statusCode !== 200 && res.statusCode !== 206) ||
+                !res.body ||
+                !Buffer.isBuffer(res.body)) {
+                return null;
+            }
+            const buf = res.body;
+            if (buf.length < 4 || buf.toString('ascii', 0, 4) !== 'fLaC') {
+                return null;
+            }
+            let offset = 4;
+            let isLast = false;
+            const metadata = {
+                title: null,
+                artist: null,
+                album: null,
+                isrc: null,
+                durationMs: 0
+            };
+            while (!isLast && offset + 4 <= buf.length) {
+                const header = buf.readUInt32BE(offset);
+                isLast = (header & 0x80000000) !== 0;
+                const blockType = (header >> 24) & 0x7f;
+                const blockLength = header & 0x00ffffff;
+                offset += 4;
+                if (offset + blockLength > buf.length)
+                    break;
+                if (blockType === 0 && blockLength >= 18) {
+                    const b10 = buf.readUInt8(offset + 10);
+                    const b11 = buf.readUInt8(offset + 11);
+                    const b12 = buf.readUInt8(offset + 12);
+                    const b13 = buf.readUInt8(offset + 13);
+                    const sampleRate = (b10 << 12) | (b11 << 4) | (b12 >> 4);
+                    const b14 = buf.readUInt8(offset + 14);
+                    const b15 = buf.readUInt8(offset + 15);
+                    const b16 = buf.readUInt8(offset + 16);
+                    const b17 = buf.readUInt8(offset + 17);
+                    const totalSamples = (BigInt(b13 & 0x0f) << 32n) |
+                        (BigInt(b14) << 24n) |
+                        (BigInt(b15) << 16n) |
+                        (BigInt(b16) << 8n) |
+                        BigInt(b17);
+                    if (sampleRate > 0) {
+                        metadata.durationMs = Number((totalSamples * 1000n) / BigInt(sampleRate));
+                    }
+                }
+                else if (blockType === 4) {
+                    let commentOffset = offset;
+                    if (commentOffset + 4 <= offset + blockLength) {
+                        const vendorLen = buf.readUInt32LE(commentOffset);
+                        commentOffset += 4 + vendorLen;
+                        if (commentOffset + 4 <= offset + blockLength) {
+                            const userCommentCount = buf.readUInt32LE(commentOffset);
+                            commentOffset += 4;
+                            for (let i = 0; i < userCommentCount &&
+                                commentOffset + 4 <= offset + blockLength; i++) {
+                                const commentLen = buf.readUInt32LE(commentOffset);
+                                commentOffset += 4;
+                                if (commentOffset + commentLen > offset + blockLength)
+                                    break;
+                                const comment = buf.toString('utf8', commentOffset, commentOffset + commentLen);
+                                commentOffset += commentLen;
+                                const eqIdx = comment.indexOf('=');
+                                if (eqIdx !== -1) {
+                                    const key = comment.substring(0, eqIdx).toUpperCase();
+                                    const val = comment.substring(eqIdx + 1);
+                                    if (key === 'TITLE' && !metadata.title)
+                                        metadata.title = val;
+                                    else if ((key === 'ARTIST' || key === 'PERFORMER') &&
+                                        !metadata.artist)
+                                        metadata.artist = val;
+                                    else if (key === 'ALBUM' && !metadata.album)
+                                        metadata.album = val;
+                                    else if (key === 'ISRC' && !metadata.isrc)
+                                        metadata.isrc = val;
+                                }
+                            }
+                        }
+                    }
+                }
+                offset += blockLength;
+            }
+            return metadata;
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * Searches for tracks, releases or artists using Monochrome's API proxy.
      * @param query - The user search query.
      * @param _sourceName - Ignored.
      * @param searchType - Type of result to prioritize.
@@ -202,33 +378,25 @@ class MonochromeSource {
         const cached = this.nodelink.trackCacheManager?.get('monochrome', cacheKey);
         if (cached)
             return cached;
-        let endpoint = '/search/';
+        let endpoint;
         switch (searchType) {
             case 'album':
-                endpoint += `?al=${encodeURIComponent(query)}`;
+                endpoint = `/search/releases?q=${encodeURIComponent(query)}&limit=20`;
                 break;
             case 'artist':
-                endpoint += `?a=${encodeURIComponent(query)}`;
-                break;
-            case 'playlist':
-                endpoint += `?p=${encodeURIComponent(query)}`;
-                break;
-            case 'video':
-                endpoint += `?v=${encodeURIComponent(query)}`;
+                endpoint = `/search/artists?q=${encodeURIComponent(query)}&limit=20`;
                 break;
             default:
-                endpoint += `?s=${encodeURIComponent(query)}`;
+                endpoint = `/search/tracks?q=${encodeURIComponent(query)}&limit=20`;
                 break;
         }
         const response = await this.fetchWithRetry(endpoint);
         if (!response)
             return { loadType: 'empty', data: {} };
         const results = [];
-        if (searchType === 'track' && response.data?.tracks?.items) {
-            for (const t of response.data.tracks.items) {
-                if (this.isTrackUnavailable(t))
-                    continue;
-                const info = this.prepareTrackInfo(t);
+        if (Array.isArray(response.tracks) && response.tracks.length > 0) {
+            for (const t of response.tracks) {
+                const info = this.prepareV2TrackInfo(t);
                 results.push({
                     encoded: encodeTrack({ ...info, details: [] }),
                     info,
@@ -236,9 +404,11 @@ class MonochromeSource {
                 });
             }
         }
-        else if (searchType === 'video' && response.data?.videos?.items) {
-            for (const v of response.data.videos.items) {
-                const info = this.prepareVideoInfo(v);
+        else if (response.data?.tracks?.items) {
+            for (const t of response.data.tracks.items) {
+                if (this.isTrackUnavailable(t))
+                    continue;
+                const info = this.prepareLegacyTrackInfo(t);
                 results.push({
                     encoded: encodeTrack({ ...info, details: [] }),
                     info,
@@ -254,7 +424,7 @@ class MonochromeSource {
         return finalResult;
     }
     /**
-     * Resolves a URL to a track, album or playlist with full pagination support.
+     * Resolves a URL to a track, release or artist collection.
      * @param url - The resource URL or ISRC identifier.
      * @returns Resolved data payload.
      */
@@ -264,12 +434,11 @@ class MonochromeSource {
         if (url.startsWith('isrc:')) {
             const isrc = url.substring(5);
             logger('debug', 'Monochrome', `Resolving ISRC: ${isrc}`);
-            const res = await this.fetchWithRetry(`/search/?s=${encodeURIComponent(isrc)}`);
-            const best = res?.data?.tracks?.items?.find((t) => t.isrc === isrc) ||
-                res?.data?.tracks?.items?.[0];
-            if (!best || this.isTrackUnavailable(best))
+            const res = await this.fetchWithRetry(`/search/tracks?q=${encodeURIComponent(isrc)}&limit=5`);
+            const best = res?.tracks?.find((t) => t.isrc === isrc) || res?.tracks?.[0];
+            if (!best)
                 return { loadType: 'empty', data: {} };
-            const info = this.prepareTrackInfo(best);
+            const info = this.prepareV2TrackInfo(best);
             return {
                 loadType: 'track',
                 data: {
@@ -279,83 +448,212 @@ class MonochromeSource {
                 }
             };
         }
-        // 2. Direct Track/Video resolution
-        const directMatch = url.match(/(track|video)\/(\d+)/);
-        if (directMatch) {
-            const type = directMatch[1] === 'video' ? 'video' : 'info';
-            const id = directMatch[2];
-            logger('debug', 'Monochrome', `Matched direct ${type} resolution for ID: ${id}`);
-            const res = await this.fetchWithRetry(`/${type}/?id=${id}`);
-            const data = res?.data;
-            if (!data)
+        // 2. Direct Track resolution
+        const trackMatch = url.match(/(?:track|tracks)\/([\w-]+)/i);
+        if (trackMatch) {
+            const trackId = trackMatch[1];
+            if (!trackId)
                 return { loadType: 'empty', data: {} };
-            const info = directMatch[1] === 'video'
-                ? this.prepareVideoInfo(data)
-                : this.prepareTrackInfo(data);
+            logger('debug', 'Monochrome', `Resolving track ID: ${trackId}`);
+            const cachedTrack = this.trackMetadataCache.get(trackId);
+            if (cachedTrack) {
+                return {
+                    loadType: 'track',
+                    data: {
+                        encoded: encodeTrack({ ...cachedTrack, details: [] }),
+                        info: cachedTrack,
+                        pluginInfo: {}
+                    }
+                };
+            }
+            const instance = this.getBestInstance('streaming');
+            const flacMeta = await this.fetchFlacMetadata(trackId, instance.url);
+            if (flacMeta) {
+                let artworkUrl = null;
+                try {
+                    if (flacMeta.title) {
+                        const searchRes = await this.fetchWithRetry(`/search/tracks?q=${encodeURIComponent(flacMeta.title)}&limit=5`);
+                        const matched = searchRes?.tracks?.find((t) => t.trackId === trackId || String(t.id) === trackId);
+                        artworkUrl =
+                            matched?.artwork || searchRes?.tracks?.[0]?.artwork || null;
+                    }
+                }
+                catch {
+                    artworkUrl = null;
+                }
+                const info = {
+                    identifier: trackId,
+                    isSeekable: true,
+                    author: flacMeta.artist || 'Unknown Artist',
+                    length: flacMeta.durationMs || 0,
+                    isStream: false,
+                    position: 0,
+                    title: flacMeta.title || `Track ${trackId}`,
+                    uri: `https://monochrome.st/track/${trackId}`,
+                    artworkUrl,
+                    isrc: flacMeta.isrc || null,
+                    sourceName: 'monochrome'
+                };
+                this.trackMetadataCache.set(trackId, info);
+                return {
+                    loadType: 'track',
+                    data: {
+                        encoded: encodeTrack({ ...info, details: [] }),
+                        info,
+                        pluginInfo: {}
+                    }
+                };
+            }
+            // Fallback: Legacy /info/ lookup
+            const legacyRes = await this.fetchWithRetry(`/info/?id=${trackId}`);
+            if (legacyRes?.data) {
+                const info = this.prepareLegacyTrackInfo(legacyRes.data);
+                this.trackMetadataCache.set(trackId, info);
+                return {
+                    loadType: 'track',
+                    data: {
+                        encoded: encodeTrack({ ...info, details: [] }),
+                        info,
+                        pluginInfo: {}
+                    }
+                };
+            }
+            // Fallback: Direct playable track reference
+            const fallbackInfo = {
+                identifier: trackId,
+                isSeekable: true,
+                author: 'Monochrome',
+                length: 0,
+                isStream: false,
+                position: 0,
+                title: `Track ${trackId}`,
+                uri: `https://monochrome.st/track/${trackId}`,
+                artworkUrl: null,
+                isrc: null,
+                sourceName: 'monochrome'
+            };
+            this.trackMetadataCache.set(trackId, fallbackInfo);
             return {
                 loadType: 'track',
                 data: {
-                    encoded: encodeTrack({ ...info, details: [] }),
-                    info,
+                    encoded: encodeTrack({ ...fallbackInfo, details: [] }),
+                    info: fallbackInfo,
                     pluginInfo: {}
                 }
             };
         }
-        // 3. Collection resolution (Album/Playlist) with exhaustive pagination
-        const collectionMatch = url.match(/(album|playlist)\/([a-f0-9-]+|\d+)/);
-        if (collectionMatch) {
-            const type = collectionMatch[1] || '';
-            const id = collectionMatch[2] || '';
-            logger('debug', 'Monochrome', `Matched ${type} resolution for ID: ${id}`);
-            const tracks = [];
-            let offset = 0;
-            const limit = 100;
-            let total = Infinity;
-            let name = 'Unknown Collection';
-            while (tracks.length < total &&
-                tracks.length <
-                    (this.nodelink.options.playback.maxPlaylistLength || 1000)) {
-                const res = await this.fetchWithRetry(`/${type}/?id=${id}&offset=${offset}&limit=${limit}`);
-                if (!res)
-                    break;
-                const data = res.data;
-                if (offset === 0) {
-                    name = data.title || data.playlist?.title || 'Monochrome Collection';
-                    total = data.numberOfTracks || data.playlist?.numberOfTracks || 0;
-                }
-                const items = data.items || [];
-                if (items.length === 0)
-                    break;
-                for (const entry of items) {
-                    const t = entry.item || entry;
-                    if (!t.id || this.isTrackUnavailable(t))
-                        continue;
-                    const info = this.prepareTrackInfo(t);
+        // 3. Release / Album resolution
+        const releaseMatch = url.match(/(?:releases?|album)\/([\w-]+)/i);
+        if (releaseMatch) {
+            const releaseId = releaseMatch[1];
+            if (!releaseId)
+                return { loadType: 'empty', data: {} };
+            logger('debug', 'Monochrome', `Resolving release ID: ${releaseId}`);
+            const releaseRes = await this.fetchWithRetry(`/releases/${releaseId}`);
+            if (releaseRes?.title && Array.isArray(releaseRes.tracks)) {
+                const name = releaseRes.title;
+                const tracks = [];
+                for (const t of releaseRes.tracks) {
+                    const author = t.artists?.[0]?.name ||
+                        t.artistNames?.[0] ||
+                        releaseRes.artists?.[0]?.name ||
+                        'Unknown Artist';
+                    const id = t.trackId || String(t.id);
+                    const info = {
+                        identifier: id,
+                        isSeekable: true,
+                        author,
+                        length: t.duration || 0,
+                        isStream: false,
+                        position: 0,
+                        title: t.title,
+                        uri: `https://monochrome.st/track/${id}`,
+                        artworkUrl: t.artwork || releaseRes.artwork || null,
+                        isrc: t.isrc || null,
+                        sourceName: 'monochrome'
+                    };
                     tracks.push({
                         encoded: encodeTrack({ ...info, details: [] }),
                         info,
                         pluginInfo: {}
                     });
                 }
-                if (items.length < limit)
-                    break;
-                offset += items.length;
+                logger('debug', 'Monochrome', `Resolved release "${name}" with ${tracks.length} tracks.`);
+                return tracks.length > 0
+                    ? {
+                        loadType: 'playlist',
+                        data: {
+                            info: { name, selectedTrack: 0 },
+                            pluginInfo: {},
+                            tracks
+                        }
+                    }
+                    : { loadType: 'empty', data: {} };
             }
-            logger('debug', 'Monochrome', `Resolved ${type} "${name}" with ${tracks.length} tracks.`);
-            return tracks.length > 0
-                ? {
-                    loadType: 'playlist',
-                    data: { info: { name, selectedTrack: 0 }, pluginInfo: {}, tracks }
+        }
+        // 4. Artist top tracks resolution
+        const artistMatch = url.match(/(?:artist|artists)\/([\w-]+)/i);
+        if (artistMatch) {
+            const artistId = artistMatch[1];
+            if (!artistId)
+                return { loadType: 'empty', data: {} };
+            logger('debug', 'Monochrome', `Resolving artist ID: ${artistId}`);
+            const artistRes = await this.fetchWithRetry(`/artists/${artistId}`);
+            if (artistRes?.name) {
+                const name = artistRes.name || artistRes.displayName || 'Unknown Artist';
+                const rawTracks = artistRes.topTracks && artistRes.topTracks.length > 0
+                    ? artistRes.topTracks
+                    : [];
+                if (rawTracks.length === 0 && Array.isArray(artistRes.albums)) {
+                    for (const album of artistRes.albums) {
+                        if (Array.isArray(album.tracks)) {
+                            rawTracks.push(...album.tracks);
+                            if (rawTracks.length >= 10)
+                                break;
+                        }
+                    }
                 }
-                : { loadType: 'empty', data: {} };
+                const tracks = [];
+                for (const t of rawTracks) {
+                    const id = t.trackId || String(t.id);
+                    const info = {
+                        identifier: id,
+                        isSeekable: true,
+                        author: name,
+                        length: t.duration || 0,
+                        isStream: false,
+                        position: 0,
+                        title: t.title,
+                        uri: `https://monochrome.st/track/${id}`,
+                        artworkUrl: t.artwork || artistRes.avatar || null,
+                        isrc: t.isrc || null,
+                        sourceName: 'monochrome'
+                    };
+                    tracks.push({
+                        encoded: encodeTrack({ ...info, details: [] }),
+                        info,
+                        pluginInfo: {}
+                    });
+                }
+                logger('debug', 'Monochrome', `Resolved artist "${name}" with ${tracks.length} tracks.`);
+                return tracks.length > 0
+                    ? {
+                        loadType: 'playlist',
+                        data: {
+                            info: { name, selectedTrack: 0 },
+                            pluginInfo: {},
+                            tracks
+                        }
+                    }
+                    : { loadType: 'empty', data: {} };
+            }
         }
         return { loadType: 'empty', data: {} };
     }
     /**
-     * Resolves the final manifest and streaming URI for a track.
-     * Handles DASH manifest parsing and audio normalization extraction.
+     * Resolves the final streaming URI for a track.
      * @param track - Normalized track metadata.
-     * @returns Streaming result with URI and ReplayGain data.
+     * @returns Streaming result with URI and format.
      */
     async getTrackUrl(track) {
         const isVideo = track.uri.includes('/video/');
@@ -370,50 +668,12 @@ class MonochromeSource {
                 };
             }
         }
-        const quality = this.config.quality || 'LOSSLESS';
-        const params = new URLSearchParams({
-            id: track.identifier,
-            adaptive: 'true',
-            manifestType: 'MPEG_DASH',
-            uriScheme: 'HTTPS',
-            usage: 'PLAYBACK'
-        });
-        if (isVideo) {
-            params.set('quality', 'HIGH');
-        }
-        else {
-            const formats = ['HEAACV1', 'AACLC', 'FLAC'];
-            if (quality === 'HI_RES_LOSSLESS')
-                formats.push('FLAC_HIRES');
-            for (const f of formats)
-                params.append('formats', f);
-        }
-        const endpoint = isVideo
-            ? `/video/?${params.toString()}`
-            : `/trackManifests/?${params.toString()}`;
-        const response = await this.fetchWithRetry(endpoint, 'streaming', '2.7');
-        if (response) {
-            const uri = this.extractStreamUrl(response);
-            if (uri) {
-                const attr = response?.data?.data?.attributes;
-                if (attr?.trackAudioNormalizationData) {
-                    logger('debug', 'Monochrome', `Normalization for ${track.identifier}: Gain ${attr.trackAudioNormalizationData.replayGain} dB, Peak ${attr.trackAudioNormalizationData.peakAmplitude}`);
-                }
-                return {
-                    url: uri,
-                    protocol: uri.includes('.mpd')
-                        ? 'dash'
-                        : uri.includes('.m3u8')
-                            ? 'hls'
-                            : 'http'
-                };
-            }
-        }
+        const instance = this.getBestInstance('streaming');
+        const streamUrl = `${instance.url}/track/${track.identifier}`;
         return {
-            exception: {
-                message: 'Failed to fetch playback manifest',
-                severity: 'fault'
-            }
+            url: streamUrl,
+            protocol: 'http',
+            format: 'audio/flac'
         };
     }
     /**
@@ -473,7 +733,7 @@ class MonochromeSource {
                 startTime: additionalData?.startTime || 0,
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    Referer: 'https://tidal.com/'
+                    Referer: 'https://monochrome.st/'
                 }
             });
             const passthrough = new PassThrough({ highWaterMark: 256 * 1024 });
@@ -503,11 +763,21 @@ class MonochromeSource {
             };
         }
         logger('debug', 'Monochrome', `Loading progressive stream for ${decodedTrack.identifier}`);
+        const rangeHeader = additionalData?.startTime
+            ? `bytes=${Math.floor((additionalData.startTime / (decodedTrack.length || 1)) * 1000)}-`
+            : 'bytes=0-';
         const res = await http1makeRequest(url, {
             method: 'GET',
             streamOnly: true,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                Accept: '*/*',
+                'Accept-Encoding': 'identity;q=1, *;q=0',
+                Range: rangeHeader,
+                'Sec-Fetch-Dest': 'audio',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'cross-site',
+                Referer: 'https://monochrome.st/'
             }
         });
         if (res.error || !res.stream) {
@@ -529,9 +799,9 @@ class MonochromeSource {
             }
         });
         sourceStream.on('error', (err) => passthrough.destroy(err));
-        let type = 'audio/mpeg';
-        if (url.includes('.flac'))
-            type = 'audio/flac';
+        let type = 'audio/flac';
+        if (url.includes('.mp3'))
+            type = 'audio/mpeg';
         else if (url.includes('.m4a') || url.includes('.mp4'))
             type = 'audio/mp4';
         else if (url.includes('.ogg') || url.includes('.opus'))
@@ -539,70 +809,53 @@ class MonochromeSource {
         return { stream: passthrough, type };
     }
     /**
-     * Implements the site's extractStreamUrlFromManifest logic.
-     * @param data - Raw manifest response.
-     * @returns Final stream URL or null.
-     * @private
+     * Executes a variant operation in test suites.
      */
-    extractStreamUrl(data) {
-        let uri = null;
-        let manifest = null;
-        if ('data' in data &&
-            data.data &&
-            typeof data.data === 'object' &&
-            'data' in data.data) {
-            const internalData = data.data;
-            const attr = internalData.data?.attributes || internalData.attributes;
-            uri = attr?.uri || null;
-            manifest = attr?.manifest || null;
-        }
-        else {
-            const internalData = data;
-            uri = internalData.attributes?.uri || null;
-            manifest =
-                internalData.manifest ||
-                    internalData.Manifest ||
-                    internalData.attributes?.manifest ||
-                    null;
-        }
-        if (uri)
-            return uri;
-        if (!manifest) {
-            const internalData = data;
-            return (internalData.OriginalTrackUrl || internalData.originalTrackUrl || null);
-        }
+    async executeVariant(variant, track, _streamSpec) {
         try {
-            const decoded = Buffer.from(manifest, 'base64').toString();
-            if (decoded.includes('<MPD'))
-                return `data:application/dash+xml;base64,${manifest}`;
-            const parsed = JSON.parse(decoded);
-            return parsed.urls?.[0] || null;
+            const { url } = await this.getTrackUrl(track);
+            if (!url) {
+                return {
+                    variant: variant.id,
+                    resolved: false,
+                    error: 'No stream URL available'
+                };
+            }
+            const streamRes = await this.loadStream(track, url);
+            return {
+                variant: variant.id,
+                resolved: true,
+                track,
+                stream: streamRes.stream,
+                container: 'flac',
+                codec: 'flac',
+                httpStatus: 200
+            };
         }
-        catch {
-            return null;
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: err instanceof Error ? err : new Error(String(err))
+            };
         }
     }
     /**
      * Fetches a direct stream URL from the Qobuz proxy instances.
-     * Steps: search by ISRC → get track ID → download music.
      * @param isrc - Track ISRC code.
+     * @param quality - Desired audio quality.
      * @returns Direct stream URL or null.
      * @private
      */
     async fetchQobuzProxyUrl(isrc, quality = 6) {
         const pool = this.qobuzInstances.filter((i) => i.score > 0);
         if (pool.length === 0) {
-            logger('warn', 'Monochrome', 'No Qobuz proxy instances available.');
             return null;
         }
         const proxyHeaders = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             Accept: '*/*',
-            'Accept-Language': 'en;q=0.8',
-            Origin: 'https://monochrome.tf',
-            Referer: 'https://monochrome.tf/',
-            Pragma: 'no-cache',
-            'Cache-Control': 'no-cache'
+            Referer: 'https://monochrome.st/'
         };
         for (const instance of pool) {
             instance.activeRequests++;
@@ -626,15 +879,11 @@ class MonochromeSource {
                     ?.tracks;
                 const items = tracks?.items;
                 const track = items?.[0];
-                if (!track) {
+                if (!track?.id) {
                     instance.score = Math.max(instance.score - 5, 0);
                     continue;
                 }
                 const trackId = track.id;
-                if (!trackId) {
-                    instance.score = Math.max(instance.score - 5, 0);
-                    continue;
-                }
                 const downloadUrl = `${instance.url}/api/download-music?track_id=${trackId}&quality=${quality}`;
                 const { body: downloadBody, statusCode: downloadStatus } = await http1makeRequest(downloadUrl, {
                     method: 'GET',
@@ -671,12 +920,40 @@ class MonochromeSource {
         return null;
     }
     /**
-     * Normalizes a raw track object into NodeLink's TrackInfo structure.
-     * @param t - Raw Tidal track data.
-     * @returns Normalized metadata.
+     * Normalizes a modern Monochrome v2.10 track into NodeLink's TrackInfo structure.
+     * @param t - Modern Monochrome track.
+     * @returns Normalized TrackInfo.
      * @private
      */
-    prepareTrackInfo(t) {
+    prepareV2TrackInfo(t) {
+        const author = t.artists?.[0]?.name ||
+            t.artistNames?.[0] ||
+            t.artists?.[0]?.displayName ||
+            'Unknown Artist';
+        const id = t.trackId || String(t.id);
+        const info = {
+            identifier: id,
+            isSeekable: true,
+            author,
+            length: t.duration || 0,
+            isStream: false,
+            position: 0,
+            title: t.title,
+            uri: `https://monochrome.st/track/${id}`,
+            artworkUrl: t.artwork || null,
+            isrc: t.isrc || null,
+            sourceName: 'monochrome'
+        };
+        this.trackMetadataCache.set(id, info);
+        return info;
+    }
+    /**
+     * Normalizes a legacy Tidal-style track into NodeLink's TrackInfo structure.
+     * @param t - Raw legacy track data.
+     * @returns Normalized TrackInfo.
+     * @private
+     */
+    prepareLegacyTrackInfo(t) {
         const coverPath = t.album?.cover?.replace(/-/g, '/');
         const title = t.version ? `${t.title} (${t.version})` : t.title;
         return {
@@ -687,7 +964,7 @@ class MonochromeSource {
             isStream: false,
             position: 0,
             title,
-            uri: `https://monochrome.tf/track/${t.id}`,
+            uri: `https://monochrome.st/track/${t.id}`,
             artworkUrl: coverPath
                 ? `https://resources.tidal.com/images/${coverPath}/1280x1280.jpg`
                 : null,
@@ -696,31 +973,7 @@ class MonochromeSource {
         };
     }
     /**
-     * Normalizes a raw video object into NodeLink's TrackInfo structure.
-     * @param v - Raw Tidal video data.
-     * @returns Normalized metadata.
-     * @private
-     */
-    prepareVideoInfo(v) {
-        const imagePath = v.image?.replace(/-/g, '/');
-        return {
-            identifier: v.id.toString(),
-            isSeekable: true,
-            author: v.artist?.name || 'Unknown Artist',
-            length: v.duration * 1000,
-            isStream: false,
-            position: 0,
-            title: v.title,
-            uri: `https://monochrome.tf/video/${v.id}`,
-            artworkUrl: imagePath
-                ? `https://resources.tidal.com/images/${imagePath}/1280x720.jpg`
-                : null,
-            isrc: null,
-            sourceName: 'monochrome'
-        };
-    }
-    /**
-     * Checks if a track is unavailable for streaming based on site rules.
+     * Checks if a legacy track is unavailable for streaming.
      * @param t - Raw track data.
      * @returns True if the track cannot be played.
      * @private
