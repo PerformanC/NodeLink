@@ -3,6 +3,10 @@
  * @module typings/lyrics/musixmatch.types
  */
 
+import type { HttpProxyConfig } from '../utils.types.ts'
+
+export type { HttpProxyConfig }
+
 /**
  * Musixmatch-specific configuration options
  * @public
@@ -13,6 +17,9 @@ export interface MusixmatchConfig {
 
   /** Optional signature secret for manual token authentication */
   signatureSecret?: string
+
+  /** Optional dedicated proxy URL or configuration to route Musixmatch requests */
+  proxy?: HttpProxyConfig | string
 }
 
 /**
@@ -50,6 +57,29 @@ export interface CredentialManager {
 }
 
 /**
+ * Snapshot representation of a proxy target.
+ * @public
+ */
+export interface ProxySnapshotLike {
+  /** Target proxy server parameters */
+  target: {
+    url: string
+    protocol?: string
+    username?: string
+    password?: string
+  }
+}
+
+/**
+ * Proxy manager contract for selecting available proxies.
+ * @public
+ */
+export interface ProxyManagerLike {
+  /** Selects the optimal proxy target for a given provider */
+  getBestProxy: (sourceName: string) => ProxySnapshotLike | undefined
+}
+
+/**
  * Minimal NodeLink instance shape required by MusixmatchLyrics
  * @public
  */
@@ -59,6 +89,9 @@ export interface NodelinkInstanceForMusixmatch {
 
   /** Credential manager for token persistence */
   credentialManager: CredentialManager
+
+  /** Proxy manager for selecting available proxies */
+  proxyManager?: ProxyManagerLike
 }
 
 /**

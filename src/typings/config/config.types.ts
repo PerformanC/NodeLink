@@ -2,6 +2,7 @@ import type { AdmissionConfig } from '../admission/admission.types.ts'
 import type { DosProtectionConfig } from '../api/dosProtection.types.ts'
 import type { RateLimitConfig } from '../api/rateLimit.types.ts'
 import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
+import type { MusixmatchConfig } from '../lyrics/musixmatch.types.ts'
 
 /**
  * Selection of the internal engine used for networking and protocol handling.
@@ -1307,6 +1308,8 @@ export interface NodelinkConfig {
     fallbackSource: string
     /** Ordered lyrics providers tried after the track's native provider. */
     preferredSources?: string[]
+    /** Musixmatch lyrics provider configuration. */
+    musixmatch?: MusixmatchConfig
     [source: string]: unknown
   }
 

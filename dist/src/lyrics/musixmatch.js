@@ -197,6 +197,10 @@ export default class MusixmatchLyrics {
                 logger('info', 'Lyrics', 'Loaded Musixmatch token from CredentialManager');
             }
         }
+        const proxy = this._getProxy();
+        if (proxy) {
+            logger('info', 'Lyrics', `Musixmatch configured with proxy: ${proxy.url}`);
+        }
         this._startCacheCleanup();
         return true;
     }
@@ -291,6 +295,31 @@ export default class MusixmatchLyrics {
         const cookie = this._getCookies();
         return cookie ? { cookie } : {};
     }
+    /**
+     * Resolves the proxy configuration for outbound Musixmatch requests.
+     * Checks dedicated provider proxy first, then falls back to global ProxyManager.
+     *
+     * @returns Proxy settings or undefined if no proxy is configured.
+     * @internal
+     */
+    _getProxy() {
+        const customProxy = this.nodelink.options.lyrics?.musixmatch?.proxy;
+        if (customProxy) {
+            if (typeof customProxy === 'string') {
+                return { url: customProxy };
+            }
+            return customProxy;
+        }
+        const proxySnapshot = this.nodelink.proxyManager?.getBestProxy('musixmatch');
+        if (proxySnapshot?.target?.url) {
+            return {
+                url: proxySnapshot.target.url,
+                username: proxySnapshot.target.username,
+                password: proxySnapshot.target.password
+            };
+        }
+        return undefined;
+    }
     async _fetchToken() {
         const url = _buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID });
         const { statusCode, headers, body } = await http1makeRequest(url, {
@@ -299,7 +328,8 @@ export default class MusixmatchLyrics {
                 accept: '*/*',
                 'accept-language': 'en',
                 'user-agent': DEFAULT_UA
-            }
+            },
+            proxy: this._getProxy()
         });
         if (headers?.['set-cookie']) {
             this._parseCookies(headers['set-cookie']);
@@ -405,13 +435,15 @@ export default class MusixmatchLyrics {
         });
         if (this.useManualToken)
             url = this._signUrl(url);
+        const proxy = this._getProxy();
         const { statusCode, headers, body } = await http1makeRequest(url, {
             method: 'GET',
             headers: {
                 accept: 'application/json',
                 'user-agent': DEFAULT_UA,
                 ...this._cookieHeader()
-            }
+            },
+            proxy
         });
         if (!this.useManualToken && headers?.['set-cookie']) {
             this._parseCookies(headers['set-cookie']);
@@ -436,7 +468,8 @@ export default class MusixmatchLyrics {
                         accept: 'application/json',
                         'user-agent': DEFAULT_UA,
                         ...this._cookieHeader()
-                    }
+                    },
+                    proxy
                 });
                 if (retryHeaders?.['set-cookie']) {
                     this._parseCookies(retryHeaders['set-cookie']);
