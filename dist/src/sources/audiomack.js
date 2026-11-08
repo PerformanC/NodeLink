@@ -453,7 +453,19 @@ export default class AudiomackSource {
             sourceStream.once('end', handleSourceEnd);
             output.once('close', handleOutputClose);
             output.once('error', handleOutputError);
-            sourceStream.pipe(output);
+            sourceStream.on('data', (chunk) => {
+                if (!output.write(chunk))
+                    sourceStream.pause();
+            });
+            output.on('drain', () => {
+                sourceStream.resume();
+            });
+            sourceStream.on('end', () => {
+                if (!output.writableEnded) {
+                    output.emit('finishBuffering');
+                    output.end();
+                }
+            });
             const streamType = coerceStreamType(additionalData?.type ?? additionalData?.format ?? decodedTrack.format, url);
             return { stream: output, type: streamType };
         }

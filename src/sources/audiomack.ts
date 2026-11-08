@@ -774,7 +774,18 @@ export default class AudiomackSource {
       output.once('close', handleOutputClose)
       output.once('error', handleOutputError)
 
-      sourceStream.pipe(output)
+      sourceStream.on('data', (chunk: Buffer) => {
+        if (!output.write(chunk)) sourceStream.pause()
+      })
+      output.on('drain', () => {
+        sourceStream.resume()
+      })
+      sourceStream.on('end', () => {
+        if (!output.writableEnded) {
+          output.emit('finishBuffering')
+          output.end()
+        }
+      })
 
       const streamType = coerceStreamType(
         additionalData?.type ?? additionalData?.format ?? decodedTrack.format,

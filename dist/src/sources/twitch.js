@@ -606,7 +606,13 @@ export default class TwitchSource {
         }
         const passthrough = new PassThrough();
         const source = res.stream;
-        source.pipe(passthrough);
+        source.on('data', (chunk) => {
+            if (!passthrough.write(chunk))
+                source.pause();
+        });
+        passthrough.on('drain', () => {
+            source.resume();
+        });
         source.on('end', () => {
             if (!passthrough.writableEnded) {
                 passthrough.emit('finishBuffering');

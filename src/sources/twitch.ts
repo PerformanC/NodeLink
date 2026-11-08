@@ -740,7 +740,13 @@ export default class TwitchSource implements SourceInstance {
     const passthrough = new PassThrough()
     const source = res.stream as Readable
 
-    source.pipe(passthrough)
+    source.on('data', (chunk: Buffer) => {
+      if (!passthrough.write(chunk)) source.pause()
+    })
+
+    passthrough.on('drain', () => {
+      source.resume()
+    })
 
     source.on('end', () => {
       if (!passthrough.writableEnded) {

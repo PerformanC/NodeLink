@@ -515,10 +515,18 @@ class MonochromeSource {
         }
         const passthrough = new PassThrough();
         const sourceStream = res.stream;
-        sourceStream.on('data', (chunk) => passthrough.write(chunk));
+        sourceStream.on('data', (chunk) => {
+            if (!passthrough.write(chunk))
+                sourceStream.pause();
+        });
+        passthrough.on('drain', () => {
+            sourceStream.resume();
+        });
         sourceStream.on('end', () => {
-            passthrough.emit('finishBuffering');
-            passthrough.end();
+            if (!passthrough.writableEnded) {
+                passthrough.emit('finishBuffering');
+                passthrough.end();
+            }
         });
         sourceStream.on('error', (err) => passthrough.destroy(err));
         let type = 'audio/mpeg';

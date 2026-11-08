@@ -294,12 +294,23 @@ export default class ChzzkSource {
         }
         const passthrough = new PassThrough();
         const source = res.stream;
-        source.pipe(passthrough);
+        source.on('data', (chunk) => {
+            if (!passthrough.write(chunk))
+                source.pause();
+        });
+        passthrough.on('drain', () => {
+            source.resume();
+        });
         source.on('end', () => {
             if (!passthrough.writableEnded) {
                 passthrough.emit('finishBuffering');
                 passthrough.end();
             }
+        });
+        source.on('error', (err) => {
+            logger('error', 'Chzzk', `Underlying stream error: ${err.message}`);
+            if (!passthrough.destroyed)
+                passthrough.destroy(err);
         });
         return { stream: passthrough, type: 'mp4' };
     }
