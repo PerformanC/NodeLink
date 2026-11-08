@@ -823,6 +823,46 @@ export default class YouTubeSource implements SourceVariantHandler {
       forbid: {
         resultTypes: ['empty']
       }
+    },
+    {
+      id: 'youtube.url.search_music',
+      name: 'YouTube Music browser search URL resolution (/search?q=...)',
+      input: {
+        type: 'resolve',
+        value:
+          'https://music.youtube.com/search?q=Flua+em+mim+Esther+e+Alexsander+L%C3%BAcio'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'youtube.url.search_standard',
+      name: 'YouTube standard browser search URL resolution (/results?search_query=...)',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/results?search_query=nocopyrightsounds+cartoon'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
     }
   ]
   /** Reference to the global NodeLink context used for configuration, caching, and source delegation. */
@@ -903,9 +943,9 @@ export default class YouTubeSource implements SourceVariantHandler {
     this.searchTerms = ['ytsearch', 'ytmsearch']
     this.recommendationTerm = ['ytrec']
     this.patterns = [
-      /^https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|live\/[\w-]+)|youtu\.be\/[\w-]+)/,
-      /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/,
-      /^https?:\/\/music\.youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+)/
+      /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|live\/[\w-]+|results\?(?:[^#]*&)?(?:search_query|q)=[^&#]+)|youtu\.be\/[\w-]+)/,
+      /^https?:\/\/(?:www\.|m\.)?youtube\.com\/shorts\/[\w-]+/,
+      /^https?:\/\/music\.youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|search\?(?:[^#]*&)?(?:q|search_query)=[^&#]+)/
     ]
 
     this.priority = 100
@@ -1433,6 +1473,47 @@ export default class YouTubeSource implements SourceVariantHandler {
    * @returns Promise resolving to a source result with track/playlist data or an exception.
    */
   async resolve(url: string, type?: string): Promise<SourceResult> {
+    try {
+      const parsedUrl = new URL(url)
+      if (
+        parsedUrl.hostname === 'music.youtube.com' &&
+        parsedUrl.pathname === '/search'
+      ) {
+        const query =
+          parsedUrl.searchParams.get('q') ||
+          parsedUrl.searchParams.get('search_query')
+        if (query) {
+          logger(
+            'debug',
+            'YouTube',
+            `Resolved YouTube Music search URL to query: "${query}"`
+          )
+          return await this.search(query, 'ytmsearch')
+        }
+      }
+
+      if (
+        (parsedUrl.hostname === 'www.youtube.com' ||
+          parsedUrl.hostname === 'youtube.com' ||
+          parsedUrl.hostname === 'm.youtube.com') &&
+        (parsedUrl.pathname === '/results' || parsedUrl.pathname === '/search')
+      ) {
+        const query =
+          parsedUrl.searchParams.get('search_query') ||
+          parsedUrl.searchParams.get('q')
+        if (query) {
+          logger(
+            'debug',
+            'YouTube',
+            `Resolved YouTube search URL to query: "${query}"`
+          )
+          return await this.search(query, 'ytsearch')
+        }
+      }
+    } catch {
+      // not a valid URL, continue standard flow
+    }
+
     const result = await this._resolveWorker(url, type)
 
     if (result.loadType === 'playlist') {
