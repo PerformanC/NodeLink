@@ -1756,7 +1756,24 @@ async function _internalHttp1Request(
           const isJson = contentType
             .toLowerCase()
             .startsWith('application/json')
-          const responseBody = isJson && text ? JSON.parse(text) : text
+          let responseBody: unknown = text
+          if (isJson && text) {
+            try {
+              responseBody = JSON.parse(text)
+            } catch {
+              const trimmed = text.trim()
+              const firstNewline = trimmed.indexOf('\n')
+              if (firstNewline !== -1) {
+                try {
+                  responseBody = JSON.parse(trimmed.slice(0, firstNewline))
+                } catch {
+                  responseBody = text
+                }
+              } else {
+                responseBody = text
+              }
+            }
+          }
           resolve({
             statusCode,
             headers: respHeaders,
@@ -2212,7 +2229,24 @@ async function makeRequest(
           const isJson = contentType
             .toLowerCase()
             .startsWith('application/json')
-          const responseBody = isJson && text ? JSON.parse(text) : text
+          let responseBody: unknown = text
+          if (isJson && text) {
+            try {
+              responseBody = JSON.parse(text)
+            } catch {
+              const trimmed = text.trim()
+              const firstNewline = trimmed.indexOf('\n')
+              if (firstNewline !== -1) {
+                try {
+                  responseBody = JSON.parse(trimmed.slice(0, firstNewline))
+                } catch {
+                  responseBody = text
+                }
+              } else {
+                responseBody = text
+              }
+            }
+          }
 
           if (loggingConfig.debug?.network) {
             const bodySnippet =

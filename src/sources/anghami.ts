@@ -20,6 +20,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, getBestMatch, logger, makeRequest } from '../utils.ts'
 
@@ -242,6 +243,76 @@ class ProtoReader {
 }
 
 export default class AnghamiSource {
+  /**
+   * Declarative test suite for validating Anghami source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'anghami.song.resolve',
+      name: 'Anghami song resolution (/song/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://play.anghami.com/song/57974012'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'عمرو دياب'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'anghami'
+          }
+        }
+      }
+    },
+    {
+      id: 'anghami.album.resolve',
+      name: 'Anghami album resolution (/album/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://play.anghami.com/album/1008449027'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 1 }
+      }
+    },
+    {
+      id: 'anghami.artist.resolve',
+      name: 'Anghami artist resolution (/artist/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://play.anghami.com/artist/1513152'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 1 }
+      }
+    },
+    {
+      id: 'anghami.search',
+      name: 'Anghami search query prefix (agsearch:)',
+      input: {
+        type: 'search',
+        value: 'Amr Diab Tamally Maak',
+        searchType: 'agsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'عمرو دياب|Amr Diab'
+          }
+        }
+      }
+    }
+  ]
+
   public readonly nodelink: WorkerNodeLink
   public readonly config: WorkerNodeLink['options']
   public readonly sourceConfig: AnghamiSourceConfig
@@ -281,9 +352,10 @@ export default class AnghamiSource {
     query: string,
     _sourceTerm?: string
   ): Promise<SourceResult> {
-    logger('debug', 'Sources', `Searching Anghami for: "${query}"`)
+    const cleanQuery = query.replace(/^(?:agsearch|anghami):/i, '').trim()
+    logger('debug', 'Sources', `Searching Anghami for: "${cleanQuery}"`)
 
-    const searchUrl = `https://api.anghami.com/gateway.php?type=GETtabsearch&query=${encodeURIComponent(query)}&web2=true&language=en&output=json`
+    const searchUrl = `https://api.anghami.com/gateway.php?type=GETtabsearch&query=${encodeURIComponent(cleanQuery)}&web2=true&language=en&output=json`
     const { body, error } = await makeRequest(searchUrl, {
       method: 'GET',
       headers: this.buildHeaders()
@@ -296,7 +368,7 @@ export default class AnghamiSource {
       }
     }
 
-    const searchBody = this.asRecord(body) as AnghamiSearchResponse | null
+    const searchBody = this.parseApiResponse<AnghamiSearchResponse>(body)
     const sections = Array.isArray(searchBody?.sections)
       ? searchBody.sections
       : []
@@ -399,13 +471,22 @@ export default class AnghamiSource {
     }
   }
 
-  public async loadStream(): Promise<TrackStreamResult> {
-    return {
-      exception: {
-        message: 'Direct stream loading is not supported by Anghami source.',
-        severity: 'common'
+  public async loadStream(
+    track: TrackInfo,
+    url: string,
+    protocol?: string,
+    additionalData?: Record<string, unknown>
+  ): Promise<TrackStreamResult> {
+    const sourceManager = (this.nodelink as WorkerNodeLink)?.sources
+    if (!sourceManager) {
+      return {
+        exception: {
+          message: 'Source manager is not available for Anghami streaming.',
+          severity: 'common'
+        }
       }
     }
+    return sourceManager.getTrackStream(track, url, protocol, additionalData)
   }
 
   private parseFingerprintFromCookies(): void {
@@ -446,7 +527,7 @@ export default class AnghamiSource {
       method: 'GET',
       headers: this.buildHeaders()
     })
-    const songBody = this.asRecord(body) as AnghamiSongResponse | null
+    const songBody = this.parseApiResponse<AnghamiSongResponse>(body)
 
     if (error || !songBody || songBody.status !== 'ok') {
       const fallback = await this.searchByIdFallback(id)
@@ -474,7 +555,7 @@ export default class AnghamiSource {
       headers: this.buildHeaders()
     })
 
-    const searchBody = this.asRecord(body) as AnghamiSearchResponse | null
+    const searchBody = this.parseApiResponse<AnghamiSearchResponse>(body)
     const sections = Array.isArray(searchBody?.sections)
       ? searchBody.sections
       : []
@@ -516,9 +597,8 @@ export default class AnghamiSource {
       method: 'GET',
       headers: this.buildHeaders()
     })
-    const collectionBody = this.asRecord(
-      body
-    ) as AnghamiCollectionResponse | null
+    const collectionBody =
+      this.parseApiResponse<AnghamiCollectionResponse>(body)
     if (error || !collectionBody || collectionBody.error) return null
 
     const tracks = this.extractCollectionTracks(collectionBody)
@@ -532,6 +612,7 @@ export default class AnghamiSource {
       this.asRecord(meta._attributes) ??
       this.asRecord(collectionBody._attributes) ??
       {}
+    const firstTrackInfo = tracks[0]?.info
     const name =
       this.asString(collectionBody.title) ??
       this.asString(collectionBody.name) ??
@@ -539,6 +620,7 @@ export default class AnghamiSource {
       this.asString(meta.name) ??
       this.asString(attributes.title) ??
       this.asString(attributes.name) ??
+      (firstTrackInfo ? `${firstTrackInfo.title} (Album)` : null) ??
       'Unknown Playlist'
 
     return {
@@ -692,7 +774,7 @@ export default class AnghamiSource {
     })
     if (error) return { loadType: 'empty', data: {} }
 
-    const artistBody = this.asRecord(body) as AnghamiArtistResponse | null
+    const artistBody = this.parseApiResponse<AnghamiArtistResponse>(body)
     if (!artistBody) return { loadType: 'empty', data: {} }
 
     let tracksData: AnghamiTrackPayload[] = []
@@ -725,6 +807,29 @@ export default class AnghamiSource {
         tracks
       }
     }
+  }
+
+  private parseApiResponse<T = Record<string, unknown>>(
+    body: unknown
+  ): T | null {
+    if (body && typeof body === 'object' && !Buffer.isBuffer(body)) {
+      return body as T
+    }
+    if (typeof body === 'string') {
+      const trimmed = body.trim()
+      if (!trimmed) return null
+      try {
+        return JSON.parse(trimmed) as T
+      } catch {
+        const firstLine = trimmed.split('\n')[0]?.trim()
+        if (firstLine) {
+          try {
+            return JSON.parse(firstLine) as T
+          } catch {}
+        }
+      }
+    }
+    return null
   }
 
   private buildHeaders(): Record<string, string> {

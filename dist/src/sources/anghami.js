@@ -207,6 +207,75 @@ class ProtoReader {
     }
 }
 export default class AnghamiSource {
+    /**
+     * Declarative test suite for validating Anghami source behavior.
+     */
+    static _TESTS = [
+        {
+            id: 'anghami.song.resolve',
+            name: 'Anghami song resolution (/song/ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://play.anghami.com/song/57974012'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'عمرو دياب'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'anghami'
+                    }
+                }
+            }
+        },
+        {
+            id: 'anghami.album.resolve',
+            name: 'Anghami album resolution (/album/ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://play.anghami.com/album/1008449027'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 1 }
+            }
+        },
+        {
+            id: 'anghami.artist.resolve',
+            name: 'Anghami artist resolution (/artist/ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://play.anghami.com/artist/1513152'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 1 }
+            }
+        },
+        {
+            id: 'anghami.search',
+            name: 'Anghami search query prefix (agsearch:)',
+            input: {
+                type: 'search',
+                value: 'Amr Diab Tamally Maak',
+                searchType: 'agsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    author: {
+                        op: 'matches',
+                        value: 'عمرو دياب|Amr Diab'
+                    }
+                }
+            }
+        }
+    ];
     nodelink;
     config;
     sourceConfig;
@@ -233,8 +302,9 @@ export default class AnghamiSource {
         return true;
     }
     async search(query, _sourceTerm) {
-        logger('debug', 'Sources', `Searching Anghami for: "${query}"`);
-        const searchUrl = `https://api.anghami.com/gateway.php?type=GETtabsearch&query=${encodeURIComponent(query)}&web2=true&language=en&output=json`;
+        const cleanQuery = query.replace(/^(?:agsearch|anghami):/i, '').trim();
+        logger('debug', 'Sources', `Searching Anghami for: "${cleanQuery}"`);
+        const searchUrl = `https://api.anghami.com/gateway.php?type=GETtabsearch&query=${encodeURIComponent(cleanQuery)}&web2=true&language=en&output=json`;
         const { body, error } = await makeRequest(searchUrl, {
             method: 'GET',
             headers: this.buildHeaders()
@@ -245,7 +315,7 @@ export default class AnghamiSource {
                 exception: { message: error, severity: 'common' }
             };
         }
-        const searchBody = this.asRecord(body);
+        const searchBody = this.parseApiResponse(body);
         const sections = Array.isArray(searchBody?.sections)
             ? searchBody.sections
             : [];
@@ -329,13 +399,17 @@ export default class AnghamiSource {
             return { exception: { message, severity: 'fault' } };
         }
     }
-    async loadStream() {
-        return {
-            exception: {
-                message: 'Direct stream loading is not supported by Anghami source.',
-                severity: 'common'
-            }
-        };
+    async loadStream(track, url, protocol, additionalData) {
+        const sourceManager = this.nodelink?.sources;
+        if (!sourceManager) {
+            return {
+                exception: {
+                    message: 'Source manager is not available for Anghami streaming.',
+                    severity: 'common'
+                }
+            };
+        }
+        return sourceManager.getTrackStream(track, url, protocol, additionalData);
     }
     parseFingerprintFromCookies() {
         const cookies = this.cookieHeader.split(';');
@@ -366,7 +440,7 @@ export default class AnghamiSource {
             method: 'GET',
             headers: this.buildHeaders()
         });
-        const songBody = this.asRecord(body);
+        const songBody = this.parseApiResponse(body);
         if (error || !songBody || songBody.status !== 'ok') {
             const fallback = await this.searchByIdFallback(id);
             if (fallback)
@@ -390,7 +464,7 @@ export default class AnghamiSource {
             method: 'GET',
             headers: this.buildHeaders()
         });
-        const searchBody = this.asRecord(body);
+        const searchBody = this.parseApiResponse(body);
         const sections = Array.isArray(searchBody?.sections)
             ? searchBody.sections
             : [];
@@ -416,7 +490,7 @@ export default class AnghamiSource {
             method: 'GET',
             headers: this.buildHeaders()
         });
-        const collectionBody = this.asRecord(body);
+        const collectionBody = this.parseApiResponse(body);
         if (error || !collectionBody || collectionBody.error)
             return null;
         const tracks = this.extractCollectionTracks(collectionBody);
@@ -428,12 +502,14 @@ export default class AnghamiSource {
         const attributes = this.asRecord(meta._attributes) ??
             this.asRecord(collectionBody._attributes) ??
             {};
+        const firstTrackInfo = tracks[0]?.info;
         const name = this.asString(collectionBody.title) ??
             this.asString(collectionBody.name) ??
             this.asString(meta.title) ??
             this.asString(meta.name) ??
             this.asString(attributes.title) ??
             this.asString(attributes.name) ??
+            (firstTrackInfo ? `${firstTrackInfo.title} (Album)` : null) ??
             'Unknown Playlist';
         return {
             loadType: 'playlist',
@@ -565,7 +641,7 @@ export default class AnghamiSource {
         });
         if (error)
             return { loadType: 'empty', data: {} };
-        const artistBody = this.asRecord(body);
+        const artistBody = this.parseApiResponse(body);
         if (!artistBody)
             return { loadType: 'empty', data: {} };
         let tracksData = [];
@@ -594,6 +670,29 @@ export default class AnghamiSource {
                 tracks
             }
         };
+    }
+    parseApiResponse(body) {
+        if (body && typeof body === 'object' && !Buffer.isBuffer(body)) {
+            return body;
+        }
+        if (typeof body === 'string') {
+            const trimmed = body.trim();
+            if (!trimmed)
+                return null;
+            try {
+                return JSON.parse(trimmed);
+            }
+            catch {
+                const firstLine = trimmed.split('\n')[0]?.trim();
+                if (firstLine) {
+                    try {
+                        return JSON.parse(firstLine);
+                    }
+                    catch { }
+                }
+            }
+        }
+        return null;
     }
     buildHeaders() {
         const headers = {
