@@ -1,50 +1,151 @@
 import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
-const LASTFM_PATTERN = /^https?:\/\/(?:www\.)?last\.fm\/(?:[a-z]{2}\/)?music\/.+/;
-const YOUTUBE_LINK_PATTERN = /header-new-playlink[^>]*href="([^"]*youtube\.com[^"]+)"/;
-const YOUTUBE_URL_PATTERN = /https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[a-zA-Z0-9_-]+/;
+const DEFAULT_LASTFM_API_KEY = 'b25b959554ed76058ac220b7b2e0a026';
+const LASTFM_API_BASE = 'https://ws.audioscrobbler.com/2.0/';
+const LASTFM_PATTERNS = [
+    /^https?:\/\/(?:www\.)?last\.fm\/(?:[a-z]{2}\/)?music(?:\/.*)?$/i,
+    /^https?:\/\/(?:www\.)?last\.fm\/(?:[a-z]{2}\/)?tag\/[^/?#]+/i,
+    /^https?:\/\/(?:www\.)?last\.fm\/(?:[a-z]{2}\/)?user\/[^/?#]+/i,
+    /^https?:\/\/(?:www\.)?last\.fm\/(?:[a-z]{2}\/)?charts(?:\/.*)?$/i
+];
 /**
- * This function decodes common HTML entities in a string, such as &amp; for '&' and &quot; for '"'.
+ * Extracts the highest quality image URL from a Last.fm image array.
  */
-function decodeHtml(text) {
-    if (!text)
-        return text;
-    return text
-        .replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'")
-        .replace(/&#x27;/g, "'")
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>');
+function extractArtworkUrl(images) {
+    if (!Array.isArray(images) || images.length === 0)
+        return null;
+    for (let i = images.length - 1; i >= 0; i--) {
+        const img = images[i];
+        const text = img?.['#text'] || img?.text || img?.url;
+        if (typeof text === 'string' && text.length > 0) {
+            return text;
+        }
+    }
+    return null;
 }
 /**
- * This function decodes URL-encoded strings and replaces '+' with spaces, which is common in query parameters. It also trims whitespace from the result.
+ * Decodes URL path parameter, replacing '+' with space and unescaping percent encoding.
  */
-function sanitizeQuery(raw) {
-    let decoded;
+function sanitizeSegment(raw) {
     try {
-        decoded = decodeURIComponent(raw.replace(/\+/g, ' '));
+        return decodeURIComponent(raw.replace(/\+/g, ' ')).trim();
     }
     catch {
-        decoded = raw.replace(/\+/g, ' ');
+        return raw.replace(/\+/g, ' ').trim();
     }
-    return decoded.trim();
 }
 /**
- * This heuristic determines if a Last.fm URL path corresponds to a track page or an album/artist page.
- * It checks the third segment of the path:
- * - If it starts with '+', it's an album page (e.g. /music/Artist/+Album).
- * - If it does not start with '+', it's a track page (e.g. /music/Artist/Track+Title).
- * If there are fewer than 3 segments, it defaults to treating it as an album/artist page.
+ * Last.fm source implementation.
+ *
+ * Resolves music metadata from Last.fm tracks, albums, artists, tags,
+ * user loved tracks, and charts, delegating audio streaming to the default
+ * mirror playback source.
+ *
+ * @public
  */
-function segmentsAreTrack(segments) {
-    if (segments.length < 3)
-        return false;
-    const thirdSegment = segments[2] ?? '';
-    // If the third segment starts with '+', it's an album page, so return false. Otherwise, it's a track page, so return true.
-    // This is a heuristic based on Last.fm's URL structure, where album pages have a '+' prefix in the third segment, while track pages do not.
-    return !thirdSegment.startsWith('+');
-}
 export default class LastFMSource {
+    /**
+     * Declarative test suite for validating Last.fm source behavior.
+     */
+    static _TESTS = [
+        {
+            id: 'lastfm.track.resolve',
+            name: 'Last.fm track resolution (/music/Artist/_/Track)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.last.fm/music/Radiohead/_/Creep'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'Creep'
+                    },
+                    author: {
+                        op: 'matches',
+                        value: 'Radiohead'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'lastfm'
+                    }
+                }
+            }
+        },
+        {
+            id: 'lastfm.album.resolve',
+            name: 'Last.fm album resolution (/music/Artist/Album)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.last.fm/music/Radiohead/OK+Computer'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 12 }
+            }
+        },
+        {
+            id: 'lastfm.artist.resolve',
+            name: 'Last.fm artist top tracks resolution (/music/Artist)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.last.fm/music/Radiohead'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 5 }
+            }
+        },
+        {
+            id: 'lastfm.tag.resolve',
+            name: 'Last.fm tag top tracks resolution (/tag/Tag)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.last.fm/tag/rock'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 5 }
+            }
+        },
+        {
+            id: 'lastfm.user.loved',
+            name: 'Last.fm user loved tracks resolution (/user/Username/loved)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.last.fm/user/RJ/loved'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 5 }
+            }
+        },
+        {
+            id: 'lastfm.charts.resolve',
+            name: 'Last.fm global charts resolution (/charts)',
+            input: {
+                type: 'resolve',
+                value: 'https://www.last.fm/charts'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 5 }
+            }
+        },
+        {
+            id: 'lastfm.search.query',
+            name: 'Last.fm search query (lfsearch)',
+            input: {
+                type: 'search',
+                value: 'Radiohead Creep',
+                searchType: 'lfsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 }
+            }
+        }
+    ];
     nodelink;
     config;
     patterns;
@@ -55,15 +156,15 @@ export default class LastFMSource {
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.config = this.getConfig();
-        this.patterns = [LASTFM_PATTERN];
+        this.patterns = LASTFM_PATTERNS;
         this.priority = 40;
-        this.searchTerms = ['lfsearch'];
+        this.searchTerms = ['lfsearch', 'lastfm'];
         this.maxSearchResults = this.getMaxSearchResults();
-        this.apiKey = this.config.apiKey ?? null;
+        this.apiKey = this.config.apiKey ?? DEFAULT_LASTFM_API_KEY;
     }
     getConfig() {
-        const options = this.nodelink.options;
-        const config = options.sources?.lastfm;
+        const options = this.nodelink?.options;
+        const config = options?.sources?.lastfm;
         return {
             apiKey: typeof config?.apiKey === 'string' && config.apiKey.length > 0
                 ? config.apiKey
@@ -71,8 +172,8 @@ export default class LastFMSource {
         };
     }
     getMaxSearchResults() {
-        const options = this.nodelink.options;
-        const limit = options.search.maxResults;
+        const options = this.nodelink?.options;
+        const limit = options?.search?.maxResults ?? options?.maxSearchResults;
         return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
             ? limit
             : 10;
@@ -82,146 +183,117 @@ export default class LastFMSource {
         return true;
     }
     isLinkMatch(link) {
-        return LASTFM_PATTERN.test(link);
+        return this.patterns.some((pattern) => pattern.test(link));
     }
+    /**
+     * Calls the Last.fm AudioScrobbler 2.0 API.
+     */
+    async callApi(method, params = {}) {
+        const query = new URLSearchParams({
+            method,
+            api_key: this.apiKey,
+            format: 'json'
+        });
+        for (const [key, value] of Object.entries(params)) {
+            query.set(key, String(value));
+        }
+        const url = `${LASTFM_API_BASE}?${query.toString()}`;
+        const response = await http1makeRequest(url, { method: 'GET' });
+        if (response.error || response.statusCode !== 200) {
+            return null;
+        }
+        const body = response.body;
+        if (body && typeof body === 'object' && !Buffer.isBuffer(body)) {
+            return body;
+        }
+        if (typeof body === 'string') {
+            try {
+                return JSON.parse(body);
+            }
+            catch {
+                return null;
+            }
+        }
+        return null;
+    }
+    /**
+     * Searches Last.fm catalog for tracks, albums, or artists.
+     */
     async search(query, _sourceTerm, searchType = 'track') {
         try {
-            if (!this.apiKey) {
-                if (searchType !== 'track') {
-                    return {
-                        loadType: 'error',
-                        exception: {
-                            message: 'Last.fm API key required for album/artist search. Configure sources.lastfm.apiKey.',
-                            severity: 'common'
-                        }
-                    };
-                }
-                return this.searchTracksHtml(query);
+            const typeMap = {
+                track: { method: 'track.search', param: 'track' },
+                album: { method: 'album.search', param: 'album' },
+                artist: { method: 'artist.search', param: 'artist' }
+            };
+            const selected = typeMap[searchType] || { method: 'track.search', param: 'track' };
+            const payload = await this.callApi(selected.method, {
+                [selected.param]: query,
+                limit: this.maxSearchResults
+            });
+            if (!payload) {
+                return { loadType: 'empty', data: {} };
             }
-            return this.searchApi(query, searchType);
+            const results = this.mapApiResults(payload, searchType);
+            return results.length > 0
+                ? { loadType: 'search', data: results }
+                : { loadType: 'empty', data: {} };
         }
         catch (error) {
-            return {
-                loadType: 'error',
-                exception: {
-                    message: error instanceof Error ? error.message : String(error),
-                    severity: 'fault'
-                }
-            };
+            const message = error instanceof Error ? error.message : String(error);
+            logger('error', 'LastFM', `Search failed: ${message}`);
+            return { loadType: 'empty', data: {} };
         }
     }
+    /**
+     * Resolves a Last.fm URL into a track or playlist.
+     */
     async resolve(url) {
-        if (!LASTFM_PATTERN.test(url)) {
+        const parsed = this.parsePath(url);
+        if (!parsed) {
             return { loadType: 'empty', data: {} };
         }
-        const path = this.parsePath(url);
-        if (!path) {
-            return { loadType: 'empty', data: {} };
-        }
+        const { segments } = parsed;
         try {
-            // Determine if this is a track page or an album/artist page based on the URL segments and the presence of a '+' prefix in the third segment.
-            const isTrack = segmentsAreTrack(path);
-            // The artist segment is always the second segment in the path, e.g. /music/Artist/Track or /music/Artist/+Album. We decode it for use in search queries.
-            const artist = sanitizeQuery(path[1] ?? 'Unknown');
-            if (isTrack) {
-                // For track pages, we attempt to resolve the track by searching YouTube with various query formulations based on the track title and artist.
-                const rawTitle = path[2] ?? '';
-                const fullTitle = sanitizeQuery(rawTitle);
-                // We strip unknown "(feat. ...)" suffix from the title to create a "core title" for more effective searching, since YouTube often omits featured artists from the title.
-                const coreTitle = fullTitle.replace(/\s*\(feat\..*?\)/i, '').trim();
-                logger('info', 'LastFM', `Resolving track: "${fullTitle}" by "${artist}"`);
-                // 1st attempt: core title + "official audio"
-                if (coreTitle && coreTitle !== fullTitle) {
-                    const r1 = await this.searchPreferredTracks(`${artist} ${coreTitle} official audio`);
-                    if (r1[0]) {
-                        const t = this.rewrapDelegatedTrack(r1[0], url);
-                        logger('info', 'LastFM', `Resolved via core+official: ${t.info?.title}`);
-                        return { loadType: 'track', data: t };
-                    }
+            // 1. Music routes: /music/...
+            if (segments[0] === 'music') {
+                // /music (discovery / overview -> global top tracks)
+                if (segments.length === 1 || segments[1] === '+free-music-downloads') {
+                    return this.resolveChartTracks();
                 }
-                // 2nd attempt: full title + "official audio"
-                const r2 = await this.searchPreferredTracks(`${artist} ${fullTitle} official audio`);
-                if (r2[0]) {
-                    const t = this.rewrapDelegatedTrack(r2[0], url);
-                    logger('info', 'LastFM', `Resolved via full+official: ${t.info?.title}`);
-                    return { loadType: 'track', data: t };
+                const artist = sanitizeSegment(segments[1] ?? '');
+                // /music/{artist}/_/{track}
+                if (segments.length >= 4 && segments[2] === '_') {
+                    const trackTitle = sanitizeSegment(segments[3] ?? '');
+                    return this.resolveTrackPage(artist, trackTitle, url);
                 }
-                // 3rd attempt: core title only
-                if (coreTitle && coreTitle !== fullTitle) {
-                    const r3 = await this.searchPreferredTracks(`${artist} ${coreTitle}`);
-                    if (r3[0]) {
-                        const t = this.rewrapDelegatedTrack(r3[0], url);
-                        logger('info', 'LastFM', `Resolved via core title: ${t.info?.title}`);
-                        return { loadType: 'track', data: t };
-                    }
+                // /music/{artist}/{album}
+                if (segments.length >= 3) {
+                    const albumTitle = sanitizeSegment((segments[2] ?? '').replace(/^\+/, ''));
+                    return this.resolveAlbumPage(artist, albumTitle, url);
                 }
-                // 4th attempt: full title only (last resort)
-                const r4 = await this.searchPreferredTracks(`${artist} ${fullTitle}`);
-                if (r4[0]) {
-                    const t = this.rewrapDelegatedTrack(r4[0], url);
-                    logger('info', 'LastFM', `Resolved via full title fallback: ${t.info?.title}`);
-                    return { loadType: 'track', data: t };
+                // /music/{artist}
+                return this.resolveArtistPage(artist, url);
+            }
+            // 2. Tag routes: /tag/{tag}
+            if (segments[0] === 'tag') {
+                const tag = sanitizeSegment(segments[1] ?? '');
+                return this.resolveTagTracks(tag, url);
+            }
+            // 3. User routes: /user/{username}/...
+            if (segments[0] === 'user') {
+                const username = sanitizeSegment(segments[1] ?? '');
+                const subRoute = segments[2]?.toLowerCase();
+                if (subRoute === 'loved') {
+                    return this.resolveUserLovedTracks(username, url);
                 }
-                logger('error', 'LastFM', `No tracks found for: "${fullTitle}" by "${artist}"`);
-                return {
-                    loadType: 'error',
-                    exception: {
-                        message: 'No matching tracks found for this Last.fm track',
-                        severity: 'fault'
-                    }
-                };
+                return this.resolveUserTopTracks(username, url);
             }
-            // For album/artist pages, we attempt to extract unknown linked YouTube URLs from the page HTML and resolve them as tracks. We treat the entire page as a "playlist" of these tracks.
-            const { body, error, statusCode } = await http1makeRequest(url, {
-                method: 'GET'
-            });
-            const html = this.getTextBody({ body });
-            if (error || statusCode !== 200 || !html) {
-                logger('error', 'LastFM', `Failed to fetch Last.fm page: ${error ?? statusCode}`);
-                return {
-                    loadType: 'error',
-                    exception: {
-                        message: `Failed to fetch Last.fm page: ${error ?? statusCode}`,
-                        severity: 'fault'
-                    }
-                };
+            // 4. Charts routes: /charts
+            if (segments[0] === 'charts') {
+                return this.resolveChartTracks();
             }
-            // We use the artist name as the collection title for artist pages, and for album pages we use "Album Title - Artist". We also decode unknown URL-encoded characters and replace '+' with spaces for readability.
-            let collectionTitle = artist;
-            if (path.length >= 3) {
-                // Strip unknown leading '+' from the third segment (which indicates an album page) and decode it to get the album title, then combine it with the artist name for the collection title.
-                collectionTitle = sanitizeQuery((path[2] ?? '').replace(/^\+/, ''));
-            }
-            const youtubeUrls = this.extractYouTubeUrls(html);
-            const tracks = [];
-            for (const youtubeUrl of youtubeUrls) {
-                const youtubeResult = await this.getSourceManager()?.resolve(youtubeUrl);
-                if (!youtubeResult)
-                    continue;
-                const delegatedTrack = this.extractTrackData(youtubeResult);
-                if (!delegatedTrack)
-                    continue;
-                tracks.push(this.rewrapDelegatedTrack(delegatedTrack, url, youtubeUrl));
-            }
-            if (tracks.length > 0) {
-                logger('info', 'LastFM', `Resolved playlist: "${collectionTitle}" - "${artist}" with ${tracks.length} tracks`);
-                return {
-                    loadType: 'playlist',
-                    data: {
-                        info: { name: `${collectionTitle} - ${artist}`, selectedTrack: 0 },
-                        pluginInfo: {},
-                        tracks
-                    }
-                };
-            }
-            logger('error', 'LastFM', 'Failed to resolve unknown tracks from Last.fm album/artist');
-            return {
-                loadType: 'error',
-                exception: {
-                    message: 'Failed to resolve tracks from Last.fm',
-                    severity: 'fault'
-                }
-            };
+            return { loadType: 'empty', data: {} };
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -229,435 +301,475 @@ export default class LastFMSource {
             return { loadType: 'error', exception: { message, severity: 'fault' } };
         }
     }
-    async getTrackUrl(decodedTrack, trackData) {
-        const sourceManager = this.getSourceManager();
-        if (!sourceManager) {
-            return {
-                exception: {
-                    message: 'Source manager is not available for Last.fm resolution.',
-                    severity: 'fault'
-                }
-            };
-        }
-        try {
-            const youtubeUrl = trackData?.pluginInfo?.youtubeUrl;
-            if (youtubeUrl) {
-                const youtubeResult = await sourceManager.resolve(youtubeUrl);
-                const delegatedTrack = this.extractTrackData(youtubeResult);
-                if (delegatedTrack?.info) {
-                    const streamInfo = await sourceManager.getTrackUrl(delegatedTrack.info);
-                    return {
-                        ...streamInfo,
-                        newTrack: delegatedTrack
-                    };
+    async resolveTrackPage(artist, trackTitle, url) {
+        const payload = await this.callApi('track.getInfo', {
+            artist,
+            track: trackTitle
+        });
+        const trackObj = payload?.track ?? null;
+        const title = trackObj?.name || trackTitle;
+        const author = trackObj?.artist?.name || artist;
+        const duration = Number(trackObj?.duration) || 0;
+        const artworkUrl = extractArtworkUrl(trackObj?.album?.image || trackObj?.image);
+        const trackInfo = {
+            identifier: url,
+            isSeekable: true,
+            author,
+            length: duration,
+            isStream: false,
+            position: 0,
+            title,
+            uri: url,
+            artworkUrl,
+            isrc: null,
+            sourceName: 'lastfm'
+        };
+        return {
+            loadType: 'track',
+            data: {
+                encoded: encodeTrack({ ...trackInfo, details: [] }),
+                info: trackInfo,
+                pluginInfo: {
+                    artist,
+                    track: title
                 }
             }
-            const query = `${decodedTrack.title} ${decodedTrack.author}`.trim();
-            const searchResult = await sourceManager.searchWithDefault(query);
-            const searchTracks = this.extractTrackArray(searchResult);
-            if (searchTracks.length === 0) {
-                return {
-                    exception: {
-                        message: 'No matching track found on default source.',
-                        severity: 'common'
-                    }
-                };
-            }
-            const bestMatchCandidate = getBestMatch(searchTracks.map((t) => ({
-                info: {
-                    title: t.info?.title || '',
-                    author: t.info?.author || '',
-                    length: t.info?.length || 0,
-                    uri: t.info?.uri
-                }
-            })), decodedTrack);
-            const bestMatch = bestMatchCandidate
-                ? searchTracks[searchTracks.findIndex((t) => t.info?.title === bestMatchCandidate.info.title &&
-                    t.info?.author === bestMatchCandidate.info.author)]
-                : null;
-            if (!bestMatch?.info) {
-                return {
-                    exception: {
-                        message: 'No suitable alternative found after filtering.',
-                        severity: 'common'
-                    }
-                };
-            }
-            const streamInfo = await sourceManager.getTrackUrl(bestMatch.info);
-            return {
-                ...streamInfo,
-                newTrack: bestMatch
-            };
-        }
-        catch (error) {
-            return {
-                exception: {
-                    message: error instanceof Error ? error.message : String(error),
-                    severity: 'fault'
-                }
-            };
-        }
+        };
     }
+    async resolveAlbumPage(artist, albumTitle, url) {
+        const payload = await this.callApi('album.getInfo', {
+            artist,
+            album: albumTitle
+        });
+        const albumObj = payload?.album ?? null;
+        if (!albumObj) {
+            return { loadType: 'empty', data: {} };
+        }
+        const title = albumObj.name || albumTitle;
+        const author = albumObj.artist || artist;
+        const artworkUrl = extractArtworkUrl(albumObj.image);
+        const rawTracks = albumObj.tracks?.track || [];
+        const trackList = Array.isArray(rawTracks) ? rawTracks : [rawTracks];
+        const tracks = [];
+        for (const raw of trackList) {
+            const item = raw;
+            if (!item || typeof item.name !== 'string')
+                continue;
+            const itemDuration = Number(item.duration) || 0;
+            const trackAuthor = item.artist?.name || author;
+            const itemUrl = item.url || url;
+            const info = {
+                identifier: itemUrl,
+                isSeekable: true,
+                author: trackAuthor,
+                length: itemDuration > 0 ? itemDuration * 1000 : 0,
+                isStream: false,
+                position: 0,
+                title: item.name,
+                uri: itemUrl,
+                artworkUrl,
+                isrc: null,
+                sourceName: 'lastfm'
+            };
+            tracks.push({
+                encoded: encodeTrack({ ...info, details: [] }),
+                info,
+                pluginInfo: { artist: trackAuthor, track: item.name }
+            });
+        }
+        if (tracks.length === 0) {
+            return { loadType: 'empty', data: {} };
+        }
+        return {
+            loadType: 'playlist',
+            data: {
+                info: {
+                    name: `${title} - ${author}`,
+                    selectedTrack: 0
+                },
+                pluginInfo: {
+                    type: 'album',
+                    url,
+                    artworkUrl,
+                    author,
+                    totalTracks: tracks.length
+                },
+                tracks
+            }
+        };
+    }
+    async resolveArtistPage(artist, url) {
+        const payload = await this.callApi('artist.getTopTracks', {
+            artist,
+            limit: this.maxSearchResults
+        });
+        const rawTracks = payload?.toptracks?.track ||
+            [];
+        const trackList = Array.isArray(rawTracks) ? rawTracks : [rawTracks];
+        const tracks = this.buildTrackList(trackList, artist);
+        if (tracks.length === 0) {
+            return { loadType: 'empty', data: {} };
+        }
+        return {
+            loadType: 'playlist',
+            data: {
+                info: {
+                    name: `${artist}'s Top Tracks`,
+                    selectedTrack: 0
+                },
+                pluginInfo: {
+                    type: 'artist',
+                    url,
+                    author: artist,
+                    totalTracks: tracks.length
+                },
+                tracks
+            }
+        };
+    }
+    async resolveTagTracks(tag, url) {
+        const payload = await this.callApi('tag.getTopTracks', {
+            tag,
+            limit: this.maxSearchResults
+        });
+        const rawTracks = payload?.tracks?.track || [];
+        const trackList = Array.isArray(rawTracks) ? rawTracks : [rawTracks];
+        const tracks = this.buildTrackList(trackList);
+        if (tracks.length === 0) {
+            return { loadType: 'empty', data: {} };
+        }
+        return {
+            loadType: 'playlist',
+            data: {
+                info: {
+                    name: `Top Tracks for #${tag}`,
+                    selectedTrack: 0
+                },
+                pluginInfo: {
+                    type: 'tag',
+                    url,
+                    totalTracks: tracks.length
+                },
+                tracks
+            }
+        };
+    }
+    async resolveUserLovedTracks(username, url) {
+        const payload = await this.callApi('user.getLovedTracks', {
+            user: username,
+            limit: this.maxSearchResults
+        });
+        const rawTracks = payload?.lovedtracks?.track ||
+            [];
+        const trackList = Array.isArray(rawTracks) ? rawTracks : [rawTracks];
+        const tracks = this.buildTrackList(trackList);
+        if (tracks.length === 0) {
+            return { loadType: 'empty', data: {} };
+        }
+        return {
+            loadType: 'playlist',
+            data: {
+                info: {
+                    name: `${username}'s Loved Tracks`,
+                    selectedTrack: 0
+                },
+                pluginInfo: {
+                    type: 'loved',
+                    url,
+                    author: username,
+                    totalTracks: tracks.length
+                },
+                tracks
+            }
+        };
+    }
+    async resolveUserTopTracks(username, url) {
+        const payload = await this.callApi('user.getTopTracks', {
+            user: username,
+            limit: this.maxSearchResults
+        });
+        const rawTracks = payload?.toptracks?.track ||
+            [];
+        const trackList = Array.isArray(rawTracks) ? rawTracks : [rawTracks];
+        const tracks = this.buildTrackList(trackList);
+        if (tracks.length === 0) {
+            return { loadType: 'empty', data: {} };
+        }
+        return {
+            loadType: 'playlist',
+            data: {
+                info: {
+                    name: `${username}'s Top Tracks`,
+                    selectedTrack: 0
+                },
+                pluginInfo: {
+                    type: 'user',
+                    url,
+                    author: username,
+                    totalTracks: tracks.length
+                },
+                tracks
+            }
+        };
+    }
+    async resolveChartTracks() {
+        const payload = await this.callApi('chart.getTopTracks', {
+            limit: this.maxSearchResults
+        });
+        const rawTracks = payload?.tracks?.track || [];
+        const trackList = Array.isArray(rawTracks) ? rawTracks : [rawTracks];
+        const tracks = this.buildTrackList(trackList);
+        if (tracks.length === 0) {
+            return { loadType: 'empty', data: {} };
+        }
+        return {
+            loadType: 'playlist',
+            data: {
+                info: {
+                    name: 'Last.fm Global Charts',
+                    selectedTrack: 0
+                },
+                pluginInfo: {
+                    type: 'charts',
+                    url: 'https://www.last.fm/charts',
+                    totalTracks: tracks.length
+                },
+                tracks
+            }
+        };
+    }
+    buildTrackList(rawTracks, defaultAuthor = 'Unknown') {
+        const tracks = [];
+        for (const raw of rawTracks) {
+            const item = raw;
+            if (!item || typeof item.name !== 'string')
+                continue;
+            const artistName = (typeof item.artist === 'string'
+                ? item.artist
+                : item.artist?.name) ||
+                defaultAuthor;
+            const durationSeconds = Number(item.duration) || 0;
+            const artworkUrl = extractArtworkUrl(item.image);
+            const trackUrl = item.url ||
+                `https://www.last.fm/music/${encodeURIComponent(artistName)}/_/${encodeURIComponent(item.name)}`;
+            const info = {
+                identifier: trackUrl,
+                isSeekable: true,
+                author: artistName,
+                length: durationSeconds > 0 ? durationSeconds * 1000 : 0,
+                isStream: false,
+                position: 0,
+                title: item.name,
+                uri: trackUrl,
+                artworkUrl,
+                isrc: null,
+                sourceName: 'lastfm'
+            };
+            tracks.push({
+                encoded: encodeTrack({ ...info, details: [] }),
+                info,
+                pluginInfo: {
+                    artist: artistName,
+                    track: item.name
+                }
+            });
+        }
+        return tracks;
+    }
+    /**
+     * Resolves playback stream via the default playback source mirror.
+     */
+    async getTrackUrl(decodedTrack, _itag, _isRecovering) {
+        const sourceManager = this.nodelink?.sources;
+        if (!sourceManager) {
+            throw new Error('Source manager is not available for Last.fm resolution.');
+        }
+        const query = `${decodedTrack.title} ${decodedTrack.author}`.trim();
+        const searchResult = await sourceManager.searchWithDefault(query);
+        if (searchResult.loadType !== 'search' ||
+            !Array.isArray(searchResult.data) ||
+            searchResult.data.length === 0) {
+            throw new Error(`No matching track found on default source for: ${query}`);
+        }
+        const candidates = searchResult.data;
+        const bestMatch = getBestMatch(candidates, decodedTrack) || candidates[0];
+        if (!bestMatch?.info) {
+            throw new Error(`No suitable alternative found after filtering for: ${query}`);
+        }
+        const streamInfo = await sourceManager.getTrackUrl(bestMatch.info);
+        return {
+            ...streamInfo,
+            newTrack: {
+                info: bestMatch.info
+            }
+        };
+    }
+    /**
+     * Delegates stream reading to the matched source.
+     */
     async loadStream(track, url, protocol, additionalData) {
-        const sourceManager = this.getSourceManager();
+        const sourceManager = this.nodelink?.sources;
         if (!sourceManager) {
             throw new Error('Source manager is not available for Last.fm streaming');
         }
         return sourceManager.getTrackStream(track, url, protocol, additionalData);
     }
     /**
-     * Parses a Last.fm URL into path segments with the 'music' prefix retained
-     * and unknown locale prefix stripped, so callers always receive segments starting
-     * at ['music', artist, ...].
-     *
-     * Examples:
-     *   /music/Kodak+Black/ZEZE+...  → ['music', 'Kodak+Black', 'ZEZE+...']
-     *   /fr/music/Artist/+Album      → ['music', 'Artist', '+Album']
+     * Executes a test variant against the Last.fm source.
      */
+    async executeVariant(variant, track, streamSpec) {
+        let urlData;
+        try {
+            urlData = await this.getTrackUrl(track);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: err instanceof Error
+                    ? err.message
+                    : 'Failed to resolve track streaming URL'
+            };
+        }
+        if (!urlData.url) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: 'Failed to resolve track streaming URL'
+            };
+        }
+        const container = 'mp4';
+        const codec = 'aac';
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: urlData.newTrack?.info || track,
+                container,
+                codec
+            };
+        }
+        let streamResult;
+        try {
+            streamResult = await this.loadStream(track, urlData.url, urlData.protocol, urlData.additionalData);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: err instanceof Error ? err.message : 'Failed to load audio stream'
+            };
+        }
+        if (!streamResult.stream) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: 'Failed to load audio stream'
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track: urlData.newTrack?.info || track,
+            stream: streamResult.stream,
+            container,
+            codec,
+            httpStatus: 200
+        };
+    }
     parsePath(url) {
         try {
             const urlObject = new URL(url);
-            const path = urlObject.pathname.split('/').filter(Boolean);
-            // Strip a leading 2-char locale prefix, e.g. /fr/music/...
-            if (path.length > 1 && path[0]?.length === 2 && path[1] === 'music') {
-                path.shift();
+            const segments = urlObject.pathname.split('/').filter(Boolean);
+            // Strip optional 2-char language prefix, e.g. /pt/music/...
+            if (segments.length > 1 &&
+                segments[0]?.length === 2 &&
+                ['music', 'tag', 'user', 'charts'].includes(segments[1] ?? '')) {
+                segments.shift();
             }
-            return path[0] === 'music' && path.length >= 2 ? path : null;
-        }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            logger('error', 'LastFM', `Error parsing path: ${message}`);
-            return null;
-        }
-    }
-    extractYouTubeUrls(html) {
-        const urls = new Set();
-        const playMatch = html.match(YOUTUBE_LINK_PATTERN);
-        if (playMatch?.[1])
-            urls.add(playMatch[1]);
-        const regex = new RegExp(YOUTUBE_URL_PATTERN, 'g');
-        let match;
-        match = regex.exec(html);
-        while (match !== null) {
-            if (match[0])
-                urls.add(match[0]);
-            match = regex.exec(html);
-        }
-        return Array.from(urls);
-    }
-    async searchPreferredTracks(query) {
-        const sourceManager = this.getSourceManager();
-        if (!sourceManager)
-            return [];
-        const fallbackResult = await sourceManager.searchWithDefault(query);
-        return this.extractTrackArray(fallbackResult);
-    }
-    async searchApi(query, searchType) {
-        const typeMap = {
-            track: { method: 'track.search', param: 'track' },
-            album: { method: 'album.search', param: 'album' },
-            artist: { method: 'artist.search', param: 'artist' }
-        };
-        const selected = typeMap[searchType];
-        if (!selected) {
-            return {
-                loadType: 'error',
-                exception: {
-                    message: `Unsupported Last.fm search type: ${searchType}`,
-                    severity: 'common'
-                }
-            };
-        }
-        const url = `https://ws.audioscrobbler.com/2.0/?method=${selected.method}` +
-            `&${selected.param}=${encodeURIComponent(query)}` +
-            `&limit=${this.maxSearchResults}&api_key=${this.apiKey}&format=json`;
-        const { body, statusCode, error } = await http1makeRequest(url, {
-            method: 'GET'
-        });
-        const payload = this.parseJsonBody(body);
-        if (error || statusCode !== 200 || !payload) {
-            return {
-                loadType: 'error',
-                exception: {
-                    message: `Last.fm API error: ${error ?? statusCode}`,
-                    severity: 'fault'
-                }
-            };
-        }
-        if (this.getValue(payload, 'error') !== undefined) {
-            const message = this.getString(payload, 'message') ?? 'Last.fm API error';
-            return { loadType: 'error', exception: { message, severity: 'fault' } };
-        }
-        const results = this.mapApiResults(payload, searchType);
-        return results.length > 0
-            ? { loadType: 'search', data: results }
-            : { loadType: 'empty', data: {} };
-    }
-    mapApiResults(body, searchType) {
-        const results = this.getRecord(body, 'results');
-        if (searchType === 'album') {
-            const albumMatches = results
-                ? this.getRecord(results, 'albummatches')
-                : null;
-            const albums = albumMatches ? this.getArray(albumMatches, 'album') : [];
-            return albums
-                .map((item) => this.getRecordFromValue(item))
-                .filter((item) => item !== null)
-                .filter((item) => typeof this.getValue(item, 'name') === 'string' &&
-                typeof this.getValue(item, 'artist') === 'string')
-                .map((item) => this.buildCollectionResult(this.getString(item, 'name') ?? 'Unknown', this.getString(item, 'artist') ?? 'Unknown', this.getString(item, 'url') ?? '', 'album'));
-        }
-        if (searchType === 'artist') {
-            const artistMatches = results
-                ? this.getRecord(results, 'artistmatches')
-                : null;
-            const artists = artistMatches
-                ? this.getArray(artistMatches, 'artist')
-                : [];
-            return artists
-                .map((item) => this.getRecordFromValue(item))
-                .filter((item) => item !== null)
-                .filter((item) => typeof this.getValue(item, 'name') === 'string')
-                .map((item) => this.buildCollectionResult(this.getString(item, 'name') ?? 'Unknown', 'Last.fm', this.getString(item, 'url') ?? '', 'artist'));
-        }
-        const trackMatches = results
-            ? this.getRecord(results, 'trackmatches')
-            : null;
-        const tracks = trackMatches ? this.getArray(trackMatches, 'track') : [];
-        return tracks
-            .map((item) => this.getRecordFromValue(item))
-            .filter((item) => item !== null)
-            .filter((item) => typeof this.getValue(item, 'name') === 'string' &&
-            typeof this.getValue(item, 'artist') === 'string')
-            .map((item) => this.buildTrackResult(this.getString(item, 'name') ?? 'Unknown', this.getString(item, 'artist') ?? 'Unknown', this.getString(item, 'url') ?? ''));
-    }
-    async searchTracksHtml(query) {
-        const url = `https://www.last.fm/search/tracks?q=${encodeURIComponent(query)}`;
-        const { body, statusCode, error } = await http1makeRequest(url, {
-            method: 'GET'
-        });
-        const html = this.getTextBody({ body });
-        if (error || statusCode !== 200 || !html) {
-            return {
-                loadType: 'error',
-                exception: {
-                    message: `Failed to fetch Last.fm search page: ${error ?? statusCode}`,
-                    severity: 'fault'
-                }
-            };
-        }
-        const results = this.parseTrackSearchHtml(html);
-        return results.length > 0
-            ? { loadType: 'search', data: results.slice(0, this.maxSearchResults) }
-            : { loadType: 'empty', data: {} };
-    }
-    parseTrackSearchHtml(html) {
-        const results = [];
-        const regex = /data-youtube-url="([^"]+)"[\s\S]*?data-track-name="([^"]+)"[\s\S]*?data-track-url="([^"]+)"[\s\S]*?data-artist-name="([^"]+)"/g;
-        let match;
-        match = regex.exec(html);
-        while (match !== null) {
-            const youtubeUrl = decodeHtml(match[1] ?? null) ?? '';
-            const title = decodeHtml(match[2] ?? null) ?? 'Unknown';
-            const trackUrl = decodeHtml(match[3] ?? null) ?? '';
-            const artist = decodeHtml(match[4] ?? null) ?? 'Unknown';
-            const fullUrl = trackUrl.startsWith('http')
-                ? trackUrl
-                : `https://www.last.fm${trackUrl}`;
-            results.push(this.buildTrackResult(title, artist, fullUrl, {
-                ...(youtubeUrl ? { youtubeUrl } : {})
-            }));
-            match = regex.exec(html);
-        }
-        return results;
-    }
-    buildTrackResult(title, artist, url, pluginInfo = {}) {
-        const info = {
-            identifier: url || `${artist} - ${title}`,
-            isSeekable: true,
-            author: artist,
-            length: 0,
-            isStream: false,
-            position: 0,
-            title,
-            uri: url,
-            artworkUrl: null,
-            isrc: null,
-            sourceName: 'lastfm'
-        };
-        return { encoded: encodeTrack({ ...info, details: [] }), info, pluginInfo };
-    }
-    buildCollectionResult(title, author, url, type) {
-        const info = {
-            identifier: url || title,
-            isSeekable: false,
-            author,
-            length: 0,
-            isStream: false,
-            position: 0,
-            title,
-            uri: url,
-            artworkUrl: null,
-            isrc: null,
-            sourceName: 'lastfm'
-        };
-        return {
-            encoded: encodeTrack({ ...info, details: [] }),
-            info,
-            pluginInfo: { type: String(type) }
-        };
-    }
-    rewrapDelegatedTrack(track, url, youtubeUrl) {
-        if (!track.info) {
-            throw new Error('Cannot rewrap track without info');
-        }
-        const pluginInfo = this.getPluginInfoRecord(track.pluginInfo);
-        const storedYoutubeUrl = pluginInfo.youtubeUrl;
-        const lastFmPluginInfo = {
-            youtubeUrl: youtubeUrl ||
-                (typeof storedYoutubeUrl === 'string'
-                    ? storedYoutubeUrl
-                    : track.info.uri) ||
-                ''
-        };
-        const info = {
-            identifier: track.info.identifier,
-            isSeekable: track.info.isSeekable,
-            author: track.info.author,
-            length: track.info.length,
-            isStream: track.info.isStream,
-            position: track.info.position,
-            title: track.info.title,
-            uri: url,
-            artworkUrl: track.info.artworkUrl ?? null,
-            isrc: track.info.isrc ?? null,
-            sourceName: 'lastfm'
-        };
-        return {
-            encoded: encodeTrack({ ...info, details: [] }),
-            info,
-            pluginInfo: lastFmPluginInfo
-        };
-    }
-    extractTrackData(result) {
-        if (result.loadType === 'track') {
-            const trackData = result.data;
-            if (this.isTrackData(trackData)) {
-                return trackData;
-            }
-        }
-        if (result.loadType === 'playlist') {
-            const playlistData = result.data;
-            if (this.isTrackCollection(playlistData) &&
-                playlistData.tracks.length > 0) {
-                return playlistData.tracks[0] ?? null;
-            }
-        }
-        return null;
-    }
-    extractTrackArray(result) {
-        if (result.loadType === 'search') {
-            const resultData = result.data;
-            if (Array.isArray(resultData) &&
-                resultData.every((item) => this.isTrackData(item))) {
-                return resultData;
-            }
-        }
-        return [];
-    }
-    findTrackDataByCandidate(tracks, candidate) {
-        return (tracks.find((track) => track.info &&
-            track.info.title === candidate.info.title &&
-            track.info.author === candidate.info.author &&
-            track.info.uri === candidate.info.uri) ?? null);
-    }
-    getSourceManager() {
-        return this.nodelink.sources ?? null;
-    }
-    getTextBody(response) {
-        if (typeof response.body === 'string')
-            return response.body;
-        if (Buffer.isBuffer(response.body))
-            return response.body.toString('utf8');
-        return null;
-    }
-    parseJsonBody(body) {
-        if (body &&
-            typeof body === 'object' &&
-            !Array.isArray(body) &&
-            !Buffer.isBuffer(body)) {
-            return body;
-        }
-        const textBody = this.getTextBody({ body });
-        if (!textBody)
-            return null;
-        try {
-            const parsed = JSON.parse(textBody);
-            return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-                ? parsed
-                : null;
+            return segments.length > 0 ? { segments } : null;
         }
         catch {
             return null;
         }
     }
-    getRecord(record, key) {
-        return this.getRecordFromValue(record[key]);
-    }
-    getRecordFromValue(value) {
-        return value && typeof value === 'object' && !Array.isArray(value)
-            ? value
-            : null;
-    }
-    getValue(record, key) {
-        return record[key];
-    }
-    getArray(record, key) {
-        const value = this.getValue(record, key);
-        return Array.isArray(value) ? value : [];
-    }
-    getString(record, key) {
-        const value = this.getValue(record, key);
-        if (typeof value === 'string')
-            return value;
-        if (typeof value === 'number')
-            return String(value);
-        return null;
-    }
-    getPluginInfoRecord(value) {
-        if (!value)
-            return {};
-        const result = {};
-        for (const [key, entry] of Object.entries(value)) {
-            if (typeof entry === 'string')
-                result[key] = entry;
-            else if (typeof entry === 'number')
-                result[key] = String(entry);
+    mapApiResults(body, searchType) {
+        const results = body.results;
+        if (!results)
+            return [];
+        if (searchType === 'album') {
+            const albumMatches = results.albummatches;
+            const rawAlbums = albumMatches?.album;
+            const albums = Array.isArray(rawAlbums)
+                ? rawAlbums
+                : rawAlbums
+                    ? [rawAlbums]
+                    : [];
+            return albums
+                .filter((item) => Boolean(item) &&
+                typeof item.name === 'string' &&
+                typeof item.artist === 'string')
+                .map((item) => {
+                const artworkUrl = extractArtworkUrl(item.image);
+                const info = {
+                    identifier: item.url || item.name,
+                    isSeekable: false,
+                    author: item.artist,
+                    length: 0,
+                    isStream: false,
+                    position: 0,
+                    title: item.name,
+                    uri: item.url || '',
+                    artworkUrl,
+                    isrc: null,
+                    sourceName: 'lastfm'
+                };
+                return {
+                    encoded: encodeTrack({ ...info, details: [] }),
+                    info,
+                    pluginInfo: { type: 'album' }
+                };
+            });
         }
-        return result;
-    }
-    isTrackData(value) {
-        const record = this.getRecordFromValue(value);
-        if (!record)
-            return false;
-        const encoded = this.getValue(record, 'encoded');
-        const info = this.getRecord(record, 'info');
-        const title = info ? this.getValue(info, 'title') : undefined;
-        const author = info ? this.getValue(info, 'author') : undefined;
-        const length = info ? this.getValue(info, 'length') : undefined;
-        const uri = info ? this.getValue(info, 'uri') : undefined;
-        return (typeof encoded === 'string' &&
-            !!info &&
-            typeof title === 'string' &&
-            typeof author === 'string' &&
-            typeof length === 'number' &&
-            typeof uri === 'string');
-    }
-    isTrackCollection(value) {
-        const record = this.getRecordFromValue(value);
-        if (!record)
-            return false;
-        const tracks = this.getValue(record, 'tracks');
-        return (Array.isArray(tracks) && tracks.every((track) => this.isTrackData(track)));
+        if (searchType === 'artist') {
+            const artistMatches = results.artistmatches;
+            const rawArtists = artistMatches?.artist;
+            const artists = Array.isArray(rawArtists)
+                ? rawArtists
+                : rawArtists
+                    ? [rawArtists]
+                    : [];
+            return artists
+                .filter((item) => Boolean(item) && typeof item.name === 'string')
+                .map((item) => {
+                const artworkUrl = extractArtworkUrl(item.image);
+                const info = {
+                    identifier: item.url || item.name,
+                    isSeekable: false,
+                    author: 'Last.fm',
+                    length: 0,
+                    isStream: false,
+                    position: 0,
+                    title: item.name,
+                    uri: item.url || '',
+                    artworkUrl,
+                    isrc: null,
+                    sourceName: 'lastfm'
+                };
+                return {
+                    encoded: encodeTrack({ ...info, details: [] }),
+                    info,
+                    pluginInfo: { type: 'artist' }
+                };
+            });
+        }
+        const trackMatches = results.trackmatches;
+        const rawTracks = trackMatches?.track;
+        const tracks = Array.isArray(rawTracks)
+            ? rawTracks
+            : rawTracks
+                ? [rawTracks]
+                : [];
+        return this.buildTrackList(tracks);
     }
 }
