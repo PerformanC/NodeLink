@@ -818,6 +818,10 @@ export const config: NodelinkConfig = {
       enabled: true
     },
 
+    zingmp3: {
+      enabled: true
+    },
+
     nicovideo: {
       enabled: true
     },

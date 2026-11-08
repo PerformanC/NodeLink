@@ -383,6 +383,7 @@ export default class ConfigValidationManager {
           kwai: { type: 'object', optional: true },
           twitch: { type: 'object', optional: true },
           chzzk: { type: 'object', optional: true },
+          zingmp3: { type: 'object', optional: true },
           nicovideo: { type: 'object', optional: true },
           reddit: { type: 'object', optional: true },
           tumblr: { type: 'object', optional: true },

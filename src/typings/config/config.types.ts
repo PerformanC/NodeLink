@@ -902,6 +902,12 @@ export interface SourcesRegistry {
   /** Naver Chzzk live stream/VOD/clip. */
   chzzk: FeatureToggle
 
+  /** Zing MP3 music and playlist streaming. */
+  zingmp3: FeatureToggle & {
+    /** Optional custom Vietnam IPv4 address used in X-Forwarded-For headers. */
+    vietnamIp?: string
+  }
+
   /** NicoVideo resolution. */
   nicovideo: FeatureToggle
 

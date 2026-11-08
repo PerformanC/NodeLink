@@ -762,6 +762,9 @@ export const config = {
         chzzk: {
             enabled: true
         },
+        zingmp3: {
+            enabled: true
+        },
         nicovideo: {
             enabled: true
         },
