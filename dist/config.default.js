@@ -316,6 +316,7 @@ export const config = {
             quality: 'high',
             encryption: 'aead_xchacha20_poly1305_rtpsize',
             resamplingQuality: 'best',
+            opusComplexity: 6,
             loudnessNormalizer: false,
             lookaheadMs: 5,
             gateThresholdLUFS: -60,

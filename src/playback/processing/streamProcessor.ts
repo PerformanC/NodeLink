@@ -3092,7 +3092,8 @@ class StreamAudioResource extends BaseAudioResource {
 
     const opusEncoder = new OpusEncoder({
       rate: AUDIO_CONFIG.sampleRate,
-      channels: AUDIO_CONFIG.channels
+      channels: AUDIO_CONFIG.channels,
+      complexity: nodelink.options.playback.audio?.opusComplexity
     })
 
     opusEncoder.setDTX(false)

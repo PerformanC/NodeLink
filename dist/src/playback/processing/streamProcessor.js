@@ -2343,7 +2343,8 @@ class StreamAudioResource extends BaseAudioResource {
         const flowController = new FlowController(volumeTransformer, fadeTransformer, tapeTransformer, scratchTransformer, audioMixer);
         const opusEncoder = new OpusEncoder({
             rate: AUDIO_CONFIG.sampleRate,
-            channels: AUDIO_CONFIG.channels
+            channels: AUDIO_CONFIG.channels,
+            complexity: nodelink.options.playback.audio?.opusComplexity
         });
         opusEncoder.setDTX(false);
         const streams = [pcmStream];

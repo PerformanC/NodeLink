@@ -341,6 +341,7 @@ export interface NodeLinkOptions {
     fading?: FadingConfig
     loudnessNormalizer?: boolean
     resamplingQuality?: string
+    opusComplexity?: number
     lookaheadMs?: number
     gateThresholdLUFS?: number
     filterTransitions?: FilterTransitionsConfig

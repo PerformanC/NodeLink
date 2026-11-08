@@ -1257,6 +1257,7 @@ export interface NodelinkConfig {
       quality: string
       encryption: string
       resamplingQuality: string
+      opusComplexity?: number
       loudnessNormalizer: boolean
       lookaheadMs: number
       gateThresholdLUFS: number

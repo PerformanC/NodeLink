@@ -9,6 +9,7 @@ const PCM_SAMPLE_BYTES = 2;
 // ^^ @toddynnn/voice-opus related, the encodeInto() functions does not check for MAX_PACKET_SIZE, unlike the encode().
 const OPUS_CTL = {
     BITRATE: 4002,
+    COMPLEXITY: 4010,
     FEC: 4012,
     PLP: 4014,
     DTX: 4016
@@ -75,7 +76,7 @@ export class Encoder extends Transform {
     leftover;
     leftoverStorage;
     encodedScratch;
-    constructor({ rate = 48000, channels = 2, frameSize = 960, application = 'audio' } = {}) {
+    constructor({ rate = 48000, channels = 2, frameSize = 960, application = 'audio', complexity } = {}) {
         super({ readableObjectMode: true });
         const { instance, lib } = _createInstance(rate, channels, application);
         this.enc = instance;
@@ -85,6 +86,10 @@ export class Encoder extends Transform {
         this.leftover = null;
         this.leftoverStorage = null;
         this.encodedScratch = Buffer.allocUnsafe(OPUS_MAX_PACKET_SIZE);
+        /* INFO: An omitted complexity preserves the selected codec library's default. */
+        if (complexity !== undefined) {
+            _applyCtl(this.enc, this.lib.name, OPUS_CTL.COMPLEXITY, complexity);
+        }
     }
     _transform(chunk, _encoding, cb) {
         if (!chunk?.length) {

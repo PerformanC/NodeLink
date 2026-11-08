@@ -360,11 +360,13 @@ export class HLSServer {
             throw new Error(urlResult.exception?.message || 'Failed to resolve track URL for HLS');
         }
         const { pcmStream, fetchedStream } = await this.createPCMStream(session, startSegment, startTimeMs, urlResult, runtime);
+        const { options } = runtime;
         const encoder = new OpusEncoder({
             rate: 48000,
             channels: 2,
             frameSize: 960,
-            application: 'audio'
+            application: 'audio',
+            complexity: options?.playback.audio.opusComplexity
         });
         const initialDecodeTime = BigInt(startSegment) * BigInt(targetFrames * 960);
         const feeder = {

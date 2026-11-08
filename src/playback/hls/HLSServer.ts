@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 import crypto from 'node:crypto'
 import type { Readable } from 'node:stream'
+import type { NodelinkConfig } from '../../typings/config/config.types.ts'
 import type {
   HlsFeeder,
   HlsPlaylistBuildOptions,
@@ -574,11 +575,13 @@ export class HLSServer {
       runtime
     )
 
+    const { options } = runtime as { options?: NodelinkConfig }
     const encoder = new OpusEncoder({
       rate: 48000,
       channels: 2,
       frameSize: 960,
-      application: 'audio'
+      application: 'audio',
+      complexity: options?.playback.audio.opusComplexity
     })
 
     const initialDecodeTime = BigInt(startSegment) * BigInt(targetFrames * 960)

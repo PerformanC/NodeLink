@@ -264,6 +264,15 @@ export default class ConfigValidationManager {
               },
               encryption: { type: 'string', optional: true },
               resamplingQuality: { type: 'string', optional: true },
+              opusComplexity: {
+                type: 'number',
+                integer: true,
+                min: 0,
+                max: 10,
+                optional: true,
+                /* INFO: Normalize optional null values before they reach native codec controls. */
+                default: () => undefined
+              },
               loudnessNormalizer: { type: 'boolean', optional: true },
               fading: { type: 'object', optional: true },
               crossfade: {
