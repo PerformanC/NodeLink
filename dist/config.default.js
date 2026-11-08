@@ -766,6 +766,9 @@ export const config = {
         zingmp3: {
             enabled: true
         },
+        qqmusic: {
+            enabled: true
+        },
         nicovideo: {
             enabled: true
         },

@@ -823,6 +823,10 @@ export const config: NodelinkConfig = {
       enabled: true
     },
 
+    qqmusic: {
+      enabled: true
+    },
+
     nicovideo: {
       enabled: true
     },

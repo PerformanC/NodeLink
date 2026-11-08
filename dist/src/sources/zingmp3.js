@@ -19,6 +19,36 @@ export default class ZingMp3Source {
      */
     static _TESTS = [
         {
+            id: 'zingmp3.track.stream',
+            name: 'Zing MP3 native audio streaming',
+            input: {
+                type: 'resolve',
+                value: 'https://zingmp3.vn/bai-hat/Xa-Mai-Xa-Bao-Thy/ZWZB9WAB.html'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    author: { op: 'matches', value: 'Bảo Thy' },
+                    sourceName: { op: 'equals', value: 'zingmp3' }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 500000,
+                    validFormats: [{ container: 'mp3', codec: 'mp3' }],
+                    decodeToEnd: true
+                }
+            },
+            forbid: {
+                resultTypes: ['empty', 'error']
+            }
+        },
+        {
             id: 'zingmp3.track.standard',
             name: 'Zing MP3 track resolution',
             input: {
@@ -304,6 +334,50 @@ export default class ZingMp3Source {
         return {
             stream: passthrough,
             type: 'audio/mpeg'
+        };
+    }
+    /**
+     * Executes a variant test for declarative stream verification in test-sources.
+     * @param variant - Test variant definition.
+     * @param track - Track info under test.
+     * @param streamSpec - Optional stream validation specification.
+     * @returns Variant test result with stream.
+     * @public
+     */
+    async executeVariant(variant, track, streamSpec) {
+        const urlData = await this.getTrackUrl(track);
+        if (!urlData || urlData.exception || !urlData.url) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: urlData?.exception?.message || 'Failed to resolve track streaming URL'
+            };
+        }
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: urlData.newTrack?.info || track,
+                container: 'mp3',
+                codec: 'mp3'
+            };
+        }
+        const streamResult = await this.loadStream(track, urlData.url);
+        if (!('stream' in streamResult)) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: streamResult.exception?.message || 'Failed to load audio stream'
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track: urlData.newTrack?.info || track,
+            stream: streamResult.stream,
+            container: 'mp3',
+            codec: 'mp3',
+            httpStatus: 200
         };
     }
     /**

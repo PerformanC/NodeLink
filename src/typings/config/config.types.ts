@@ -908,6 +908,16 @@ export interface SourcesRegistry {
     vietnamIp?: string
   }
 
+  /** QQ Music music, album, playlist, and toplist streaming. */
+  qqmusic: FeatureToggle & {
+    /** Optional cookie string for VIP credentials. */
+    cookie?: string
+    /** Optional QQ User Identification Number (UIN). */
+    uin?: string | number
+    /** Optional QQ Music keyst token for authenticated API calls. */
+    qmKeyst?: string
+  }
+
   /** NicoVideo resolution. */
   nicovideo: FeatureToggle
 
