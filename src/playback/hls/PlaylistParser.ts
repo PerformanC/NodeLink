@@ -64,7 +64,10 @@ export function parse(content: string, baseUrl: string): HLSPlaylist {
     const line = lines[i]
     if (line === undefined) continue
 
-    if (line.startsWith('#EXT-X-DISCONTINUITY')) {
+    if (
+      line.startsWith('#EXT-X-DISCONTINUITY') &&
+      !line.startsWith('#EXT-X-DISCONTINUITY-SEQUENCE')
+    ) {
       pendingDiscontinuity = true
     } else if (line.startsWith('#EXT-X-KEY:')) {
       currentKey = parseAttributes(line, baseUrl) as unknown as HLSSegmentKey

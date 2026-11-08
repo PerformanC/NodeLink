@@ -814,6 +814,10 @@ export const config: NodelinkConfig = {
       enabled: true
     },
 
+    chzzk: {
+      enabled: true
+    },
+
     nicovideo: {
       enabled: true
     },

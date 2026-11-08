@@ -899,6 +899,9 @@ export interface SourcesRegistry {
   /** Twitch stream/clip. */
   twitch: FeatureToggle
 
+  /** Naver Chzzk live stream/VOD/clip. */
+  chzzk: FeatureToggle
+
   /** NicoVideo resolution. */
   nicovideo: FeatureToggle
 

@@ -378,6 +378,7 @@ export default class ConfigValidationManager {
                     instagram: { type: 'object', optional: true },
                     kwai: { type: 'object', optional: true },
                     twitch: { type: 'object', optional: true },
+                    chzzk: { type: 'object', optional: true },
                     nicovideo: { type: 'object', optional: true },
                     reddit: { type: 'object', optional: true },
                     tumblr: { type: 'object', optional: true },

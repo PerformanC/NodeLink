@@ -759,6 +759,9 @@ export const config = {
         twitch: {
             enabled: true
         },
+        chzzk: {
+            enabled: true
+        },
         nicovideo: {
             enabled: true
         },
