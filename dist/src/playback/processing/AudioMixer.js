@@ -92,7 +92,7 @@ export class AudioMixer extends Readable {
                     sample += ((layer.view[i] ?? 0) * layer.volume) | 0;
                 }
             }
-            outputView[i] = sample < -32768 ? -32768 : sample > 32767 ? 32767 : sample;
+            outputView[i] = sample < -32768 ? -32768 : Math.min(sample, 32767);
         }
         return outputBuffer;
     }

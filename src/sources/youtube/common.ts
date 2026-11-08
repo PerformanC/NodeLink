@@ -542,7 +542,8 @@ function extractThumbnail(
 ): string | null {
   let resultUrl: string | null = null
 
-  const musicThumbnails = renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+  const musicThumbnails =
+    renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
   const regularThumbnails = renderer?.thumbnail?.thumbnails
 
   if (Array.isArray(musicThumbnails) && musicThumbnails.length > 0) {

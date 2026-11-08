@@ -5,7 +5,7 @@
  * This seems to be a Internal youtube client. It does not require
  * a login to function, just like ANDROID_VR.
  * As of this date (08/16/2026), its more reliable than ANDROID_VR.
- * 
+ *
  * @packageDocumentation
  * @module YouTubeVisionOSClient
  */

@@ -322,7 +322,7 @@ export default class QQMusicSource {
     async getTrackUrl(track) {
         const mid = track.identifier;
         const curMs = Date.now() % 1000;
-        const guid = String(Math.floor((Math.random() * 2147483647) * curMs % 1e10));
+        const guid = String(Math.floor((Math.random() * 2147483647 * curMs) % 1e10));
         const uin = this.config?.uin ? String(this.config.uin) : '0';
         let mediaMid = mid;
         try {
@@ -720,8 +720,10 @@ export default class QQMusicSource {
      */
     buildSongTrack(song) {
         const mid = song.mid || String(song.id || '');
-        const author = song.singer?.map((s) => s.name || s.title).filter(Boolean).join(', ') ||
-            'Unknown Artist';
+        const author = song.singer
+            ?.map((s) => s.name || s.title)
+            .filter(Boolean)
+            .join(', ') || 'Unknown Artist';
         const artworkUrl = song.album?.mid
             ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${song.album.mid}.jpg`
             : song.singer?.[0]?.mid
@@ -752,8 +754,10 @@ export default class QQMusicSource {
      */
     buildLegacySongTrack(song) {
         const mid = song.songmid || String(song.songid || '');
-        const author = song.singer?.map((s) => s.name).filter(Boolean).join(', ') ||
-            'Unknown Artist';
+        const author = song.singer
+            ?.map((s) => s.name)
+            .filter(Boolean)
+            .join(', ') || 'Unknown Artist';
         const artworkUrl = song.albummid
             ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${song.albummid}.jpg`
             : song.singer?.[0]?.mid
@@ -793,7 +797,8 @@ export default class QQMusicSource {
         }
         const query = `${track.title} ${track.author}`;
         const searchResult = await this.nodelink.sources.search(query, 'ytsearch');
-        if (searchResult.loadType !== 'search' || !Array.isArray(searchResult.data)) {
+        if (searchResult.loadType !== 'search' ||
+            !Array.isArray(searchResult.data)) {
             return {
                 exception: {
                     message: 'No fallback track found for VIP audio.',
@@ -805,7 +810,7 @@ export default class QQMusicSource {
         const fallbackTracks = [];
         for (const item of searchResult.data) {
             const info = item?.info;
-            if (info && info.title && info.author) {
+            if (info?.title && info.author) {
                 candidates.push({ info });
                 fallbackTracks.push(info);
             }

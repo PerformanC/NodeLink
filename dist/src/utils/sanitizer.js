@@ -16,20 +16,20 @@ const IPV4_REGEX = /\b(?!127\.0\.0\.1\b|0\.0\.0\.0\b)(?:25[0-5]|2[0-4]\d|1\d\d|[
 const IPV6_REGEX = /\b(?!::1\b|::\b)(?:[0-9a-fA-F]{1,4}:){1,7}(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|(?:::([0-9a-fA-F]{1,4}:){1,7}|::[0-9a-fA-F]{1,4})|(?:\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b)/g;
 const SSID_REGEX = /\(SSID\s+([^)]+)\)/g;
 const PROXY_AUTH_REGEX = /((?:https?|socks5?|ftp):\/\/)([^:\s@]+):([^@\s]+)@/gi;
-const YT_TOKEN_REGEX = /\byt\.a\.[A-Za-z0-9_\-]{8,}\b/g;
-const VK_TOKEN_REGEX = /\bvk1\.a\.[A-Za-z0-9_\-]{8,}\b/g;
-const SPOTIFY_SP_DC_REGEX = /\bAQDV[A-Za-z0-9_\-]{16,}\b/g;
-const YOUTUBE_REFRESH_TOKEN_REGEX = /\b1\/\/[A-Za-z0-9_\-]{12,}\b/g;
+const YT_TOKEN_REGEX = /\byt\.a\.[A-Za-z0-9_-]{8,}\b/g;
+const VK_TOKEN_REGEX = /\bvk1\.a\.[A-Za-z0-9_-]{8,}\b/g;
+const SPOTIFY_SP_DC_REGEX = /\bAQDV[A-Za-z0-9_-]{16,}\b/g;
+const YOUTUBE_REFRESH_TOKEN_REGEX = /\b1\/\/[A-Za-z0-9_-]{12,}\b/g;
 const DISCORD_BOT_TOKEN_REGEX = /\b[MN][A-Za-z\d]{23,26}\.[\w-]{6}\.[\w-]{27,38}\b/g;
-const BEARER_AUTH_REGEX = /\b(Bearer\s+)([A-Za-z0-9_\-\.~+/]{12,}=*)\b/gi;
-const BASIC_AUTH_REGEX = /\b(Basic\s+)([A-Za-z0-9_\-\.~+/]{12,}=*)\b/gi;
+const BEARER_AUTH_REGEX = /\b(Bearer\s+)([A-Za-z0-9_\-.~+/]{12,}=*)\b/gi;
+const BASIC_AUTH_REGEX = /\b(Basic\s+)([A-Za-z0-9_\-.~+/]{12,}=*)\b/gi;
 const KEY_VALUE_SECRET_REGEX = /(["']?(?:[a-zA-Z0-9_]*password|[a-zA-Z0-9_]*secret|decryptionKey|mediaApiToken|apiKey|userToken|mediaUserToken|refreshToken|arl|deviceId|udid)["']?\s*[:=]\s*["']?)([^"'\r\n,;]+)(["']?)/gi;
 const COOKIE_HEADER_REGEX = /(cookie\s*:\s*["']?)([^"'\r\n]+)(["']?)/gi;
 const COOKIE_FIELD_REGEX = /(cookies\s*:\s*["'])([^"'\r\n]+)(["'])/gi;
 const REMIX_COOKIE_REGEX = /\b(remixsid|solution429|COMPASS|SAPISID|APISID|SSID|HSID|SID|SIDCC)=([^;\s"']+)/g;
-const EMAIL_REGEX = /(?<![\/\w@])([a-zA-Z0-9_.+-])[a-zA-Z0-9_.+-]*@([a-zA-Z0-9-]+\.[a-zA-Z]{2,63})\b/g;
+const EMAIL_REGEX = /(?<![/\w@])([a-zA-Z0-9_.+-])[a-zA-Z0-9_.+-]*@([a-zA-Z0-9-]+\.[a-zA-Z]{2,63})\b/g;
 const LOGIN_ACCOUNT_REGEX = /\b(Logged into \w+ as:)\s*([^(\r\n]+?)(?:\s*\(([^)\r\n]+)\))?(?=$|[,\r\n])/gi;
-const CLIENT_ID_REGEX = /(client[_-]?id[:=\s]+|[Cc]lient[ -]ID[:=\s]+|client_id\s*\()([A-Za-z0-9_\-]{16,})(\)?)/gi;
+const CLIENT_ID_REGEX = /(client[_-]?id[:=\s]+|[Cc]lient[ -]ID[:=\s]+|client_id\s*\()([A-Za-z0-9_-]{16,})(\)?)/gi;
 const UDID_REGEX = /\b((?:Extracted\s+)?(?:X-ANGH-UDID|X-Device-ID|UDID|udid|deviceId|device_id)[^\r\n:]*:\s*)([a-fA-F0-9-]{16,64})\b/gi;
 const DISCORD_ID_REGEX = /\b(?:guild|user|channel|session)?[\s:_]*(\d{17,20})\b/gi;
 export class LogSanitizer {
@@ -98,8 +98,8 @@ export class LogSanitizer {
                     .replace(/\\\\/g, '\\\\+');
                 output = output.replace(new RegExp(escaped, 'gi'), '<USER_HOME>');
             }
-            output = output.replace(/[a-zA-Z]:\\+Users\\+[^\s\\\/:"'<>|]+/gi, '<USER_HOME>');
-            output = output.replace(/\/(?:home|Users)\/[^\s\\\/:"'<>|]+/g, '<USER_HOME>');
+            output = output.replace(/[a-zA-Z]:\\+Users\\+[^\s\\/:"'<>|]+/gi, '<USER_HOME>');
+            output = output.replace(/\/(?:home|Users)\/[^\s\\/:"'<>|]+/g, '<USER_HOME>');
         }
         if (this.options.networkInfo) {
             output = output.replace(SSID_REGEX, (_match, ssid) => {
@@ -111,8 +111,12 @@ export class LogSanitizer {
         }
         if (this.options.passwords) {
             output = output.replace(PROXY_AUTH_REGEX, (_match, protocol, user, pass) => {
-                const userRepl = isTrace ? this.getTraceToken('pass', user) : '[REDACTED_USER]';
-                const passRepl = isTrace ? this.getTraceToken('pass', pass) : '[REDACTED_PASS]';
+                const userRepl = isTrace
+                    ? this.getTraceToken('pass', user)
+                    : '[REDACTED_USER]';
+                const passRepl = isTrace
+                    ? this.getTraceToken('pass', pass)
+                    : '[REDACTED_PASS]';
                 return `${protocol}${userRepl}:${passRepl}@`;
             });
             output = output.replace(KEY_VALUE_SECRET_REGEX, (_match, prefix, secret, suffix) => {

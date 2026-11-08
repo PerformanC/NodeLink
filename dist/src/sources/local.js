@@ -458,10 +458,7 @@ export default class LocalSource {
                 }
             };
         }
-        const extension = path
-            .extname(filePath)
-            .slice(1)
-            .toLowerCase();
+        const extension = path.extname(filePath).slice(1).toLowerCase();
         const metadata = this.getTrackMetadata(track);
         const streamType = metadata?.streamType ?? this.detectLocalAudioType(filePath, extension);
         return {
@@ -490,7 +487,7 @@ export default class LocalSource {
             throw new Error('Path traversal is not allowed.');
         }
         const stats = await fs.promises.stat(filePath).catch(() => null);
-        if (!stats || !stats.isFile()) {
+        if (!stats?.isFile()) {
             throw new Error('Local file not found or is not a regular file.');
         }
         const extension = path.extname(filePath).slice(1).toLowerCase();

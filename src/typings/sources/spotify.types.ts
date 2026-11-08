@@ -474,4 +474,3 @@ export interface SpotifyGraphQLShowResponse {
     }
   }
 }
-

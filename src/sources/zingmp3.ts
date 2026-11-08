@@ -109,7 +109,8 @@ export default class ZingMp3Source
       name: 'Zing MP3 album resolution',
       input: {
         type: 'resolve',
-        value: 'https://zingmp3.vn/album/Special-Album-Bao-Thy/Dw7v1MMIRBSU.html'
+        value:
+          'https://zingmp3.vn/album/Special-Album-Bao-Thy/Dw7v1MMIRBSU.html'
       },
       expect: {
         result: {
@@ -325,7 +326,9 @@ export default class ZingMp3Source
         loadType: 'error',
         exception: {
           message:
-            error instanceof Error ? error.message : 'Zing MP3 resolution error',
+            error instanceof Error
+              ? error.message
+              : 'Zing MP3 resolution error',
           severity: 'common'
         }
       }
@@ -397,7 +400,8 @@ export default class ZingMp3Source
     if (res.error || !res.stream || (res.statusCode && res.statusCode >= 400)) {
       return {
         exception: {
-          message: res.error || `HTTP error ${res.statusCode} loading audio stream`,
+          message:
+            res.error || `HTTP error ${res.statusCode} loading audio stream`,
           severity: 'fault'
         }
       }
@@ -496,7 +500,7 @@ export default class ZingMp3Source
     )
 
     const song = response?.data
-    if (!song || !song.encodeId || !song.title) {
+    if (!song?.encodeId || !song.title) {
       return {
         loadType: 'empty',
         data: {}
@@ -521,7 +525,12 @@ export default class ZingMp3Source
 
     const playlist = response?.data
     const songItems = playlist?.song?.items
-    if (!playlist || !songItems || !Array.isArray(songItems) || songItems.length === 0) {
+    if (
+      !playlist ||
+      !songItems ||
+      !Array.isArray(songItems) ||
+      songItems.length === 0
+    ) {
       return {
         loadType: 'empty',
         data: {}
@@ -560,7 +569,9 @@ export default class ZingMp3Source
    */
   private buildTrack(song: ZingMp3SongData): TrackData {
     const uri = song.link
-      ? (song.link.startsWith('http') ? song.link : `${DOMAIN}${song.link}`)
+      ? song.link.startsWith('http')
+        ? song.link
+        : `${DOMAIN}${song.link}`
       : `${DOMAIN}/bai-hat/${song.encodeId}.html`
 
     const trackInfo: TrackInfo = {
@@ -602,7 +613,10 @@ export default class ZingMp3Source
 
     const query = `${track.title} ${track.author}`
     const searchResult = await this.nodelink.sources.search(query, 'ytsearch')
-    if (searchResult.loadType !== 'search' || !Array.isArray(searchResult.data)) {
+    if (
+      searchResult.loadType !== 'search' ||
+      !Array.isArray(searchResult.data)
+    ) {
       return {
         exception: {
           message: 'No fallback track found for VIP audio.',
@@ -616,7 +630,7 @@ export default class ZingMp3Source
 
     for (const item of searchResult.data) {
       const info = (item as TrackData)?.info
-      if (info && info.title && info.author) {
+      if (info?.title && info.author) {
         candidates.push({ info })
         fallbackTracks.push(info)
       }
@@ -659,7 +673,7 @@ export default class ZingMp3Source
   private parseUrl(url: string): ZingMp3ParsedUrl | null {
     for (const pattern of this.patterns) {
       const match = pattern.exec(url)
-      if (match && match[1] && match[2]) {
+      if (match?.[1] && match[2]) {
         const rawType = match[1].toLowerCase()
         const id = match[2]
 
@@ -755,10 +769,7 @@ export default class ZingMp3Source
    * Computes the HMAC-SHA512 signature for whitelisted query parameters.
    * @internal
    */
-  private buildSignature(
-    slug: string,
-    params: Record<string, string>
-  ): string {
+  private buildSignature(slug: string, params: Record<string, string>): string {
     const sortedKeys = Object.keys(params).sort()
     const hashParams: Record<string, string> = {}
 
@@ -793,7 +804,10 @@ export default class ZingMp3Source
    */
   private async ensureSession(): Promise<string> {
     const now = Date.now()
-    if (this.cachedCookieHeader && now - this.cookieCachedAt < SESSION_CACHE_TTL) {
+    if (
+      this.cachedCookieHeader &&
+      now - this.cookieCachedAt < SESSION_CACHE_TTL
+    ) {
       return this.cachedCookieHeader
     }
 
@@ -809,7 +823,9 @@ export default class ZingMp3Source
 
     const setCookies = res.headers?.['set-cookie']
     if (Array.isArray(setCookies)) {
-      this.cachedCookieHeader = setCookies.map((c) => c.split(';')[0]).join('; ')
+      this.cachedCookieHeader = setCookies
+        .map((c) => c.split(';')[0])
+        .join('; ')
     } else if (typeof setCookies === 'string') {
       this.cachedCookieHeader = setCookies.split(';')[0] ?? ''
     } else {

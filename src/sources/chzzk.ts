@@ -20,14 +20,12 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
-import type {
-  SourceTestCase,
-  SourceVariantHandler
-} from '../typings/sources/test.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
 
 const CHZZK_API_BASE = 'https://api.chzzk.naver.com'
-const NEONPLAYER_API_BASE = 'https://apis.naver.com/neonplayer/vodplay/v1/playback'
+const NEONPLAYER_API_BASE =
+  'https://apis.naver.com/neonplayer/vodplay/v1/playback'
 
 const DEFAULT_HEADERS = {
   'User-Agent':
@@ -162,22 +160,30 @@ export default class ChzzkSource implements SourceInstance {
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
-      const liveMatch = url.match(/^https?:\/\/chzzk\.naver\.com\/live\/([a-fA-F0-9]+)/i)
+      const liveMatch = url.match(
+        /^https?:\/\/chzzk\.naver\.com\/live\/([a-fA-F0-9]+)/i
+      )
       if (liveMatch?.[1]) {
         return await this._loadLive(liveMatch[1], url)
       }
 
-      const videoMatch = url.match(/^https?:\/\/chzzk\.naver\.com\/video\/(\d+)/i)
+      const videoMatch = url.match(
+        /^https?:\/\/chzzk\.naver\.com\/video\/(\d+)/i
+      )
       if (videoMatch?.[1]) {
         return await this._loadVideo(videoMatch[1], url)
       }
 
-      const clipMatch = url.match(/^https?:\/\/chzzk\.naver\.com\/clips\/([\w-]+)/i)
+      const clipMatch = url.match(
+        /^https?:\/\/chzzk\.naver\.com\/clips\/([\w-]+)/i
+      )
       if (clipMatch?.[1]) {
         return await this._loadClip(clipMatch[1], url)
       }
 
-      const channelMatch = url.match(/^https?:\/\/chzzk\.naver\.com\/([a-fA-F0-9]{32})(?:[/?#]|$)/i)
+      const channelMatch = url.match(
+        /^https?:\/\/chzzk\.naver\.com\/([a-fA-F0-9]{32})(?:[/?#]|$)/i
+      )
       if (channelMatch?.[1]) {
         return await this._loadChannel(channelMatch[1], url)
       }
@@ -292,17 +298,23 @@ export default class ChzzkSource implements SourceInstance {
    */
   public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
     try {
-      const liveMatch = track.uri.match(/^https?:\/\/chzzk\.naver\.com\/live\/([a-fA-F0-9]+)/i)
+      const liveMatch = track.uri.match(
+        /^https?:\/\/chzzk\.naver\.com\/live\/([a-fA-F0-9]+)/i
+      )
       if (liveMatch?.[1]) {
         return await this._getLiveStreamUrl(liveMatch[1])
       }
 
-      const videoMatch = track.uri.match(/^https?:\/\/chzzk\.naver\.com\/video\/(\d+)/i)
+      const videoMatch = track.uri.match(
+        /^https?:\/\/chzzk\.naver\.com\/video\/(\d+)/i
+      )
       if (videoMatch?.[1]) {
         return await this._getVideoStreamUrl(videoMatch[1])
       }
 
-      const clipMatch = track.uri.match(/^https?:\/\/chzzk\.naver\.com\/clips\/([\w-]+)/i)
+      const clipMatch = track.uri.match(
+        /^https?:\/\/chzzk\.naver\.com\/clips\/([\w-]+)/i
+      )
       if (clipMatch?.[1]) {
         return await this._getClipStreamUrl(clipMatch[1])
       }
@@ -392,7 +404,10 @@ export default class ChzzkSource implements SourceInstance {
    * Loads a live stream track by channel ID.
    * @internal
    */
-  private async _loadLive(channelId: string, url: string): Promise<SourceResult> {
+  private async _loadLive(
+    channelId: string,
+    url: string
+  ): Promise<SourceResult> {
     const res = await http1makeRequest(
       `${CHZZK_API_BASE}/service/v3/channels/${channelId}/live-detail`,
       { headers: DEFAULT_HEADERS }
@@ -432,7 +447,10 @@ export default class ChzzkSource implements SourceInstance {
    * Loads a VOD track by video ID.
    * @internal
    */
-  private async _loadVideo(videoId: string, url: string): Promise<SourceResult> {
+  private async _loadVideo(
+    videoId: string,
+    url: string
+  ): Promise<SourceResult> {
     const res = await http1makeRequest(
       `${CHZZK_API_BASE}/service/v3/videos/${videoId}`,
       { headers: DEFAULT_HEADERS }
@@ -510,7 +528,10 @@ export default class ChzzkSource implements SourceInstance {
    * Loads channel live stream if currently broadcasting.
    * @internal
    */
-  private async _loadChannel(channelId: string, _url: string): Promise<SourceResult> {
+  private async _loadChannel(
+    channelId: string,
+    _url: string
+  ): Promise<SourceResult> {
     const channelRes = await http1makeRequest(
       `${CHZZK_API_BASE}/service/v1/channels/${channelId}`,
       { headers: DEFAULT_HEADERS }
@@ -527,7 +548,10 @@ export default class ChzzkSource implements SourceInstance {
     ) as ChzzkApiResponse<ChzzkChannelDetail>
 
     if (body.content?.openLive) {
-      return await this._loadLive(channelId, `https://chzzk.naver.com/live/${channelId}`)
+      return await this._loadLive(
+        channelId,
+        `https://chzzk.naver.com/live/${channelId}`
+      )
     }
 
     return {
@@ -547,7 +571,9 @@ export default class ChzzkSource implements SourceInstance {
     )
 
     if (res.statusCode !== 200 || !res.body) {
-      throw new Error(`Failed to fetch Chzzk live detail (status ${res.statusCode})`)
+      throw new Error(
+        `Failed to fetch Chzzk live detail (status ${res.statusCode})`
+      )
     }
 
     const body = (
@@ -578,11 +604,15 @@ export default class ChzzkSource implements SourceInstance {
     }
 
     // Prefer audio-only HLS track when available for lower bandwidth consumption
-    const audioTrack = hlsMedia.encodingTrack?.find((t) => t.audioOnly && t.path)
+    const audioTrack = hlsMedia.encodingTrack?.find(
+      (t) => t.audioOnly && t.path
+    )
     const streamUrl = audioTrack?.path || hlsMedia.path
 
     if (!streamUrl) {
-      throw new Error('No valid HLS playlist path found in Chzzk live playback.')
+      throw new Error(
+        'No valid HLS playlist path found in Chzzk live playback.'
+      )
     }
 
     return {
@@ -603,7 +633,9 @@ export default class ChzzkSource implements SourceInstance {
     )
 
     if (res.statusCode !== 200 || !res.body) {
-      throw new Error(`Failed to fetch Chzzk video detail (status ${res.statusCode})`)
+      throw new Error(
+        `Failed to fetch Chzzk video detail (status ${res.statusCode})`
+      )
     }
 
     const body = (
@@ -622,7 +654,8 @@ export default class ChzzkSource implements SourceInstance {
           : content.liveRewindPlaybackJson
       ) as ChzzkLivePlaybackJson
 
-      const hls = rewindPb.media?.find((m) => m.protocol === 'HLS') || rewindPb.media?.[0]
+      const hls =
+        rewindPb.media?.find((m) => m.protocol === 'HLS') || rewindPb.media?.[0]
       if (hls?.path) {
         return { url: hls.path, protocol: 'hls', format: 'aac' }
       }
@@ -646,7 +679,9 @@ export default class ChzzkSource implements SourceInstance {
     )
 
     if (res.statusCode !== 200 || !res.body) {
-      throw new Error(`Failed to fetch Chzzk clip play-info (status ${res.statusCode})`)
+      throw new Error(
+        `Failed to fetch Chzzk clip play-info (status ${res.statusCode})`
+      )
     }
 
     const body = (
@@ -676,8 +711,11 @@ export default class ChzzkSource implements SourceInstance {
       throw new Error(`Neonplayer request failed (status ${res.statusCode})`)
     }
 
-    const bodyStr = typeof res.body === 'string' ? res.body : JSON.stringify(res.body)
-    const directMp4Match = bodyStr.match(/https?:\/\/[^"'\s,]+\.mp4\?[^"'\s,]+/i)
+    const bodyStr =
+      typeof res.body === 'string' ? res.body : JSON.stringify(res.body)
+    const directMp4Match = bodyStr.match(
+      /https?:\/\/[^"'\s,]+\.mp4\?[^"'\s,]+/i
+    )
     if (directMp4Match?.[0]) {
       return {
         url: directMp4Match[0],

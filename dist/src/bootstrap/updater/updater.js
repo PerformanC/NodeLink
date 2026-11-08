@@ -19,9 +19,7 @@ function areCommitsEqual(a, b) {
         return false;
     const cleanA = a.trim().toLowerCase();
     const cleanB = b.trim().toLowerCase();
-    return (cleanA === cleanB ||
-        cleanA.startsWith(cleanB) ||
-        cleanB.startsWith(cleanA));
+    return (cleanA === cleanB || cleanA.startsWith(cleanB) || cleanB.startsWith(cleanA));
 }
 export class UpdateManager {
     root;
@@ -235,9 +233,7 @@ export class UpdateManager {
                 reason: 'Local installation is already running the latest commit'
             };
         }
-        let available = !isSameCommit &&
-            current.commit !== 'unknown' &&
-            latest.commit.length > 0;
+        let available = !isSameCommit && current.commit !== 'unknown' && latest.commit.length > 0;
         if (provider.type === 'git') {
             const gitProvider = provider;
             const isBehind = await gitProvider.isBehind(current.commit, latest.commit);

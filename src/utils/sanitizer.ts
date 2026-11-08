@@ -1,5 +1,4 @@
 import os from 'node:os'
-import process from 'node:process'
 
 export type RedactionMode = 'mask' | 'trace' | 'off'
 
@@ -39,38 +38,33 @@ const IPV6_REGEX =
 
 const SSID_REGEX = /\(SSID\s+([^)]+)\)/g
 
-const PROXY_AUTH_REGEX =
-  /((?:https?|socks5?|ftp):\/\/)([^:\s@]+):([^@\s]+)@/gi
+const PROXY_AUTH_REGEX = /((?:https?|socks5?|ftp):\/\/)([^:\s@]+):([^@\s]+)@/gi
 
-const YT_TOKEN_REGEX = /\byt\.a\.[A-Za-z0-9_\-]{8,}\b/g
-const VK_TOKEN_REGEX = /\bvk1\.a\.[A-Za-z0-9_\-]{8,}\b/g
-const SPOTIFY_SP_DC_REGEX = /\bAQDV[A-Za-z0-9_\-]{16,}\b/g
-const YOUTUBE_REFRESH_TOKEN_REGEX = /\b1\/\/[A-Za-z0-9_\-]{12,}\b/g
+const YT_TOKEN_REGEX = /\byt\.a\.[A-Za-z0-9_-]{8,}\b/g
+const VK_TOKEN_REGEX = /\bvk1\.a\.[A-Za-z0-9_-]{8,}\b/g
+const SPOTIFY_SP_DC_REGEX = /\bAQDV[A-Za-z0-9_-]{16,}\b/g
+const YOUTUBE_REFRESH_TOKEN_REGEX = /\b1\/\/[A-Za-z0-9_-]{12,}\b/g
 const DISCORD_BOT_TOKEN_REGEX =
   /\b[MN][A-Za-z\d]{23,26}\.[\w-]{6}\.[\w-]{27,38}\b/g
-const BEARER_AUTH_REGEX =
-  /\b(Bearer\s+)([A-Za-z0-9_\-\.~+/]{12,}=*)\b/gi
-const BASIC_AUTH_REGEX =
-  /\b(Basic\s+)([A-Za-z0-9_\-\.~+/]{12,}=*)\b/gi
+const BEARER_AUTH_REGEX = /\b(Bearer\s+)([A-Za-z0-9_\-.~+/]{12,}=*)\b/gi
+const BASIC_AUTH_REGEX = /\b(Basic\s+)([A-Za-z0-9_\-.~+/]{12,}=*)\b/gi
 
 const KEY_VALUE_SECRET_REGEX =
   /(["']?(?:[a-zA-Z0-9_]*password|[a-zA-Z0-9_]*secret|decryptionKey|mediaApiToken|apiKey|userToken|mediaUserToken|refreshToken|arl|deviceId|udid)["']?\s*[:=]\s*["']?)([^"'\r\n,;]+)(["']?)/gi
 
-const COOKIE_HEADER_REGEX =
-  /(cookie\s*:\s*["']?)([^"'\r\n]+)(["']?)/gi
-const COOKIE_FIELD_REGEX =
-  /(cookies\s*:\s*["'])([^"'\r\n]+)(["'])/gi
+const COOKIE_HEADER_REGEX = /(cookie\s*:\s*["']?)([^"'\r\n]+)(["']?)/gi
+const COOKIE_FIELD_REGEX = /(cookies\s*:\s*["'])([^"'\r\n]+)(["'])/gi
 const REMIX_COOKIE_REGEX =
   /\b(remixsid|solution429|COMPASS|SAPISID|APISID|SSID|HSID|SID|SIDCC)=([^;\s"']+)/g
 
 const EMAIL_REGEX =
-  /(?<![\/\w@])([a-zA-Z0-9_.+-])[a-zA-Z0-9_.+-]*@([a-zA-Z0-9-]+\.[a-zA-Z]{2,63})\b/g
+  /(?<![/\w@])([a-zA-Z0-9_.+-])[a-zA-Z0-9_.+-]*@([a-zA-Z0-9-]+\.[a-zA-Z]{2,63})\b/g
 
 const LOGIN_ACCOUNT_REGEX =
   /\b(Logged into \w+ as:)\s*([^(\r\n]+?)(?:\s*\(([^)\r\n]+)\))?(?=$|[,\r\n])/gi
 
 const CLIENT_ID_REGEX =
-  /(client[_-]?id[:=\s]+|[Cc]lient[ -]ID[:=\s]+|client_id\s*\()([A-Za-z0-9_\-]{16,})(\)?)/gi
+  /(client[_-]?id[:=\s]+|[Cc]lient[ -]ID[:=\s]+|client_id\s*\()([A-Za-z0-9_-]{16,})(\)?)/gi
 
 const UDID_REGEX =
   /\b((?:Extracted\s+)?(?:X-ANGH-UDID|X-Device-ID|UDID|udid|deviceId|device_id)[^\r\n:]*:\s*)([a-fA-F0-9-]{16,64})\b/gi
@@ -122,7 +116,10 @@ export class LogSanitizer {
     }
   }
 
-  private getTraceToken(type: keyof typeof this.traceCounters, originalValue: string): string {
+  private getTraceToken(
+    type: keyof typeof this.traceCounters,
+    originalValue: string
+  ): string {
     const key = `${type}:${originalValue}`
     const existing = this.traceMap.get(key)
     if (existing) {
@@ -152,12 +149,12 @@ export class LogSanitizer {
       }
 
       output = output.replace(
-        /[a-zA-Z]:\\+Users\\+[^\s\\\/:"'<>|]+/gi,
+        /[a-zA-Z]:\\+Users\\+[^\s\\/:"'<>|]+/gi,
         '<USER_HOME>'
       )
 
       output = output.replace(
-        /\/(?:home|Users)\/[^\s\\\/:"'<>|]+/g,
+        /\/(?:home|Users)\/[^\s\\/:"'<>|]+/g,
         '<USER_HOME>'
       )
     }
@@ -175,8 +172,12 @@ export class LogSanitizer {
       output = output.replace(
         PROXY_AUTH_REGEX,
         (_match, protocol: string, user: string, pass: string) => {
-          const userRepl = isTrace ? this.getTraceToken('pass', user) : '[REDACTED_USER]'
-          const passRepl = isTrace ? this.getTraceToken('pass', pass) : '[REDACTED_PASS]'
+          const userRepl = isTrace
+            ? this.getTraceToken('pass', user)
+            : '[REDACTED_USER]'
+          const passRepl = isTrace
+            ? this.getTraceToken('pass', pass)
+            : '[REDACTED_PASS]'
           return `${protocol}${userRepl}:${passRepl}@`
         }
       )
@@ -295,22 +296,28 @@ export class LogSanitizer {
     }
 
     if (this.options.emails) {
-      output = output.replace(EMAIL_REGEX, (_match, firstChar: string, domain: string) => {
-        return isTrace
-          ? this.getTraceToken('email', _match)
-          : `${firstChar}***@${domain}`
-      })
+      output = output.replace(
+        EMAIL_REGEX,
+        (_match, firstChar: string, domain: string) => {
+          return isTrace
+            ? this.getTraceToken('email', _match)
+            : `${firstChar}***@${domain}`
+        }
+      )
     }
 
     if (this.options.discordIds) {
-      output = output.replace(DISCORD_ID_REGEX, (match: string, snowflake: string) => {
-        const lead = snowflake.slice(0, 4)
-        const tail = snowflake.slice(-4)
-        const replacement = isTrace
-          ? this.getTraceToken('discord', snowflake)
-          : `${lead}...${tail}`
-        return match.replace(snowflake, replacement)
-      })
+      output = output.replace(
+        DISCORD_ID_REGEX,
+        (match: string, snowflake: string) => {
+          const lead = snowflake.slice(0, 4)
+          const tail = snowflake.slice(-4)
+          const replacement = isTrace
+            ? this.getTraceToken('discord', snowflake)
+            : `${lead}...${tail}`
+          return match.replace(snowflake, replacement)
+        }
+      )
     }
 
     if (this.options.accountInfo) {

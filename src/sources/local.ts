@@ -675,9 +675,7 @@ export default class LocalSource {
    * @param track - Decoded local track information.
    * @returns Local protocol descriptor used by the playback pipeline.
    */
-  public async getTrackUrl(
-    track: LocalResolvedTrack
-  ): Promise<TrackUrlResult> {
+  public async getTrackUrl(track: LocalResolvedTrack): Promise<TrackUrlResult> {
     const { filePath, isTraversal } = await this.resolveValidPath(
       track.uri || ''
     )
@@ -698,10 +696,7 @@ export default class LocalSource {
       }
     }
 
-    const extension = path
-      .extname(filePath)
-      .slice(1)
-      .toLowerCase()
+    const extension = path.extname(filePath).slice(1).toLowerCase()
     const metadata = this.getTrackMetadata(track)
     const streamType =
       metadata?.streamType ?? this.detectLocalAudioType(filePath, extension)
@@ -745,7 +740,7 @@ export default class LocalSource {
     }
 
     const stats = await fs.promises.stat(filePath).catch(() => null)
-    if (!stats || !stats.isFile()) {
+    if (!stats?.isFile()) {
       throw new Error('Local file not found or is not a regular file.')
     }
 

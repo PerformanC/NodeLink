@@ -108,8 +108,8 @@ export default class Echo extends AnimatableFilter {
 
       const fbL = inL + delL * fb
       const fbR = inR + delR * fb
-      this.delayLineL.write(fbL > 65534 ? 65534 : fbL < -65534 ? -65534 : fbL)
-      this.delayLineR.write(fbR > 65534 ? 65534 : fbR < -65534 ? -65534 : fbR)
+      this.delayLineL.write(fbL > 65534 ? 65534 : Math.max(fbL, -65534))
+      this.delayLineR.write(fbR > 65534 ? 65534 : Math.max(fbR, -65534))
 
       const echoL = inL * dry + delL * wet
       const echoR = inR * dry + delR * wet

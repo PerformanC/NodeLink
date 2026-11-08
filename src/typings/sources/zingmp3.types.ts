@@ -1,13 +1,5 @@
-import type { Readable } from 'node:stream'
-import type {
-  SourceResult,
-  TrackData,
-  TrackInfo,
-  TrackStreamResult,
-  TrackUrlResult,
-  WorkerNodeLink
-} from './source.types.ts'
 import type { HttpProxyConfig } from '../utils.types.ts'
+import type { TrackInfo, TrackStreamResult } from './source.types.ts'
 
 /**
  * Zing MP3 configuration block within NodeLink.

@@ -775,7 +775,7 @@ export default class SpotifySource implements SourceInstance {
     item: SpotifyGraphQLTrack,
     artwork: string | null = null
   ): TrackData | null {
-    if (!item || !item.uri || !item.name || this._isLocalTrack(item)) return null
+    if (!item?.uri || !item.name || this._isLocalTrack(item)) return null
     const id = item.uri.split(':').pop() || ''
     if (!id) return null
     const explicit =
@@ -819,22 +819,21 @@ export default class SpotifySource implements SourceInstance {
     item: SpotifyTrack,
     artwork: string | null = null
   ): TrackData | null {
-    if (!item || !item.id || !item.name || this._isLocalTrack(item)) return null
+    if (!item?.id || !item.name || this._isLocalTrack(item)) return null
     const info: TrackInfo = {
       identifier: item.id,
       isSeekable: true,
       author:
-        item.artists?.map((a) => a?.name).filter(Boolean).join(', ') ||
-        'Unknown',
+        item.artists
+          ?.map((a) => a?.name)
+          .filter(Boolean)
+          .join(', ') || 'Unknown',
       length: typeof item.duration_ms === 'number' ? item.duration_ms : 0,
       isStream: false,
       position: 0,
       title: item.name,
       uri: `${item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`}?explicit=${Boolean(item.explicit)}`,
-      artworkUrl:
-        artwork ||
-        this._pickLargestImage(item.album?.images) ||
-        null,
+      artworkUrl: artwork || this._pickLargestImage(item.album?.images) || null,
       isrc: item.external_ids?.isrc || null,
       sourceName: 'spotify'
     }
@@ -861,7 +860,9 @@ export default class SpotifySource implements SourceInstance {
     type = 'track'
   ): Promise<SourceResult> {
     if (term === 'spsuggest' || query.startsWith('spsuggest:'))
-      return await this._resolveSearchSuggestions(query.replace(/^spsuggest:/, '').trim())
+      return await this._resolveSearchSuggestions(
+        query.replace(/^spsuggest:/, '').trim()
+      )
     if (term === 'spsimilar' || query.startsWith('spsimilar:'))
       return await this._resolveSimilar(query.replace(/^spsimilar:/, '').trim())
     if (term && this.recommendationTerm.includes(term))
@@ -1772,8 +1773,13 @@ export default class SpotifySource implements SourceInstance {
                       duration_ms?: number
                       isExplicit?: boolean
                       audioPreview?: { url?: string }
-                      visualIdentity?: { image?: Array<{ url: string; maxWidth?: number }> }
-                      relatedEntityCoverArt?: Array<{ url: string; maxWidth?: number }>
+                      visualIdentity?: {
+                        image?: Array<{ url: string; maxWidth?: number }>
+                      }
+                      relatedEntityCoverArt?: Array<{
+                        url: string
+                        maxWidth?: number
+                      }>
                     }
                   }
                 }
@@ -1843,7 +1849,10 @@ export default class SpotifySource implements SourceInstance {
       if (oembedRes.statusCode === 200 && oembedRes.body) {
         const body =
           typeof oembedRes.body === 'string'
-            ? (JSON.parse(oembedRes.body) as { title?: string; thumbnail_url?: string })
+            ? (JSON.parse(oembedRes.body) as {
+                title?: string
+                thumbnail_url?: string
+              })
             : (oembedRes.body as { title?: string; thumbnail_url?: string })
         if (body?.title) {
           const info: TrackInfo = {
@@ -1910,12 +1919,14 @@ export default class SpotifySource implements SourceInstance {
           kind === 'audiobook'
             ? QUERIES.queryBookChapters
             : QUERIES.queryPodcastEpisodes
-        let data =
-          await this._internalApiRequest<SpotifyGraphQLShowResponse>(op, {
+        let data = await this._internalApiRequest<SpotifyGraphQLShowResponse>(
+          op,
+          {
             uri: `spotify:show:${id}`,
             offset: 0,
             limit: Math.min(maxTracks, 100)
-          })
+          }
+        )
 
         if (
           kind === 'show' &&
@@ -1945,17 +1956,17 @@ export default class SpotifySource implements SourceInstance {
 
           const isAudiobook = show.__typename === 'Audiobook'
           const initialItems = isAudiobook
-            ? show.chaptersV2?.items ?? []
-            : show.episodesV2?.items ?? []
+            ? (show.chaptersV2?.items ?? [])
+            : (show.episodesV2?.items ?? [])
           const totalCount = isAudiobook
-            ? show.chaptersV2?.totalCount ?? initialItems.length
-            : show.episodesV2?.totalCount ?? initialItems.length
+            ? (show.chaptersV2?.totalCount ?? initialItems.length)
+            : (show.episodesV2?.totalCount ?? initialItems.length)
 
           const tracks: TrackData[] = []
 
           const parseItem = (it: (typeof initialItems)[number]): void => {
             const ep = it.entity?.data
-            if (!ep || !ep.name) return
+            if (!ep?.name) return
             const epUri = ep.uri || it.entity?._uri || ''
             const epId = ep.id || epUri.split(':').pop() || id
             const epKind = ep.__typename === 'Chapter' ? 'chapter' : 'episode'
@@ -2016,8 +2027,8 @@ export default class SpotifySource implements SourceInstance {
                 limit
               })
             const pageItems = isAudiobook
-              ? pageData?.podcastUnionV2?.chaptersV2?.items ?? []
-              : pageData?.podcastUnionV2?.episodesV2?.items ?? []
+              ? (pageData?.podcastUnionV2?.chaptersV2?.items ?? [])
+              : (pageData?.podcastUnionV2?.episodesV2?.items ?? [])
             if (!pageItems.length) break
 
             for (const it of pageItems) {
@@ -2079,8 +2090,13 @@ export default class SpotifySource implements SourceInstance {
                       duration_ms?: number
                       isExplicit?: boolean
                       audioPreview?: { url?: string }
-                      visualIdentity?: { image?: Array<{ url: string; maxWidth?: number }> }
-                      relatedEntityCoverArt?: Array<{ url: string; maxWidth?: number }>
+                      visualIdentity?: {
+                        image?: Array<{ url: string; maxWidth?: number }>
+                      }
+                      relatedEntityCoverArt?: Array<{
+                        url: string
+                        maxWidth?: number
+                      }>
                     }
                   }
                 }
@@ -2259,9 +2275,7 @@ export default class SpotifySource implements SourceInstance {
    * Internal executor for track URL resolution via delegation.
    * @internal
    */
-  private async _executeGetTrackUrl(
-    track: TrackInfo
-  ): Promise<TrackUrlResult> {
+  private async _executeGetTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
     const sm = this.nodelink.sources
     if (!sm) {
       return {
@@ -2476,7 +2490,7 @@ export default class SpotifySource implements SourceInstance {
         const tracks: TrackData[] = []
         for (const item of items) {
           const a = item.data
-          if (!a || !a.name) continue
+          if (!a?.name) continue
           const albumId = a.uri?.split(':').pop() || ''
           const artistName =
             a.artists?.items
@@ -3007,7 +3021,8 @@ export default class SpotifySource implements SourceInstance {
       name: 'Legacy user playlist URL format (/user/<username>/playlist/ID)',
       input: {
         type: 'resolve',
-        value: 'https://open.spotify.com/user/filtr.br/playlist/5HmZtuuIDMtIy21kylqhx6'
+        value:
+          'https://open.spotify.com/user/filtr.br/playlist/5HmZtuuIDMtIy21kylqhx6'
       },
       expect: {
         result: { type: 'playlist' },

@@ -383,7 +383,7 @@ export default class QQMusicSource
   public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
     const mid = track.identifier
     const curMs = Date.now() % 1000
-    const guid = String(Math.floor((Math.random() * 2147483647) * curMs % 1e10))
+    const guid = String(Math.floor((Math.random() * 2147483647 * curMs) % 1e10))
     const uin = this.config?.uin ? String(this.config.uin) : '0'
 
     let mediaMid = mid
@@ -399,8 +399,7 @@ export default class QQMusicSource
       const detailRes = await this.callMusicu<{
         info?: QQMusicSongDetailResponse
       }>(detailPayload)
-      const fetchedMediaMid =
-        detailRes?.info?.data?.track_info?.file?.media_mid
+      const fetchedMediaMid = detailRes?.info?.data?.track_info?.file?.media_mid
       if (fetchedMediaMid) {
         mediaMid = fetchedMediaMid
       }
@@ -707,7 +706,8 @@ export default class QQMusicSource
       }
     }
 
-    let text = typeof res.body === 'string' ? res.body : JSON.stringify(res.body)
+    let text =
+      typeof res.body === 'string' ? res.body : JSON.stringify(res.body)
     text = text.replace(/^[a-zA-Z_0-9$.]+\s*\(/, '').replace(/\)\s*;?$/, '')
 
     let body: QQMusicPlaylistApiResponse
@@ -864,8 +864,10 @@ export default class QQMusicSource
   private buildSongTrack(song: QQMusicSongInfo): TrackData {
     const mid = song.mid || String(song.id || '')
     const author =
-      song.singer?.map((s) => s.name || s.title).filter(Boolean).join(', ') ||
-      'Unknown Artist'
+      song.singer
+        ?.map((s) => s.name || s.title)
+        .filter(Boolean)
+        .join(', ') || 'Unknown Artist'
     const artworkUrl = song.album?.mid
       ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${song.album.mid}.jpg`
       : song.singer?.[0]?.mid
@@ -900,8 +902,10 @@ export default class QQMusicSource
   private buildLegacySongTrack(song: QQMusicSongLegacy): TrackData {
     const mid = song.songmid || String(song.songid || '')
     const author =
-      song.singer?.map((s) => s.name).filter(Boolean).join(', ') ||
-      'Unknown Artist'
+      song.singer
+        ?.map((s) => s.name)
+        .filter(Boolean)
+        .join(', ') || 'Unknown Artist'
     const artworkUrl = song.albummid
       ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${song.albummid}.jpg`
       : song.singer?.[0]?.mid
@@ -939,7 +943,8 @@ export default class QQMusicSource
     if (!this.nodelink.sources?.search) {
       return {
         exception: {
-          message: 'Song requires QQ Music VIP and alternative fallback search is unavailable.',
+          message:
+            'Song requires QQ Music VIP and alternative fallback search is unavailable.',
           severity: 'common'
         }
       }
@@ -947,7 +952,10 @@ export default class QQMusicSource
 
     const query = `${track.title} ${track.author}`
     const searchResult = await this.nodelink.sources.search(query, 'ytsearch')
-    if (searchResult.loadType !== 'search' || !Array.isArray(searchResult.data)) {
+    if (
+      searchResult.loadType !== 'search' ||
+      !Array.isArray(searchResult.data)
+    ) {
       return {
         exception: {
           message: 'No fallback track found for VIP audio.',
@@ -961,7 +969,7 @@ export default class QQMusicSource
 
     for (const item of searchResult.data) {
       const info = (item as TrackData)?.info
-      if (info && info.title && info.author) {
+      if (info?.title && info.author) {
         candidates.push({ info })
         fallbackTracks.push(info)
       }

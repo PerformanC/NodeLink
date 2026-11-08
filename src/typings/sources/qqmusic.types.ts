@@ -1,12 +1,4 @@
 import type { Readable } from 'node:stream'
-import type {
-  SourceResult,
-  TrackData,
-  TrackInfo,
-  TrackStreamResult,
-  TrackUrlResult,
-  WorkerNodeLink
-} from './source.types.ts'
 import type { HttpProxyConfig } from '../utils.types.ts'
 
 /**

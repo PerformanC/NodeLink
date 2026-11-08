@@ -137,7 +137,7 @@ export class AudioMixer extends Readable {
         }
       }
 
-      outputView[i] = sample < -32768 ? -32768 : sample > 32767 ? 32767 : sample
+      outputView[i] = sample < -32768 ? -32768 : Math.min(sample, 32767)
     }
 
     return outputBuffer

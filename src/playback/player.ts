@@ -72,8 +72,7 @@ function isWebmYouTubePlayback(
   const itag = data?.additionalData?.itag
   if (typeof itag === 'number') return YOUTUBE_WEBM_ITAGS.has(itag)
   const format = data?.format
-  if (typeof format === 'string')
-    return format.toLowerCase().includes('webm')
+  if (typeof format === 'string') return format.toLowerCase().includes('webm')
   if (typeof format?.itag === 'number')
     return YOUTUBE_WEBM_ITAGS.has(format.itag)
   return true
@@ -887,7 +886,9 @@ export class Player {
         )
         severity = 'suspicious'
         cause = 'VOICE_STATE_TIMEOUT'
-      } else if (error.message.includes('Voice WS closed with reconnect code')) {
+      } else if (
+        error.message.includes('Voice WS closed with reconnect code')
+      ) {
         logger(
           'warn',
           'Player',

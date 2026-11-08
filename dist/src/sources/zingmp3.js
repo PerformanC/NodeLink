@@ -256,7 +256,9 @@ export default class ZingMp3Source {
             return {
                 loadType: 'error',
                 exception: {
-                    message: error instanceof Error ? error.message : 'Zing MP3 resolution error',
+                    message: error instanceof Error
+                        ? error.message
+                        : 'Zing MP3 resolution error',
                     severity: 'common'
                 }
             };
@@ -387,7 +389,7 @@ export default class ZingMp3Source {
     async resolveSong(id) {
         const response = await this.callApi('/api/v2/page/get/song', { id });
         const song = response?.data;
-        if (!song || !song.encodeId || !song.title) {
+        if (!song?.encodeId || !song.title) {
             return {
                 loadType: 'empty',
                 data: {}
@@ -406,7 +408,10 @@ export default class ZingMp3Source {
         const response = await this.callApi('/api/v2/page/get/playlist', { id });
         const playlist = response?.data;
         const songItems = playlist?.song?.items;
-        if (!playlist || !songItems || !Array.isArray(songItems) || songItems.length === 0) {
+        if (!playlist ||
+            !songItems ||
+            !Array.isArray(songItems) ||
+            songItems.length === 0) {
             return {
                 loadType: 'empty',
                 data: {}
@@ -442,7 +447,9 @@ export default class ZingMp3Source {
      */
     buildTrack(song) {
         const uri = song.link
-            ? (song.link.startsWith('http') ? song.link : `${DOMAIN}${song.link}`)
+            ? song.link.startsWith('http')
+                ? song.link
+                : `${DOMAIN}${song.link}`
             : `${DOMAIN}/bai-hat/${song.encodeId}.html`;
         const trackInfo = {
             identifier: song.encodeId,
@@ -478,7 +485,8 @@ export default class ZingMp3Source {
         }
         const query = `${track.title} ${track.author}`;
         const searchResult = await this.nodelink.sources.search(query, 'ytsearch');
-        if (searchResult.loadType !== 'search' || !Array.isArray(searchResult.data)) {
+        if (searchResult.loadType !== 'search' ||
+            !Array.isArray(searchResult.data)) {
             return {
                 exception: {
                     message: 'No fallback track found for VIP audio.',
@@ -490,7 +498,7 @@ export default class ZingMp3Source {
         const fallbackTracks = [];
         for (const item of searchResult.data) {
             const info = item?.info;
-            if (info && info.title && info.author) {
+            if (info?.title && info.author) {
                 candidates.push({ info });
                 fallbackTracks.push(info);
             }
@@ -525,7 +533,7 @@ export default class ZingMp3Source {
     parseUrl(url) {
         for (const pattern of this.patterns) {
             const match = pattern.exec(url);
-            if (match && match[1] && match[2]) {
+            if (match?.[1] && match[2]) {
                 const rawType = match[1].toLowerCase();
                 const id = match[2];
                 let type = 'song';
@@ -626,7 +634,8 @@ export default class ZingMp3Source {
      */
     async ensureSession() {
         const now = Date.now();
-        if (this.cachedCookieHeader && now - this.cookieCachedAt < SESSION_CACHE_TTL) {
+        if (this.cachedCookieHeader &&
+            now - this.cookieCachedAt < SESSION_CACHE_TTL) {
             return this.cachedCookieHeader;
         }
         const res = await http1makeRequest(DOMAIN, {
@@ -639,7 +648,9 @@ export default class ZingMp3Source {
         });
         const setCookies = res.headers?.['set-cookie'];
         if (Array.isArray(setCookies)) {
-            this.cachedCookieHeader = setCookies.map((c) => c.split(';')[0]).join('; ');
+            this.cachedCookieHeader = setCookies
+                .map((c) => c.split(';')[0])
+                .join('; ');
         }
         else if (typeof setCookies === 'string') {
             this.cachedCookieHeader = setCookies.split(';')[0] ?? '';

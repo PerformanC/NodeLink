@@ -182,7 +182,7 @@ export class Encoder extends Transform {
         cb(err);
     }
     setBitrate(v) {
-        const val = v < 500 ? 500 : v > 512000 ? 512000 : v;
+        const val = v < 500 ? 500 : Math.min(v, 512000);
         if (this.enc)
             _applyCtl(this.enc, this.lib.name, OPUS_CTL.BITRATE, val);
     }

@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { access, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
@@ -34,9 +34,7 @@ function areCommitsEqual(a?: string, b?: string): boolean {
   const cleanA = a.trim().toLowerCase()
   const cleanB = b.trim().toLowerCase()
   return (
-    cleanA === cleanB ||
-    cleanA.startsWith(cleanB) ||
-    cleanB.startsWith(cleanA)
+    cleanA === cleanB || cleanA.startsWith(cleanB) || cleanB.startsWith(cleanA)
   )
 }
 
@@ -70,7 +68,10 @@ export class UpdateManager {
     const lockPath = path.join(this.root, UPDATER_PATHS.lock)
     try {
       const content = await readFile(lockPath, 'utf8')
-      const lockData = JSON.parse(content) as { pid?: number; timestamp?: number }
+      const lockData = JSON.parse(content) as {
+        pid?: number
+        timestamp?: number
+      }
       const age = Date.now() - (lockData.timestamp ?? 0)
 
       let isAlive = false
@@ -323,9 +324,7 @@ export class UpdateManager {
     }
 
     let available =
-      !isSameCommit &&
-      current.commit !== 'unknown' &&
-      latest.commit.length > 0
+      !isSameCommit && current.commit !== 'unknown' && latest.commit.length > 0
 
     if (provider.type === 'git') {
       const gitProvider = provider as GitProvider
@@ -393,7 +392,11 @@ export class UpdateManager {
           UPDATER_PATHS.staging,
           manifest.commit
         )
-        logger('info', 'UpdateManager', 'Unpacking update archive to staging...')
+        logger(
+          'info',
+          'UpdateManager',
+          'Unpacking update archive to staging...'
+        )
         await this.extractor.extract(archivePath, stagingDir)
 
         const backupDir = path.join(this.root, UPDATER_PATHS.backup)
@@ -401,20 +404,24 @@ export class UpdateManager {
         await swapper.createBackup(backupDir)
         await swapper.applyStaging(stagingDir)
 
-        await rm(stagingDir, { recursive: true, force: true }).catch((error) => {
-          logger(
-            'debug',
-            'UpdateManager',
-            `Failed to remove staging directory: ${error instanceof Error ? error.message : String(error)}`
-          )
-        })
-        await rm(downloadDir, { recursive: true, force: true }).catch((error) => {
-          logger(
-            'debug',
-            'UpdateManager',
-            `Failed to remove download directory: ${error instanceof Error ? error.message : String(error)}`
-          )
-        })
+        await rm(stagingDir, { recursive: true, force: true }).catch(
+          (error) => {
+            logger(
+              'debug',
+              'UpdateManager',
+              `Failed to remove staging directory: ${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+        )
+        await rm(downloadDir, { recursive: true, force: true }).catch(
+          (error) => {
+            logger(
+              'debug',
+              'UpdateManager',
+              `Failed to remove download directory: ${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+        )
       }
 
       const previousState = await this.stateStore.read()

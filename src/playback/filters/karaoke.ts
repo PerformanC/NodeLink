@@ -174,8 +174,8 @@ export default class Karaoke extends AnimatableFilter {
     const level = this.targetLevel
     const monoLevel = this.targetMonoLevel
 
-    this.level = level <= 0 ? 0 : level >= 1 ? 1 : level
-    this.monoLevel = monoLevel <= 0 ? 0 : monoLevel >= 1 ? 1 : monoLevel
+    this.level = level <= 0 ? 0 : Math.min(level, 1)
+    this.monoLevel = monoLevel <= 0 ? 0 : Math.min(monoLevel, 1)
   }
 
   protected override isConfigActive(config?: Record<string, number>): boolean {

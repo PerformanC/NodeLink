@@ -603,7 +603,7 @@ export default class SpotifySource {
      * @internal
      */
     _buildTrackFromInternal(item, artwork = null) {
-        if (!item || !item.uri || !item.name || this._isLocalTrack(item))
+        if (!item?.uri || !item.name || this._isLocalTrack(item))
             return null;
         const id = item.uri.split(':').pop() || '';
         if (!id)
@@ -642,21 +642,21 @@ export default class SpotifySource {
      * @internal
      */
     _buildTrack(item, artwork = null) {
-        if (!item || !item.id || !item.name || this._isLocalTrack(item))
+        if (!item?.id || !item.name || this._isLocalTrack(item))
             return null;
         const info = {
             identifier: item.id,
             isSeekable: true,
-            author: item.artists?.map((a) => a?.name).filter(Boolean).join(', ') ||
-                'Unknown',
+            author: item.artists
+                ?.map((a) => a?.name)
+                .filter(Boolean)
+                .join(', ') || 'Unknown',
             length: typeof item.duration_ms === 'number' ? item.duration_ms : 0,
             isStream: false,
             position: 0,
             title: item.name,
             uri: `${item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`}?explicit=${Boolean(item.explicit)}`,
-            artworkUrl: artwork ||
-                this._pickLargestImage(item.album?.images) ||
-                null,
+            artworkUrl: artwork || this._pickLargestImage(item.album?.images) || null,
             isrc: item.external_ids?.isrc || null,
             sourceName: 'spotify'
         };
@@ -1581,15 +1581,15 @@ export default class SpotifySource {
                     }))) || null;
                     const isAudiobook = show.__typename === 'Audiobook';
                     const initialItems = isAudiobook
-                        ? show.chaptersV2?.items ?? []
-                        : show.episodesV2?.items ?? [];
+                        ? (show.chaptersV2?.items ?? [])
+                        : (show.episodesV2?.items ?? []);
                     const totalCount = isAudiobook
-                        ? show.chaptersV2?.totalCount ?? initialItems.length
-                        : show.episodesV2?.totalCount ?? initialItems.length;
+                        ? (show.chaptersV2?.totalCount ?? initialItems.length)
+                        : (show.episodesV2?.totalCount ?? initialItems.length);
                     const tracks = [];
                     const parseItem = (it) => {
                         const ep = it.entity?.data;
-                        if (!ep || !ep.name)
+                        if (!ep?.name)
                             return;
                         const epUri = ep.uri || it.entity?._uri || '';
                         const epId = ep.id || epUri.split(':').pop() || id;
@@ -1642,8 +1642,8 @@ export default class SpotifySource {
                             limit
                         });
                         const pageItems = isAudiobook
-                            ? pageData?.podcastUnionV2?.chaptersV2?.items ?? []
-                            : pageData?.podcastUnionV2?.episodesV2?.items ?? [];
+                            ? (pageData?.podcastUnionV2?.chaptersV2?.items ?? [])
+                            : (pageData?.podcastUnionV2?.episodesV2?.items ?? []);
                         if (!pageItems.length)
                             break;
                         for (const it of pageItems) {
@@ -2010,7 +2010,7 @@ export default class SpotifySource {
                 const tracks = [];
                 for (const item of items) {
                     const a = item.data;
-                    if (!a || !a.name)
+                    if (!a?.name)
                         continue;
                     const albumId = a.uri?.split(':').pop() || '';
                     const artistName = a.artists?.items

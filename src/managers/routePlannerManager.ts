@@ -1,5 +1,5 @@
-import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type { RoutePlannerIpBlockEntry } from '../typings/api/routeplanner.types.ts'
+import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import { logger } from '../utils.ts'
 
 /**
