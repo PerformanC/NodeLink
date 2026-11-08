@@ -67,9 +67,9 @@ export default class BilibiliSource implements SourceInstance {
    * @public
    */
   public readonly patterns = [
-    /^https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[a-zA-Z0-9]+|av\d+)/,
-    /^https?:\/\/(?:www\.)?bilibili\.com\/bangumi\/play\/(ep|ss)(\d+)/,
-    /^https?:\/\/(?:www\.)?bilibili\.com\/audio\/(au|am)(\d+)/,
+    /^https?:\/\/(?:www\.)?bilibili\.com\/(?:[a-zA-Z]{2}\/)?video\/(BV[a-zA-Z0-9]+|av\d+)/,
+    /^https?:\/\/(?:www\.)?bilibili\.com\/(?:[a-zA-Z]{2}\/)?bangumi\/play\/(ep|ss)(\d+)/,
+    /^https?:\/\/(?:www\.)?bilibili\.com\/(?:[a-zA-Z]{2}\/)?audio\/(au|am)(\d+)/,
     /^https?:\/\/live\.bilibili\.com\/(\d+)/,
     /^https?:\/\/space\.bilibili\.com\/(\d+)/,
     /^https?:\/\/(?:www\.)?b23\.tv\/.+/i,
