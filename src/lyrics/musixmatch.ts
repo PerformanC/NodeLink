@@ -218,6 +218,7 @@ export default class MusixmatchLyrics {
   private cache: Map<string, CacheEntry<LyricsResult>>
   private cacheCleanup: ReturnType<typeof setInterval> | null
   private tokenFile: string
+  private proxyIndex: number = 0
 
   constructor(nodelink: NodelinkInstanceForMusixmatch) {
     this.nodelink = nodelink
@@ -256,13 +257,22 @@ export default class MusixmatchLyrics {
       }
     }
 
-    const proxy = this._getProxy()
-    if (proxy) {
+    const proxyConfig = this.nodelink.options.lyrics?.musixmatch?.proxy
+    if (Array.isArray(proxyConfig) && proxyConfig.length > 0) {
       logger(
         'info',
         'Lyrics',
-        `Musixmatch configured with proxy: ${proxy.url}`
+        `Musixmatch configured with ${proxyConfig.length} rotating proxies`
       )
+    } else {
+      const proxy = this._getProxy()
+      if (proxy) {
+        logger(
+          'info',
+          'Lyrics',
+          `Musixmatch configured with proxy: ${proxy.url}`
+        )
+      }
     }
 
     this._startCacheCleanup()
@@ -363,14 +373,26 @@ export default class MusixmatchLyrics {
 
   /**
    * Resolves the proxy configuration for outbound Musixmatch requests.
-   * Checks dedicated provider proxy first, then falls back to global ProxyManager.
+   * Supports round-robin rotation for proxy arrays, with automatic fallback
+   * to the global ProxyManager pool.
    *
+   * @param rotate - Whether to force advancing to the next proxy in the array.
    * @returns Proxy settings or undefined if no proxy is configured.
    * @internal
    */
-  private _getProxy(): HttpProxyConfig | undefined {
+  private _getProxy(rotate = false): HttpProxyConfig | undefined {
     const customProxy = this.nodelink.options.lyrics?.musixmatch?.proxy
     if (customProxy) {
+      if (Array.isArray(customProxy)) {
+        if (customProxy.length === 0) return undefined
+        if (rotate) {
+          this.proxyIndex = (this.proxyIndex + 1) % customProxy.length
+        }
+        const item = customProxy[this.proxyIndex % customProxy.length]
+        if (!item) return undefined
+        return typeof item === 'string' ? { url: item } : item
+      }
+
       if (typeof customProxy === 'string') {
         return { url: customProxy }
       }
@@ -389,34 +411,62 @@ export default class MusixmatchLyrics {
     return undefined
   }
 
+  /**
+   * Reports health metrics of a used proxy back to the ProxyManager.
+   * @internal
+   */
+  private _reportProxy(
+    proxy: HttpProxyConfig | undefined,
+    success: boolean,
+    statusCode: number
+  ): void {
+    if (!proxy?.url || !this.nodelink.proxyManager?.report) return
+    this.nodelink.proxyManager.report(proxy.url, success, statusCode)
+  }
+
   private async _fetchToken(): Promise<string> {
     const url = _buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID })
-    const { statusCode, headers, body } = await http1makeRequest(url, {
-      method: 'GET',
-      headers: {
-        accept: '*/*',
-        'accept-language': 'en',
-        'user-agent': DEFAULT_UA
-      },
-      proxy: this._getProxy()
-    })
+    const proxy = this._getProxy()
+    try {
+      const { statusCode, headers, body } = await http1makeRequest(url, {
+        method: 'GET',
+        headers: {
+          accept: '*/*',
+          'accept-language': 'en',
+          'user-agent': DEFAULT_UA
+        },
+        proxy
+      })
 
-    if (headers?.['set-cookie']) {
-      this._parseCookies(headers['set-cookie'])
+      if (headers?.['set-cookie']) {
+        this._parseCookies(headers['set-cookie'])
+      }
+
+      if (statusCode !== 200) {
+        this._reportProxy(proxy, false, statusCode ?? 0)
+        throw new HttpError(statusCode ?? 0)
+      }
+
+      const parsed = typeof body === 'string' ? JSON.parse(body) : body
+      const header = parsed?.message?.header
+      const token = parsed?.message?.body?.user_token
+
+      if (header?.status_code !== 200) {
+        this._reportProxy(proxy, false, header?.status_code ?? 0)
+        throw new MxmApiError(header?.status_code ?? 0, header?.hint)
+      }
+
+      if (!token) {
+        this._reportProxy(proxy, false, 0)
+        throw new MxmApiError(0, header?.hint || 'No token in response')
+      }
+
+      this._reportProxy(proxy, true, 200)
+      return token
+    } catch (err) {
+      this._reportProxy(proxy, false, err instanceof HttpError ? err.status : 0)
+      throw err
     }
-
-    if (statusCode !== 200) throw new HttpError(statusCode ?? 0)
-
-    const parsed = typeof body === 'string' ? JSON.parse(body) : body
-    const header = parsed?.message?.header
-    const token = parsed?.message?.body?.user_token
-
-    if (header?.status_code !== 200)
-      throw new MxmApiError(header?.status_code ?? 0, header?.hint)
-
-    if (!token) throw new MxmApiError(0, header?.hint || 'No token in response')
-
-    return token
   }
 
   private async _resetToken(hard = false): Promise<void> {
@@ -548,6 +598,7 @@ export default class MusixmatchLyrics {
     const apiHint = parsed?.message?.header?.hint
 
     if (isAuthCode(statusCode ?? 0) || isAuthCode(apiStatus)) {
+      this._reportProxy(proxy, false, statusCode ?? 403)
       if (!this.useManualToken) {
         const isCaptcha = apiHint?.toLowerCase().includes('captcha')
         await this._resetToken(!!isCaptcha)
@@ -559,6 +610,7 @@ export default class MusixmatchLyrics {
           guid: this.guid
         })
 
+        const retryProxy = this._getProxy(true)
         const {
           statusCode: retryStatus,
           headers: retryHeaders,
@@ -570,7 +622,7 @@ export default class MusixmatchLyrics {
             'user-agent': DEFAULT_UA,
             ...this._cookieHeader()
           },
-          proxy
+          proxy: retryProxy
         })
 
         if (retryHeaders?.['set-cookie']) {
@@ -582,15 +634,24 @@ export default class MusixmatchLyrics {
         if (
           retryStatus !== 200 ||
           retryParsed?.message?.header?.status_code !== 200
-        )
+        ) {
+          this._reportProxy(retryProxy, false, retryStatus ?? 0)
           return null
+        }
 
+        this._reportProxy(retryProxy, true, 200)
         return retryParsed.message.body
       }
       return null
     }
 
-    return statusCode === 200 && apiStatus === 200 ? parsed.message.body : null
+    if (statusCode === 200 && apiStatus === 200) {
+      this._reportProxy(proxy, true, 200)
+      return parsed.message.body
+    }
+
+    this._reportProxy(proxy, false, statusCode ?? 0)
+    return null
   }
 
   private async _fetchMacro(

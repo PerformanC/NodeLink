@@ -8,6 +8,12 @@ import type { HttpProxyConfig } from '../utils.types.ts'
 export type { HttpProxyConfig }
 
 /**
+ * Single proxy configuration definition.
+ * @public
+ */
+export type MusixmatchProxyConfig = HttpProxyConfig | string
+
+/**
  * Musixmatch-specific configuration options
  * @public
  */
@@ -18,8 +24,8 @@ export interface MusixmatchConfig {
   /** Optional signature secret for manual token authentication */
   signatureSecret?: string
 
-  /** Optional dedicated proxy URL or configuration to route Musixmatch requests */
-  proxy?: HttpProxyConfig | string
+  /** Optional dedicated proxy URL, config, or rotating array of proxies to route Musixmatch requests */
+  proxy?: MusixmatchProxyConfig | MusixmatchProxyConfig[]
 }
 
 /**
@@ -77,6 +83,14 @@ export interface ProxySnapshotLike {
 export interface ProxyManagerLike {
   /** Selects the optimal proxy target for a given provider */
   getBestProxy: (sourceName: string) => ProxySnapshotLike | undefined
+
+  /** Reports request health feedback for the selected proxy */
+  report?: (
+    proxyUrl: string,
+    success: boolean,
+    statusCode: number,
+    latencyMs?: number
+  ) => void
 }
 
 /**
