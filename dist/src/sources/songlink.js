@@ -47,6 +47,51 @@ const SCRAPE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit
  */
 export default class SongLinkSource {
     /**
+     * Declarative test suite for validating Song.link source behavior.
+     */
+    static _TESTS = [
+        {
+            id: 'songlink.song.resolve',
+            name: 'Song.link song resolution (/s/ID)',
+            input: {
+                type: 'resolve',
+                value: 'https://song.link/s/4eoOQgFQ0rLMKNP8KcUNWc'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'ocean eyes'
+                    },
+                    author: {
+                        op: 'matches',
+                        value: 'Billie Eilish'
+                    }
+                }
+            }
+        },
+        {
+            id: 'songlink.search',
+            name: 'Song.link search via iTunes (slsearch:)',
+            input: {
+                type: 'search',
+                value: 'Billie Eilish ocean eyes',
+                searchType: 'slsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'ocean eyes'
+                    }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime NodeLink context.
      */
     nodelink;
@@ -104,7 +149,8 @@ export default class SongLinkSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
-        this.config = this.nodelink.options.sources.songlink;
+        this.config = (this.nodelink.options?.sources?.songlink ??
+            {});
         this.searchTerms = ['slsearch'];
         this.patterns = [SONG_LINK_PATTERN];
         this.priority = 95;
@@ -122,16 +168,16 @@ export default class SongLinkSource {
      * @returns Always true.
      */
     async setup() {
-        this.apiKey = this.asString(this.config.apiKey);
-        this.userCountry = this.asString(this.config.userCountry) ?? 'US';
-        this.songIfSingle = this.asBoolean(this.config.songIfSingle) ?? true;
-        this.preferredPlatforms = Array.isArray(this.config.preferredPlatforms)
+        this.apiKey = this.asString(this.config?.apiKey);
+        this.userCountry = this.asString(this.config?.userCountry) ?? 'US';
+        this.songIfSingle = this.asBoolean(this.config?.songIfSingle) ?? true;
+        this.preferredPlatforms = Array.isArray(this.config?.preferredPlatforms)
             ? this.config.preferredPlatforms.filter((item) => typeof item === 'string')
             : [...DEFAULT_PLATFORM_ORDER];
-        this.fallbackToAny = this.asBoolean(this.config.fallbackToAny) ?? true;
+        this.fallbackToAny = this.asBoolean(this.config?.fallbackToAny) ?? true;
         this.useScrapeFallback =
-            this.asBoolean(this.config.useScrapeFallback) ?? true;
-        this.useApi = this.asBoolean(this.config.useApi) ?? true;
+            this.asBoolean(this.config?.useScrapeFallback) ?? true;
+        this.useApi = this.asBoolean(this.config?.useApi) ?? true;
         return true;
     }
     /**
@@ -178,6 +224,53 @@ export default class SongLinkSource {
                     logger('debug', 'SongLink', `Failed to resolve ${platform} link: ${this.getErrorMessage(error)}`);
                 }
             }
+            const entities = this.asRecord(data?.entitiesByUniqueId) || {};
+            const entityId = this.asString(data?.entityUniqueId) || '';
+            const entity = this.asRecord(entities[entityId]) || this.asRecord(data?.entityData);
+            const firstSection = Array.isArray(data?.sections)
+                ? (this.asRecord(data.sections[0]) ?? null)
+                : null;
+            const title = this.asString(entity?.title) || this.asString(firstSection?.title);
+            const author = this.asString(entity?.artistName) ||
+                this.asString(firstSection?.artistName) ||
+                'Unknown Artist';
+            if (title) {
+                const durationSec = this.asNumber(entity?.duration);
+                const durationMs = this.asNumber(this.asRecord(data?.entityData)?.duration);
+                const length = durationMs !== null
+                    ? durationMs
+                    : durationSec !== null
+                        ? durationSec * 1000
+                        : 0;
+                const trackInfo = {
+                    identifier: entityId || url,
+                    isSeekable: true,
+                    author,
+                    length,
+                    isStream: false,
+                    position: 0,
+                    title,
+                    uri: url,
+                    artworkUrl: this.asString(entity?.thumbnailUrl) ||
+                        this.asString(firstSection?.thumbnailUrl) ||
+                        null,
+                    isrc: this.asString(entity?.isrc) || null,
+                    sourceName: 'songlink'
+                };
+                const encodedInput = { ...trackInfo, details: [] };
+                const decorated = {
+                    loadType: 'track',
+                    data: {
+                        encoded: encodeTrack(encodedInput),
+                        info: trackInfo,
+                        pluginInfo: {
+                            songlink: songlinkInfo
+                        }
+                    }
+                };
+                this.nodelink.trackCacheManager?.set('songlink', url, decorated, this.cacheTtlMs);
+                return decorated;
+            }
             return {
                 loadType: 'error',
                 exception: {
@@ -204,20 +297,38 @@ export default class SongLinkSource {
      */
     async search(query, _sourceTerm, _searchType = 'track') {
         try {
-            const maxSearchRaw = this.nodelink.options.search?.maxResults;
+            const cleanQuery = query.replace(/^(?:slsearch|songlink):/i, '').trim();
+            const maxSearchRaw = this.nodelink.options?.search?.maxResults;
             const limit = typeof maxSearchRaw === 'number' && Number.isFinite(maxSearchRaw)
                 ? maxSearchRaw
                 : 10;
+            let entity = 'song';
+            if (_searchType === 'album') {
+                entity = 'album';
+            }
+            else if (_searchType === 'podcast') {
+                entity = 'podcast,podcastEpisode';
+            }
             const searchUrl = new URL('https://itunes.apple.com/search');
-            searchUrl.searchParams.set('term', query);
+            searchUrl.searchParams.set('term', cleanQuery);
             searchUrl.searchParams.set('country', this.userCountry || 'US');
-            searchUrl.searchParams.set('entity', 'song,album,podcast,podcastEpisode');
+            searchUrl.searchParams.set('entity', entity);
             searchUrl.searchParams.set('limit', String(limit));
-            searchUrl.searchParams.set('callback', '__jp33');
             const { body, statusCode } = await http1makeRequest(searchUrl.toString());
             if (statusCode !== 200)
                 return { loadType: 'empty', data: {} };
-            const payload = typeof body === 'string' ? this._parseJsonp(body) : this.asRecord(body);
+            let payload = null;
+            if (typeof body === 'string') {
+                try {
+                    payload = JSON.parse(body);
+                }
+                catch {
+                    payload = this._parseJsonp(body);
+                }
+            }
+            else {
+                payload = this.asRecord(body);
+            }
             const results = payload?.results;
             if (!Array.isArray(results) || results.length === 0) {
                 return { loadType: 'empty', data: {} };
@@ -325,15 +436,55 @@ export default class SongLinkSource {
                     exception: { message: 'Missing track URL.', severity: 'common' }
                 };
             }
-            const resolved = await this.nodelink.sources.resolve(uri);
-            if (resolved.loadType === 'track' &&
-                this.isTrackResultData(resolved.data)) {
-                const streamInfo = await this.nodelink.sources.getTrackUrl(resolved.data.info);
-                return { newTrack: resolved.data, ...streamInfo };
+            if (SONG_LINK_PATTERN.test(uri)) {
+                const data = await this._fetchSongLinkData(uri);
+                const linksByPlatform = this.asRecord(data?.linksByPlatform) || {};
+                const platforms = this._buildPlatformOrder(linksByPlatform);
+                for (const platform of platforms) {
+                    const platformData = this.asRecord(linksByPlatform[platform]);
+                    const link = this.asString(platformData?.url);
+                    if (!link)
+                        continue;
+                    const sourceName = PLATFORM_SOURCE_MAP[platform];
+                    if (!sourceName || !this._isSourceAvailable(sourceName))
+                        continue;
+                    try {
+                        const resolved = await this.nodelink.sources.resolve(link);
+                        if (resolved.loadType === 'track' &&
+                            this.isTrackResultData(resolved.data)) {
+                            const streamInfo = await this.nodelink.sources.getTrackUrl(resolved.data.info);
+                            return { newTrack: resolved.data, ...streamInfo };
+                        }
+                    }
+                    catch { }
+                }
+            }
+            else {
+                try {
+                    const resolved = await this.nodelink.sources.resolve(uri);
+                    if (resolved.loadType === 'track' &&
+                        this.isTrackResultData(resolved.data)) {
+                        const streamInfo = await this.nodelink.sources.getTrackUrl(resolved.data.info);
+                        return { newTrack: resolved.data, ...streamInfo };
+                    }
+                }
+                catch { }
+            }
+            const query = `${decodedTrack.author} - ${decodedTrack.title}`;
+            const searchResult = await this.nodelink.sources.searchWithDefault(query);
+            if (searchResult?.loadType === 'search' &&
+                Array.isArray(searchResult.data) &&
+                searchResult.data.length > 0) {
+                const candidates = searchResult.data;
+                const bestMatch = candidates[0];
+                if (bestMatch?.info) {
+                    const streamInfo = await this.nodelink.sources.getTrackUrl(bestMatch.info);
+                    return { ...streamInfo, newTrack: { info: bestMatch.info } };
+                }
             }
             return {
                 exception: {
-                    message: 'Resolved URL did not return a playable track.',
+                    message: 'Unable to find a playable stream for this track.',
                     severity: 'common'
                 }
             };
@@ -348,12 +499,22 @@ export default class SongLinkSource {
         }
     }
     /**
+     * Delegates stream reading to the matched source.
+     */
+    async loadStream(track, url, protocol, additionalData) {
+        const sourceManager = this.nodelink?.sources;
+        if (!sourceManager) {
+            throw new Error('Source manager is not available for Song.link streaming');
+        }
+        return sourceManager.getTrackStream(track, url, protocol, additionalData);
+    }
+    /**
      * Fetches Song.link payload from API or HTML fallback.
      * @param url - Song.link URL.
      * @returns Parsed Song.link payload.
      */
     async _fetchSongLinkData(url) {
-        if (this.useApi) {
+        if (this.useApi && this.apiKey) {
             try {
                 const apiUrl = new URL('https://api.song.link/v1-alpha.1/links');
                 apiUrl.searchParams.set('url', url);
@@ -363,9 +524,7 @@ export default class SongLinkSource {
                 if (this.songIfSingle) {
                     apiUrl.searchParams.set('songIfSingle', 'true');
                 }
-                if (this.apiKey) {
-                    apiUrl.searchParams.set('key', this.apiKey);
-                }
+                apiUrl.searchParams.set('key', this.apiKey);
                 const { body, statusCode } = await http1makeRequest(apiUrl.toString());
                 const parsed = this.asRecord(body);
                 const linksByPlatform = this.asRecord(parsed?.linksByPlatform);
@@ -500,19 +659,26 @@ export default class SongLinkSource {
         }
         if (Object.keys(linksByPlatform).length === 0)
             return null;
+        const firstSectionWithInfo = sections.find((s) => this.asRecord(s)?.title || this.asRecord(s)?.artistName);
         const entitiesByUniqueId = {};
         const entityId = this.asString(pageData.entityUniqueId);
         const entityData = this.asRecord(pageData.entityData);
-        if (entityId && entityData) {
-            const durationRaw = this.asNumber(entityData.duration);
+        if (entityId) {
+            const durationRaw = this.asNumber(entityData?.duration);
             entitiesByUniqueId[entityId] = {
-                id: entityData.id,
-                type: this.asString(entityData.type) || undefined,
-                title: this.asString(entityData.title) || undefined,
-                artistName: this.asString(entityData.artistName) || undefined,
-                thumbnailUrl: this.asString(entityData.thumbnailUrl) || undefined,
+                id: entityData?.id,
+                type: this.asString(entityData?.type) || undefined,
+                title: this.asString(entityData?.title) ||
+                    this.asString(firstSectionWithInfo?.title) ||
+                    undefined,
+                artistName: this.asString(entityData?.artistName) ||
+                    this.asString(firstSectionWithInfo?.artistName) ||
+                    undefined,
+                thumbnailUrl: this.asString(entityData?.thumbnailUrl) ||
+                    this.asString(firstSectionWithInfo?.thumbnailUrl) ||
+                    undefined,
                 duration: durationRaw !== null ? durationRaw / 1000 : undefined,
-                isrc: this.asString(entityData.isrc) || null
+                isrc: this.asString(entityData?.isrc) || null
             };
         }
         return {
@@ -522,7 +688,9 @@ export default class SongLinkSource {
                 this.asString(pageProps?.pageUrl) ||
                 undefined,
             linksByPlatform,
-            entitiesByUniqueId
+            entitiesByUniqueId,
+            entityData,
+            sections
         };
     }
     /**
