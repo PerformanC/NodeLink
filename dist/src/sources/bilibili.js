@@ -28,6 +28,81 @@ const HEADERS = {
  */
 export default class BilibiliSource {
     /**
+     * Test suite cases validating Bilibili video resolution, search, and playback.
+     */
+    static _TESTS = [
+        {
+            id: 'bilibili.video.stream',
+            name: 'Bilibili standard BV video playback',
+            input: {
+                type: 'resolve',
+                value: 'https://www.bilibili.com/video/BV11x411c7X6'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'PikaPika'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bilibili'
+                    }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 100000,
+                    validFormats: [{ container: 'mp4', codec: 'aac' }]
+                }
+            }
+        },
+        {
+            id: 'bilibili.search.query',
+            name: 'Bilibili text search query',
+            input: {
+                type: 'search',
+                value: 'bad apple'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'search'
+                }
+            }
+        },
+        {
+            id: 'bilibili.video.classic',
+            name: 'Bilibili classic video resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.bilibili.com/video/BV1xx411c7mD'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bilibili'
+                    }
+                }
+            }
+        }
+    ];
+    /**
      * The NodeLink worker context.
      * @internal
      */
@@ -1325,5 +1400,75 @@ export default class BilibiliSource {
             const message = err instanceof Error ? err.message : String(err);
             return { exception: { message, severity: 'common' } };
         }
+    }
+    /**
+     * Executes a test variant against the Bilibili source.
+     *
+     * @param variant - The test variant to execute.
+     * @param track - The track information.
+     * @param streamSpec - Optional stream validation specifications.
+     * @returns A result object detailing resolution and stream state.
+     */
+    async executeVariant(variant, track, streamSpec) {
+        let urlData;
+        try {
+            urlData = await this.getTrackUrl(track);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: err instanceof Error
+                    ? err.message
+                    : 'Failed to resolve track streaming URL'
+            };
+        }
+        if (!urlData.url) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: 'Failed to resolve track streaming URL'
+            };
+        }
+        const format = typeof urlData.format === 'string' ? urlData.format : undefined;
+        const container = format === 'm4a' ? 'mp4' : format || 'mp4';
+        const codec = 'aac';
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: urlData.newTrack?.info || track,
+                container,
+                codec
+            };
+        }
+        const protocol = typeof urlData.protocol === 'string' ? urlData.protocol : undefined;
+        let streamResult;
+        try {
+            streamResult = await this.loadStream(track, urlData.url, protocol, urlData.additionalData);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: err instanceof Error ? err.message : 'Failed to load audio stream'
+            };
+        }
+        if ('exception' in streamResult || !streamResult.stream) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: streamResult.exception?.message || 'Failed to load audio stream'
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track: urlData.newTrack?.info || track,
+            stream: streamResult.stream,
+            container,
+            codec,
+            httpStatus: 200
+        };
     }
 }
