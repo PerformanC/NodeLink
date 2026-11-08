@@ -18,10 +18,18 @@ import type {
   InstagramUrlInfo
 } from '../typings/sources/instagram.types.ts'
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   BestMatchTrackInfo,
@@ -44,7 +52,209 @@ import {
  * extraction, authenticated audio API calls, and mirror track
  * resolution on other sources.
  */
-export default class InstagramSource {
+export default class InstagramSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating Instagram source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'instagram.reel.stream',
+      name: 'Instagram reel direct video/audio stream playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/reels/Dd7vMRnR6ft/'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          author: {
+            op: 'matches',
+            value: 'dannyelalff'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [
+            {
+              container: 'mp4',
+              codec: 'aac'
+            }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.audio.stream',
+      name: 'Instagram audio page direct audio stream playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/reels/audio/2923115364369679/'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Bem'
+          },
+          author: {
+            op: 'matches',
+            value: 'Chapéu de Palha'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [
+            {
+              container: 'mp4',
+              codec: 'aac'
+            }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.reel.singular',
+      name: 'Instagram reel resolution using singular reel path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/reel/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.post.standard',
+      name: 'Instagram post resolution using standard post path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/p/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.reel.share',
+      name: 'Instagram share reel resolution path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/share/reel/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.search',
+      name: 'Instagram search with reel URL query',
+      input: {
+        type: 'search',
+        value: 'https://www.instagram.com/reel/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -55,8 +265,8 @@ export default class InstagramSource {
    *
    * @remarks
    * - Index 0: Audio page (`/reels/audio/:id`)
-   * - Index 1: Standard post (`/p/:shortcode`)
-   * - Index 2: Reel/short-video (`/reel/:shortcode` or `/reels/:shortcode`)
+   * - Index 1: Standard post (`/p/:shortcode`, `/tv/:shortcode`, `/share/p/:shortcode`)
+   * - Index 2: Reel/short-video (`/reel/:shortcode`, `/reels/:shortcode`, `/share/reel/:shortcode`)
    */
   public readonly patterns: RegExp[]
 
@@ -82,8 +292,8 @@ export default class InstagramSource {
     this.nodelink = nodelink
     this.patterns = [
       /^https?:\/\/(?:www\.)?instagram\.com\/reels\/audio\/(\d+)/,
-      /^https?:\/\/(?:www\.)?instagram\.com\/p\/([\w-]+)/,
-      /^https?:\/\/(?:www\.)?instagram\.com\/(?:reels?|reel)\/([\w-]+)/
+      /^https?:\/\/(?:www\.)?instagram\.com\/(?:p|tv|share\/p)\/([\w-]+)/,
+      /^https?:\/\/(?:www\.)?instagram\.com\/(?:reels?|share\/reel)\/([\w-]+)/
     ]
     this.priority = 70
 
@@ -591,7 +801,11 @@ export default class InstagramSource {
         }
 
         let pathSegment: 'p' | 'reel' = 'p'
-        if (url.includes('/reel/') || url.includes('/reels/')) {
+        if (
+          url.includes('/reel/') ||
+          url.includes('/reels/') ||
+          url.includes('/share/reel/')
+        ) {
           pathSegment = 'reel'
         }
         return {
@@ -1311,7 +1525,7 @@ export default class InstagramSource {
    */
   public async getTrackUrl(
     track: InstagramDecodedTrack
-  ): Promise<TrackUrlResult | SourceResult> {
+  ): Promise<TrackUrlResult> {
     const urlInfo = this._extractInfo(track.uri)
     if (urlInfo.error || !urlInfo.id) {
       return {
@@ -1443,17 +1657,34 @@ export default class InstagramSource {
           response.error || 'Failed to get stream, no stream object returned.'
         )
       }
+      const upstream = response.stream
       const stream = new PassThrough()
-      response.stream.on('data', (chunk: Buffer) => {
-        stream.write(chunk)
+
+      upstream.on('data', (chunk: Buffer) => {
+        if (!stream.write(chunk)) {
+          upstream.pause()
+        }
       })
-      response.stream.on('end', () => {
-        stream.end()
-        stream.emit('finishBuffering')
+
+      stream.on('drain', () => {
+        if (!stream.destroyed) {
+          upstream.resume()
+        }
       })
-      response.stream.on('error', (err: Error) => {
-        stream.destroy(err)
+
+      upstream.on('end', () => {
+        if (!stream.writableEnded) {
+          stream.emit('finishBuffering')
+          stream.end()
+        }
       })
+
+      upstream.on('error', (err: Error) => {
+        if (!stream.destroyed) {
+          stream.destroy(err)
+        }
+      })
+
       return { stream, type: 'video/mp4' }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
@@ -1497,6 +1728,65 @@ export default class InstagramSource {
         severity: 'common',
         cause: 'NoResults'
       }
+    }
+  }
+
+  /**
+   * Executes a test variant for Instagram source testing.
+   *
+   * @param variant - Test variant definition.
+   * @param track - Resolved track info.
+   * @param streamSpec - Optional stream validation specification.
+   * @returns Test variant result payload.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    const urlData = await this.getTrackUrl(track)
+    if (!urlData || 'exception' in urlData || !urlData.url) {
+      const errorMsg =
+        urlData && 'exception' in urlData && urlData.exception?.message
+          ? urlData.exception.message
+          : 'Failed to resolve track streaming URL'
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: errorMsg
+      }
+    }
+
+    const container = 'mp4'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    const streamResult = await this.loadStream(track, urlData.url)
+    if (!('stream' in streamResult) || !streamResult.stream) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: streamResult.exception?.message || 'Failed to load audio stream'
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
     }
   }
 }
