@@ -163,7 +163,8 @@ export default class AppleMusicSource implements SourceInstance {
       name: 'Apple Music Search query (amsearch:)',
       input: {
         type: 'search',
-        value: 'amsearch:Daft Punk Get Lucky'
+        value: 'Daft Punk Get Lucky',
+        searchType: 'amsearch'
       },
       expect: {
         result: { type: 'search' },
@@ -449,7 +450,6 @@ export default class AppleMusicSource implements SourceInstance {
     searchType = 'track'
   ): Promise<SourceResult> {
     try {
-      const cleanedQuery = query.replace(/^amsearch:/i, '').trim()
       const limit = (this.nodelink.options.search.maxResults as number) || 10
       const typeMap: Record<string, string> = {
         track: 'songs',
@@ -462,7 +462,7 @@ export default class AppleMusicSource implements SourceInstance {
       const data = await this.apiRequest<{
         results: Record<string, { data: AppleMusicResource[] }>
       }>(
-        `/catalog/${this.country}/search?term=${encodeURIComponent(cleanedQuery)}&limit=${limit}&types=${apiType}&extend=artistUrl,editorialVideo`
+        `/catalog/${this.country}/search?term=${encodeURIComponent(query)}&limit=${limit}&types=${apiType}&extend=artistUrl,editorialVideo`
       )
 
       const items: AppleMusicResource[] = data?.results?.[apiType]?.data || []

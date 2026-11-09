@@ -817,15 +817,7 @@ export default class DeezerSource {
       return this.getRecommendations(query)
     }
 
-    let cleanedQuery = query
-    for (const term of this.searchTerms) {
-      if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
-        cleanedQuery = cleanedQuery.slice(term.length + 1).trim()
-        break
-      }
-    }
-
-    const isrc = this.extractIsrc(cleanedQuery)
+    const isrc = this.extractIsrc(query)
     if (isrc) {
       try {
         const track = await this.fetchTrackByIsrc(isrc)
@@ -847,7 +839,7 @@ export default class DeezerSource {
       ? searchType
       : 'track'
     const { body, error } = await makeRequest(
-      `https://api.deezer.com/2.0/search/${effectiveSearchType}?q=${encodeURIComponent(cleanedQuery)}`,
+      `https://api.deezer.com/2.0/search/${effectiveSearchType}?q=${encodeURIComponent(query)}`,
       { method: 'GET' }
     )
     const response = this.getJsonBody<DeezerListResponse<DeezerEntity>>(body)

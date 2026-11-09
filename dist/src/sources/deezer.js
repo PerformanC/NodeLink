@@ -192,14 +192,7 @@ export default class DeezerSource {
         if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
             return this.getRecommendations(query);
         }
-        let cleanedQuery = query;
-        for (const term of this.searchTerms) {
-            if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
-                cleanedQuery = cleanedQuery.slice(term.length + 1).trim();
-                break;
-            }
-        }
-        const isrc = this.extractIsrc(cleanedQuery);
+        const isrc = this.extractIsrc(query);
         if (isrc) {
             try {
                 const track = await this.fetchTrackByIsrc(isrc);
@@ -216,7 +209,7 @@ export default class DeezerSource {
         const effectiveSearchType = this.isSearchType(searchType)
             ? searchType
             : 'track';
-        const { body, error } = await makeRequest(`https://api.deezer.com/2.0/search/${effectiveSearchType}?q=${encodeURIComponent(cleanedQuery)}`, { method: 'GET' });
+        const { body, error } = await makeRequest(`https://api.deezer.com/2.0/search/${effectiveSearchType}?q=${encodeURIComponent(query)}`, { method: 'GET' });
         const response = this.getJsonBody(body);
         if (error || response?.error) {
             return this.createException(error ?? response?.error?.message ?? 'Failed to search Deezer.', 'common');

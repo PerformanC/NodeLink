@@ -368,8 +368,7 @@ export default class PiperSource {
       return { loadType: 'empty', data: {} }
     }
 
-    const text = query.startsWith('pipertts:') ? query.slice(9) : query
-    const track = this.buildTrack(text)
+    const track = this.buildTrack(query)
 
     return {
       loadType: 'track',
@@ -380,14 +379,12 @@ export default class PiperSource {
   /**
    * Resolves a Piper request into a synthesized track payload.
    *
-   * The legacy source treats resolve and search the same way, so this method
-   * delegates to {@link search}.
-   *
-   * @param query - Raw Piper TTS query or `pipertts:` URI.
+   * @param url - Raw Piper TTS query or `pipertts:` URI.
    * @returns Same payload produced by {@link search}.
    */
-  public async resolve(query: string): Promise<SourceResult> {
-    return this.search(query)
+  public async resolve(url: string): Promise<SourceResult> {
+    const text = url.startsWith('pipertts:') ? url.slice(9) : url
+    return this.search(text)
   }
 
   /**

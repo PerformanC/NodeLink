@@ -297,7 +297,6 @@ export default class SongLinkSource {
      */
     async search(query, _sourceTerm, _searchType = 'track') {
         try {
-            const cleanQuery = query.replace(/^(?:slsearch|songlink):/i, '').trim();
             const maxSearchRaw = this.nodelink.options?.search?.maxResults;
             const limit = typeof maxSearchRaw === 'number' && Number.isFinite(maxSearchRaw)
                 ? maxSearchRaw
@@ -310,7 +309,7 @@ export default class SongLinkSource {
                 entity = 'podcast,podcastEpisode';
             }
             const searchUrl = new URL('https://itunes.apple.com/search');
-            searchUrl.searchParams.set('term', cleanQuery);
+            searchUrl.searchParams.set('term', query);
             searchUrl.searchParams.set('country', this.userCountry || 'US');
             searchUrl.searchParams.set('entity', entity);
             searchUrl.searchParams.set('limit', String(limit));

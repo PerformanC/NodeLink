@@ -67,7 +67,8 @@ export default class QobuzSource {
       name: 'Qobuz Search query (qbsearch:)',
       input: {
         type: 'search',
-        value: 'qbsearch:Daft Punk Get Lucky'
+        searchType: 'qbsearch',
+        value: 'Daft Punk Get Lucky'
       },
       expect: {
         result: { type: 'search' },
@@ -83,7 +84,8 @@ export default class QobuzSource {
       name: 'Qobuz Search query (qbisrc:)',
       input: {
         type: 'search',
-        value: 'qbisrc:USQX91300809'
+        searchType: 'qbisrc',
+        value: 'USQX91300809'
       },
       expect: {
         result: { type: 'search' },
@@ -252,13 +254,12 @@ export default class QobuzSource {
     query: string,
     sourceTerm?: string
   ): Promise<SourceResult> {
-    const cleanedQuery = query.replace(/^(?:qbsearch|qbisrc):/i, '').trim()
     if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
-      return this.getRecommendations(cleanedQuery)
+      return this.getRecommendations(query)
     }
 
     const data = await this.apiRequest('/catalog/search', {
-      query: cleanedQuery,
+      query,
       limit: this.getMaxSearchResults(),
       type: 'tracks'
     })

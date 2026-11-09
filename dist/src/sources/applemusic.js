@@ -7,6 +7,72 @@ import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest } from '../
  */
 export default class AppleMusicSource {
     /**
+     * Declarative test suite for validating Apple Music source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'applemusic.track.resolve',
+            name: 'Apple Music Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://music.apple.com/us/album/get-lucky/617154241?i=617154366'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    author: { op: 'matches', value: 'Daft Punk' },
+                    sourceName: { op: 'equals', value: 'applemusic' }
+                }
+            }
+        },
+        {
+            id: 'applemusic.album.resolve',
+            name: 'Apple Music Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://music.apple.com/us/album/random-access-memories/617154241'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 10 },
+                metadata: {
+                    author: { op: 'matches', value: 'Daft Punk' }
+                }
+            }
+        },
+        {
+            id: 'applemusic.playlist.resolve',
+            name: 'Apple Music Playlist URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 20 }
+            }
+        },
+        {
+            id: 'applemusic.search.amsearch',
+            name: 'Apple Music Search query (amsearch:)',
+            input: {
+                type: 'search',
+                value: 'Daft Punk Get Lucky',
+                searchType: 'amsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    sourceName: { op: 'equals', value: 'applemusic' }
+                }
+            }
+        }
+    ];
+    /**
      * The global worker NodeLink instance.
      * @internal
      */
@@ -328,14 +394,22 @@ export default class AppleMusicSource {
             return { loadType: 'empty', data: {} };
         const tracks = await this.paginate(album, `/catalog/${country}/albums/${id}/tracks`);
         return {
-            loadType: 'album',
+            loadType: 'playlist',
             data: {
                 info: {
                     name: album.attributes?.name || 'Unknown Album',
                     selectedTrack: 0
                 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    type: 'album',
+                    identifier: id,
+                    url: album.attributes?.url ??
+                        `https://music.apple.com/${country}/album/${id}`,
+                    artworkUrl: this.parseArtwork(album.attributes?.artwork) || '',
+                    author: album.attributes?.artistName?.trim() || '',
+                    totalTracks: capTotalTracks(album.attributes?.trackCount ?? tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
+                }
             }
         };
     }
@@ -389,14 +463,22 @@ export default class AppleMusicSource {
             .map((t) => this.buildTrack(t))
             .filter((t) => !!t);
         return {
-            loadType: 'artist',
+            loadType: 'playlist',
             data: {
                 info: {
                     name: `${artist.attributes?.name}'s Top Tracks`,
                     selectedTrack: 0
                 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    type: 'artist',
+                    identifier: id,
+                    url: artist.attributes?.url ??
+                        `https://music.apple.com/${country}/artist/${id}`,
+                    artworkUrl: this.parseArtwork(artist.attributes?.artwork) || '',
+                    author: artist.attributes?.name?.trim() || '',
+                    totalTracks: tracks.length
+                }
             }
         };
     }

@@ -187,20 +187,12 @@ export default class JioSaavnSource {
       return this.getRecommendations(query)
     }
 
-    let cleanedQuery = query
-    for (const term of this.searchTerms) {
-      if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
-        cleanedQuery = cleanedQuery.slice(term.length + 1).trim()
-        break
-      }
-    }
-
     try {
-      logger('debug', 'JioSaavn', `Searching for: ${cleanedQuery}`)
+      logger('debug', 'JioSaavn', `Searching for: ${query}`)
 
       const data = await this._getJson({
         __call: 'search.getResults',
-        q: cleanedQuery,
+        q: query,
         includeMetaTags: '1'
       })
 

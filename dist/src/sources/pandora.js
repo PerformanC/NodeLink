@@ -26,6 +26,61 @@ const PANDORA_BASE_URL = 'https://www.pandora.com';
  */
 export default class PandoraSource {
     /**
+     * Declarative test suite for validating Pandora source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'pandora.track.resolve',
+            name: 'Pandora Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.pandora.com/artist/daft-punk/get-lucky-radio-edit-feat-pharrell-williams-and-nile-rodgers/get-lucky-radio-edit-feat-pharrell-williams-and-nile-rodgers/TRV4k4P4lv7g7ng'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    author: { op: 'matches', value: 'Daft Punk' },
+                    sourceName: { op: 'equals', value: 'pandora' }
+                }
+            }
+        },
+        {
+            id: 'pandora.album.resolve',
+            name: 'Pandora Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.pandora.com/artist/daft-punk/discovery/ALnj5w9vqJX7gvZ'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 10 },
+                metadata: {
+                    author: { op: 'matches', value: 'Daft Punk' },
+                    sourceName: { op: 'equals', value: 'pandora' }
+                }
+            }
+        },
+        {
+            id: 'pandora.search.pdsearch',
+            name: 'Pandora Search query (pdsearch:)',
+            input: {
+                type: 'search',
+                searchType: 'pdsearch',
+                value: 'Daft Punk Get Lucky'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    sourceName: { op: 'equals', value: 'pandora' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime NodeLink context.
      * @internal
      */
@@ -312,11 +367,14 @@ export default class PandoraSource {
         if (authError)
             return authError;
         const cleanUrl = url.split('?')[0]?.split('#')[0] ?? url;
-        const typeMatch = /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(cleanUrl);
+        const typeMatch = /^https?:\/\/(?:www\.)?pandora\.com\/(playlist|station|podcast|artist)\/.+/i.exec(cleanUrl);
         if (!typeMatch) {
             return { loadType: 'empty', data: {} };
         }
-        const type = typeMatch[2];
+        const type = typeMatch[1]?.toLowerCase();
+        if (!type) {
+            return { loadType: 'empty', data: {} };
+        }
         const lastPart = cleanUrl.split('/').pop() ?? '';
         logger('debug', 'Pandora', `Resolving ${type} with ID: ${lastPart}`);
         switch (type) {
@@ -489,11 +547,11 @@ export default class PandoraSource {
             .filter((item) => item !== undefined)
             .map((item) => this.buildTrack(item));
         return {
-            loadType: 'album',
+            loadType: 'playlist',
             data: {
                 info: { name, selectedTrack: 0 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: { type: 'album' }
             }
         };
     }

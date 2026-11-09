@@ -302,17 +302,9 @@ export default class AudiusSource implements SourceInstance {
     query: string,
     _sourceTerm?: string
   ): Promise<SourceResult> {
-    let cleanedQuery = query
-    for (const term of this.searchTerms) {
-      if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
-        cleanedQuery = cleanedQuery.slice(term.length + 1).trim()
-        break
-      }
-    }
-
     try {
       const limit = this.nodelink.options.search.maxResults || 10
-      const endpoint = `/v1/tracks/search?query=${encodeURIComponent(cleanedQuery)}&limit=${limit}`
+      const endpoint = `/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}`
       const data = await this._apiRequest<AudiusTrack[]>(endpoint)
 
       if (!data || data.length === 0) {

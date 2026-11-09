@@ -109,7 +109,8 @@ export default class PandoraSource implements SourceInstance {
       name: 'Pandora Search query (pdsearch:)',
       input: {
         type: 'search',
-        value: 'pdsearch:Daft Punk Get Lucky'
+        searchType: 'pdsearch',
+        value: 'Daft Punk Get Lucky'
       },
       expect: {
         result: { type: 'search' },
@@ -427,11 +428,10 @@ export default class PandoraSource implements SourceInstance {
     const authError = await this.ensureAuth()
     if (authError) return authError
 
-    const cleanedQuery = query.replace(/^pdsearch:/i, '').trim()
-    logger('debug', 'Pandora', `Searching for: ${cleanedQuery}`)
+    logger('debug', 'Pandora', `Searching for: ${query}`)
 
     const body = {
-      query: cleanedQuery,
+      query,
       types: ['TR'],
       listener: null,
       start: 0,

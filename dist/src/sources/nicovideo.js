@@ -306,10 +306,9 @@ export default class NicoVideoSource {
      * empty result, or an exception payload when the request fails.
      */
     async search(query) {
-        const cleanQuery = query.replace(/^(?:ncsearch|nicovideo):/, '').trim();
-        logger('debug', 'NicoVideo', `Searching for: ${cleanQuery}`);
+        logger('debug', 'NicoVideo', `Searching for: ${query}`);
         const params = new URLSearchParams({
-            q: cleanQuery,
+            q: query,
             targets: 'title,tags',
             fields: 'contentId,title,userId,thumbnailUrl,lengthSeconds',
             _sort: '-viewCounter',

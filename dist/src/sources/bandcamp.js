@@ -137,20 +137,13 @@ export default class BandcampSource {
      * @returns Search results, an empty payload, or a structured exception.
      */
     async search(query) {
-        let cleanedQuery = query;
-        for (const term of this.searchTerms) {
-            if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
-                cleanedQuery = cleanedQuery.slice(term.length + 1).trim();
-                break;
-            }
-        }
         try {
             const request = await makeRequest(BANDCAMP_SEARCH_API_URL, {
                 method: 'POST',
                 disableBodyCompression: true,
                 headers: REQUEST_HEADERS,
                 body: {
-                    search_text: cleanedQuery,
+                    search_text: query,
                     search_filter: 't',
                     full_page: true,
                     fan_id: null

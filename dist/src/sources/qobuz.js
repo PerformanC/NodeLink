@@ -8,6 +8,77 @@ const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
  */
 export default class QobuzSource {
     /**
+     * Declarative test suite for validating Qobuz source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'qobuz.track.resolve',
+            name: 'Qobuz Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://open.qobuz.com/track/8767428'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    author: { op: 'matches', value: 'Daft Punk' },
+                    sourceName: { op: 'equals', value: 'qobuz' }
+                }
+            }
+        },
+        {
+            id: 'qobuz.album.resolve',
+            name: 'Qobuz Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://open.qobuz.com/album/0886443973442'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 1 },
+                metadata: {
+                    author: { op: 'matches', value: 'Daft Punk' }
+                }
+            }
+        },
+        {
+            id: 'qobuz.search.qbsearch',
+            name: 'Qobuz Search query (qbsearch:)',
+            input: {
+                type: 'search',
+                searchType: 'qbsearch',
+                value: 'Daft Punk Get Lucky'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    sourceName: { op: 'equals', value: 'qobuz' }
+                }
+            }
+        },
+        {
+            id: 'qobuz.search.qbisrc',
+            name: 'Qobuz Search query (qbisrc:)',
+            input: {
+                type: 'search',
+                searchType: 'qbisrc',
+                value: 'USQX91300809'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    isrc: { op: 'matches', value: 'USQX91300809' },
+                    sourceName: { op: 'equals', value: 'qobuz' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime NodeLink context.
      */
     nodelink;

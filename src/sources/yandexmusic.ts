@@ -136,7 +136,8 @@ export default class YandexMusicSource implements SourceInstance {
       name: 'Yandex Music Search query (ymsearch:)',
       input: {
         type: 'search',
-        value: 'ymsearch:Daft Punk Get Lucky'
+        searchType: 'ymsearch',
+        value: 'Daft Punk Get Lucky'
       },
       expect: {
         result: { type: 'search' },
@@ -313,9 +314,8 @@ export default class YandexMusicSource implements SourceInstance {
     sourceTerm?: string,
     searchType = 'track'
   ): Promise<SourceResult> {
-    const cleanedQuery = query.replace(/^ymsearch:/i, '').trim()
     if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
-      return this.getRecommendations(cleanedQuery)
+      return this.getRecommendations(query)
     }
 
     if (!this.hasToken) {
@@ -332,7 +332,7 @@ export default class YandexMusicSource implements SourceInstance {
       const data = await this._apiRequest<{
         result?: YandexMusicSearchResponse
       }>('/search', {
-        text: cleanedQuery,
+        text: query,
         type: 'all',
         page: '0'
       })

@@ -316,17 +316,10 @@ export default class AudiomackSource {
      * @returns Search results, an empty payload, or a structured exception.
      */
     async search(query, _sourceTerm) {
-        let cleanedQuery = query;
-        for (const term of this.searchTerms) {
-            if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
-                cleanedQuery = cleanedQuery.slice(term.length + 1).trim();
-                break;
-            }
-        }
-        logger('debug', 'Sources', `Searching Audiomack for: "${cleanedQuery}"`);
+        logger('debug', 'Sources', `Searching Audiomack for: "${query}"`);
         try {
             const response = await this.makeSignedRequest('GET', `${API_BASE}/search`, {
-                q: cleanedQuery,
+                q: query,
                 limit: '20',
                 show: 'music',
                 sort: 'popular',

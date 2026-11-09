@@ -352,10 +352,9 @@ export default class AnghamiSource {
     query: string,
     _sourceTerm?: string
   ): Promise<SourceResult> {
-    const cleanQuery = query.replace(/^(?:agsearch|anghami):/i, '').trim()
-    logger('debug', 'Sources', `Searching Anghami for: "${cleanQuery}"`)
+    logger('debug', 'Sources', `Searching Anghami for: "${query}"`)
 
-    const searchUrl = `https://api.anghami.com/gateway.php?type=GETtabsearch&query=${encodeURIComponent(cleanQuery)}&web2=true&language=en&output=json`
+    const searchUrl = `https://api.anghami.com/gateway.php?type=GETtabsearch&query=${encodeURIComponent(query)}&web2=true&language=en&output=json`
     const { body, error } = await makeRequest(searchUrl, {
       method: 'GET',
       headers: this.buildHeaders()

@@ -269,16 +269,8 @@ export default class MixcloudSource {
    * @returns Search load result payload.
    */
   public async search(query: string): Promise<MixcloudSourceResult> {
-    let cleanedQuery = query
-    for (const term of this.searchTerms) {
-      if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
-        cleanedQuery = cleanedQuery.slice(term.length + 1).trim()
-        break
-      }
-    }
-
     try {
-      const apiUrl = `https://api.mixcloud.com/search/?q=${encodeURIComponent(cleanedQuery)}&type=cloudcast`
+      const apiUrl = `https://api.mixcloud.com/search/?q=${encodeURIComponent(query)}&type=cloudcast`
       const response = await http1makeRequest(apiUrl, {
         headers: { 'User-Agent': MIXCLOUD_USER_AGENT },
         disableBodyCompression: true

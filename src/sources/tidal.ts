@@ -90,7 +90,8 @@ export default class TidalSource {
       name: 'Tidal Search query (tdsearch:)',
       input: {
         type: 'search',
-        value: 'tdsearch:Daft Punk Get Lucky'
+        searchType: 'tdsearch',
+        value: 'Daft Punk Get Lucky'
       },
       expect: {
         result: { type: 'search' },
@@ -250,15 +251,14 @@ export default class TidalSource {
     query: string,
     sourceTerm?: string
   ): Promise<SourceResult> {
-    const cleanedQuery = query.replace(/^tdsearch:/i, '').trim()
     if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
-      return this.getRecommendations(cleanedQuery)
+      return this.getRecommendations(query)
     }
 
     try {
       const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10
       const data = await this.getJson('search', {
-        query: cleanedQuery,
+        query,
         limit,
         types: 'TRACKS'
       })

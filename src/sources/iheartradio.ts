@@ -340,7 +340,8 @@ export default class IheartradioSource {
       name: 'iHeartRadio Search query (ihsearch:)',
       input: {
         type: 'search',
-        value: 'ihsearch:Z100'
+        value: 'Z100',
+        searchType: 'ihsearch'
       },
       expect: {
         result: { type: 'search' },
@@ -565,10 +566,7 @@ export default class IheartradioSource {
    */
   public async search(query: string): Promise<SourceResult> {
     try {
-      const cleanedQuery = query
-        .replace(/^(?:ihsearch|iheartradio):/i, '')
-        .trim()
-      const encoded = encodeURIComponent(cleanedQuery)
+      const encoded = encodeURIComponent(query)
       const data = await this.requestJson(
         `${IHEART_API_V1}/catalog/searchAll` +
           `?keywords=${encoded}` +
