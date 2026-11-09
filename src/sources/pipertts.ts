@@ -6,6 +6,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
@@ -144,6 +145,45 @@ interface PiperTrackData {
  * Piper TTS source implementation.
  */
 export default class PiperSource {
+  /**
+   * Declarative test suite for validating Piper TTS source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'pipertts.tts.resolve',
+      name: 'Piper TTS resolution (pipertts:)',
+      input: {
+        type: 'resolve',
+        value: 'pipertts:Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          author: { op: 'equals', value: 'Piper TTS' },
+          sourceName: { op: 'equals', value: 'pipertts' }
+        }
+      }
+    },
+    {
+      id: 'pipertts.tts.search',
+      name: 'Piper TTS Search query (pipertts:)',
+      input: {
+        type: 'search',
+        searchType: 'pipertts',
+        value: 'Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          sourceName: { op: 'equals', value: 'pipertts' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */

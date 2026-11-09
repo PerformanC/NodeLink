@@ -614,7 +614,11 @@ async function main() {
     for (const [key, val] of Object.entries(rawSources)) {
         if (targetArg) {
             filteredSources[key] =
-                key.toLowerCase() === targetArg ? val : { enabled: false };
+                key.toLowerCase() === targetArg
+                    ? typeof val === 'object' && val !== null
+                        ? { ...val, enabled: true }
+                        : { enabled: true }
+                    : { enabled: false };
         }
         else {
             filteredSources[key] = val;
