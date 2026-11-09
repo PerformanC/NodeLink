@@ -5,6 +5,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestHeaders,
   HttpRequestResult,
@@ -298,6 +299,61 @@ interface IheartSourceManager {
  */
 export default class IheartradioSource {
   /**
+   * Declarative test suite for validating iHeartRadio source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'iheartradio.station.resolve',
+      name: 'iHeartRadio Station URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.iheart.com/live/1469/'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Z100' },
+          isStream: { op: 'equals', value: true },
+          sourceName: { op: 'equals', value: 'iheartradio' }
+        }
+      }
+    },
+    {
+      id: 'iheartradio.station.slug',
+      name: 'iHeartRadio Station URL with slug resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.iheart.com/live/z100-1469/'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Z100' },
+          isStream: { op: 'equals', value: true },
+          sourceName: { op: 'equals', value: 'iheartradio' }
+        }
+      }
+    },
+    {
+      id: 'iheartradio.search.ihsearch',
+      name: 'iHeartRadio Search query (ihsearch:)',
+      input: {
+        type: 'search',
+        value: 'ihsearch:Z100'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Z100' },
+          sourceName: { op: 'equals', value: 'iheartradio' }
+        }
+      }
+    }
+  ]
+
+  /**
    * Worker runtime shared with the source manager.
    */
   public readonly nodelink: WorkerNodeLink
@@ -509,7 +565,10 @@ export default class IheartradioSource {
    */
   public async search(query: string): Promise<SourceResult> {
     try {
-      const encoded = encodeURIComponent(query)
+      const cleanedQuery = query
+        .replace(/^(?:ihsearch|iheartradio):/i, '')
+        .trim()
+      const encoded = encodeURIComponent(cleanedQuery)
       const data = await this.requestJson(
         `${IHEART_API_V1}/catalog/searchAll` +
           `?keywords=${encoded}` +
