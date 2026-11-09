@@ -11,6 +11,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   YandexMusicAlbumNode,
   YandexMusicArtistNode,
@@ -82,6 +83,72 @@ const ALBUM_MAX_PAGE_ITEMS = 50
  * @public
  */
 export default class YandexMusicSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating Yandex Music source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'yandexmusic.track.resolve',
+      name: 'Yandex Music Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://music.yandex.com/track/16201639'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'yandexmusic' }
+        }
+      }
+    },
+    {
+      id: 'yandexmusic.album.resolve',
+      name: 'Yandex Music Album URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://music.yandex.com/album/1767585'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 10 },
+        metadata: {
+          author: { op: 'matches', value: 'Daft Punk' }
+        }
+      }
+    },
+    {
+      id: 'yandexmusic.playlist.resolve',
+      name: 'Yandex Music Playlist URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://music.yandex.com/users/yamusic-top/playlists/1000'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 20 }
+      }
+    },
+    {
+      id: 'yandexmusic.search.ymsearch',
+      name: 'Yandex Music Search query (ymsearch:)',
+      input: {
+        type: 'search',
+        value: 'ymsearch:Daft Punk Get Lucky'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          sourceName: { op: 'equals', value: 'yandexmusic' }
+        }
+      }
+    }
+  ]
+
   /**
    * The NodeLink worker context.
    * @internal
@@ -201,9 +268,7 @@ export default class YandexMusicSource implements SourceInstance {
    */
   public async setup(): Promise<boolean> {
     const cm = this.nodelink.credentialManager
-    if (!cm) return false
-
-    const cachedToken = cm.get<string>('yandexmusic_access_token')
+    const cachedToken = cm?.get<string>('yandexmusic_access_token')
     this.accessToken = this.config.accessToken || cachedToken || null
 
     if (!this.accessToken) {
@@ -216,7 +281,11 @@ export default class YandexMusicSource implements SourceInstance {
       return true
     }
 
-    if (this.config.accessToken && this.config.accessToken !== cachedToken) {
+    if (
+      cm &&
+      this.config.accessToken &&
+      this.config.accessToken !== cachedToken
+    ) {
       cm.set('yandexmusic_access_token', this.accessToken, 24 * 60 * 60 * 1000)
     }
 
@@ -244,8 +313,9 @@ export default class YandexMusicSource implements SourceInstance {
     sourceTerm?: string,
     searchType = 'track'
   ): Promise<SourceResult> {
+    const cleanedQuery = query.replace(/^ymsearch:/i, '').trim()
     if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
-      return this.getRecommendations(query)
+      return this.getRecommendations(cleanedQuery)
     }
 
     if (!this.hasToken) {
@@ -259,21 +329,22 @@ export default class YandexMusicSource implements SourceInstance {
     }
 
     try {
-      const data = await this._apiRequest<YandexMusicSearchResponse>(
-        '/search',
-        {
-          text: query,
-          type: 'all',
-          page: '0'
-        }
-      )
+      const data = await this._apiRequest<{
+        result?: YandexMusicSearchResponse
+      }>('/search', {
+        text: cleanedQuery,
+        type: 'all',
+        page: '0'
+      })
 
       if (!data) return { loadType: 'empty', data: {} }
 
+      const searchResult =
+        data.result || (data as unknown as YandexMusicSearchResponse)
       const limit = (this.nodelink.options.search.maxResults as number) || 10
 
       if (searchType === 'album') {
-        const albums = (data.albums?.results || [])
+        const albums = (searchResult.albums?.results || [])
           .filter((item) => this.allowUnavailable || item.available)
           .slice(0, limit)
           .map((item) => this._buildAlbumSearchResult(item))
@@ -283,7 +354,7 @@ export default class YandexMusicSource implements SourceInstance {
       }
 
       if (searchType === 'artist') {
-        const artists = (data.artists?.results || [])
+        const artists = (searchResult.artists?.results || [])
           .filter((item) => this.allowUnavailable || item.available)
           .slice(0, limit)
           .map((item) => this._buildArtistSearchResult(item))
@@ -293,7 +364,7 @@ export default class YandexMusicSource implements SourceInstance {
       }
 
       if (searchType === 'playlist') {
-        const playlists = (data.playlists?.results || [])
+        const playlists = (searchResult.playlists?.results || [])
           .filter(
             (item) =>
               this.allowUnavailable || (item.available as unknown as boolean)
@@ -305,10 +376,10 @@ export default class YandexMusicSource implements SourceInstance {
           : { loadType: 'empty', data: {} }
       }
 
-      const tracks = this._parseTracks(data.tracks?.results || [], 'com').slice(
-        0,
-        limit
-      )
+      const tracks = this._parseTracks(
+        searchResult.tracks?.results || [],
+        'com'
+      ).slice(0, limit)
       return tracks.length
         ? { loadType: 'search', data: tracks }
         : { loadType: 'empty', data: {} }
