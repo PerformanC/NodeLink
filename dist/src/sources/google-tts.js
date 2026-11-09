@@ -5,6 +5,44 @@ import { encodeTrack, logger, makeRequest } from '../utils.js';
  */
 export default class GoogleTTSSource {
     /**
+     * Declarative test suite for validating Google TTS source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'googletts.tts.resolve',
+            name: 'Google TTS resolution (gtts:)',
+            input: {
+                type: 'resolve',
+                value: 'gtts:Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    author: { op: 'equals', value: 'Google TTS' },
+                    sourceName: { op: 'equals', value: 'google-tts' }
+                }
+            }
+        },
+        {
+            id: 'googletts.tts.search',
+            name: 'Google TTS Search query (gtts:)',
+            input: {
+                type: 'search',
+                searchType: 'gtts',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    sourceName: { op: 'equals', value: 'google-tts' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -179,7 +217,8 @@ export default class GoogleTTSSource {
      * @returns Same payload produced by {@link search}.
      */
     async resolve(query) {
-        return this.search(query);
+        const text = query.startsWith('gtts:') ? query.slice(5) : query;
+        return this.search(text);
     }
     /**
      * Resolves the direct playback URL for a Google TTS track.
