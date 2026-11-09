@@ -1,9 +1,11 @@
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpResponseHeaders,
   TrackEncodeInput
@@ -119,7 +121,29 @@ interface RssPlaylistData {
 /**
  * RSS source implementation.
  */
-export default class RssSource {
+export default class RssSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating RSS source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'rss.feed.playlist',
+      name: 'RSS Podcast Feed resolution (Buzzsprout)',
+      input: {
+        type: 'resolve',
+        value: 'https://feeds.buzzsprout.com/1.rss'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 1 },
+        metadata: {
+          sourceName: { op: 'equals', value: 'rss' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -153,6 +177,15 @@ export default class RssSource {
    */
   public async setup(): Promise<boolean> {
     return true
+  }
+
+  /**
+   * Search handler for RSS source (returns empty as feeds do not support query search).
+   *
+   * @returns Empty source result.
+   */
+  public async search(_query: string): Promise<SourceResult> {
+    return { loadType: 'empty', data: {} }
   }
 
   /**
@@ -275,11 +308,13 @@ export default class RssSource {
    */
   public async getTrackUrl(
     track: TrackInfo
-  ): Promise<TrackUrlResult | SourceResult> {
+  ): Promise<TrackUrlResult> {
     const url = track.uri
     if (!url) {
       return {
-        loadType: 'error',
+        url: '',
+        protocol: 'http',
+        format: 'mp3',
         exception: {
           message: 'Missing enclosure URL.',
           severity: 'common'
