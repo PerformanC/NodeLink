@@ -833,9 +833,7 @@ export default class BlueskySource
    * @returns Direct HLS or blob URL descriptor, or an exception payload when
    * the track URI cannot be resolved.
    */
-  public async getTrackUrl(
-    decodedTrack: TrackInfo
-  ): Promise<TrackUrlResult> {
+  public async getTrackUrl(decodedTrack: TrackInfo): Promise<TrackUrlResult> {
     const reference = this.parsePostReference(decodedTrack.uri)
     if (!reference) {
       return {

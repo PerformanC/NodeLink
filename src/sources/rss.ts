@@ -306,9 +306,7 @@ export default class RssSource implements SourceInstance {
    * @returns Direct HTTP or HTTPS URL descriptor, or an exception payload when
    * the enclosure URL is missing.
    */
-  public async getTrackUrl(
-    track: TrackInfo
-  ): Promise<TrackUrlResult> {
+  public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
     const url = track.uri
     if (!url) {
       return {

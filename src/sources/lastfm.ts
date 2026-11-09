@@ -286,8 +286,10 @@ export default class LastFMSource
         artist: { method: 'artist.search', param: 'artist' }
       }
 
-      const selected =
-        typeMap[searchType] || { method: 'track.search', param: 'track' }
+      const selected = typeMap[searchType] || {
+        method: 'track.search',
+        param: 'track'
+      }
       const payload = await this.callApi(selected.method, {
         [selected.param]: query,
         limit: this.maxSearchResults
