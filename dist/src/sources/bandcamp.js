@@ -27,6 +27,56 @@ const JSON_LD_REGEX = /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/sc
  */
 export default class BandcampSource {
     /**
+     * Declarative test suite for validating Bandcamp source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'bandcamp.track.resolve',
+            name: 'Bandcamp Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://carpenterbrut.bandcamp.com/track/maniac-feat-yann-ligner'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'MANIAC' },
+                    author: { op: 'matches', value: 'Carpenter Brut' },
+                    sourceName: { op: 'equals', value: 'bandcamp' }
+                }
+            }
+        },
+        {
+            id: 'bandcamp.album.resolve',
+            name: 'Bandcamp Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://carpenterbrut.bandcamp.com/album/trilogy'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 10 },
+                metadata: {
+                    author: { op: 'matches', value: 'Carpenter Brut' }
+                }
+            }
+        },
+        {
+            id: 'bandcamp.search.bcsearch',
+            name: 'Bandcamp Search query (bcsearch:)',
+            input: {
+                type: 'search',
+                value: 'carpenter brut maniac',
+                searchType: 'bcsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 }
+            }
+        }
+    ];
+    /**
      * Shared worker runtime provided by the source manager.
      */
     nodelink;
@@ -87,13 +137,20 @@ export default class BandcampSource {
      * @returns Search results, an empty payload, or a structured exception.
      */
     async search(query) {
+        let cleanedQuery = query;
+        for (const term of this.searchTerms) {
+            if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
+                cleanedQuery = cleanedQuery.slice(term.length + 1).trim();
+                break;
+            }
+        }
         try {
             const request = await makeRequest(BANDCAMP_SEARCH_API_URL, {
                 method: 'POST',
                 disableBodyCompression: true,
                 headers: REQUEST_HEADERS,
                 body: {
-                    search_text: query,
+                    search_text: cleanedQuery,
                     search_filter: 't',
                     full_page: true,
                     fan_id: null
