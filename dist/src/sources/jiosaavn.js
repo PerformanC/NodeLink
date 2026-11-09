@@ -18,6 +18,59 @@ const DEFAULT_ARTIST_LIMIT = 20;
  */
 export default class JioSaavnSource {
     /**
+     * Declarative test suite for validating JioSaavn source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'jiosaavn.track.resolve',
+            name: 'JioSaavn Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.jiosaavn.com/song/kesariya-tu-fuljhadiyo-wale-tyohaaro-jesi-happy-diwali/AgIAQyBeWlI'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Kesariya' },
+                    author: { op: 'matches', value: 'Pritam' },
+                    sourceName: { op: 'equals', value: 'jiosaavn' }
+                }
+            }
+        },
+        {
+            id: 'jiosaavn.album.resolve',
+            name: 'JioSaavn Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.jiosaavn.com/album/brahmastra/xq4v9ZFC9iA_'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 5 },
+                metadata: {
+                    sourceName: { op: 'equals', value: 'jiosaavn' }
+                }
+            }
+        },
+        {
+            id: 'jiosaavn.search.jssearch',
+            name: 'JioSaavn Search query (jssearch:)',
+            input: {
+                type: 'search',
+                value: 'Kesariya',
+                searchType: 'jssearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Kesariya' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime NodeLink context.
      */
     nodelink;
@@ -86,11 +139,18 @@ export default class JioSaavnSource {
         if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
             return this.getRecommendations(query);
         }
+        let cleanedQuery = query;
+        for (const term of this.searchTerms) {
+            if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
+                cleanedQuery = cleanedQuery.slice(term.length + 1).trim();
+                break;
+            }
+        }
         try {
-            logger('debug', 'JioSaavn', `Searching for: ${query}`);
+            logger('debug', 'JioSaavn', `Searching for: ${cleanedQuery}`);
             const data = await this._getJson({
                 __call: 'search.getResults',
-                q: query,
+                q: cleanedQuery,
                 includeMetaTags: '1'
             });
             const payload = this.toObject(data);
@@ -327,7 +387,6 @@ export default class JioSaavnSource {
             _format: 'json',
             _marker: '0',
             cc: 'in',
-            ctx: 'web6dot0',
             ...Object.fromEntries(Object.entries(params).map(([key, value]) => [key, String(value)]))
         }).toString();
         const { body, error, statusCode } = await http1makeRequest(url.toString(), {
@@ -339,11 +398,13 @@ export default class JioSaavnSource {
             throw new Error(`JioSaavn API request failed: ${statusCode || 'unknown'}`);
         }
         if (typeof body === 'string') {
+            if (!body.trim())
+                return null;
             try {
                 return JSON.parse(body);
             }
             catch {
-                throw new Error('Failed to parse JioSaavn response');
+                return null;
             }
         }
         return body;
@@ -374,9 +435,18 @@ export default class JioSaavnSource {
             type: 'song'
         });
         const webApiPayload = this.toObject(data);
-        return Array.isArray(webApiPayload?.songs)
-            ? this._parseSongPayload(webApiPayload.songs[0])
-            : null;
+        if (webApiPayload) {
+            if (Array.isArray(webApiPayload.songs) && webApiPayload.songs[0]) {
+                return this._parseSongPayload(webApiPayload.songs[0]);
+            }
+            const values = Object.values(webApiPayload);
+            if (values[0] && typeof values[0] === 'object') {
+                const payload = this._parseSongPayload(values[0]);
+                if (payload)
+                    return payload;
+            }
+        }
+        return null;
     }
     /**
      * Resolves non-song JioSaavn URLs (album/playlist/artist).
