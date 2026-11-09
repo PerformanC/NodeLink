@@ -12,6 +12,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   TrackEncodeInput
@@ -35,6 +36,73 @@ const DEFAULT_HIFI_QUALITIES = ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'LOW']
  * @public
  */
 export default class TidalSource {
+  /**
+   * Declarative test suite for validating Tidal source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'tidal.track.resolve',
+      name: 'Tidal Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://tidal.com/browse/track/20115564'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'tidal' }
+        }
+      }
+    },
+    {
+      id: 'tidal.album.resolve',
+      name: 'Tidal Album URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://tidal.com/browse/album/20115556'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 10 },
+        metadata: {
+          author: { op: 'matches', value: 'Daft Punk' }
+        }
+      }
+    },
+    {
+      id: 'tidal.playlist.resolve',
+      name: 'Tidal Playlist URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://tidal.com/browse/playlist/edf3b7d2-cb42-41d7-93c0-afa2a395521b'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 20 }
+      }
+    },
+    {
+      id: 'tidal.search.tdsearch',
+      name: 'Tidal Search query (tdsearch:)',
+      input: {
+        type: 'search',
+        value: 'tdsearch:Daft Punk Get Lucky'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          sourceName: { op: 'equals', value: 'tidal' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -182,14 +250,15 @@ export default class TidalSource {
     query: string,
     sourceTerm?: string
   ): Promise<SourceResult> {
+    const cleanedQuery = query.replace(/^tdsearch:/i, '').trim()
     if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
-      return this.getRecommendations(query)
+      return this.getRecommendations(cleanedQuery)
     }
 
     try {
       const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10
       const data = await this.getJson('search', {
-        query,
+        query: cleanedQuery,
         limit,
         types: 'TRACKS'
       })
