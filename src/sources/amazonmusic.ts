@@ -583,24 +583,39 @@ export default class AmazonMusicSource implements SourceInstance {
    */
   public async search(query: string): Promise<SourceResult> {
     try {
-      const searchUrl = `https://www.amazon.com/s?k=${encodeURIComponent(query)}&i=digital-music`
-      const res = await http1makeRequest(searchUrl, {
-        headers: {
-          'User-Agent': SEARCH_USER_AGENT,
-          Accept:
-            'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9'
-        }
-      })
+      const domains = ['www.amazon.com', 'www.amazon.de', 'www.amazon.co.uk']
+      let body = ''
 
-      if (res.statusCode !== 200 || typeof res.body !== 'string') {
+      for (const domain of domains) {
+        const searchUrl = `https://${domain}/s?k=${encodeURIComponent(query)}&i=digital-music`
+        const res = await http1makeRequest(searchUrl, {
+          headers: {
+            'User-Agent': SEARCH_USER_AGENT,
+            Accept:
+              'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9'
+          }
+        })
+
+        if (
+          res.statusCode === 200 &&
+          typeof res.body === 'string' &&
+          !res.body.includes('bm-verify') &&
+          res.body.includes('data-asin=')
+        ) {
+          body = res.body
+          break
+        }
+      }
+
+      if (!body) {
         return { loadType: 'empty', data: {} }
       }
 
       const itemRegex = /data-asin="([A-Z0-9]{10})"[\s\S]*?(?:data-asin=|$)/g
       const tracks: TrackInfo[] = []
 
-      for (const match of res.body.matchAll(itemRegex)) {
+      for (const match of body.matchAll(itemRegex)) {
         if (tracks.length >= 10) break
         const asin = match[1]
         const block = match[0]
