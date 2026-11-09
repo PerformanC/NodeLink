@@ -36,6 +36,45 @@ const _createAdtsHeader = (sampleLength, profile, samplingIndex, channelCount) =
  */
 export default class EternalboxSource {
     /**
+     * Declarative test suite for validating Eternalbox source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'eternalbox.track.resolve',
+            name: 'Eternalbox Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://eternalbox.floriegl.tech/jukebox_go.html?id=0DiWol3AO6WpXZgp0goxAV'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'One More Time' },
+                    author: { op: 'matches', value: 'Daft Punk' },
+                    sourceName: { op: 'equals', value: 'eternalbox' }
+                }
+            }
+        },
+        {
+            id: 'eternalbox.search.ebox',
+            name: 'Eternalbox Search query (ebox:)',
+            input: {
+                type: 'search',
+                searchType: 'ebox',
+                value: 'Daft Punk One More Time'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'One More Time' },
+                    sourceName: { op: 'equals', value: 'eternalbox' }
+                }
+            }
+        }
+    ];
+    /**
      * The NodeLink worker context.
      * @internal
      */
@@ -88,9 +127,9 @@ export default class EternalboxSource {
         this.nodelink = nodelink;
         this.config = (nodelink.options.sources?.eternalbox || {
             enabled: false,
-            baseUrl: 'https://eternalboxmirror.xyz'
+            baseUrl: 'https://eternalbox.floriegl.tech'
         });
-        this.baseUrl = this.config.baseUrl || 'https://eternalboxmirror.xyz';
+        this.baseUrl = this.config.baseUrl || 'https://eternalbox.floriegl.tech';
         this.cacheMaxBytes = this.config.cacheMaxBytes ?? 20 * 1024 * 1024;
         const mirrors = [
             'eternalboxmirror\\.xyz',
@@ -134,7 +173,15 @@ export default class EternalboxSource {
         const url = `${this.baseUrl}/api/analysis/search?query=${encodeURIComponent(query)}&results=${limit}`;
         try {
             const res = await http1makeRequest(url, {
-                headers: this._buildApiHeaders()
+                headers: this._buildApiHeaders(),
+                shouldFollowRedirect: (nextUrl) => {
+                    try {
+                        return this._isAllowedHost(new URL(nextUrl).hostname);
+                    }
+                    catch {
+                        return false;
+                    }
+                }
             });
             if (res.statusCode !== 200)
                 return { loadType: 'empty', data: {} };
@@ -312,6 +359,14 @@ export default class EternalboxSource {
      * @internal
      */
     _extractItems(body) {
+        if (typeof body === 'string') {
+            try {
+                body = JSON.parse(body);
+            }
+            catch {
+                return [];
+            }
+        }
         if (Array.isArray(body))
             return body;
         const b = body;
@@ -360,8 +415,16 @@ export default class EternalboxSource {
                 }
             }
         });
-        if (res.statusCode !== 200)
+        if (res.statusCode !== 200 || !res.body)
             return null;
+        if (typeof res.body === 'string') {
+            try {
+                return JSON.parse(res.body);
+            }
+            catch {
+                return null;
+            }
+        }
         return res.body;
     }
     /**
@@ -568,9 +631,16 @@ export default class EternalboxSource {
                     }
                 }
             });
-            if (res.statusCode !== 200)
+            if (res.statusCode !== 200 || !res.body)
                 return null;
-            return res.body?.url || null;
+            let body = res.body;
+            if (typeof body === 'string') {
+                try {
+                    body = JSON.parse(body);
+                }
+                catch { }
+            }
+            return body?.url || null;
         }
         catch {
             return null;

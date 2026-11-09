@@ -17,6 +17,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
 
 /**
@@ -101,6 +102,47 @@ interface QuantumInternal extends EternalboxQuantum {
  */
 export default class EternalboxSource implements SourceInstance {
   /**
+   * Declarative test suite for validating Eternalbox source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'eternalbox.track.resolve',
+      name: 'Eternalbox Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://eternalbox.floriegl.tech/jukebox_go.html?id=0DiWol3AO6WpXZgp0goxAV'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'One More Time' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'eternalbox' }
+        }
+      }
+    },
+    {
+      id: 'eternalbox.search.ebox',
+      name: 'Eternalbox Search query (ebox:)',
+      input: {
+        type: 'search',
+        searchType: 'ebox',
+        value: 'Daft Punk One More Time'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'One More Time' },
+          sourceName: { op: 'equals', value: 'eternalbox' }
+        }
+      }
+    }
+  ]
+
+  /**
    * The NodeLink worker context.
    * @internal
    */
@@ -165,10 +207,10 @@ export default class EternalboxSource implements SourceInstance {
     this.nodelink = nodelink
     this.config = (nodelink.options.sources?.eternalbox || {
       enabled: false,
-      baseUrl: 'https://eternalboxmirror.xyz'
+      baseUrl: 'https://eternalbox.floriegl.tech'
     }) as EternalboxSourceConfig
 
-    this.baseUrl = this.config.baseUrl || 'https://eternalboxmirror.xyz'
+    this.baseUrl = this.config.baseUrl || 'https://eternalbox.floriegl.tech'
     this.cacheMaxBytes = this.config.cacheMaxBytes ?? 20 * 1024 * 1024
 
     const mirrors = [
@@ -231,7 +273,14 @@ export default class EternalboxSource implements SourceInstance {
 
     try {
       const res = await http1makeRequest(url, {
-        headers: this._buildApiHeaders()
+        headers: this._buildApiHeaders(),
+        shouldFollowRedirect: (nextUrl) => {
+          try {
+            return this._isAllowedHost(new URL(nextUrl).hostname)
+          } catch {
+            return false
+          }
+        }
       })
       if (res.statusCode !== 200) return { loadType: 'empty', data: {} }
 
@@ -441,6 +490,13 @@ export default class EternalboxSource implements SourceInstance {
    * @internal
    */
   private _extractItems(body: unknown): Record<string, unknown>[] {
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body)
+      } catch {
+        return []
+      }
+    }
     if (Array.isArray(body)) return body as Record<string, unknown>[]
     const b = body as Record<string, unknown> | null
     if (!b) return []
@@ -488,7 +544,14 @@ export default class EternalboxSource implements SourceInstance {
         }
       }
     })
-    if (res.statusCode !== 200) return null
+    if (res.statusCode !== 200 || !res.body) return null
+    if (typeof res.body === 'string') {
+      try {
+        return JSON.parse(res.body) as EternalboxPayload
+      } catch {
+        return null
+      }
+    }
     return res.body as EternalboxPayload
   }
 
@@ -736,8 +799,14 @@ export default class EternalboxSource implements SourceInstance {
           }
         }
       })
-      if (res.statusCode !== 200) return null
-      return (res.body as { url?: string })?.url || null
+      if (res.statusCode !== 200 || !res.body) return null
+      let body = res.body
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body)
+        } catch {}
+      }
+      return (body as { url?: string })?.url || null
     } catch {
       return null
     }
