@@ -130,8 +130,10 @@ The sections below show how these parts fit together. For the full set of option
 
 Before we start, make sure you have:
 
-- **Node.js `>=22.22.2`**
+- **Node.js `>=22.22.2`** or **Bun**
 - **Git**
+
+Node.js is the documented baseline. Prefer Bun? There's a separate start path for it below.
 
 ### Clone the project
 
@@ -142,8 +144,16 @@ cd NodeLink
 
 ### Install dependencies
 
+With npm:
+
 ```bash
 npm install
+```
+
+Or, when using Bun:
+
+```bash
+bun install
 ```
 
 ### Create the configuration and start NodeLink
@@ -187,6 +197,24 @@ docker run -d --name nodelink-dev -p 3000:3000 ghcr.io/performanc/nodelink:dev
 ```
 
 For additional deployment details, use the [Configuration Guide](https://nodelink.js.org/docs/config).
+
+### Prefer Bun?
+
+Already using Bun in your projects? NodeLink has a dedicated start script for it, so you can run the TypeScript entry point directly:
+
+```bash
+bun run start:bun
+```
+
+The default configuration has `server.useBunServer` enabled. When NodeLink is started with Bun and this option is enabled, the HTTP and WebSocket server path uses `Bun.serve` and Bun's native WebSocket implementation. [`BunSocketWrapper`](https://github.com/PerformanC/NodeLink/blob/dev/src/server/bunServer.ts) adapts those sockets to the event flow NodeLink already uses.
+
+There's a second path too. Set `server.useBunServer` to `false` to use Node's HTTP server together with [`@performanc/pwsl-server`](https://github.com/PerformanC/internals/tree/PWSL-server). PWSL detects when it is running under Bun and selects its `ws` implementation for WebSocket handling instead of its regular socket implementation; that runtime-specific selection lives in [PWSL's server entry point](https://github.com/PerformanC/internals/blob/PWSL-server/index.js).
+
+The native `Bun.serve` path is still marked experimental in the runtime, so keep that in mind when choosing it for a deployment. Its Bun-specific regression tests are in [`src/server/bunServer.test.ts`](https://github.com/PerformanC/NodeLink/blob/dev/src/server/bunServer.test.ts) and can be run with:
+
+```bash
+bun test src/server/bunServer.test.ts
+```
 
 ---
 
@@ -337,7 +365,7 @@ NodeLink uses a small set of focused packages for voice transport, decoding, res
 - [`@performanc/voice`](https://github.com/PerformanC/voice) — Discord voice connections and voice packet transport. **Maintained by PerformanC.**
 - [`@ecliptia/faad2-wasm`](https://www.npmjs.com/package/@ecliptia/faad2-wasm) — AAC decoding through the FAAD2 WebAssembly build. **Published under the Ecliptia scope.**
 - [`@ecliptia/seekable-stream`](https://github.com/1Lucas1apk/seekable-stream) — seekable HTTP streams and byte-range handling. **Ecliptia package; source maintained in the 1Lucas1apk repository.**
-- [`@toddynnn/symphonia-decoder`](https://www.npmjs.com/package/@toddynnn/symphonia-decoder) — audio decoding for formats handled by the Symphonia-based module. **Published under the `@toddynnn` npm scope.**
+- [`@toddynnn/symphonia-decoder`](https://github.com/ToddyTheNoobDud/symphonia-decoder) — audio decoding for formats handled by the Symphonia-based module. [npm package](https://www.npmjs.com/package/@toddynnn/symphonia-decoder). **Maintained by Toddy.**
 - [`@toddynnn/voice-opus`](https://www.npmjs.com/package/@toddynnn/voice-opus) — Opus encoding and decoding used by the audio path. **Published under the `@toddynnn` npm scope.**
 - [`@alexanderolsen/libsamplerate-js`](https://www.npmjs.com/package/@alexanderolsen/libsamplerate-js) — sample-rate conversion. **Upstream project:** [aolsenjazz/libsamplerate-js](https://github.com/aolsenjazz/libsamplerate-js).
 - [`fastest-validator`](https://www.npmjs.com/package/fastest-validator) — configuration and data validation. **Upstream project:** [icebob/fastest-validator](https://github.com/icebob/fastest-validator).
@@ -365,12 +393,13 @@ The README is the starting point. The documentation goes deeper when you need th
 Want to run the project from source or help improve it? These are the scripts defined in `package.json`:
 
 ```bash
-npm run start       # Start from source
+npm run start       # Start from source with Node.js
 npm run build       # Compile TypeScript
 npm run type-check  # Check types without emitting build output
+bun run start:bun   # Start from source with Bun
 ```
 
-The project requires Node.js `>=22.22.2`. Source-specific test tooling is available under `scripts/`; check the script and provider setup before running live source checks.
+The Node.js minimum is `>=22.22.2`. Bun has its own start path and server integration, described above. Source-specific test tooling is available under `scripts/`; check the script and provider setup before running live source checks.
 
 ## Contributing
 
@@ -378,7 +407,58 @@ Found something broken? Have an idea? Want to improve a source, add a filter, wo
 
 Issues and pull requests are welcome. Start with the [issue tracker](https://github.com/PerformanC/NodeLink/issues) or reach out through the community servers below.
 
-A huge thank you to **@RainyXeon** for allowing us to incorporate NicoVideo streaming logic from [LunaStream](https://github.com/LunaStream/LunaStream).
+## The people behind NodeLink
+
+<p align="center">
+  NodeLink is built and maintained by people who enjoy working on audio, infrastructure and the little details that make the server work.
+</p>
+
+<table align="center">
+  <tr>
+    <td align="center" width="260">
+      <a href="https://github.com/1Lucas1apk">
+        <img src="https://avatars.githubusercontent.com/u/76886832?v=4" width="112" height="112" alt="Lucas Morais Rodrigues" />
+      </a>
+      <br />
+      <strong><a href="https://github.com/1Lucas1apk">Lucas Morais Rodrigues</a></strong>
+      <br />
+      <sub>Core developer</sub>
+      <br />
+      <sub><a href="https://github.com/1Lucas1apk">@1Lucas1apk</a></sub>
+    </td>
+    <td align="center" width="260">
+      <a href="https://github.com/ToddyTheNoobDud">
+        <img src="https://avatars.githubusercontent.com/u/86982643?v=4" width="112" height="112" alt="Toddy" />
+      </a>
+      <br />
+      <strong><a href="https://github.com/ToddyTheNoobDud">Toddy</a></strong>
+      <br />
+      <sub>Core maintainer</sub>
+      <br />
+      <sub><a href="https://github.com/ToddyTheNoobDud">@ToddyTheNoobDud</a></sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  And to everyone who has opened an issue, tested a source, reported an edge case, sent a fix, improved the docs or helped someone else get unstuck: <strong>thank you.</strong>
+  <br />
+  NodeLink is better because people take the time to contribute.
+</p>
+
+<h3 align="center">Everyone who helped along the way 💙</h3>
+
+<p align="center">
+  <a href="https://github.com/PerformanC/NodeLink/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=PerformanC/NodeLink&max=400&columns=8" width="760" alt="NodeLink contributors" />
+  </a>
+  <br />
+  <sub>Contributor avatars generated by <a href="https://contrib.rocks">contrib.rocks</a>. <a href="https://github.com/PerformanC/NodeLink/graphs/contributors">See the full contributors graph</a>.</sub>
+</p>
+
+<p align="center">
+  A special thank you to <strong>@RainyXeon</strong> for allowing us to incorporate NicoVideo streaming logic from <a href="https://github.com/LunaStream/LunaStream">LunaStream</a>.
+</p>
 
 ## Community & support
 
