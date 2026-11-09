@@ -1257,6 +1257,13 @@ export interface NodelinkServer {
   sources: import('../managers/sourceManager.ts').default | null
 
   /**
+   * Source health manager
+   */
+  sourceHealthManager?:
+    | import('../managers/sourceHealthManager.ts').default
+    | null
+
+  /**
    * Lyrics manager
    */
   lyrics: import('../managers/lyricsManager.ts').default | null

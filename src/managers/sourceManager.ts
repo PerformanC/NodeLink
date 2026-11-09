@@ -61,6 +61,8 @@ export interface SourcesManagerContext {
   sourceWorkerManager?: unknown
   /** Global plugin manager for hook execution. */
   pluginManager?: import('./pluginManager.ts').default | null
+  /** Global source health and observability manager. */
+  sourceHealthManager?: import('./sourceHealthManager.ts').default | null
 }
 
 /**
@@ -183,6 +185,7 @@ export default class SourcesManager implements SourceManagerLike {
             }
           }
         }
+        this.nodelink.sourceHealthManager?.registerSource(sourceKey)
         logger('info', 'Sources', `Loaded source: ${sourceKey}`)
       }
     }
@@ -289,6 +292,9 @@ export default class SourcesManager implements SourceManagerLike {
       )
     }
 
+    const start = performance.now()
+    const healthManager = this.nodelink.sourceHealthManager
+
     try {
       const fn = (instance as Record<string, unknown>)[method] as
         | ((...a: unknown[]) => Promise<SourceResult>)
@@ -297,6 +303,8 @@ export default class SourcesManager implements SourceManagerLike {
         throw new Error(`Method ${method} not found on source ${sourceName}`)
       }
       const result = await fn.apply(instance, args)
+      const duration = Math.round(performance.now() - start)
+
       if (result.loadType === 'search') {
         for (const track of result.data) track.userData ??= {}
       } else if (result.loadType === 'track' || result.loadType === 'episode') {
@@ -311,12 +319,20 @@ export default class SourcesManager implements SourceManagerLike {
 
       if (result.loadType === 'error') {
         this.nodelink.statsManager?.incrementSourceFailure?.(sourceName)
+        healthManager?.recordFailure(
+          sourceName,
+          duration,
+          result.exception?.message ?? 'Source returned error loadType'
+        )
       } else {
         this.nodelink.statsManager?.incrementSourceSuccess?.(sourceName)
+        healthManager?.recordSuccess(sourceName, duration)
       }
       return result
     } catch (e) {
+      const duration = Math.round(performance.now() - start)
       this.nodelink.statsManager?.incrementSourceFailure?.(sourceName)
+      healthManager?.recordFailure(sourceName, duration, e)
       throw e
     }
   }
@@ -616,16 +632,41 @@ export default class SourcesManager implements SourceManagerLike {
         }
       }
 
-      return (await sourceGetTrackUrl.call(
-        instance,
-        track,
-        itag,
-        isRecovering
-      )) as TrackUrlResult & {
-        protocol?: string
-        format?: TrackFormat
-        trackInfo?: TrackInfoExtended
-        additionalData?: Record<string, unknown>
+      const trackStart = performance.now()
+      try {
+        const urlResult = (await sourceGetTrackUrl.call(
+          instance,
+          track,
+          itag,
+          isRecovering
+        )) as TrackUrlResult & {
+          protocol?: string
+          format?: TrackFormat
+          trackInfo?: TrackInfoExtended
+          additionalData?: Record<string, unknown>
+        }
+        const trackDuration = Math.round(performance.now() - trackStart)
+        if (urlResult.exception) {
+          this.nodelink.sourceHealthManager?.recordFailure(
+            track.sourceName,
+            trackDuration,
+            urlResult.exception.message
+          )
+        } else {
+          this.nodelink.sourceHealthManager?.recordSuccess(
+            track.sourceName,
+            trackDuration
+          )
+        }
+        return urlResult
+      } catch (err) {
+        const trackDuration = Math.round(performance.now() - trackStart)
+        this.nodelink.sourceHealthManager?.recordFailure(
+          track.sourceName,
+          trackDuration,
+          err
+        )
+        throw err
       }
     })
   }

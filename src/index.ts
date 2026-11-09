@@ -34,6 +34,7 @@ import PluginManager from './managers/pluginManager.ts'
 import RateLimitManager from './managers/rateLimitManager.ts'
 import RoutePlannerManager from './managers/routePlannerManager.ts'
 import SessionManager from './managers/sessionManager.ts'
+import SourceHealthManager from './managers/sourceHealthManager.ts'
 import type SourcesManager from './managers/sourceManager.ts'
 import type SourceWorkerManager from './managers/sourceWorkerManager.ts'
 import StatsManager from './managers/statsManager.ts'
@@ -120,6 +121,7 @@ class NodelinkServer extends EventEmitter {
   sourceWorkerManager: SourceWorkerManager | null
   workerManager: WorkerManager | null
   sources: SourcesManager | null
+  readonly sourceHealthManager: SourceHealthManager
   lyrics: LyricsManager | null
   meanings: MeaningManager | null
 
@@ -149,6 +151,7 @@ class NodelinkServer extends EventEmitter {
     this.sessions = new SessionManager(this, PlayerManagerClass)
     this.routePlanner = new RoutePlannerManager(this)
     this.statsManager = new StatsManager(this)
+    this.sourceHealthManager = new SourceHealthManager(this)
     this.rateLimitManager = new RateLimitManager(this)
     this.dosProtectionManager = new DosProtectionManager(this)
     this.admissionManager = new AdmissionManager(this, options.admission)
@@ -215,6 +218,7 @@ class NodelinkServer extends EventEmitter {
     this.rateLimitManager.destroy()
     this.dosProtectionManager.destroy()
     this.admissionManager.destroy()
+    this.sourceHealthManager.destroy()
 
     await this._cleanupWebSocketServer()
 

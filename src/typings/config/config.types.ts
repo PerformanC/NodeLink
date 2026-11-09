@@ -3,6 +3,7 @@ import type { DosProtectionConfig } from '../api/dosProtection.types.ts'
 import type { RateLimitConfig } from '../api/rateLimit.types.ts'
 import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 import type { MusixmatchConfig } from '../lyrics/musixmatch.types.ts'
+import type { SourceHealthConfig } from '../sources/sourceHealth.types.ts'
 
 /**
  * Selection of the internal engine used for networking and protocol handling.
@@ -1239,6 +1240,7 @@ export interface NodelinkConfig {
   rateLimit: SecuritySection['rateLimit']
   dosProtection: SecuritySection['dosProtection']
   admission?: AdmissionConfig
+  sourceHealth?: SourceHealthConfig
   trustProxy: boolean
   network: NetworkSection
   search: {

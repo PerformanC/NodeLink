@@ -115,6 +115,13 @@ interface InfoRouteRuntime extends ApiNodelinkServer {
   pluginManager: InfoPluginManager | null
 
   /**
+   * Source health manager instance when available.
+   */
+  sourceHealthManager?:
+    | import('../managers/sourceHealthManager.ts').default
+    | null
+
+  /**
    * Configuration extended with optional filter flags.
    */
   options: ApiNodelinkServer['options'] & {
@@ -212,6 +219,13 @@ interface InfoResponse {
    * Loaded plugin metadata list.
    */
   plugins: InfoPluginResponse[]
+
+  /**
+   * Source health monitoring status.
+   */
+  sourceHealth?: {
+    enabled: boolean
+  }
 }
 
 /**
@@ -346,7 +360,10 @@ async function buildInfoResponse(
     isNodelink: true,
     sourceManagers: await getSourceManagers(nodelink),
     filters: getEnabledFilterNames(nodelink.options.playback.filters?.enabled),
-    plugins: getPlugins(nodelink.pluginManager)
+    plugins: getPlugins(nodelink.pluginManager),
+    sourceHealth: {
+      enabled: Boolean(nodelink.sourceHealthManager?.isEnabled)
+    }
   }
 }
 
