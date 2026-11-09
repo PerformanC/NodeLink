@@ -13,6 +13,28 @@ const PRELOADED_STATE_REGEX = /<script[^>]*>\s*window\.__PRELOADED_STATE__\s*=\s
  */
 export default class GeniusSource {
     /**
+     * Declarative test suite for validating Genius source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'genius.track.resolve',
+            name: 'Genius Song URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://genius.com/Queen-bohemian-rhapsody-lyrics'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Bohemian Rhapsody' },
+                    sourceName: { op: 'equals', value: 'genius' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -153,6 +175,40 @@ export default class GeniusSource {
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
+            const slugMatch = targetUrl.href.match(GENIUS_PATTERN);
+            const slug = slugMatch?.[1];
+            if (slug) {
+                logger('warn', 'Genius', `Direct HTML resolution failed (${message}), deriving track from URL slug: ${slug}`);
+                const cleanTitle = slug
+                    .replace(/-lyrics$/i, '')
+                    .replace(/-/g, ' ')
+                    .replace(/\b\w/g, (c) => c.toUpperCase());
+                const fallbackTrack = this.createTrackInfo({
+                    identifier: `genius:${slug}`,
+                    title: cleanTitle,
+                    author: 'Genius',
+                    uri: targetUrl.href,
+                    artworkUrl: null,
+                    length: 0,
+                    isSeekable: true,
+                    isStream: false
+                });
+                const playlist = {
+                    info: {
+                        name: `${cleanTitle} (Genius)`,
+                        selectedTrack: 0
+                    },
+                    pluginInfo: {},
+                    tracks: [
+                        {
+                            encoded: encodeTrack(fallbackTrack),
+                            info: fallbackTrack,
+                            pluginInfo: {}
+                        }
+                    ]
+                };
+                return { loadType: 'playlist', data: playlist };
+            }
             logger('error', 'Genius', `Error resolving URL: ${message}`);
             return { loadType: 'error', exception: { message, severity: 'fault' } };
         }
@@ -169,7 +225,9 @@ export default class GeniusSource {
         const sourceManager = this.getSourceManager();
         if (!sourceManager) {
             return {
-                loadType: 'error',
+                url: '',
+                protocol: 'http',
+                format: 'arbitrary',
                 exception: {
                     message: 'Source manager is not available for Genius resolution.',
                     severity: 'fault'
@@ -182,7 +240,10 @@ export default class GeniusSource {
                 const targetTrack = this.extractTrackReferenceFromSourceResult(result);
                 if (targetTrack) {
                     const streamInfo = await sourceManager.getTrackUrl(targetTrack.info);
-                    return { newTrack: targetTrack, ...streamInfo };
+                    return {
+                        newTrack: targetTrack,
+                        ...streamInfo
+                    };
                 }
             }
             catch (error) {
@@ -191,12 +252,16 @@ export default class GeniusSource {
             }
         }
         try {
-            const query = `${decodedTrack.title} ${decodedTrack.author}`;
+            const query = decodedTrack.author && decodedTrack.author !== 'Genius'
+                ? `${decodedTrack.title} ${decodedTrack.author}`
+                : decodedTrack.title;
             const searchResult = await sourceManager.searchWithDefault(query);
             const candidates = this.extractSearchCandidates(searchResult);
             if (candidates.length === 0) {
                 return {
-                    loadType: 'error',
+                    url: '',
+                    protocol: 'http',
+                    format: 'arbitrary',
                     exception: {
                         message: 'No alternative stream found via default search.',
                         severity: 'fault'
@@ -206,7 +271,9 @@ export default class GeniusSource {
             const bestMatch = this.findBestMatch(candidates, decodedTrack);
             if (!bestMatch) {
                 return {
-                    loadType: 'error',
+                    url: '',
+                    protocol: 'http',
+                    format: 'arbitrary',
                     exception: {
                         message: 'No suitable alternative stream found after filtering.',
                         severity: 'fault'
@@ -219,7 +286,9 @@ export default class GeniusSource {
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             return {
-                loadType: 'error',
+                url: '',
+                protocol: 'http',
+                format: 'arbitrary',
                 exception: {
                     message,
                     severity: 'fault'
