@@ -152,10 +152,10 @@ export default class PiperSource {
   public static readonly _TESTS: SourceTestCase[] = [
     {
       id: 'pipertts.tts.resolve',
-      name: 'Piper TTS resolution (pipertts:)',
+      name: 'Piper TTS resolution',
       input: {
         type: 'resolve',
-        value: 'pipertts:Hello world'
+        value: 'Hello world'
       },
       expect: {
         result: { type: 'track' },
@@ -423,8 +423,7 @@ export default class PiperSource {
    * @returns Same payload produced by {@link search}.
    */
   public async resolve(url: string): Promise<SourceResult> {
-    const text = url.startsWith('pipertts:') ? url.slice(9) : url
-    return this.search(text)
+    return this.search(url)
   }
 
   /**

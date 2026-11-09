@@ -11,10 +11,10 @@ export default class GoogleTTSSource {
     static _TESTS = [
         {
             id: 'googletts.tts.resolve',
-            name: 'Google TTS resolution (gtts:)',
+            name: 'Google TTS resolution',
             input: {
                 type: 'resolve',
-                value: 'gtts:Hello world'
+                value: 'Hello world'
             },
             expect: {
                 result: { type: 'track' },
@@ -217,8 +217,7 @@ export default class GoogleTTSSource {
      * @returns Same payload produced by {@link search}.
      */
     async resolve(query) {
-        const text = query.startsWith('gtts:') ? query.slice(5) : query;
-        return this.search(text);
+        return this.search(query);
     }
     /**
      * Resolves the direct playback URL for a Google TTS track.

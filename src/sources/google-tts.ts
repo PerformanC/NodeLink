@@ -122,10 +122,10 @@ export default class GoogleTTSSource {
   public static readonly _TESTS: SourceTestCase[] = [
     {
       id: 'googletts.tts.resolve',
-      name: 'Google TTS resolution (gtts:)',
+      name: 'Google TTS resolution',
       input: {
         type: 'resolve',
-        value: 'gtts:Hello world'
+        value: 'Hello world'
       },
       expect: {
         result: { type: 'track' },
@@ -352,8 +352,7 @@ export default class GoogleTTSSource {
    * @returns Same payload produced by {@link search}.
    */
   public async resolve(query: string): Promise<SourceResult> {
-    const text = query.startsWith('gtts:') ? query.slice(5) : query
-    return this.search(text)
+    return this.search(query)
   }
 
   /**
