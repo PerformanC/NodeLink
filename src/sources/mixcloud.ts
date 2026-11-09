@@ -24,6 +24,7 @@ import type {
   TrackInfo,
   TrackStreamResult
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestResult,
   TrackEncodeInput
@@ -32,7 +33,7 @@ import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
 
 const DECRYPTION_KEY = 'IFYOUWANTTHEARTISTSTOGETPAIDDONOTDOWNLOADFROMMIXCLOUD'
 const MIXCLOUD_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0'
 const DEFAULT_MAX_RESULTS = 10
 const DEFAULT_MAX_PLAYLIST_LENGTH = 1000
 
@@ -41,6 +42,42 @@ const DEFAULT_MAX_PLAYLIST_LENGTH = 1000
  * @public
  */
 export default class MixcloudSource {
+  /**
+   * Declarative test suite for validating Mixcloud source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'mixcloud.track.resolve',
+      name: 'Mixcloud Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.mixcloud.com/kubozuzula/chillout-with-chopin/'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Chillout With Chopin' },
+          author: { op: 'matches', value: 'Kubo Zuzula' },
+          sourceName: { op: 'equals', value: 'mixcloud' }
+        }
+      }
+    },
+    {
+      id: 'mixcloud.search.mcsearch',
+      name: 'Mixcloud Search query (mcsearch:)',
+      input: {
+        type: 'search',
+        value: 'chillout',
+        searchType: 'mcsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -232,8 +269,16 @@ export default class MixcloudSource {
    * @returns Search load result payload.
    */
   public async search(query: string): Promise<MixcloudSourceResult> {
+    let cleanedQuery = query
+    for (const term of this.searchTerms) {
+      if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
+        cleanedQuery = cleanedQuery.slice(term.length + 1).trim()
+        break
+      }
+    }
+
     try {
-      const apiUrl = `https://api.mixcloud.com/search/?q=${encodeURIComponent(query)}&type=cloudcast`
+      const apiUrl = `https://api.mixcloud.com/search/?q=${encodeURIComponent(cleanedQuery)}&type=cloudcast`
       const response = await http1makeRequest(apiUrl, {
         headers: { 'User-Agent': MIXCLOUD_USER_AGENT },
         disableBodyCompression: true
