@@ -8,6 +8,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   HttpRequestHeaders,
@@ -71,6 +72,9 @@ interface AudiomackApiTrack {
   /** Stable Audiomack item identifier. */
   id?: string | number | null
 
+  /** Alternative Audiomack track identifier in album responses. */
+  song_id?: string | number | null
+
   /** Result type exposed by the search endpoint. */
   type?: string | null
 
@@ -121,6 +125,26 @@ interface AudiomackApiTrack {
 
   /** Stream URL variant. */
   stream_url?: string | null
+}
+
+/**
+ * Minimal Audiomack collection payload for albums and playlists.
+ */
+interface AudiomackCollection {
+  /** Stable collection identifier. */
+  id?: string | number | null
+
+  /** Collection title. */
+  title?: string | null
+
+  /** Primary artwork image URL. */
+  image?: string | null
+
+  /** Base artwork image fallback URL. */
+  image_base?: string | null
+
+  /** Array of tracks in the collection. */
+  tracks?: AudiomackApiTrack[]
 }
 
 /**
@@ -421,6 +445,73 @@ function getSectionPath(uri?: string | null): string {
  * Audiomack source backed by the official public API.
  */
 export default class AudiomackSource {
+  /**
+   * Declarative test suite for validating Audiomack source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'audiomack.track.resolve',
+      name: 'Audiomack Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://audiomack.com/the-crowdcontroller/song/90s-old-school-best-rnb-hip-hop-rap-mix'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: "90'S OLD SCHOOL BEST RNB HIP HOP RAP MIX"
+          },
+          author: { op: 'matches', value: 'DJ Amacoz' },
+          sourceName: { op: 'equals', value: 'audiomack' }
+        }
+      }
+    },
+    {
+      id: 'audiomack.album.resolve',
+      name: 'Audiomack Album URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://audiomack.com/eminem/album/curtain-call-2'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 10 },
+        metadata: {
+          author: { op: 'matches', value: 'Eminem' }
+        }
+      }
+    },
+    {
+      id: 'audiomack.playlist.resolve',
+      name: 'Audiomack Playlist URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://audiomack.com/audiomack-hip-hop/playlist/26'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 5 }
+      }
+    },
+    {
+      id: 'audiomack.search.admsearch',
+      name: 'Audiomack Search query (admsearch:)',
+      input: {
+        type: 'search',
+        value: 'eminem',
+        searchType: 'admsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 }
+      }
+    }
+  ]
+
   /** Runtime worker context provided by the source manager. */
   public readonly nodelink: WorkerNodeLink
 
@@ -462,14 +553,22 @@ export default class AudiomackSource {
     query: string,
     _sourceTerm?: string
   ): Promise<SourceResult> {
-    logger('debug', 'Sources', `Searching Audiomack for: "${query}"`)
+    let cleanedQuery = query
+    for (const term of this.searchTerms) {
+      if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
+        cleanedQuery = cleanedQuery.slice(term.length + 1).trim()
+        break
+      }
+    }
+
+    logger('debug', 'Sources', `Searching Audiomack for: "${cleanedQuery}"`)
 
     try {
       const response = await this.makeSignedRequest(
         'GET',
         `${API_BASE}/search`,
         {
-          q: query,
+          q: cleanedQuery,
           limit: '20',
           show: 'music',
           sort: 'popular',
@@ -519,13 +618,10 @@ export default class AudiomackSource {
   }
 
   /**
-   * Resolves a public Audiomack song URL into a single encoded track.
-   *
-   * Album, playlist, and profile URLs intentionally return an exception until
-   * dedicated handling is implemented.
+   * Resolves a public Audiomack song, album, or playlist URL into encoded track(s).
    *
    * @param queryUrl Public Audiomack URL to resolve.
-   * @returns A track payload, an empty payload, or a structured exception.
+   * @returns A track or playlist payload, an empty payload, or a structured exception.
    */
   public async resolve(queryUrl: string): Promise<SourceResult> {
     let parsedUrl: URL
@@ -543,17 +639,21 @@ export default class AudiomackSource {
 
     if (
       !artistSlug ||
-      resourceType !== 'song' ||
+      !resourceType ||
+      !['song', 'album', 'playlist'].includes(resourceType) ||
       resourceSegments.length === 0
     ) {
       return this.createException(
-        'Only single song URLs are currently supported.',
+        'Only song, album, and playlist URLs are currently supported.',
         'common'
       )
     }
 
-    const songSlug = resourceSegments.join('/')
-    const apiUrl = `${API_BASE}/music/song/${artistSlug}/${songSlug}`
+    const slug = resourceSegments.join('/')
+    const apiUrl =
+      resourceType === 'playlist'
+        ? `${API_BASE}/playlist/${artistSlug}/${slug}`
+        : `${API_BASE}/music/${resourceType}/${artistSlug}/${slug}`
 
     try {
       const response = await this.makeSignedRequest('GET', apiUrl, {
@@ -562,35 +662,78 @@ export default class AudiomackSource {
 
       if (response.error || response.statusCode !== 200 || !response.body) {
         const message =
-          response.error ?? 'Failed to fetch track details from Audiomack API.'
+          response.error ??
+          `Failed to fetch ${resourceType} details from Audiomack API.`
 
         return this.createException(message, 'common')
       }
 
-      const json = parseJsonBody<AudiomackApiEnvelope<AudiomackApiTrack>>(
-        response.body
+      const json = parseJsonBody<
+        AudiomackApiEnvelope<AudiomackApiTrack | AudiomackCollection>
+      >(response.body)
+
+      if (resourceType === 'song') {
+        const song = normalizeApiResult(
+          json as AudiomackApiEnvelope<AudiomackApiTrack>
+        )
+
+        if (
+          !song ||
+          (song.id === undefined &&
+            song.song_id === undefined &&
+            song.id === null &&
+            song.song_id === null)
+        ) {
+          return this.createException(
+            'Track not found or invalid response.',
+            'common'
+          )
+        }
+
+        const track = this.buildTrack(song, queryUrl)
+        if (!track) {
+          return this.createException(
+            'Track not found or invalid response.',
+            'common'
+          )
+        }
+
+        return { loadType: 'track', data: track }
+      }
+
+      const collection = normalizeApiResult(
+        json as AudiomackApiEnvelope<AudiomackCollection>
       )
-      const song = normalizeApiResult(json)
-
-      if (!song || song.id === undefined || song.id === null) {
-        return this.createException(
-          'Track not found or invalid response.',
-          'common'
+      const fallbackImage = collection?.image ?? collection?.image_base ?? null
+      const rawTracks = collection?.tracks || []
+      const tracks = rawTracks
+        .map((item) =>
+          this.buildTrack(item.image ? item : { ...item, image: fallbackImage })
         )
+        .filter((track): track is AudiomackTrackData => track !== null)
+
+      if (tracks.length === 0) {
+        return { loadType: 'empty', data: {} }
       }
 
-      const track = this.buildTrack(song, queryUrl)
-      if (!track) {
-        return this.createException(
-          'Track not found or invalid response.',
-          'common'
-        )
+      return {
+        loadType: 'playlist',
+        data: {
+          info: {
+            name:
+              collection?.title ||
+              (resourceType === 'album'
+                ? 'Audiomack Album'
+                : 'Audiomack Playlist'),
+            selectedTrack: 0
+          },
+          tracks,
+          pluginInfo: {}
+        }
       }
-
-      return { loadType: 'track', data: track }
     } catch (error) {
       return this.createException(
-        `Failed to resolve track: ${getErrorMessage(error)}`,
+        `Failed to resolve ${resourceType}: ${getErrorMessage(error)}`,
         'common'
       )
     }
@@ -870,7 +1013,8 @@ export default class AudiomackSource {
     item: AudiomackApiTrack,
     queryUrl: string | null = null
   ): AudiomackTrackData | null {
-    if (item.id === undefined || item.id === null || item.id === '') {
+    const rawId = item.id ?? item.song_id
+    if (rawId === undefined || rawId === null || rawId === '') {
       return null
     }
 
@@ -891,7 +1035,7 @@ export default class AudiomackSource {
     }
 
     const trackInfo: AudiomackTrackInfo = {
-      identifier: String(item.id),
+      identifier: String(rawId),
       title,
       author,
       length: toDurationMilliseconds(item.duration),
