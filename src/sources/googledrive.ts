@@ -10,6 +10,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
 
@@ -40,6 +41,44 @@ interface GoogleDrivePlaybackResponse {
  * @public
  */
 export default class GoogleDriveSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating Google Drive source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'googledrive.track.resolve',
+      name: 'Google Drive Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://drive.google.com/file/d/1yMbItvFKVaCT93yPWmlP3883XtJ-wSee/view'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: {
+            op: 'equals',
+            value: '1yMbItvFKVaCT93yPWmlP3883XtJ-wSee'
+          },
+          sourceName: { op: 'equals', value: 'googledrive' }
+        }
+      }
+    },
+    {
+      id: 'googledrive.search.empty',
+      name: 'Google Drive Search returns empty',
+      input: {
+        type: 'search',
+        searchType: 'gdsearch',
+        value: 'test'
+      },
+      expect: {
+        result: { type: 'empty' }
+      }
+    }
+  ]
+
   public readonly nodelink: WorkerNodeLink
   public readonly searchTerms = ['gdsearch']
   public readonly patterns = [
@@ -175,7 +214,11 @@ export default class GoogleDriveSource implements SourceInstance {
 
   private _normalizeDriveTitle(title: string): string {
     const normalized = title.replace(' - Google Drive', '').trim()
-    if (!normalized || /virus scan warning/i.test(normalized)) return ''
+    if (
+      !normalized ||
+      /virus scan warning|error 404|not found/i.test(normalized)
+    )
+      return ''
     return normalized
   }
 
@@ -895,7 +938,7 @@ export default class GoogleDriveSource implements SourceInstance {
     return { stream: finalStream, type: streamType }
   }
 
-  public async search(): Promise<SourceResult> {
+  public async search(_query?: string): Promise<SourceResult> {
     return { loadType: 'empty', data: null }
   }
 }

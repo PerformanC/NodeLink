@@ -7,6 +7,42 @@ import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js'
  * @public
  */
 export default class GoogleDriveSource {
+    /**
+     * Declarative test suite for validating Google Drive source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'googledrive.track.resolve',
+            name: 'Google Drive Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://drive.google.com/file/d/1yMbItvFKVaCT93yPWmlP3883XtJ-wSee/view'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: {
+                        op: 'equals',
+                        value: '1yMbItvFKVaCT93yPWmlP3883XtJ-wSee'
+                    },
+                    sourceName: { op: 'equals', value: 'googledrive' }
+                }
+            }
+        },
+        {
+            id: 'googledrive.search.empty',
+            name: 'Google Drive Search returns empty',
+            input: {
+                type: 'search',
+                searchType: 'gdsearch',
+                value: 'test'
+            },
+            expect: {
+                result: { type: 'empty' }
+            }
+        }
+    ];
     nodelink;
     searchTerms = ['gdsearch'];
     patterns = [
@@ -112,7 +148,8 @@ export default class GoogleDriveSource {
     }
     _normalizeDriveTitle(title) {
         const normalized = title.replace(' - Google Drive', '').trim();
-        if (!normalized || /virus scan warning/i.test(normalized))
+        if (!normalized ||
+            /virus scan warning|error 404|not found/i.test(normalized))
             return '';
         return normalized;
     }
@@ -698,7 +735,7 @@ export default class GoogleDriveSource {
         attachStream(stream);
         return { stream: finalStream, type: streamType };
     }
-    async search() {
+    async search(_query) {
         return { loadType: 'empty', data: null };
     }
 }
