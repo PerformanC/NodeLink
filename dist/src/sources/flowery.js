@@ -6,6 +6,44 @@ import { encodeTrack, logger, makeRequest } from '../utils.js';
  */
 export default class FlowerySource {
     /**
+     * Declarative test suite for validating Flowery TTS source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'flowery.tts.resolve',
+            name: 'Flowery TTS URL resolution (ftts://)',
+            input: {
+                type: 'resolve',
+                value: 'ftts://Hello%20world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    author: { op: 'equals', value: 'Flowery TTS' },
+                    sourceName: { op: 'equals', value: 'flowery' }
+                }
+            }
+        },
+        {
+            id: 'flowery.tts.search',
+            name: 'Flowery TTS Search query (ftts:)',
+            input: {
+                type: 'search',
+                searchType: 'ftts',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    sourceName: { op: 'equals', value: 'flowery' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;

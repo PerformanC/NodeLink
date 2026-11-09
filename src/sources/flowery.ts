@@ -7,6 +7,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestResult,
   TrackEncodeInput
@@ -230,6 +231,45 @@ interface FloweryTrackUrlResult extends TrackUrlResult {
  * Flowery TTS source implementation.
  */
 export default class FlowerySource {
+  /**
+   * Declarative test suite for validating Flowery TTS source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'flowery.tts.resolve',
+      name: 'Flowery TTS URL resolution (ftts://)',
+      input: {
+        type: 'resolve',
+        value: 'ftts://Hello%20world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          author: { op: 'equals', value: 'Flowery TTS' },
+          sourceName: { op: 'equals', value: 'flowery' }
+        }
+      }
+    },
+    {
+      id: 'flowery.tts.search',
+      name: 'Flowery TTS Search query (ftts:)',
+      input: {
+        type: 'search',
+        searchType: 'ftts',
+        value: 'Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          sourceName: { op: 'equals', value: 'flowery' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */
