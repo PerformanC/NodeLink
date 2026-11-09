@@ -5,6 +5,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   TrackEncodeInput
@@ -25,6 +26,76 @@ const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com'
  * @public
  */
 export default class QobuzSource {
+  /**
+   * Declarative test suite for validating Qobuz source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'qobuz.track.resolve',
+      name: 'Qobuz Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://open.qobuz.com/track/8767428'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'qobuz' }
+        }
+      }
+    },
+    {
+      id: 'qobuz.album.resolve',
+      name: 'Qobuz Album URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://open.qobuz.com/album/0886443973442'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 1 },
+        metadata: {
+          author: { op: 'matches', value: 'Daft Punk' }
+        }
+      }
+    },
+    {
+      id: 'qobuz.search.qbsearch',
+      name: 'Qobuz Search query (qbsearch:)',
+      input: {
+        type: 'search',
+        value: 'qbsearch:Daft Punk Get Lucky'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          sourceName: { op: 'equals', value: 'qobuz' }
+        }
+      }
+    },
+    {
+      id: 'qobuz.search.qbisrc',
+      name: 'Qobuz Search query (qbisrc:)',
+      input: {
+        type: 'search',
+        value: 'qbisrc:USQX91300809'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          isrc: { op: 'matches', value: 'USQX91300809' },
+          sourceName: { op: 'equals', value: 'qobuz' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -181,12 +252,13 @@ export default class QobuzSource {
     query: string,
     sourceTerm?: string
   ): Promise<SourceResult> {
+    const cleanedQuery = query.replace(/^(?:qbsearch|qbisrc):/i, '').trim()
     if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
-      return this.getRecommendations(query)
+      return this.getRecommendations(cleanedQuery)
     }
 
     const data = await this.apiRequest('/catalog/search', {
-      query,
+      query: cleanedQuery,
       limit: this.getMaxSearchResults(),
       type: 'tracks'
     })
