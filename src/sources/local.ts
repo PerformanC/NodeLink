@@ -1,12 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackStreamResult,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, logger } from '../utils.ts'
 
@@ -151,7 +153,36 @@ interface LocalAdditionalData {
 /**
  * Local source implementation.
  */
-export default class LocalSource {
+export default class LocalSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating Local source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'local.traversal.blocked',
+      name: 'Local path traversal blocked',
+      input: {
+        type: 'resolve',
+        value: '../package.json'
+      },
+      expect: {
+        result: { type: 'error' }
+      }
+    },
+    {
+      id: 'local.file.missing',
+      name: 'Local non-existent file returns empty',
+      input: {
+        type: 'resolve',
+        value: 'non-existent-file.mp3'
+      },
+      expect: {
+        result: { type: 'empty' }
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */

@@ -24,6 +24,34 @@ const EXTENSION_TYPE_MAP = Object.freeze({
  */
 export default class LocalSource {
     /**
+     * Declarative test suite for validating Local source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'local.traversal.blocked',
+            name: 'Local path traversal blocked',
+            input: {
+                type: 'resolve',
+                value: '../package.json'
+            },
+            expect: {
+                result: { type: 'error' }
+            }
+        },
+        {
+            id: 'local.file.missing',
+            name: 'Local non-existent file returns empty',
+            input: {
+                type: 'resolve',
+                value: 'non-existent-file.mp3'
+            },
+            expect: {
+                result: { type: 'empty' }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
