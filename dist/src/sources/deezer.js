@@ -24,6 +24,88 @@ const TRACK_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
  */
 export default class DeezerSource {
     /**
+     * Declarative test suite for validating Deezer source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'deezer.track.resolve',
+            name: 'Deezer Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.deezer.com/track/138547415'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Creep' },
+                    author: { op: 'matches', value: 'Radiohead' },
+                    isrc: { op: 'matches', value: 'GBAYE9200070' },
+                    sourceName: { op: 'equals', value: 'deezer' }
+                }
+            }
+        },
+        {
+            id: 'deezer.album.resolve',
+            name: 'Deezer Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.deezer.com/album/302127'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 10 },
+                metadata: {
+                    author: { op: 'matches', value: 'Daft Punk' }
+                }
+            }
+        },
+        {
+            id: 'deezer.playlist.resolve',
+            name: 'Deezer Playlist URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.deezer.com/playlist/908622995'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 20 }
+            }
+        },
+        {
+            id: 'deezer.search.dzsearch',
+            name: 'Deezer Search query (dzsearch:)',
+            input: {
+                type: 'search',
+                value: 'Radiohead Creep',
+                searchType: 'dzsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Creep' }
+                }
+            }
+        },
+        {
+            id: 'deezer.search.dzisrc',
+            name: 'Deezer ISRC search (dzisrc:)',
+            input: {
+                type: 'search',
+                value: 'GBAYE9200070',
+                searchType: 'dzisrc'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    isrc: { op: 'matches', value: 'GBAYE9200070' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -110,7 +192,14 @@ export default class DeezerSource {
         if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
             return this.getRecommendations(query);
         }
-        const isrc = this.extractIsrc(query);
+        let cleanedQuery = query;
+        for (const term of this.searchTerms) {
+            if (cleanedQuery.toLowerCase().startsWith(`${term.toLowerCase()}:`)) {
+                cleanedQuery = cleanedQuery.slice(term.length + 1).trim();
+                break;
+            }
+        }
+        const isrc = this.extractIsrc(cleanedQuery);
         if (isrc) {
             try {
                 const track = await this.fetchTrackByIsrc(isrc);
@@ -127,7 +216,7 @@ export default class DeezerSource {
         const effectiveSearchType = this.isSearchType(searchType)
             ? searchType
             : 'track';
-        const { body, error } = await makeRequest(`https://api.deezer.com/2.0/search/${effectiveSearchType}?q=${encodeURIComponent(query)}`, { method: 'GET' });
+        const { body, error } = await makeRequest(`https://api.deezer.com/2.0/search/${effectiveSearchType}?q=${encodeURIComponent(cleanedQuery)}`, { method: 'GET' });
         const response = this.getJsonBody(body);
         if (error || response?.error) {
             return this.createException(error ?? response?.error?.message ?? 'Failed to search Deezer.', 'common');
