@@ -15,6 +15,7 @@ import PluginManager from './managers/pluginManager.js';
 import RateLimitManager from './managers/rateLimitManager.js';
 import RoutePlannerManager from './managers/routePlannerManager.js';
 import SessionManager from './managers/sessionManager.js';
+import SourceHealthManager from './managers/sourceHealthManager.js';
 import StatsManager from './managers/statsManager.js';
 import { cleanupBunServer, createBunServer } from './server/bunServer.js';
 import { createHttpServer, listenHttpServer } from './server/httpServer.js';
@@ -50,6 +51,7 @@ class NodelinkServer extends EventEmitter {
     sourceWorkerManager;
     workerManager;
     sources;
+    sourceHealthManager;
     lyrics;
     meanings;
     constructor(options, PlayerManagerClass) {
@@ -70,6 +72,7 @@ class NodelinkServer extends EventEmitter {
         this.sessions = new SessionManager(this, PlayerManagerClass);
         this.routePlanner = new RoutePlannerManager(this);
         this.statsManager = new StatsManager(this);
+        this.sourceHealthManager = new SourceHealthManager(this);
         this.rateLimitManager = new RateLimitManager(this);
         this.dosProtectionManager = new DosProtectionManager(this);
         this.admissionManager = new AdmissionManager(this, options.admission);
@@ -126,6 +129,7 @@ class NodelinkServer extends EventEmitter {
         this.rateLimitManager.destroy();
         this.dosProtectionManager.destroy();
         this.admissionManager.destroy();
+        this.sourceHealthManager.destroy();
         await this._cleanupWebSocketServer();
         const httpServer = this.server;
         if (httpServer?.listening) {
@@ -164,6 +168,7 @@ class NodelinkServer extends EventEmitter {
             const sourceWorkerManager = new SourceWorkerManagerClass(this);
             this.sourceWorkerManager = sourceWorkerManager;
             await sourceWorkerManager.start();
+            this.sourceHealthManager.setProbeRunner((sourceName) => sourceWorkerManager.runHealthProbe(sourceName), sourceWorkerManager.getHealthProbeSources());
         }
         const ConnectionManagerClass = await getConnectionManagerClass();
         this.connectionManager = new ConnectionManagerClass(this);
@@ -183,6 +188,9 @@ class NodelinkServer extends EventEmitter {
             this.lyrics = lyrics;
             this.meanings = meanings;
             await sources.loadFolder();
+            if (!cluster.isWorker || cluster.worker?.id === 1) {
+                this.sourceHealthManager.setProbeRunner((sourceName) => sources.runHealthProbe(sourceName), sources.getHealthProbeSources());
+            }
             await lyrics.loadFolder();
             await meanings.loadFolder();
         }
@@ -232,6 +240,14 @@ class NodelinkServer extends EventEmitter {
                 break;
             case 'workerFailed':
                 broadcastWorkerFailure(this.sessions, message.payload.workerId, message.payload.affectedGuilds);
+                break;
+            case 'sourceHealthMetric':
+                if (message.payload.success) {
+                    this.sourceHealthManager.recordSuccess(message.payload.sourceName, message.payload.duration);
+                }
+                else {
+                    this.sourceHealthManager.recordFailure(message.payload.sourceName, message.payload.duration, message.payload.error);
+                }
                 break;
             case 'ipBlock': {
                 const payload = message;

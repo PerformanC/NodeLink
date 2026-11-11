@@ -229,6 +229,12 @@ if (isMainThread) {
           'SourceWorker',
           `Micro-worker ${threadNumber} is ready.`
         )
+        if (msg.healthProbeSources) {
+          process.send?.({
+            type: 'sourceHealthReady',
+            payload: { sources: msg.healthProbeSources }
+          })
+        }
         processNextTask()
       } else if (msg.type === 'result') {
         const { socketPath, id, result, error } = msg
@@ -248,6 +254,8 @@ if (isMainThread) {
         sendStreamError(msg.socketPath, msg.id, msg.error)
         worker.load = Math.max(0, worker.load - 1)
         processNextTask()
+      } else if (msg.type === 'sourceHealthMetric') {
+        process.send?.(msg)
       }
     })
 
@@ -1174,7 +1182,10 @@ if (isMainThread) {
     return { success: false, error: `Unsupported profiler action: ${action}` }
   }
 
-  ;(parentPort as MessagePort).postMessage({ type: 'ready' })
+  ;(parentPort as MessagePort).postMessage({
+    type: 'ready',
+    healthProbeSources: nodelink.sources?.getHealthProbeSources() ?? []
+  })
 
   /**
    * Sends stream data chunk to parent thread
@@ -1521,6 +1532,12 @@ if (isMainThread) {
           result = await handleProfilerCommand(
             (payload as Record<string, unknown>) || {}
           )
+          break
+        case 'sourceHealthProbe':
+          await nodelink.sources?.runHealthProbe(
+            (payload as { sourceName: string }).sourceName
+          )
+          result = true
           break
       }
       ;(parentPort as MessagePort).postMessage({

@@ -79,6 +79,7 @@ class SourceWorkerManager {
     workers;
     requests;
     workerLoads;
+    healthProbeSources;
     maxWorkers;
     scaleUpThreshold;
     scaleCooldownMs;
@@ -93,6 +94,7 @@ class SourceWorkerManager {
         this.workers = [];
         this.requests = new Map();
         this.workerLoads = new Map(); // worker.id -> pending count
+        this.healthProbeSources = [];
         this.maxWorkers = Math.max(1, nodelink.options.cluster?.specializedSourceWorker?.count || 1);
         this.scaleUpThreshold =
             nodelink.options.cluster?.specializedSourceWorker?.scaleUpThreshold || 30;
@@ -321,14 +323,43 @@ class SourceWorkerManager {
         });
         worker.workerType = 'source';
         worker.on('message', (msg) => {
-            if (msg.type === 'ready')
+            if (msg.type === 'ready') {
                 logger('info', 'SourceCluster', `Source worker manager ${msg.pid} ready`);
+            }
+            else if (msg.type === 'sourceHealthMetric') {
+                const healthManager = this.nodelink.sourceHealthManager;
+                if (healthManager) {
+                    if (msg.payload.success) {
+                        healthManager.recordSuccess(msg.payload.sourceName, msg.payload.duration);
+                    }
+                    else {
+                        healthManager.recordFailure(msg.payload.sourceName, msg.payload.duration, msg.payload.error);
+                    }
+                }
+            }
+            else if (msg.type === 'sourceHealthReady') {
+                this.healthProbeSources = msg.payload.sources;
+                this.nodelink.sourceHealthManager?.setProbeSources(msg.payload.sources);
+            }
         });
         worker.on('error', (err) => {
             logger('error', 'SourceCluster', `Source worker ${worker.id} error: ${err.message}`);
         });
         this.workers.push(worker);
         this.workerLoads.set(worker.id, 0);
+    }
+    /** Runs a lightweight declarative health case on an available source worker. */
+    getHealthProbeSources() {
+        return [...this.healthProbeSources];
+    }
+    /** Runs a lightweight declarative health case on an available source worker. */
+    async runHealthProbe(sourceName) {
+        const worker = this.workers
+            .filter((candidate) => candidate?.isConnected?.())
+            .sort((a, b) => (this.workerLoads.get(a.id) || 0) - (this.workerLoads.get(b.id) || 0))[0];
+        if (!worker)
+            throw new Error('No source worker is available for health probe');
+        await this._executeOnWorker(worker, 'sourceHealthProbe', { sourceName }, { timeoutMs: 7000 });
     }
     _decrementLoad(workerId) {
         const load = this.workerLoads.get(workerId) || 0;

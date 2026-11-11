@@ -395,6 +395,32 @@ export const config = {
     experimental: {
         enableHoloTracks: false
     },
+    sourceHealth: {
+        enabled: true,
+        observationWindowSize: 50,
+        minObservations: 3,
+        idleThresholdMs: 600000,
+        degradedLatencyThresholdMs: 2500,
+        degradedJitterThresholdMs: 800,
+        consecutiveFailureThreshold: 3,
+        failureRateThreshold: 0.5,
+        relativeLatencyMultiplier: 3.0,
+        circuitBreaker: {
+            enabled: true,
+            resetTimeoutMs: 30000,
+            maxResetTimeoutMs: 300000,
+            backoffMultiplier: 2.0,
+            halfOpenMaxAttempts: 1
+        },
+        activeProbes: {
+            enabled: true,
+            startupProbe: true,
+            maxConcurrent: 2,
+            intervalMs: 120000
+        },
+        websocketNotifications: true,
+        sources: {}
+    },
     sources: {
         youtube: {
             enabled: true,

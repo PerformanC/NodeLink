@@ -274,6 +274,10 @@ class NodelinkServer extends EventEmitter {
       const sourceWorkerManager = new SourceWorkerManagerClass(this)
       this.sourceWorkerManager = sourceWorkerManager
       await sourceWorkerManager.start()
+      this.sourceHealthManager.setProbeRunner(
+        (sourceName) => sourceWorkerManager.runHealthProbe(sourceName),
+        sourceWorkerManager.getHealthProbeSources()
+      )
     }
 
     const ConnectionManagerClass = await getConnectionManagerClass()
@@ -300,6 +304,12 @@ class NodelinkServer extends EventEmitter {
       this.meanings = meanings
 
       await sources.loadFolder()
+      if (!cluster.isWorker || cluster.worker?.id === 1) {
+        this.sourceHealthManager.setProbeRunner(
+          (sourceName) => sources.runHealthProbe(sourceName),
+          sources.getHealthProbeSources()
+        )
+      }
       await lyrics.loadFolder()
       await meanings.loadFolder()
     }
@@ -374,6 +384,21 @@ class NodelinkServer extends EventEmitter {
           message.payload.workerId,
           message.payload.affectedGuilds
         )
+        break
+
+      case 'sourceHealthMetric':
+        if (message.payload.success) {
+          this.sourceHealthManager.recordSuccess(
+            message.payload.sourceName,
+            message.payload.duration
+          )
+        } else {
+          this.sourceHealthManager.recordFailure(
+            message.payload.sourceName,
+            message.payload.duration,
+            message.payload.error
+          )
+        }
         break
 
       case 'ipBlock': {

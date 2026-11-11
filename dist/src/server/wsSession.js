@@ -98,6 +98,9 @@ function _resumeSession(context, socket, clientInfo, oldSessionId) {
         resumed: true,
         sessionId: oldSessionId
     }));
+    if (context.sourceHealthManager?.isEnabled) {
+        socket.send(JSON.stringify(context.sourceHealthManager.getSnapshot()));
+    }
     /* INFO: Flush all events that occurred while the client was disconnected */
     for (const event of session.eventQueue) {
         socket.send(event);
@@ -116,6 +119,9 @@ function _createNewSession(context, socket, request, clientInfo) {
         resumed: false,
         sessionId
     }));
+    if (context.sourceHealthManager?.isEnabled) {
+        socket.send(JSON.stringify(context.sourceHealthManager.getSnapshot()));
+    }
 }
 /* INFO: Top-level handler for incoming gateway WebSocket client connections */
 function handleClientWebSocket(context, socket, request, clientInfo, oldSessionId) {

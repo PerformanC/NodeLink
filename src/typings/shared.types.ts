@@ -1,3 +1,5 @@
+import type { SourceHealthMetricPayload } from './sources/sourceHealth.types.ts'
+
 /**
  * Client information from Client-Name header
  * @public
@@ -72,6 +74,10 @@ export type IPCMessage =
       type: 'ipBlock'
       ip: string
       durationMs?: number
+    }
+  | {
+      type: 'sourceHealthMetric'
+      payload: SourceHealthMetricPayload
     }
 
 /**

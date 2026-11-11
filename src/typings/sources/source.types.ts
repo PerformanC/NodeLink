@@ -17,6 +17,9 @@ import type {
 } from '../modules/credential.types.ts'
 import type { LoggerFn, TrackInfoExtended } from '../playback/player.types.ts'
 import type { TrackCacheEntry } from '../playback/trackCache.types.ts'
+import type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
+
+export type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
 
 /**
  * Frame type identifier for socket communication protocol
@@ -91,6 +94,8 @@ export interface ReadyMessage extends WorkerMessage {
   type: 'ready'
   /** Process ID of the worker (optional, main thread only) */
   pid?: number
+  /** Lightweight declarative source cases available in this micro-worker. */
+  healthProbeSources?: string[]
 }
 
 /**
@@ -169,6 +174,15 @@ export interface ErrorMessage extends WorkerMessage {
 }
 
 /**
+ * Source health metric message emitted by worker threads
+ * @public
+ */
+export interface SourceHealthMetricMessage {
+  type: 'sourceHealthMetric'
+  payload: SourceHealthMetricPayload
+}
+
+/**
  * Union type of all possible worker messages
  * @public
  */
@@ -179,6 +193,7 @@ export type WorkerMessageType =
   | ChatActionMessage
   | EndMessage
   | ErrorMessage
+  | SourceHealthMetricMessage
 
 /**
  * Task data structure sent to micro-workers
@@ -209,6 +224,7 @@ export type TaskType =
   | 'loadStream'
   | 'loadLiveChat'
   | 'cancelLiveChat'
+  | 'sourceHealthProbe'
   | 'profilerCommand'
 
 /**
@@ -638,6 +654,10 @@ export interface SourceManager {
   getSource: (name: string) => SourceInstance | null
   /** Load sources from folder */
   loadFolder: () => Promise<void>
+  /** Run a lightweight case from the provider's declarative source tests. */
+  runHealthProbe: (sourceName: string) => Promise<void>
+  /** List providers with a lightweight declarative health case. */
+  getHealthProbeSources: () => string[]
   /** Primary source instances keyed by source name */
   sources: Map<string, SourceInstance>
   /** Get names of all enabled sources */

@@ -123,6 +123,8 @@ export interface CircuitBreakerConfig {
 export interface ActiveProbeConfig {
   /** Whether periodic active health probes are enabled. */
   enabled: boolean
+  /** Whether to probe sources immediately upon startup. Defaults to true when enabled. */
+  startupProbe?: boolean
   /** Maximum simultaneous probe requests across all sources. */
   maxConcurrent?: number
   /** Probe check interval in milliseconds. */
@@ -216,4 +218,26 @@ export interface SourceHealthApiResponse {
   timestamp: number
   summary: SourceHealthSummary
   sources: Record<string, SourceHealthEntry>
+  probe: {
+    enabled: boolean
+    intervalMs: number
+    nextRunAt: number | null
+    lastRunAt: number | null
+    running: boolean
+    currentSources: Array<{ source: string; startedAt: number }>
+    nextSources: string[]
+    eligibleSources: number
+  }
+}
+
+/**
+ * Metric payload transmitted across processes and worker threads to update source health telemetry.
+ * @public
+ */
+export interface SourceHealthMetricPayload {
+  sourceName: string
+  success: boolean
+  duration: number
+  error?: string
+  httpStatus?: number | null
 }

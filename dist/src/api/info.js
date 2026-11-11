@@ -110,7 +110,10 @@ async function buildInfoResponse(nodelink) {
         isNodelink: true,
         sourceManagers: await getSourceManagers(nodelink),
         filters: getEnabledFilterNames(nodelink.options.playback.filters?.enabled),
-        plugins: getPlugins(nodelink.pluginManager)
+        plugins: getPlugins(nodelink.pluginManager),
+        sourceHealth: {
+            enabled: Boolean(nodelink.sourceHealthManager?.isEnabled)
+        }
     };
 }
 /**

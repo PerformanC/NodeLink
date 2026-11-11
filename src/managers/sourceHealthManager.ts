@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type {
+  ActiveProbeConfig,
   CircuitBreakerConfig,
   CircuitBreakerState,
   SourceHealthAction,
@@ -66,6 +67,16 @@ const DEFAULT_CIRCUIT_BREAKER_CONFIG: Required<CircuitBreakerConfig> = {
 }
 
 /**
+ * Default active health probe settings applied when not overridden in configuration.
+ */
+const DEFAULT_ACTIVE_PROBE_CONFIG: Required<ActiveProbeConfig> = {
+  enabled: true,
+  startupProbe: true,
+  maxConcurrent: 2,
+  intervalMs: 120000
+}
+
+/**
  * Default source health settings applied across all sources.
  */
 const DEFAULT_SOURCE_HEALTH_CONFIG: Required<
@@ -95,6 +106,14 @@ export default class SourceHealthManager extends EventEmitter {
   private readonly nodelink: SourceHealthManagerContext
   private readonly records: Map<string, SourceHealthRecord> = new Map()
   private idleCheckInterval: NodeJS.Timeout | null = null
+  private probeInterval: NodeJS.Timeout | null = null
+  private isProbing = false
+  private probeRunner: ((sourceName: string) => Promise<void>) | null = null
+  private probeSources = new Set<string>()
+  private probeCursor = 0
+  private nextProbeAt: number | null = null
+  private lastProbeAt: number | null = null
+  private readonly activeProbeSources = new Map<string, number>()
 
   /**
    * Creates an instance of the SourceHealthManager.
@@ -110,6 +129,57 @@ export default class SourceHealthManager extends EventEmitter {
         60000
       )
       this.idleCheckInterval.unref?.()
+
+      this.bootstrapSources()
+
+      const probeConfig = this.getActiveProbeConfig()
+
+      if (probeConfig.enabled && probeConfig.intervalMs > 0) {
+        this.nextProbeAt = Date.now() + probeConfig.intervalMs
+        this.probeInterval = setInterval(() => {
+          this.nextProbeAt = Date.now() + probeConfig.intervalMs
+          this.runProbes().catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err)
+            logger(
+              'error',
+              'SourceHealth',
+              `Periodic probe execution failed: ${msg}`
+            )
+          })
+        }, probeConfig.intervalMs)
+        this.probeInterval.unref?.()
+      }
+    }
+  }
+
+  /** Attaches the source-test-backed lightweight probe runner once providers are loaded. */
+  public setProbeRunner(
+    runner: (sourceName: string) => Promise<void>,
+    sources: string[]
+  ): void {
+    this.probeRunner = runner
+    this.probeSources = new Set(sources)
+    const config = this.getActiveProbeConfig()
+    if (config.enabled && config.startupProbe) {
+      setImmediate(
+        () =>
+          void this.runProbes().catch((err: unknown) => {
+            logger(
+              'error',
+              'SourceHealth',
+              `Startup probe execution failed: ${String(err)}`
+            )
+          })
+      )
+    }
+  }
+
+  /** Updates declarative probe cases reported by a source worker. */
+  public setProbeSources(sources: string[]): void {
+    this.probeSources = new Set(sources)
+    this.probeCursor = 0
+    if (sources.length > 0 && this.lastProbeAt === null) {
+      setImmediate(() => void this.runProbes())
     }
   }
 
@@ -121,9 +191,186 @@ export default class SourceHealthManager extends EventEmitter {
   }
 
   /**
-   * Resolves configuration for a specific source, applying overrides when available.
-   * @param sourceName - Source provider key.
+   * Resolves active health probe configuration applying defaults.
    */
+  private getActiveProbeConfig(): Required<ActiveProbeConfig> {
+    const root = this.nodelink.options.sourceHealth?.activeProbes
+    return {
+      enabled: root?.enabled ?? DEFAULT_ACTIVE_PROBE_CONFIG.enabled,
+      startupProbe:
+        root?.startupProbe ?? DEFAULT_ACTIVE_PROBE_CONFIG.startupProbe,
+      maxConcurrent:
+        root?.maxConcurrent ?? DEFAULT_ACTIVE_PROBE_CONFIG.maxConcurrent,
+      intervalMs: root?.intervalMs ?? DEFAULT_ACTIVE_PROBE_CONFIG.intervalMs
+    }
+  }
+
+  /**
+   * Registers all enabled sources from configuration and evaluates their static configuration state.
+   */
+  public bootstrapSources(): void {
+    const sources = this.nodelink.options.sources as
+      | Record<string, unknown>
+      | undefined
+    if (!sources || typeof sources !== 'object') return
+
+    for (const [rawKey, rawVal] of Object.entries(sources)) {
+      const sourceName = rawKey.toLowerCase()
+      const val = rawVal as { enabled?: boolean } | undefined
+      if (val && typeof val === 'object' && val.enabled) {
+        this.registerSource(sourceName)
+        this.evaluateStaticConfiguration(
+          sourceName,
+          val as Record<string, unknown>
+        )
+      }
+    }
+  }
+
+  /**
+   * Performs pre-flight static configuration checks to detect misconfigured sources without network requests.
+   * @param sourceName - Source provider key.
+   * @param config - Source configuration block.
+   */
+  private evaluateStaticConfiguration(
+    sourceName: string,
+    config: Record<string, unknown>
+  ): void {
+    const record = this.records.get(sourceName)
+    if (!record) return
+
+    if (sourceName === 'spotify') {
+      const clientId = String(config.clientId ?? '').trim()
+      const clientSecret = String(config.clientSecret ?? '').trim()
+      const isMissing =
+        !clientId ||
+        !clientSecret ||
+        clientId.startsWith('<') ||
+        clientId.includes('your_client_id')
+      if (isMissing) {
+        record.status = 'misconfigured'
+        record.reason = 'unconfigured'
+        record.message =
+          'Spotify is enabled but client credentials (clientId/clientSecret) are missing or set to default placeholders.'
+        record.recommendedAction = 'disable'
+        record.previousStatus = 'misconfigured'
+        record.previousReason = 'unconfigured'
+        record.previousAction = 'disable'
+      }
+    }
+  }
+
+  /**
+   * Performs a lightweight active health probe against a specific source provider.
+   * @param sourceName - Name of the source to probe.
+   */
+  public async probeSource(sourceName: string): Promise<void> {
+    const record = this.records.get(sourceName)
+    if (!record || record.status === 'misconfigured' || !this.probeRunner)
+      return
+    const start = performance.now()
+    this.activeProbeSources.set(sourceName, Date.now())
+    try {
+      await this.probeRunner(sourceName)
+      this.recordSuccess(sourceName, Math.round(performance.now() - start))
+    } catch (err: unknown) {
+      this.recordFailure(sourceName, Math.round(performance.now() - start), err)
+    } finally {
+      this.activeProbeSources.delete(sourceName)
+    }
+  }
+
+  /**
+   * Executes active health probes across registered candidate sources.
+   * @param sourcesToProbe - Optional subset of sources to probe.
+   */
+  public async runProbes(sourcesToProbe?: string[]): Promise<void> {
+    if (!this.isEnabled || this.isProbing) return
+    this.isProbing = true
+
+    try {
+      const probeConfig = this.getActiveProbeConfig()
+      const candidates = (
+        sourcesToProbe ?? Array.from(this.records.keys())
+      ).filter((key) => {
+        const rec = this.records.get(key)
+        return rec && rec.status !== 'misconfigured'
+      })
+
+      const eligible = candidates.filter((c) => this.probeSources.has(c))
+      if (eligible.length === 0) return
+
+      const batchSize = Math.max(1, probeConfig.maxConcurrent * 2)
+      const startIndex = this.probeCursor % eligible.length
+      const toProbe = Array.from(
+        { length: Math.min(batchSize, eligible.length) },
+        (_, offset) => eligible[(startIndex + offset) % eligible.length]
+      ).filter((source): source is string => Boolean(source))
+      this.probeCursor = (startIndex + toProbe.length) % eligible.length
+      if (toProbe.length === 0) return
+      this.lastProbeAt = Date.now()
+
+      const concurrency = Math.max(1, probeConfig.maxConcurrent)
+      const queue = [...toProbe]
+
+      const workers = Array.from(
+        { length: Math.min(concurrency, queue.length) },
+        async () => {
+          while (queue.length > 0) {
+            const source = queue.shift()
+            if (!source) break
+            await this.probeSource(source).catch(() => {})
+          }
+        }
+      )
+
+      await Promise.all(workers)
+    } finally {
+      this.isProbing = false
+    }
+  }
+
+  /** Reports active and scheduled probe work for the health API. */
+  public getProbeStatus(): {
+    enabled: boolean
+    intervalMs: number
+    nextRunAt: number | null
+    lastRunAt: number | null
+    running: boolean
+    currentSources: Array<{ source: string; startedAt: number }>
+    nextSources: string[]
+    eligibleSources: number
+  } {
+    const probeConfig = this.getActiveProbeConfig()
+    const names = Array.from(this.probeSources)
+    const nextSources = names.length
+      ? Array.from(
+          {
+            length: Math.min(
+              names.length,
+              Math.max(1, probeConfig.maxConcurrent * 2)
+            )
+          },
+          (_, offset) => names[(this.probeCursor + offset) % names.length]
+        ).filter((source): source is string => Boolean(source))
+      : []
+    return {
+      enabled: probeConfig.enabled && Boolean(this.probeRunner),
+      intervalMs: probeConfig.intervalMs,
+      nextRunAt: this.nextProbeAt,
+      lastRunAt: this.lastProbeAt,
+      running: this.isProbing,
+      currentSources: Array.from(
+        this.activeProbeSources,
+        ([source, startedAt]) => ({
+          source,
+          startedAt
+        })
+      ),
+      nextSources,
+      eligibleSources: this.probeSources.size
+    }
+  }
   private getSourceConfig(sourceName: string): {
     windowSize: number
     minObservations: number
@@ -141,6 +388,15 @@ export default class SourceHealthManager extends EventEmitter {
 
     const cbRoot = root?.circuitBreaker
     const cbOverride = override?.circuitBreaker
+    const measuredProviderDefaults =
+      sourceName === 'spotify'
+        ? { degradedLatencyThresholdMs: 5000, degradedJitterThresholdMs: 2000 }
+        : sourceName === 'youtube'
+          ? {
+              degradedLatencyThresholdMs: 3500,
+              degradedJitterThresholdMs: 1500
+            }
+          : null
 
     const circuitBreaker: Required<CircuitBreakerConfig> = {
       enabled:
@@ -180,10 +436,20 @@ export default class SourceHealthManager extends EventEmitter {
         DEFAULT_SOURCE_HEALTH_CONFIG.idleThresholdMs,
       degradedLatencyThresholdMs:
         override?.degradedLatencyThresholdMs ??
+        (root?.degradedLatencyThresholdMs !==
+        DEFAULT_SOURCE_HEALTH_CONFIG.degradedLatencyThresholdMs
+          ? root?.degradedLatencyThresholdMs
+          : undefined) ??
+        measuredProviderDefaults?.degradedLatencyThresholdMs ??
         root?.degradedLatencyThresholdMs ??
         DEFAULT_SOURCE_HEALTH_CONFIG.degradedLatencyThresholdMs,
       degradedJitterThresholdMs:
         override?.degradedJitterThresholdMs ??
+        (root?.degradedJitterThresholdMs !==
+        DEFAULT_SOURCE_HEALTH_CONFIG.degradedJitterThresholdMs
+          ? root?.degradedJitterThresholdMs
+          : undefined) ??
+        measuredProviderDefaults?.degradedJitterThresholdMs ??
         root?.degradedJitterThresholdMs ??
         DEFAULT_SOURCE_HEALTH_CONFIG.degradedJitterThresholdMs,
       consecutiveFailureThreshold:
@@ -211,6 +477,7 @@ export default class SourceHealthManager extends EventEmitter {
    * @param sourceName - Source name (e.g., 'youtube', 'spotify', 'monochrome').
    */
   public registerSource(sourceName: string): void {
+    sourceName = this.normalizeSourceName(sourceName)
     if (this.records.has(sourceName)) return
 
     this.records.set(sourceName, {
@@ -239,6 +506,11 @@ export default class SourceHealthManager extends EventEmitter {
       circuitBackoffExponent: 0,
       circuitHalfOpenAttempts: 0
     })
+  }
+
+  /** Maps alternate identifiers to the provider's canonical health record. */
+  private normalizeSourceName(sourceName: string): string {
+    return sourceName === 'ytmusic' ? 'youtube' : sourceName
   }
 
   /**
@@ -425,6 +697,7 @@ export default class SourceHealthManager extends EventEmitter {
       msg.includes('enotfound') ||
       msg.includes('fetch failed') ||
       msg.includes('internal api') ||
+      msg.includes('api interna') ||
       msg.includes('service unavailable') ||
       msg.includes('bad gateway')
     ) {
@@ -529,6 +802,7 @@ export default class SourceHealthManager extends EventEmitter {
   public recordSuccess(sourceName: string, durationMs: number): void {
     if (!this.isEnabled) return
 
+    sourceName = this.normalizeSourceName(sourceName)
     this.registerSource(sourceName)
     const record = this.records.get(sourceName)
     if (!record) return
@@ -566,13 +840,24 @@ export default class SourceHealthManager extends EventEmitter {
       record.status === 'restricted'
 
     // Health state evaluation
-    if (record.latencies.length < config.minObservations && !wasUnhealthy) {
+    if (
+      record.latencies.length < config.minObservations &&
+      !wasUnhealthy &&
+      record.consecutiveSuccesses === 0
+    ) {
       record.status = 'unknown'
       record.reason = null
       record.message = 'Not enough information is available.'
       record.recommendedAction = null
     } else {
       const metrics = this.calculateMetrics(record.latencies)
+      const recentLatencies = record.latencies.slice(
+        -Math.max(config.minObservations, 5)
+      )
+      const sustainedSlowObservations = recentLatencies.filter(
+        (latency) => latency >= config.degradedLatencyThresholdMs
+      ).length
+      const sustainedSlow = sustainedSlowObservations >= config.minObservations
 
       if (record.baselineLatency === null) {
         record.baselineLatency = metrics.average ?? duration
@@ -582,9 +867,12 @@ export default class SourceHealthManager extends EventEmitter {
         )
       }
 
-      const isHighLatency = metrics.p95 >= config.degradedLatencyThresholdMs
-      const isHighJitter = metrics.jitter >= config.degradedJitterThresholdMs
+      const isHighLatency =
+        metrics.p95 >= config.degradedLatencyThresholdMs && sustainedSlow
+      const isHighJitter =
+        metrics.jitter >= config.degradedJitterThresholdMs && sustainedSlow
       const isSuddenSpike =
+        sustainedSlow &&
         metrics.average !== undefined &&
         record.baselineLatency !== null &&
         metrics.average >
@@ -627,6 +915,7 @@ export default class SourceHealthManager extends EventEmitter {
   ): void {
     if (!this.isEnabled) return
 
+    sourceName = this.normalizeSourceName(sourceName)
     this.registerSource(sourceName)
     const record = this.records.get(sourceName)
     if (!record) return
@@ -657,9 +946,7 @@ export default class SourceHealthManager extends EventEmitter {
     if (
       diagnosis.status === 'rate_limited' ||
       diagnosis.status === 'restricted' ||
-      diagnosis.status === 'misconfigured' ||
-      diagnosis.reason === 'internal_api_unavailable' ||
-      diagnosis.reason === 'service_timeout'
+      diagnosis.status === 'misconfigured'
     ) {
       record.status = diagnosis.status
       record.reason = diagnosis.reason
@@ -763,11 +1050,31 @@ export default class SourceHealthManager extends EventEmitter {
     if (!this.isEnabled) return
 
     const now = Date.now()
+    const probeConfig = this.getActiveProbeConfig()
+    const probeBatchSize = Math.max(1, probeConfig.maxConcurrent * 2)
+    const probeCycleMs =
+      probeConfig.enabled && this.probeRunner && this.probeSources.size > 0
+        ? Math.ceil(this.probeSources.size / probeBatchSize) *
+          probeConfig.intervalMs
+        : 0
+
     for (const record of this.records.values()) {
       const config = this.getSourceConfig(record.sourceName)
+      const isProbeMonitored = this.probeSources.has(record.sourceName)
+      const idleThresholdMs = isProbeMonitored
+        ? Math.max(config.idleThresholdMs, probeCycleMs * 1.5)
+        : config.idleThresholdMs
+      const hasUnresolvedFailure =
+        record.status === 'unavailable' ||
+        record.status === 'degraded' ||
+        record.status === 'rate_limited' ||
+        record.status === 'restricted' ||
+        record.status === 'misconfigured'
+
       if (
+        !hasUnresolvedFailure &&
         record.lastActivityAt !== null &&
-        now - record.lastActivityAt > config.idleThresholdMs &&
+        now - record.lastActivityAt > idleThresholdMs &&
         record.status !== 'idle'
       ) {
         record.status = 'idle'
@@ -784,6 +1091,7 @@ export default class SourceHealthManager extends EventEmitter {
    * @param sourceName - Source provider key.
    */
   public getHealth(sourceName: string): SourceHealthEntry {
+    sourceName = this.normalizeSourceName(sourceName)
     const record = this.records.get(sourceName)
     if (!record) {
       return {
@@ -903,6 +1211,10 @@ export default class SourceHealthManager extends EventEmitter {
     if (this.idleCheckInterval) {
       clearInterval(this.idleCheckInterval)
       this.idleCheckInterval = null
+    }
+    if (this.probeInterval) {
+      clearInterval(this.probeInterval)
+      this.probeInterval = null
     }
     this.removeAllListeners()
   }

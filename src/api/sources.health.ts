@@ -50,7 +50,17 @@ function handler(
         idle: 0,
         unknown: 0
       },
-      sources: {}
+      sources: {},
+      probe: {
+        enabled: false,
+        intervalMs: 0,
+        nextRunAt: null,
+        lastRunAt: null,
+        running: false,
+        currentSources: [],
+        nextSources: [],
+        eligibleSources: 0
+      }
     }
     sendResponse(req, res, disabledResponse, 200)
     return
@@ -60,7 +70,8 @@ function handler(
     enabled: true,
     timestamp: Date.now(),
     summary: manager.getSummary(),
-    sources: manager.getAllHealth()
+    sources: manager.getAllHealth(),
+    probe: manager.getProbeStatus()
   }
 
   sendResponse(req, res, responsePayload, 200)

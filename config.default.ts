@@ -428,7 +428,8 @@ export const config: NodelinkConfig = {
       halfOpenMaxAttempts: 1
     },
     activeProbes: {
-      enabled: false,
+      enabled: true,
+      startupProbe: true,
       maxConcurrent: 2,
       intervalMs: 120000
     },

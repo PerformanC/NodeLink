@@ -6,6 +6,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { IPCMessage } from '../typings/shared.types.ts'
 import { logger } from '../utils.ts'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -29,6 +30,7 @@ interface SourceWorkerManagerContext {
       }
     }
   }
+  sourceHealthManager?: import('./sourceHealthManager.ts').default | null
 }
 
 /**
@@ -48,6 +50,7 @@ type SourceTaskType =
   | 'loadStream'
   | 'loadLiveChat'
   | 'cancelLiveChat'
+  | 'sourceHealthProbe'
   | 'profilerCommand'
 
 /**
@@ -209,6 +212,7 @@ class SourceWorkerManager {
   private workers: SourceClusterWorker[]
   private requests: Map<string, SourceRequestEntry>
   private workerLoads: Map<number, number>
+  private healthProbeSources: string[]
   private maxWorkers: number
   private scaleUpThreshold: number
   private scaleCooldownMs: number
@@ -230,6 +234,7 @@ class SourceWorkerManager {
     this.workers = []
     this.requests = new Map()
     this.workerLoads = new Map() // worker.id -> pending count
+    this.healthProbeSources = []
     this.maxWorkers = Math.max(
       1,
       nodelink.options.cluster?.specializedSourceWorker?.count || 1
@@ -470,14 +475,44 @@ class SourceWorkerManager {
     }) as SourceClusterWorker
 
     worker.workerType = 'source'
-    worker.on('message', (msg: { type?: string; pid?: number }) => {
-      if (msg.type === 'ready')
-        logger(
-          'info',
-          'SourceCluster',
-          `Source worker manager ${msg.pid} ready`
-        )
-    })
+    worker.on(
+      'message',
+      (
+        msg:
+          | IPCMessage
+          | { type: 'ready'; pid: number }
+          | { type: 'sourceHealthReady'; payload: { sources: string[] } }
+      ) => {
+        if (msg.type === 'ready') {
+          logger(
+            'info',
+            'SourceCluster',
+            `Source worker manager ${msg.pid} ready`
+          )
+        } else if (msg.type === 'sourceHealthMetric') {
+          const healthManager = this.nodelink.sourceHealthManager
+          if (healthManager) {
+            if (msg.payload.success) {
+              healthManager.recordSuccess(
+                msg.payload.sourceName,
+                msg.payload.duration
+              )
+            } else {
+              healthManager.recordFailure(
+                msg.payload.sourceName,
+                msg.payload.duration,
+                msg.payload.error
+              )
+            }
+          }
+        } else if (msg.type === 'sourceHealthReady') {
+          this.healthProbeSources = msg.payload.sources
+          this.nodelink.sourceHealthManager?.setProbeSources(
+            msg.payload.sources
+          )
+        }
+      }
+    )
     worker.on('error', (err: Error) => {
       logger(
         'error',
@@ -487,6 +522,29 @@ class SourceWorkerManager {
     })
     this.workers.push(worker)
     this.workerLoads.set(worker.id, 0)
+  }
+
+  /** Runs a lightweight declarative health case on an available source worker. */
+  getHealthProbeSources(): string[] {
+    return [...this.healthProbeSources]
+  }
+
+  /** Runs a lightweight declarative health case on an available source worker. */
+  async runHealthProbe(sourceName: string): Promise<void> {
+    const worker = this.workers
+      .filter((candidate) => candidate?.isConnected?.())
+      .sort(
+        (a, b) =>
+          (this.workerLoads.get(a.id) || 0) - (this.workerLoads.get(b.id) || 0)
+      )[0]
+    if (!worker)
+      throw new Error('No source worker is available for health probe')
+    await this._executeOnWorker(
+      worker,
+      'sourceHealthProbe',
+      { sourceName },
+      { timeoutMs: 7000 }
+    )
   }
 
   private _decrementLoad(workerId: number): void {

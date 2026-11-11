@@ -330,6 +330,10 @@ export default class ConfigValidationManager {
                     enableHoloTracks: { type: 'boolean', default: false }
                 }
             },
+            sourceHealth: {
+                type: 'object',
+                optional: true
+            },
             sources: {
                 type: 'object',
                 props: {

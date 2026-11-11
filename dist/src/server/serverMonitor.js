@@ -83,6 +83,14 @@ function startServerMonitor(server, isClusterPrimary = false) {
     const state = _getMonitorState(server);
     if (state.statsBroadcastTimer || state.playerUpdateTimer)
         return;
+    if (server.sourceHealthManager) {
+        server.sourceHealthManager.on('statusChange', (payload) => {
+            const serialized = JSON.stringify(payload);
+            for (const session of server.sessions.values()) {
+                session.queueOrSend(serialized);
+            }
+        });
+    }
     const playbackConfig = server.options.playback;
     const playerUpdateInterval = Math.max(1, playbackConfig.playerUpdateInterval ?? 5000);
     const statsSendInterval = Math.max(1, playbackConfig.statsUpdateInterval ?? 30000);
