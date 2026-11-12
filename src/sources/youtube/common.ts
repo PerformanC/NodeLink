@@ -2536,16 +2536,8 @@ export abstract class BaseClient {
       logger(
         'warn',
         `youtube-${this.name}`,
-        `Video/short ${videoId} not playable: ${message}`
+        `Video/short ${videoId} is currently not playable: ${message}. Retaining its track metadata for playback fallback.`
       )
-      return {
-        loadType: 'error',
-        exception: {
-          message,
-          severity: 'common',
-          cause: 'UpstreamPlayability'
-        }
-      }
     }
 
     if (!videoDetails?.videoId) {
@@ -3050,17 +3042,32 @@ export abstract class BaseClient {
     const streamingData = playerResponse.streamingData
 
     if (!streamingData) {
+      const playabilityStatus = playerResponse.playabilityStatus?.status
+      const playabilityReason = playerResponse.playabilityStatus?.reason
+      const responseVideoId = playerResponse.videoDetails?.videoId
+      const detail = [
+        playabilityStatus ? `status=${playabilityStatus}` : null,
+        playabilityReason ? `reason=${playabilityReason}` : null,
+        responseVideoId ? `responseVideoId=${responseVideoId}` : null
+      ]
+        .filter(Boolean)
+        .join(', ')
       logger(
-        'error',
+        'warn',
         `youtube-${this.name}`,
-        `No streaming data found for ${decodedTrack.identifier}`
+        `Player response has no streamingData for ${decodedTrack.identifier}${detail ? ` (${detail})` : ''}`
       )
       return {
         loadType: 'error',
         exception: {
-          message: 'No streaming data available.',
+          message: detail
+            ? `No streaming data available (${detail}).`
+            : 'No streaming data available.',
           severity: 'common',
-          cause: 'UpstreamNoStream'
+          cause:
+            playabilityStatus && playabilityStatus !== 'OK'
+              ? 'UpstreamPlayability'
+              : 'UpstreamNoStream'
         }
       }
     }

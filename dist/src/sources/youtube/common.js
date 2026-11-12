@@ -1825,15 +1825,7 @@ export class BaseClient {
             playerResponse.microformat?.microformatDataRenderer.appName !==
                 'YouTube Music') {
             const message = playerResponse.playabilityStatus?.reason || 'Video not playable.';
-            logger('warn', `youtube-${this.name}`, `Video/short ${videoId} not playable: ${message}`);
-            return {
-                loadType: 'error',
-                exception: {
-                    message,
-                    severity: 'common',
-                    cause: 'UpstreamPlayability'
-                }
-            };
+            logger('warn', `youtube-${this.name}`, `Video/short ${videoId} is currently not playable: ${message}. Retaining its track metadata for playback fallback.`);
         }
         if (!videoDetails?.videoId) {
             logger('error', `youtube-${this.name}`, `Missing videoDetails for ${videoId}`);
@@ -2128,13 +2120,27 @@ export class BaseClient {
         const playerResponse = playerResponseRaw;
         const streamingData = playerResponse.streamingData;
         if (!streamingData) {
-            logger('error', `youtube-${this.name}`, `No streaming data found for ${decodedTrack.identifier}`);
+            const playabilityStatus = playerResponse.playabilityStatus?.status;
+            const playabilityReason = playerResponse.playabilityStatus?.reason;
+            const responseVideoId = playerResponse.videoDetails?.videoId;
+            const detail = [
+                playabilityStatus ? `status=${playabilityStatus}` : null,
+                playabilityReason ? `reason=${playabilityReason}` : null,
+                responseVideoId ? `responseVideoId=${responseVideoId}` : null
+            ]
+                .filter(Boolean)
+                .join(', ');
+            logger('warn', `youtube-${this.name}`, `Player response has no streamingData for ${decodedTrack.identifier}${detail ? ` (${detail})` : ''}`);
             return {
                 loadType: 'error',
                 exception: {
-                    message: 'No streaming data available.',
+                    message: detail
+                        ? `No streaming data available (${detail}).`
+                        : 'No streaming data available.',
                     severity: 'common',
-                    cause: 'UpstreamNoStream'
+                    cause: playabilityStatus && playabilityStatus !== 'OK'
+                        ? 'UpstreamPlayability'
+                        : 'UpstreamNoStream'
                 }
             };
         }
