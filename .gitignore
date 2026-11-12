@@ -28,3 +28,4 @@
 !tsconfig.json
 !dist
 !dist/**
+dist/config.js
