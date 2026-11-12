@@ -2179,8 +2179,7 @@ class StreamAudioResource extends BaseAudioResource {
             new FiltersManager(nodelink, initialFilters, {}, 'protected');
             for (const factory of nodelink.extensions?.audioInterceptors ?? []) {
                 const caps = factory.audioCapabilities;
-                if (!caps ||
-                    !caps.sampleFormats.includes('f32le') ||
+                if (!caps?.sampleFormats.includes('f32le') ||
                     caps.amplitudeBehavior !== 'preserves-headroom') {
                     throw new Error('Protected mode requires every audio interceptor to declare f32le support and headroom preservation');
                 }

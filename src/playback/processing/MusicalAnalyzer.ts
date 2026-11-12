@@ -94,6 +94,7 @@ export interface MusicalBandEnergy {
 export interface MusicalProfile {
   bpm: number | null
   confidence: number
+  analysisRevision?: number
   phase: number
   downbeatPhase: number
   energy: number
@@ -215,6 +216,9 @@ export class MusicalAnalyzer {
   private totalFrames = 0
   private framesSinceEstimate = 0
   private estimate: TempoEstimate | null = null
+  private pendingTempo: TempoEstimate | null = null
+  private pendingTempoCount = 0
+  private analysisRevision = 0
   private keyEstimate: KeyEstimate | null = null
   private readonly chromaAccumulator = new Float32Array(12)
   private readonly chromaFilters: Array<{
@@ -281,9 +285,13 @@ export class MusicalAnalyzer {
       this.onsets.length >= 200 &&
       (!this.estimate || this.framesSinceEstimate >= 50)
     ) {
-      this.estimate = this._estimateTempo()
+      const candidateTempo = this._estimateTempo()
+      if (candidateTempo) {
+        this.estimate = this._stabilizeTempo(candidateTempo)
+      }
       this.keyEstimate = this._estimateKey()
       this.framesSinceEstimate = 0
+      this.analysisRevision++
     }
 
     const meanK =
@@ -301,6 +309,7 @@ export class MusicalAnalyzer {
     return {
       bpm: this.estimate?.bpm ?? null,
       confidence: this.estimate?.confidence ?? 0,
+      analysisRevision: this.analysisRevision,
       phase: this.estimate?.phase ?? 0,
       downbeatPhase: this.estimate?.downbeatPhase ?? 0,
       energy: this.energy,
@@ -427,6 +436,64 @@ export class MusicalAnalyzer {
     if (this.lowOnsets.length > HISTORY_FRAMES) this.lowOnsets.shift()
     this.totalFrames += 1
     this.framesSinceEstimate += 1
+  }
+
+  /**
+   * Stabilizes tempo estimates across consecutive analysis windows.
+   * Small measurement changes are smoothed; larger changes must persist
+   * across two independent windows before replacing the current tempo.
+   */
+  private _stabilizeTempo(candidate: TempoEstimate): TempoEstimate {
+    const previous = this.estimate
+    if (!previous) {
+      this.pendingTempo = null
+      this.pendingTempoCount = 0
+      return candidate
+    }
+
+    const relativeDifference =
+      Math.abs(candidate.bpm - previous.bpm) / Math.max(previous.bpm, 1)
+
+    if (relativeDifference <= 0.025) {
+      this.pendingTempo = null
+      this.pendingTempoCount = 0
+      const smoothing = candidate.confidence >= previous.confidence ? 0.35 : 0.2
+      return {
+        bpm:
+          Math.round(
+            (previous.bpm + (candidate.bpm - previous.bpm) * smoothing) * 10
+          ) / 10,
+        confidence: previous.confidence * 0.6 + candidate.confidence * 0.4,
+        phase: candidate.phase,
+        downbeatPhase: candidate.downbeatPhase
+      }
+    }
+
+    const pendingDifference = this.pendingTempo
+      ? Math.abs(candidate.bpm - this.pendingTempo.bpm) /
+        Math.max(this.pendingTempo.bpm, 1)
+      : Number.POSITIVE_INFINITY
+
+    if (pendingDifference <= 0.02) {
+      this.pendingTempoCount++
+    } else {
+      this.pendingTempo = candidate
+      this.pendingTempoCount = 1
+    }
+
+    const confidentlyDifferent =
+      candidate.confidence >= 0.65 &&
+      candidate.confidence >= previous.confidence + 0.2
+    const consistentlyDifferent =
+      this.pendingTempoCount >= 2 && candidate.confidence >= 0.35
+
+    if (confidentlyDifferent || consistentlyDifferent) {
+      this.pendingTempo = null
+      this.pendingTempoCount = 0
+      return candidate
+    }
+
+    return previous
   }
 
   private _estimateKey(): KeyEstimate | null {
@@ -567,24 +634,30 @@ export class MusicalAnalyzer {
       }
     }
 
-    let secondScore = -1
+    if (bestScore < 0.08) return null
+
+    const selectedCorrelation = correlations[bestLag] ?? 0
+    if (selectedCorrelation < 0.08) return null
+
+    let secondScore = 0
     for (let lag = minimumLag; lag <= maximumLag; lag++) {
       if (Math.abs(lag - bestLag) > 2) {
-        const s = correlations[lag] ?? 0
-        if (s > secondScore) secondScore = s
+        secondScore = Math.max(secondScore, correlations[lag] ?? 0)
       }
     }
 
-    if (bestScore < 0.08) return null
-
+    const competingCorrelation = Math.max(correlationMean, secondScore)
     const separation = Math.max(
       0,
-      (bestScore - Math.max(correlationMean, secondScore)) /
-        Math.max(bestScore, 1e-6)
+      Math.min(
+        1,
+        (selectedCorrelation - competingCorrelation) /
+          Math.max(selectedCorrelation, 1e-6)
+      )
     )
     const confidence = Math.max(
       0,
-      Math.min(1, bestScore * 0.72 + separation * 0.28)
+      Math.min(1, selectedCorrelation * 0.65 + separation * 0.35)
     )
     const phase = this._estimatePhase(onset, refinedLag)
     const downbeatPhase = this._estimateDownbeatPhase(lowOnset, refinedLag)
@@ -749,8 +822,11 @@ export interface OutroProfile {
   analysisConfidence: number
   energyDecayStartMs: number
   naturalOutroPointMs: number
+  /** Voice-specific end marker; 0 when only the energy heuristic is available. */
   vocalEndMs: number
+  /** Phrase-specific end marker; 0 when only the energy heuristic is available. */
   lastPhraseEndMs: number
+  /** Detected final beat; 0 when no beat-specific outro analysis is available. */
   finalBeatMs: number
   averageEnergy: number
   energyProfile: 'sustained' | 'decay' | 'cliff' | 'fade'
@@ -906,7 +982,8 @@ export function detectIntroBoundary(
     vocalEvidence: {
       detected: foundVocalEntry,
       entryMs: foundVocalEntry ? vocalEntryMs : 0,
-      confidence: foundVocalEntry ? 0.75 : 0.2,
+      // RMS energy is only a vocal-like activity hint, not voice identification.
+      confidence: foundVocalEntry ? 0.3 : 0.2,
       persistenceMs: consecutiveVocalFrames * 25
     }
   }
@@ -1014,9 +1091,9 @@ export function inspectTrackOutroQuick(
       energySamples[decayStartIdx]?.ms ?? windowStartMs
     ),
     naturalOutroPointMs: naturalOutroMs,
-    vocalEndMs: naturalOutroMs,
-    lastPhraseEndMs: naturalOutroMs,
-    finalBeatMs: Math.round(windowEndMs),
+    vocalEndMs: 0,
+    lastPhraseEndMs: 0,
+    finalBeatMs: 0,
     averageEnergy: avgEnergy,
     energyProfile: energyProfileType
   }
@@ -1339,8 +1416,7 @@ export function matchTempo(
   const alignedBpm = nextBpm / 2 ** octaveOffset
   const bestDifference =
     Math.max(alignedBpm, mainBpm) / Math.min(alignedBpm, mainBpm) - 1
-  const ratio =
-    octaveOffset > 0 ? '2:1' : octaveOffset < 0 ? '1:2' : '1:1'
+  const ratio = octaveOffset > 0 ? '2:1' : octaveOffset < 0 ? '1:2' : '1:1'
 
   const score = Math.max(0, 1 - bestDifference * 3.5)
   const compatible = bestDifference <= 0.08
@@ -1379,6 +1455,16 @@ export function evaluatePlacementAnalysis(
     incoming.keyConfidence
   )
   const tempo = matchTempo(outgoing.bpm, incoming.bpm)
+  const requestedLimitMs = Math.max(1, Math.round(_requestedDurationMs || 6000))
+  const availableLimitMs =
+    availableMs === undefined || !Number.isFinite(availableMs)
+      ? requestedLimitMs
+      : Math.max(1, Math.round(availableMs))
+  const resolveOverlap = (preferredMs: number): number =>
+    Math.max(
+      1,
+      Math.min(requestedLimitMs, availableLimitMs, Math.round(preferredMs))
+    )
   const outroProfile = 'outroProfile' in outgoing ? outgoing.outroProfile : null
   const introProfile = 'introProfile' in incoming ? incoming.introProfile : null
 
@@ -1414,12 +1500,6 @@ export function evaluatePlacementAnalysis(
   const isTempoClash =
     tempo !== null && tempoConfidence >= 0.4 && tempo.difference > 0.22
 
-  const isShortOutro =
-    outgoingDurationMs - naturalOutroPointMs < 3500 &&
-    outgoingDurationMs > 15000
-  const _effectiveAvailableMs = isShortOutro
-    ? Math.max(availableMs ?? 6000, 6000)
-    : availableMs
   const harmonicEvidenceMultiplier = Math.max(
     0,
     Math.min(1, harmonic.confidence / 0.2)
@@ -1438,8 +1518,7 @@ export function evaluatePlacementAnalysis(
         ? 0.8
         : 0.5
 
-  const candidate1Overlap = Math.min(
-    availableMs ?? 8000,
+  const candidate1Overlap = resolveOverlap(
     Math.max(3500, Math.min(8000, Math.round(beatMs * 8)))
   )
   const candidate1StructuralScore =
@@ -1468,8 +1547,7 @@ export function evaluatePlacementAnalysis(
     curve: 'sinusoidal'
   }
 
-  const candidate2Overlap = Math.min(
-    availableMs ?? 12000,
+  const candidate2Overlap = resolveOverlap(
     Math.max(3500, Math.round(beatMs * 8))
   )
   const candidate2Archetype: TransitionArchetype =
@@ -1504,8 +1582,7 @@ export function evaluatePlacementAnalysis(
     curve: 'sinusoidal'
   }
 
-  const candidate3Overlap = Math.min(
-    availableMs ?? 6000,
+  const candidate3Overlap = resolveOverlap(
     Math.max(2000, Math.round(outgoingDurationMs - naturalOutroPointMs + 2000))
   )
   const candidate3DecayScore = isOutroDecaying ? 0.95 : 0.5
@@ -1533,7 +1610,7 @@ export function evaluatePlacementAnalysis(
     curve: 'exponential'
   }
 
-  const candidate4Overlap = Math.min(availableMs ?? 8000, 8000)
+  const candidate4Overlap = resolveOverlap(8000)
   const candidate4Total =
     harmonicScore * 0.3 +
     rhythmicScore * 0.3 +
@@ -1556,7 +1633,7 @@ export function evaluatePlacementAnalysis(
     curve: 'sinusoidal'
   }
 
-  const candidate5Overlap = 50
+  const candidate5Overlap = resolveOverlap(50)
   const incomingImpact = 'impact' in incoming ? incoming.impact : 0
   const isIncomingImpact =
     firstBeatMs <= 250 && incoming.energy >= 0.35 && incomingImpact >= 0.6
@@ -1591,13 +1668,15 @@ export function evaluatePlacementAnalysis(
     curve: 'linear'
   }
 
-  const hasIncomingVocalRunway = vocalEntryMs >= 400
+  const hasIncomingVocalRunway =
+    vocalEntryMs >= 400 &&
+    introProfile?.vocalEvidence?.detected === true &&
+    (introProfile.vocalEvidence.confidence ?? 0) >= 0.6
   const isVocalHandoffFeasible =
     hasIncomingVocalRunway &&
     outgoing.vocalActivity >= 0.35 &&
     incoming.vocalActivity >= 0.35
-  const candidate6Overlap = Math.min(
-    availableMs ?? 6000,
+  const candidate6Overlap = resolveOverlap(
     Math.max(
       3500,
       Math.min(
@@ -1631,7 +1710,7 @@ export function evaluatePlacementAnalysis(
   }
 
   const isAcousticLowEnergy = outgoing.energy <= 0.15 && incoming.energy <= 0.2
-  const candidate7Overlap = 300
+  const candidate7Overlap = resolveOverlap(300)
   const candidate7DecayScore =
     isOutroDecaying && isAcousticLowEnergy ? 0.95 : 0.4
   const candidate7BreathScore = isAcousticLowEnergy ? 0.9 : 0.4
@@ -1658,8 +1737,7 @@ export function evaluatePlacementAnalysis(
 
   const isBpmTightMatch = tempo?.compatible && tempo.difference <= 0.045
   const isBothRhythmic = outgoing.bands.low > 0.02 && incoming.bands.low > 0.02
-  const candidate8Overlap = Math.min(
-    availableMs ?? 16000,
+  const candidate8Overlap = resolveOverlap(
     Math.max(4000, Math.min(16000, Math.round(beatMs * 16)))
   )
   const candidate8RhythmicScore = isBpmTightMatch
@@ -1692,8 +1770,7 @@ export function evaluatePlacementAnalysis(
 
   const isIncomingHighEnergy =
     incoming.energy >= outgoing.energy * 1.25 || incoming.energy >= 0.35
-  const candidate9Overlap = Math.min(
-    availableMs ?? 8000,
+  const candidate9Overlap = resolveOverlap(
     Math.max(3000, Math.round(beatMs * 8))
   )
   const candidate9EnergyScore = isIncomingHighEnergy ? 0.92 : 0.5
@@ -1724,7 +1801,7 @@ export function evaluatePlacementAnalysis(
     (isTempoClash || !isExactOrRelativeHarmonic) &&
     outgoing.energy >= 0.15 &&
     isIncomingImpact
-  const candidate10Overlap = Math.min(availableMs ?? 1500, 1200)
+  const candidate10Overlap = resolveOverlap(1200)
   const candidate10Total =
     (isTapeStopFeasible ? 0.9 : 0.4) * 0.35 +
     (isIncomingImpact ? 0.92 : 0.5) * 0.35 +
@@ -1746,8 +1823,7 @@ export function evaluatePlacementAnalysis(
     curve: 's-curve'
   }
 
-  const candidate11Overlap = Math.min(
-    availableMs ?? 5000,
+  const candidate11Overlap = resolveOverlap(
     Math.max(2500, Math.round(beatMs * 8))
   )
   const candidate11Decay = outgoing.energy >= 0.2 && isOutroDecaying
@@ -1858,7 +1934,7 @@ export function evaluateMusicalRelationship(
     requestedDurationMs,
     availableMs
   )
-  const bestPlacement = placement.selected
+  let bestPlacement = placement.selected
 
   const vocalClash =
     outgoing.vocalActivity >= 0.35 && incoming.vocalActivity >= 0.35
@@ -1898,7 +1974,6 @@ export function evaluateMusicalRelationship(
     strongSignals++
   }
 
-  const musicalCompatibilityScore = bestPlacement.totalScore
   const decisionReliability =
     harmonic.confidence * 0.3 +
     Math.min(outgoingConf, incomingConf) * 0.4 +
@@ -1913,6 +1988,20 @@ export function evaluateMusicalRelationship(
     harmonic.confidence >= 0.2 || tempoConfidence >= 0.4
   const analysisIsUncertain =
     decisionReliability < 0.22 || !hasReliableMusicalMeasurements
+
+  if (analysisIsUncertain) {
+    bestPlacement =
+      placement.candidates.find(
+        (candidate) => candidate.candidateId === 'candidate_4'
+      ) ?? bestPlacement
+  }
+
+  const resolvedPlacement =
+    bestPlacement === placement.selected
+      ? placement
+      : { ...placement, selected: bestPlacement }
+
+  const musicalCompatibilityScore = bestPlacement.totalScore
   let archetype = analysisIsUncertain
     ? 'instrumental-blend'
     : bestPlacement.archetype
@@ -1954,8 +2043,9 @@ export function evaluateMusicalRelationship(
     decisionReason = 'Standard equal-power crossfade blend'
   }
 
-  const confidenceLevel =
-    decisionReliability >= 0.4
+  const confidenceLevel = analysisIsUncertain
+    ? 'uncertain'
+    : decisionReliability >= 0.4
       ? 'strong'
       : decisionReliability >= 0.22
         ? 'likely'
@@ -2007,7 +2097,8 @@ export function evaluateMusicalRelationship(
         archetype === 'beatmatch-blend'),
     energyLift:
       !analysisIsUncertain &&
-      (incoming.energy >= outgoing.energy * 1.35 || archetype === 'energy-lift'),
+      (incoming.energy >= outgoing.energy * 1.35 ||
+        archetype === 'energy-lift'),
     energyDrop:
       !analysisIsUncertain && incoming.energy <= outgoing.energy * 0.65,
     multiBand:
@@ -2038,6 +2129,20 @@ export function evaluateMusicalRelationship(
     Math.round(outgoingConf * 4),
     quantizedNextBpm,
     Math.round(incomingConf * 4),
+    Math.round(outgoing.energy * 20),
+    Math.round(incoming.energy * 20),
+    Math.round(outgoing.vocalActivity * 4),
+    Math.round(incoming.vocalActivity * 4),
+    Math.round(outgoing.bands.low * 50),
+    Math.round(incoming.bands.low * 50),
+    Math.round(outgoing.brightness * 20),
+    Math.round(incoming.brightness * 20),
+    Math.round(('impact' in outgoing ? outgoing.impact : 0) * 4),
+    Math.round(('impact' in incoming ? incoming.impact : 0) * 4),
+    Math.round(
+      (('transitionConfidence' in outgoing && outgoing.transitionConfidence) ||
+        0) * 4
+    ),
     archetype,
     Math.round(entryPointMs / 50) * 50,
     Math.round(crossfadeDurationMs / 200) * 200
@@ -2050,7 +2155,7 @@ export function evaluateMusicalRelationship(
     musicalCompatibilityScore:
       Math.round(musicalCompatibilityScore * 1000) / 1000,
     decisionReliability: Math.round(decisionReliability * 1000) / 1000,
-    decisionStability: 1.0,
+    decisionStability: 0,
     independentSignals,
     strongSignals,
     crossfadeDurationMs,
@@ -2058,7 +2163,7 @@ export function evaluateMusicalRelationship(
     introBoundaryMs,
     introHoldMs,
     outgoingTargetMs: bestPlacement.outgoingTargetMs,
-    placement,
+    placement: resolvedPlacement,
     effects,
     fingerprint
   }

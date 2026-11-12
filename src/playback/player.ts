@@ -2443,145 +2443,159 @@ export class Player {
    * Seeks using source-native capabilities (e.g., SABR/Deezer).
    */
   private async _seekUsingSource(
-    position: number,
-    endTime?: number
-  ): Promise<boolean> {
-    if (!this.track) return false
-    const seekTrack = this.track
+  position: number,
+  endTime?: number
+): Promise<boolean> {
+  if (!this.track) return false
+  const seekTrack = this.track
+
+  logger(
+    'debug',
+    'Player',
+    `Seeking using source (native) to ${position}ms for guild ${this.guildId}`
+  )
+
+  this.position = position
+  this.track.endTime = endTime
+  let reuseUrlData: TrackUrlResult | null = null
+  let seekHandoff: { cancelSeekHandoff: () => void } | null = null
+
+  if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
+    const inputStream = (
+      this.connection.audioStream as {
+        pipes?: Array<{
+          beginSeekHandoff?: () => Promise<unknown>
+          cancelSeekHandoff?: () => void
+        }>
+      }
+    )?.pipes?.[0]
+
+    const previousSession = await inputStream?.beginSeekHandoff?.()
+
+    if (this.destroying || this.track !== seekTrack) {
+      inputStream?.cancelSeekHandoff?.()
+      return false
+    }
+
+    if (previousSession) {
+      seekHandoff = inputStream?.cancelSeekHandoff
+        ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
+        : null
+
+      logger(
+        'debug',
+        'Player',
+        `Extracted SABR session state: rn=${
+          (previousSession as { requestNumber?: number }).requestNumber
+        }, hasCookie=${!!(
+          previousSession as {
+            nextRequestPolicy?: { playbackCookie?: unknown }
+          }
+        ).nextRequestPolicy?.playbackCookie}`
+      )
+
+      reuseUrlData = {
+        newTrack: this.streamInfo.newTrack,
+        protocol: this.streamInfo.protocol,
+        url: this.streamInfo.url,
+        additionalData: {
+          ...this.streamInfo.additionalData,
+          previousSession,
+          startTime: position
+        }
+      } as TrackUrlResult
+
+      logger(
+        'debug',
+        'Player',
+        `Reusing existing SABR streaming URL for seek to maintain session`
+      )
+    }
+  }
+
+  const trackInfo = {
+    ...this.track.info,
+    audioTrackId: this.track.audioTrackId
+  }
+
+  // Reuse the playing URL when it's a native WebM stream: resolving a
+  // fresh URL hits the cipher on every seek. A stale URL just fails
+  // here and falls through to the fresh resolve below.
+  const seekSourceName =
+    (this.streamInfo?.newTrack as { info?: { sourceName?: string } } | null)
+      ?.info?.sourceName ?? this.track.info.sourceName
+
+  if (
+    !reuseUrlData &&
+    this.streamInfo?.protocol !== 'sabr' &&
+    this.streamInfo?.protocol !== 'hls' &&
+    this.streamInfo?.protocol !== 'dash' &&
+    isWebmYouTubePlayback(seekSourceName, this.streamInfo) &&
+    this.streamInfo?.url
+  ) {
+    const cachedUrlData = this.streamInfo as unknown as TrackUrlResult
+
+    const cachedResult = await this._connectAndPlayStream(
+      cachedUrlData,
+      position,
+      'source-seek',
+      'seekPrepare',
+      `Playing resource for guild ${this.guildId} after source seek (cached URL)`,
+      true,
+      true
+    )
+
+    if (this.destroying || this.track !== seekTrack) return false
+    if (cachedResult) return true
 
     logger(
       'debug',
       'Player',
-      `Seeking using source (native) to ${position}ms for guild ${this.guildId}`
+      `Cached URL seek failed for guild ${this.guildId}, resolving fresh URL`
+    )
+  }
+
+  const urlData =
+    reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo))
+
+  if (this.destroying || this.track !== seekTrack) {
+    seekHandoff?.cancelSeekHandoff()
+    return false
+  }
+
+  this.streamInfo = { ...urlData, trackInfo: this.track.info }
+
+  if (urlData.exception) {
+    seekHandoff?.cancelSeekHandoff()
+
+    const err = new Error(urlData.exception.message)
+    this._onError(err)
+    return false
+  }
+
+  try {
+    const result = await this._connectAndPlayStream(
+      urlData,
+      position,
+      'source-seek',
+      'seekPrepare',
+      `Playing resource for guild ${this.guildId} after source seek`,
+      true
     )
 
-    this.position = position
-    this.track.endTime = endTime
-    let reuseUrlData: TrackUrlResult | null = null
-    let seekHandoff: { cancelSeekHandoff: () => void } | null = null
-
-    if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
-      const inputStream = (
-        this.connection.audioStream as {
-          pipes?: Array<{
-            beginSeekHandoff?: () => Promise<unknown>
-            cancelSeekHandoff?: () => void
-          }>
-        }
-      )?.pipes?.[0]
-
-      const previousSession = await inputStream?.beginSeekHandoff?.()
-      if (this.destroying || this.track !== seekTrack) {
-        inputStream?.cancelSeekHandoff?.()
-        return false
-      }
-      if (previousSession) {
-        seekHandoff = inputStream?.cancelSeekHandoff
-          ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
-          : null
-        logger(
-          'debug',
-          'Player',
-          `Extracted SABR session state: rn=${
-            (previousSession as { requestNumber?: number }).requestNumber
-          }, hasCookie=${!!(
-            previousSession as {
-              nextRequestPolicy?: { playbackCookie?: unknown }
-            }
-          ).nextRequestPolicy?.playbackCookie}`
-        )
-
-        reuseUrlData = {
-          newTrack: this.streamInfo.newTrack,
-          protocol: this.streamInfo.protocol,
-          url: this.streamInfo.url,
-          additionalData: {
-            ...this.streamInfo.additionalData,
-            previousSession,
-            startTime: position
-          }
-        } as TrackUrlResult
-
-        logger(
-          'debug',
-          'Player',
-          `Reusing existing SABR streaming URL for seek to maintain session`
-        )
-      }
-    }
-
-    const trackInfo = {
-      ...this.track.info,
-      audioTrackId: this.track.audioTrackId
-    }
-
-    // Reuse the playing URL when it's a native WebM stream: resolving a
-    // fresh URL hits the cipher on every seek. A stale URL just fails
-    // here and falls through to the fresh resolve below.
-    const seekSourceName =
-      (this.streamInfo?.newTrack as { info?: { sourceName?: string } } | null)
-        ?.info?.sourceName ?? this.track.info.sourceName
-    if (
-      !reuseUrlData &&
-      this.streamInfo?.protocol !== 'sabr' &&
-      this.streamInfo?.protocol !== 'hls' &&
-      this.streamInfo?.protocol !== 'dash' &&
-      isWebmYouTubePlayback(seekSourceName, this.streamInfo) &&
-      this.streamInfo?.url
-    ) {
-      const cachedUrlData = this.streamInfo as unknown as TrackUrlResult
-      const cachedResult = await this._connectAndPlayStream(
-        cachedUrlData,
-        position,
-        'source-seek',
-        'seekPrepare',
-        `Playing resource for guild ${this.guildId} after source seek (cached URL)`,
-        false,
-        true
-      )
-      if (this.destroying || this.track !== seekTrack) return false
-      if (cachedResult) return true
-      logger(
-        'debug',
-        'Player',
-        `Cached URL seek failed for guild ${this.guildId}, resolving fresh URL`
-      )
-    }
-
-    const urlData =
-      reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo))
     if (this.destroying || this.track !== seekTrack) {
       seekHandoff?.cancelSeekHandoff()
       return false
     }
-    this.streamInfo = { ...urlData, trackInfo: this.track.info }
 
-    if (urlData.exception) {
-      seekHandoff?.cancelSeekHandoff()
-      const err = new Error(urlData.exception.message)
-      this._onError(err)
-      return false
-    }
+    if (!result) seekHandoff?.cancelSeekHandoff()
 
-    try {
-      const result = await this._connectAndPlayStream(
-        urlData,
-        position,
-        'source-seek',
-        'seekPrepare',
-        `Playing resource for guild ${this.guildId} after source seek`
-      )
-      if (this.destroying || this.track !== seekTrack) {
-        seekHandoff?.cancelSeekHandoff()
-        return false
-      }
-      if (!result) seekHandoff?.cancelSeekHandoff()
-      return result
-    } catch (error) {
-      seekHandoff?.cancelSeekHandoff()
-      throw error
-    }
+    return result
+  } catch (error) {
+    seekHandoff?.cancelSeekHandoff()
+    throw error
   }
+}
 
   /**
    * Seeks using seekable-stream helper for compatible sources.
@@ -2782,126 +2796,139 @@ export class Player {
   /**
    * Seeks using legacy re-fetch strategy.
    */
-  private async _legacySeek(
-    position: number,
-    endTime?: number
-  ): Promise<boolean> {
-    if (!this.track) return false
-    const seekTrack = this.track
-    if (
-      position < 0 ||
-      (this.track.info.length > 0 && position > this.track.info.length)
-    )
-      return false
+ private async _legacySeek(
+  position: number,
+  endTime?: number
+): Promise<boolean> {
+  if (!this.track) return false
+  const seekTrack = this.track
 
-    logger(
-      'debug',
-      'Player',
-      `Seeking with legacy method to ${position}ms for guild ${this.guildId}`
-    )
-
-    this.position = position
-    this.track.endTime = endTime
-
-    const trackInfo = {
-      ...this.track.info,
-      audioTrackId: this.track.audioTrackId
-    }
-
-    const urlData = await this.nodelink.sources.getTrackUrl(
-      trackInfo,
-      undefined,
-      this._isRecovering
-    )
-    if (this.destroying || this.track !== seekTrack) return false
-    this.streamInfo = { ...urlData, trackInfo: this.track.info }
-
-    if (urlData.exception) {
-      const err = new Error(urlData.exception.message)
-      this._onError(err)
-      return false
-    }
-
-    if (!this.connection) {
-      this._initConnection()
-    }
-
-    if (!this._isVoiceReady()) {
-      this._ensureVoiceConnection()
-      try {
-        await this.waitEvent(
-          'stateChange',
-          (s: VoiceConnectionState) =>
-            s.status === 'connected' && !!this.connection?.udpInfo?.secretKey
-        )
-      } catch {}
-    }
-
-    if (this.destroying || this.track !== seekTrack) return false
-    if (!this.connection || !this._isVoiceReady()) {
-      this._onError(
-        new Error(
-          `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
-          { cause: 'VOICE_CONNECTION_TIMEOUT' }
-        )
-      )
-      return false
-    }
-
-    const fetched = await this._fetchResource(
-      this.track.info,
-      urlData,
-      position
-    )
-    /* INFO: A resource fetched for the old track must be released without replacing the current pipeline. */
-    if (this.destroying || this.track !== seekTrack) {
-      if (!('exception' in fetched)) fetched.stream.destroy()
-      return false
-    }
-    if ('exception' in fetched) {
-      const err = new Error(fetched.exception.message)
-      this._onError(err)
-      return false
-    }
-
-    this._cleanupCurrentAudioStream('legacy-seek')
-
-    const resource = fetched.stream
-    if (this.volumePercent !== 100) {
-      resource.setVolume(this.volumePercent / 100)
-    }
-    this._fading('seekPrepare', { resource })
-
-    this.setFilters(this.filters)
-
-    logger(
-      'debug',
-      'Player',
-      `Playing resource for guild ${this.guildId} after legacy seek`
-    )
-    this._currentResource = resource
-    this.connection.play(resource as unknown)
-
-    // Connect ducking controller to the new audio stream
-    if (this.duckingController && resource.fadeTo) {
-      this.duckingController.attach(this.connection)
-      this.duckingController.setStreamControl({
-        fadeTo: (volume: number, durationMs: number, curve?: string) =>
-          resource.fadeTo?.(volume, durationMs, curve)
-      })
-    }
-    await this.waitEvent(
-      'playerStateChange',
-      (s: VoicePlayerState) => s.status === 'playing'
-    )
-
-    if (this.destroying || this.track !== seekTrack) return false
-    this._lyricsBasePosition = position
-    this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
-
-    return true
+  if (
+    position < 0 ||
+    (this.track.info.length > 0 && position > this.track.info.length)
+  ) {
+    return false
   }
 
+  logger(
+    'debug',
+    'Player',
+    `Seeking with legacy method to ${position}ms for guild ${this.guildId}`
+  )
+
+  this.position = position
+  this.track.endTime = endTime
+
+  const trackInfo = {
+    ...this.track.info,
+    audioTrackId: this.track.audioTrackId
+  }
+
+  const urlData = await this.nodelink.sources.getTrackUrl(
+    trackInfo,
+    undefined,
+    this._isRecovering
+  )
+
+  if (this.destroying || this.track !== seekTrack) return false
+
+  this.streamInfo = { ...urlData, trackInfo: this.track.info }
+
+  if (urlData.exception) {
+    const err = new Error(urlData.exception.message)
+    this._onError(err)
+    return false
+  }
+
+  if (!this.connection) {
+    this._initConnection()
+  }
+
+  if (!this._isVoiceReady()) {
+    this._ensureVoiceConnection()
+
+    try {
+      await this.waitEvent(
+        'stateChange',
+        (s: VoiceConnectionState) =>
+          s.status === 'connected' && !!this.connection?.udpInfo?.secretKey
+      )
+    } catch {}
+  }
+
+  if (this.destroying || this.track !== seekTrack) return false
+
+  if (!this.connection || !this._isVoiceReady()) {
+    this._onError(
+      new Error(
+        `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
+        { cause: 'VOICE_CONNECTION_TIMEOUT' }
+      )
+    )
+
+    return false
+  }
+
+  const fetched = await this._fetchResource(
+    this.track.info,
+    urlData,
+    position
+  )
+
+  /* INFO: A resource fetched for the old track must be released without replacing the current pipeline. */
+  if (this.destroying || this.track !== seekTrack) {
+    if (!('exception' in fetched)) fetched.stream.destroy()
+    return false
+  }
+
+  if ('exception' in fetched) {
+    const err = new Error(fetched.exception.message)
+    this._onError(err)
+    return false
+  }
+
+  this._cleanupCurrentAudioStream('legacy-seek', true)
+
+  const resource = fetched.stream
+
+  if (this.volumePercent !== 100) {
+    resource.setVolume(this.volumePercent / 100)
+  }
+
+  this._fading('seekPrepare', { resource })
+
+  this.setFilters(this.filters)
+
+  logger(
+    'debug',
+    'Player',
+    `Playing resource for guild ${this.guildId} after legacy seek`
+  )
+
+  this._currentResource = resource
+  this.connection.play(resource as unknown)
+
+  // Connect ducking controller to the new audio stream
+  if (this.duckingController && resource.fadeTo) {
+    this.duckingController.attach(this.connection)
+    this.duckingController.setStreamControl({
+      fadeTo: (volume: number, durationMs: number, curve?: string) =>
+        resource.fadeTo?.(volume, durationMs, curve)
+    })
+  }
+
+  await this.waitEvent(
+    'playerStateChange',
+    (s: VoicePlayerState) => s.status === 'playing'
+  )
+
+  if (this.destroying || this.track !== seekTrack) return false
+
+  this._lyricsBasePosition = position
+  this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
+
+  return true
+}
   /**
    * Stops playback and emits STOPPED if applicable.
    *

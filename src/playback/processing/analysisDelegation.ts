@@ -16,7 +16,10 @@ interface AnalysisResponse {
 
 const pending = new Map<
   string,
-  { resolve: (value: TrackPreAnalysisProfile | null) => void; timer: NodeJS.Timeout }
+  {
+    resolve: (value: TrackPreAnalysisProfile | null) => void
+    timer: NodeJS.Timeout
+  }
 >()
 
 process.on('message', (message: AnalysisResponse) => {
@@ -25,7 +28,7 @@ process.on('message', (message: AnalysisResponse) => {
   if (!entry) return
   clearTimeout(entry.timer)
   pending.delete(message.requestId)
-  entry.resolve(message.error ? null : message.payload ?? null)
+  entry.resolve(message.error ? null : (message.payload ?? null))
 })
 
 /** Requests one bounded analysis window from the master/source worker cluster. */
@@ -44,13 +47,20 @@ export function requestPcmAnalysis(
     }, timeoutMs)
     timer.unref?.()
     pending.set(requestId, { resolve, timer })
-    process.send?.({ type: 'pcmAnalysisRequest', requestId, payload } satisfies AnalysisRequest, (error) => {
-      if (!error) return
-      const entry = pending.get(requestId)
-      if (!entry) return
-      clearTimeout(entry.timer)
-      pending.delete(requestId)
-      entry.resolve(null)
-    })
+    process.send?.(
+      {
+        type: 'pcmAnalysisRequest',
+        requestId,
+        payload
+      } satisfies AnalysisRequest,
+      (error) => {
+        if (!error) return
+        const entry = pending.get(requestId)
+        if (!entry) return
+        clearTimeout(entry.timer)
+        pending.delete(requestId)
+        entry.resolve(null)
+      }
+    )
   })
 }

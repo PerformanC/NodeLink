@@ -368,7 +368,9 @@ class SourceWorkerManager {
             .sort((a, b) => (this.workerLoads.get(a.id) || 0) - (this.workerLoads.get(b.id) || 0))[0];
         if (!worker)
             throw new Error('No source worker is available for PCM analysis');
-        return this._executeOnWorker(worker, 'analyzePcm', payload, { timeoutMs: 10000 });
+        return this._executeOnWorker(worker, 'analyzePcm', payload, {
+            timeoutMs: 10000
+        });
     }
     _decrementLoad(workerId) {
         const load = this.workerLoads.get(workerId) || 0;

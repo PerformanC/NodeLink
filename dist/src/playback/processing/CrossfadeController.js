@@ -29,7 +29,7 @@ const SAMPLE_RATE = 48000;
 const FRAME_DURATION_MS = 20;
 const HALF_PI = Math.PI / 2;
 const MAX_STARVATION_MS = 5000;
-const MUSICAL_ANALYSIS_MS = 2000;
+const MUSICAL_ANALYSIS_MS = 4000;
 const _MAX_ENTRY_SCAN_MS = 300;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const BASS_CROSSOVER_HZ = 200;
@@ -101,7 +101,6 @@ export class CrossfadeController extends Transform {
     planFrozen = false;
     reclassificationCount = 0;
     transitionId = '';
-    archetypeHistory = [];
     /**
      * Buffers a next-track PCM stream using explicit backpressure.
      *
@@ -116,7 +115,7 @@ export class CrossfadeController extends Transform {
         this.clearNext();
         const durationMs = Math.max(1, Math.round(options.durationMs));
         const minBufferMs = Math.max(FRAME_DURATION_MS, Math.min(2000, Math.round(options.minBufferMs ?? 2000)));
-        const bufferMs = Math.max(minBufferMs, Math.round(options.bufferMs ?? durationMs));
+        const bufferMs = Math.max(minBufferMs, Math.round(options.bufferMs ?? Math.max(durationMs, MUSICAL_ANALYSIS_MS)));
         this.defaultDurationMs = durationMs;
         this.minBufferBytes = this._alignBytes(minBufferMs * this.bytesPerMs);
         this.analysisReadyBytes = this._alignBytes(Math.min(bufferMs, MUSICAL_ANALYSIS_MS) * this.bytesPerMs);
@@ -166,7 +165,6 @@ export class CrossfadeController extends Transform {
         };
         const plan = evaluateMusicalRelationship(planningMainProfile, incomingWithIntro, requestedDurationMs, availableMs);
         this.activePlan = plan;
-        this.archetypeHistory = [plan.archetype];
         const harmonic = getHarmonicDistance(mainProfile.key, nextProfile.key, mainProfile.keyConfidence, nextProfile.keyConfidence);
         const tempo = matchTempo(mainProfile.bpm, nextProfile.bpm);
         const strategy = plan.archetype === 'filter-sweep-dip' ? 'dip' : 'mix';
@@ -188,6 +186,7 @@ export class CrossfadeController extends Transform {
         const maximumWaitMs = Math.max(preferredWaitMs, selectionMs);
         this.armed = {
             plan,
+            incomingIntroProfile: introBoundary,
             transitionId,
             strategy,
             bassSwap: plan.effects.bassSwap,
@@ -228,7 +227,11 @@ export class CrossfadeController extends Transform {
             positionAtArmMs: mainProfile.durationMs,
             plannedTargetMissed,
             midDuckDb: plan.effects.midDuckDb,
-            harmonicRelation: harmonic.relation
+            harmonicRelation: harmonic.relation,
+            lastMainAnalysisRevision: mainProfile.analysisRevision ?? 0,
+            lastNextAnalysisRevision: nextProfile.analysisRevision ?? 0,
+            pendingPlanFingerprint: '',
+            pendingPlanSamples: 0
         };
         if (plan.placement) {
             logger('info', 'AutoMix', `[AutoMix][${transitionId}][PlacementAnalysis]`, {
@@ -553,15 +556,17 @@ export class CrossfadeController extends Transform {
         const next = this.next;
         if (!transition || !next)
             return true;
+        if (next.length < main.length) {
+            transition.incomingStarvedFrames += main.length / this.bytesPerFrame;
+            return this.push(main);
+        }
         const incoming = this._readTarget(next, main.length);
-        let paddedIncoming = incoming;
-        if (!paddedIncoming || paddedIncoming.length !== main.length) {
-            const padded = Buffer.alloc(main.length);
-            paddedIncoming?.copy(padded);
-            paddedIncoming = padded;
+        if (!incoming || incoming.length !== main.length) {
+            transition.incomingStarvedFrames += main.length / this.bytesPerFrame;
+            return this.push(main);
         }
         transition.incomingFrames += main.length / this.bytesPerFrame;
-        const mixed = this._mix(main, paddedIncoming, transition);
+        const mixed = this._mix(main, incoming, transition);
         const accepted = this.push(mixed);
         if (transition.elapsedFrames >= transition.durationFrames) {
             this._promoteNext(transition);
@@ -572,13 +577,8 @@ export class CrossfadeController extends Transform {
         if (!this.bridge)
             return;
         const output = this._readTarget(this.bridge, size);
-        if (output?.length === size) {
+        if (output?.length)
             this.push(output);
-            return;
-        }
-        const padded = Buffer.alloc(size);
-        output?.copy(padded);
-        this.push(padded);
     }
     /**
      * Real-time stereo PCM crossover mixing pipeline (s16le or headroom-preserving f32le).
@@ -646,6 +646,8 @@ export class CrossfadeController extends Transform {
         let outBassGain = outBassStart;
         let inBassGain = inBassStart;
         const crossover = runtime.crossover;
+        let mixLimiterGain = crossover.mixLimiterGain;
+        const limiterReleaseCoefficient = 1 - Math.exp(-1 / (SAMPLE_RATE * 0.08));
         const sampleScale = this.float32 ? 32768 : 1;
         const readSample = (buffer, byteOffset) => (this.float32
             ? buffer.readFloatLE(byteOffset)
@@ -830,14 +832,23 @@ export class CrossfadeController extends Transform {
                 inTotalLeft = inMid + inSide;
                 inTotalRight = inMid - inSide;
             }
-            // Equal-power fades can exceed unity when the two tracks are correlated
-            // (for example, two vocal-heavy tracks with similar phase). Keep the
-            // combined envelope below full scale before writing s16 PCM; otherwise
-            // _clampSample hard-clips the overlap and creates audible distortion.
-            const combinedGain = outGain + inGain;
-            const mixHeadroom = combinedGain > 0.98 ? 0.98 / combinedGain : 1;
-            const left = (outTotalLeft + inTotalLeft) * mixHeadroom;
-            const right = (outTotalRight + inTotalRight) * mixHeadroom;
+            let left = outTotalLeft + inTotalLeft;
+            let right = outTotalRight + inTotalRight;
+            if (!this.float32) {
+                // Apply linked stereo peak protection only when the s16 output would
+                // exceed full scale. Float32 keeps its headroom for the downstream
+                // Protected pipeline limiter.
+                const peak = Math.max(Math.abs(left), Math.abs(right));
+                const targetGain = peak > 32767 ? 32767 / peak : 1;
+                if (targetGain < mixLimiterGain) {
+                    mixLimiterGain = targetGain;
+                }
+                else {
+                    mixLimiterGain += (1 - mixLimiterGain) * limiterReleaseCoefficient;
+                }
+                left *= mixLimiterGain;
+                right *= mixLimiterGain;
+            }
             if (this.float32) {
                 output.writeFloatLE(left / 32768, offset);
                 output.writeFloatLE(right / 32768, offset + this.bytesPerSample);
@@ -854,6 +865,7 @@ export class CrossfadeController extends Transform {
             inBassGain += inBassStep;
             alphaSweep += alphaSweepStep;
         }
+        crossover.mixLimiterGain = mixLimiterGain;
         runtime.elapsedFrames = Math.min(runtime.durationFrames, runtime.elapsedFrames + frames);
         return output;
     }
@@ -895,7 +907,9 @@ export class CrossfadeController extends Transform {
             introHoldMs: plan?.introHoldMs ?? 0,
             consumedMs: Math.round(consumedMs),
             reclassificationCount: this.reclassificationCount,
-            audioUnderrun: false
+            audioUnderrun: false,
+            incomingBufferStarvation: runtime.incomingStarvedFrames > 0,
+            incomingBufferStarvationMs: Math.round((runtime.incomingStarvedFrames / SAMPLE_RATE) * 1000)
         });
     }
     _promoteArmedGapless(reason) {
@@ -974,9 +988,7 @@ export class CrossfadeController extends Transform {
             return;
         const phaseDistance = Math.min(profile.phase, 1 - profile.phase);
         const phraseLockedBeatMatch = armed.earlyBeatMatch && armed.bassSwap;
-        const beatReady = profile.bpm !== null &&
-            profile.confidence >= 0.4 &&
-            phaseDistance <= 0.2;
+        const beatReady = profile.bpm !== null && profile.confidence >= 0.4 && phaseDistance <= 0.2;
         const preferredReached = armed.waitedFrames >= armed.preferredWaitFrames;
         const maximumReached = armed.waitedFrames >= armed.maximumWaitFrames;
         const hasVocalPause = profile.vocalActivity < 0.28;
@@ -1029,6 +1041,14 @@ export class CrossfadeController extends Transform {
             return;
         const main = this.mainAnalyzer.getProfile();
         const next = this.next.analyzer.getProfile();
+        const mainRevision = main.analysisRevision ?? 0;
+        const nextRevision = next.analysisRevision ?? 0;
+        if (mainRevision === armed.lastMainAnalysisRevision &&
+            nextRevision === armed.lastNextAnalysisRevision) {
+            return;
+        }
+        armed.lastMainAnalysisRevision = mainRevision;
+        armed.lastNextAnalysisRevision = nextRevision;
         const quantizedMainBpm = main.bpm ? Math.round(main.bpm / 5) * 5 : 0;
         const quantizedNextBpm = next.bpm ? Math.round(next.bpm / 5) * 5 : 0;
         const currentFingerprint = [
@@ -1040,41 +1060,86 @@ export class CrossfadeController extends Transform {
             Math.round(main.confidence * 4),
             quantizedNextBpm,
             Math.round(next.confidence * 4),
+            Math.round(main.energy * 20),
+            Math.round(next.energy * 20),
+            Math.round(main.vocalActivity * 4),
+            Math.round(next.vocalActivity * 4),
+            Math.round(main.bands.low * 50),
+            Math.round(next.bands.low * 50),
+            Math.round(main.brightness * 20),
+            Math.round(next.brightness * 20),
+            Math.round(main.impact * 4),
+            Math.round(next.impact * 4),
+            Math.round(main.transitionConfidence * 4),
             armed.plan.archetype,
             Math.round(armed.plan.entryPointMs / 50) * 50,
             Math.round(armed.durationMs / 200) * 200
         ].join(':');
-        if (currentFingerprint === armed.plan.fingerprint)
+        if (currentFingerprint === armed.plan.fingerprint) {
+            if (armed.pendingPlanFingerprint === armed.plan.fingerprint) {
+                armed.pendingPlanSamples++;
+                armed.plan.decisionStability = Math.min(1, armed.pendingPlanSamples / 3);
+                this.activePlan = armed.plan;
+                if (armed.plan.decisionStability >= 0.75 &&
+                    armed.plan.decisionReliability >= 0.5) {
+                    this.planFrozen = true;
+                    logger('info', 'AutoMix', `[AutoMix][${armed.transitionId}][PLAN_LOCKED]`, {
+                        transitionId: armed.transitionId,
+                        state: 'early-frozen',
+                        archetype: armed.plan.archetype,
+                        musicalCompatibilityScore: armed.plan.musicalCompatibilityScore,
+                        decisionReliability: armed.plan.decisionReliability,
+                        decisionStability: armed.plan.decisionStability,
+                        reclassificationCount: this.reclassificationCount
+                    });
+                }
+            }
             return;
-        const availableMs = (armed.availableFrames / SAMPLE_RATE) * 1000;
-        const newPlan = evaluateMusicalRelationship({ ...main, durationMs: armed.sourceEndPositionMs }, next, armed.requestedDurationMs, availableMs);
-        this.archetypeHistory.push(newPlan.archetype);
-        const recent = this.archetypeHistory.slice(-4);
-        const matchingCount = recent.filter((a) => a === newPlan.archetype).length;
-        const stability = Math.round((matchingCount / recent.length) * 1000) / 1000;
-        newPlan.decisionStability = stability;
-        const isArchetypeChanged = newPlan.archetype !== armed.plan.archetype;
-        const shouldAllowConservativeReclassification = newPlan.decisionReliability < 0.4 ||
-            (newPlan.archetype === 'instrumental-blend' &&
-                newPlan.decisionReason.includes('confidence'));
-        const isScoreMateriallyBetter = newPlan.musicalCompatibilityScore -
-            armed.plan.musicalCompatibilityScore >=
-            0.12;
-        if (isArchetypeChanged &&
-            !isScoreMateriallyBetter &&
-            !shouldAllowConservativeReclassification &&
-            (armed.plan.archetype === 'continuation-handoff' ||
-                armed.plan.archetype === 'natural-decay' ||
-                armed.plan.archetype === 'vocal-handoff' ||
-                armed.plan.archetype === 'silence-breath' ||
-                armed.plan.archetype === 'beatmatch-blend' ||
-                armed.plan.archetype === 'hpf-sweep' ||
-                armed.plan.archetype === 'tape-stop' ||
-                armed.plan.archetype === 'washout-delay' ||
-                armed.plan.archetype === 'spinback' ||
-                armed.plan.archetype === 'stutter-build' ||
-                armed.plan.archetype === 'hard-cut')) {
-            armed.plan.fingerprint = currentFingerprint;
+        }
+        const remainingMs = Math.max(0, armed.sourceEndPositionMs - main.durationMs);
+        const incomingWithIntro = {
+            ...next,
+            introProfile: armed.incomingIntroProfile
+        };
+        const newPlan = evaluateMusicalRelationship({ ...main, durationMs: armed.sourceEndPositionMs }, incomingWithIntro, armed.requestedDurationMs, remainingMs);
+        const candidateFingerprint = newPlan.fingerprint;
+        if (candidateFingerprint === armed.plan.fingerprint) {
+            armed.pendingPlanFingerprint = candidateFingerprint;
+            armed.pendingPlanSamples = Math.max(armed.pendingPlanSamples, 1);
+            return;
+        }
+        if (candidateFingerprint === armed.pendingPlanFingerprint) {
+            armed.pendingPlanSamples++;
+        }
+        else {
+            armed.pendingPlanFingerprint = candidateFingerprint;
+            armed.pendingPlanSamples = 1;
+        }
+        const stableSamples = armed.pendingPlanSamples;
+        newPlan.decisionStability = Math.min(1, stableSamples / 3);
+        const previousTargetMs = armed.plan.outgoingTargetMs ?? armed.sourceEndPositionMs;
+        const newTargetMs = newPlan.outgoingTargetMs ?? armed.sourceEndPositionMs;
+        const scoreGain = newPlan.musicalCompatibilityScore - armed.plan.musicalCompatibilityScore;
+        const reliabilityFloor = Math.max(0.35, armed.plan.decisionReliability - 0.05);
+        const reliabilityAcceptable = newPlan.decisionReliability >= reliabilityFloor;
+        const materiallyBetter = scoreGain >= 0.12 ||
+            newPlan.decisionReliability >= armed.plan.decisionReliability + 0.08;
+        const sameArchetype = newPlan.archetype === armed.plan.archetype;
+        if (stableSamples < 2 ||
+            !reliabilityAcceptable ||
+            (!sameArchetype && !materiallyBetter)) {
+            logger('debug', 'AutoMix', `[AutoMix][${armed.transitionId}][PlanCandidate]`, {
+                transitionId: armed.transitionId,
+                candidateFingerprint,
+                stableSamples,
+                requiredStableSamples: 2,
+                candidateArchetype: newPlan.archetype,
+                currentArchetype: armed.plan.archetype,
+                candidateReliability: newPlan.decisionReliability,
+                reliabilityFloor,
+                scoreGain: Math.round(scoreGain * 1000) / 1000,
+                accepted: false
+            });
             return;
         }
         const previousArchetype = armed.plan.archetype;
@@ -1084,11 +1149,19 @@ export class CrossfadeController extends Transform {
             stability: armed.plan.decisionStability
         };
         const previousFingerprint = armed.plan.fingerprint;
-        const previousTargetMs = armed.plan.outgoingTargetMs ?? armed.sourceEndPositionMs;
-        const newTargetMs = newPlan.outgoingTargetMs ?? armed.sourceEndPositionMs;
         this.reclassificationCount++;
         armed.plan = newPlan;
+        this.activePlan = newPlan;
         armed.strategy = newPlan.archetype === 'filter-sweep-dip' ? 'dip' : 'mix';
+        const refreshedTempo = matchTempo(main.bpm, next.bpm);
+        const refreshedTempoReliable = (refreshedTempo?.compatible ?? false) &&
+            Math.min(main.confidence, next.confidence) >= 0.4;
+        armed.earlyBeatMatch = refreshedTempoReliable;
+        armed.tempoState = refreshedTempoReliable
+            ? 'compatible'
+            : armed.strategy === 'dip'
+                ? 'mismatch'
+                : 'unknown';
         armed.bassSwap = newPlan.effects.bassSwap;
         armed.echoTail = newPlan.effects.echoTail;
         armed.sidechain = newPlan.effects.sidechain;
@@ -1105,16 +1178,32 @@ export class CrossfadeController extends Transform {
         armed.curve = this._resolveCurve(newPlan.effects.curve || armed.curve);
         armed.midDuckDb = newPlan.effects.midDuckDb;
         armed.durationMs = newPlan.crossfadeDurationMs;
-        armed.targetWaitFrames = Math.round((Math.max(0, newTargetMs - main.durationMs) / 1000) *
-            SAMPLE_RATE);
-        armed.plannedTargetMissed =
-            Math.abs(newTargetMs - previousTargetMs) > 500 &&
-                newTargetMs < main.durationMs - 500;
+        armed.targetWaitFrames = Math.round((Math.max(0, newTargetMs - main.durationMs) / 1000) * SAMPLE_RATE);
+        armed.plannedTargetMissed = newTargetMs < main.durationMs - 500;
+        armed.availableFrames = Math.round((remainingMs / 1000) * SAMPLE_RATE);
+        const selectionMs = Math.max(0, remainingMs - armed.durationMs - 4000);
+        const minimumWaitMs = Math.min(6000, selectionMs * 0.25);
+        const preferredWaitMs = Math.min(12000, Math.max(minimumWaitMs, selectionMs * 0.55));
+        const maximumWaitMs = Math.max(preferredWaitMs, selectionMs);
+        armed.minimumWaitFrames =
+            armed.waitedFrames + Math.round((minimumWaitMs / 1000) * SAMPLE_RATE);
+        armed.preferredWaitFrames =
+            armed.waitedFrames + Math.round((preferredWaitMs / 1000) * SAMPLE_RATE);
+        armed.maximumWaitFrames =
+            armed.waitedFrames + Math.round((maximumWaitMs / 1000) * SAMPLE_RATE);
+        const effectiveMainBpm = main.bpm && next.bpm && main.bpm > next.bpm * 1.5
+            ? main.bpm / 2
+            : main.bpm;
+        const beatMs = effectiveMainBpm ? 60000 / effectiveMainBpm : 500;
+        armed.maxBeatWaitFrames =
+            armed.strategy === 'mix' && main.bpm && main.confidence >= 0.4
+                ? Math.round((Math.min(1200, beatMs * 1.25) / 1000) * SAMPLE_RATE)
+                : 0;
         logger('info', 'AutoMix', `[AutoMix][${armed.transitionId}][PlanChange]`, {
             transitionId: armed.transitionId,
             reclassificationCount: this.reclassificationCount,
             previousFingerprint,
-            newFingerprint: currentFingerprint,
+            newFingerprint: candidateFingerprint,
             previousArchetype,
             newArchetype: newPlan.archetype,
             previousScores,
@@ -1124,11 +1213,13 @@ export class CrossfadeController extends Transform {
                 stability: newPlan.decisionStability
             },
             reasonForChange: newPlan.decisionReason,
-            resolvedDurationMs: newPlan.crossfadeDurationMs
+            resolvedDurationMs: newPlan.crossfadeDurationMs,
+            targetChangedMs: Math.round(newTargetMs - previousTargetMs),
+            timingWindowRebased: true
         });
-        if (stability >= 0.75 &&
-            newPlan.decisionReliability >= 0.5 &&
-            this.archetypeHistory.length >= 3) {
+        if (stableSamples >= 3 &&
+            newPlan.decisionStability >= 0.75 &&
+            newPlan.decisionReliability >= 0.5) {
             this.planFrozen = true;
             logger('info', 'AutoMix', `[AutoMix][${armed.transitionId}][PLAN_LOCKED]`, {
                 transitionId: armed.transitionId,
@@ -1136,7 +1227,7 @@ export class CrossfadeController extends Transform {
                 archetype: newPlan.archetype,
                 musicalCompatibilityScore: newPlan.musicalCompatibilityScore,
                 decisionReliability: newPlan.decisionReliability,
-                decisionStability: stability,
+                decisionStability: newPlan.decisionStability,
                 reclassificationCount: this.reclassificationCount
             });
         }
@@ -1195,13 +1286,44 @@ export class CrossfadeController extends Transform {
             armed.durationMs = Math.min(armed.durationMs, Math.max(1, armed.sourceEndPositionMs - mainProfile.durationMs - 500));
         }
         this.planFrozen = true;
-        const plan = armed.plan;
-        const plannedEntryPointMs = plan.entryPointMs ?? 0;
-        const rawSkipBytes = Math.floor((plannedEntryPointMs / 1000) * this.bytesPerMs);
-        const skipBytes = Math.min(next.length, rawSkipBytes - (rawSkipBytes % this.bytesPerFrame));
+        let plan = armed.plan;
+        const requestedEntryPointMs = plan.entryPointMs ?? 0;
+        const rawSkipBytes = this._alignBytes((requestedEntryPointMs / 1000) * this.bytesPerMs);
+        const canHonorEntryPoint = rawSkipBytes <= next.length;
+        const plannedEntryPointMs = canHonorEntryPoint ? requestedEntryPointMs : 0;
+        const skipBytes = canHonorEntryPoint ? rawSkipBytes : 0;
+        if (!canHonorEntryPoint && requestedEntryPointMs > 0) {
+            logger('warn', 'Crossfade', `[AutoMix][${transitionId}][EntryPointFallback] Buffered PCM cannot reach the planned intro position`, {
+                transitionId,
+                requestedEntryPointMs,
+                bufferedMs: Math.round(next.length / this.bytesPerMs),
+                fallbackEntryPointMs: 0
+            });
+            plan = {
+                ...plan,
+                entryPointMs: 0,
+                introHoldMs: 0,
+                placement: plan.placement
+                    ? {
+                        ...plan.placement,
+                        incoming: {
+                            ...plan.placement.incoming,
+                            entryPointMs: 0,
+                            firstBeatMs: 0,
+                            vocalEntryMs: 0,
+                            introBoundaryMs: 0
+                        },
+                        selected: { ...plan.placement.selected, incomingStartMs: 0 }
+                    }
+                    : undefined
+            };
+            armed.plan = plan;
+            this.activePlan = plan;
+        }
         if (skipBytes > 0) {
             this._readTarget(next, skipBytes, false);
         }
+        this.activePlan = plan;
         let incomingGainStart = 1.0;
         if (mainProfile.loudnessLufs > -60 && nextProfile.loudnessLufs > -60) {
             const lufsDiff = mainProfile.loudnessLufs - nextProfile.loudnessLufs;
@@ -1221,6 +1343,7 @@ export class CrossfadeController extends Transform {
             durationFrames,
             elapsedFrames: 0,
             incomingFrames: skipBytes / this.bytesPerFrame,
+            incomingStarvedFrames: 0,
             curve: armed.curve,
             strategy: armed.strategy,
             bassSwap: armed.bassSwap,
@@ -1253,6 +1376,7 @@ export class CrossfadeController extends Transform {
                 incomingTiltRight: 0,
                 prevIncomingBass: 0,
                 sidechainEnvelope: 0,
+                mixLimiterGain: 1,
                 reverb: createReverbTailState()
             },
             handoff,

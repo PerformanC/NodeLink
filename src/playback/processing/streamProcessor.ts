@@ -2863,8 +2863,7 @@ class StreamAudioResource extends BaseAudioResource {
       for (const factory of nodelink.extensions?.audioInterceptors ?? []) {
         const caps = factory.audioCapabilities
         if (
-          !caps ||
-          !caps.sampleFormats.includes('f32le') ||
+          !caps?.sampleFormats.includes('f32le') ||
           caps.amplitudeBehavior !== 'preserves-headroom'
         ) {
           throw new Error(

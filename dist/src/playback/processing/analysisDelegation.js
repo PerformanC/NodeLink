@@ -8,7 +8,7 @@ process.on('message', (message) => {
         return;
     clearTimeout(entry.timer);
     pending.delete(message.requestId);
-    entry.resolve(message.error ? null : message.payload ?? null);
+    entry.resolve(message.error ? null : (message.payload ?? null));
 });
 /** Requests one bounded analysis window from the master/source worker cluster. */
 export function requestPcmAnalysis(payload, timeoutMs = 9000) {
@@ -23,7 +23,11 @@ export function requestPcmAnalysis(payload, timeoutMs = 9000) {
         }, timeoutMs);
         timer.unref?.();
         pending.set(requestId, { resolve, timer });
-        process.send?.({ type: 'pcmAnalysisRequest', requestId, payload }, (error) => {
+        process.send?.({
+            type: 'pcmAnalysisRequest',
+            requestId,
+            payload
+        }, (error) => {
             if (!error)
                 return;
             const entry = pending.get(requestId);

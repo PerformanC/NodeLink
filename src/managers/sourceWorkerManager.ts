@@ -562,13 +562,11 @@ class SourceWorkerManager {
         (a, b) =>
           (this.workerLoads.get(a.id) || 0) - (this.workerLoads.get(b.id) || 0)
       )[0]
-    if (!worker) throw new Error('No source worker is available for PCM analysis')
-    return this._executeOnWorker(
-      worker,
-      'analyzePcm',
-      payload,
-      { timeoutMs: 10000 }
-    )
+    if (!worker)
+      throw new Error('No source worker is available for PCM analysis')
+    return this._executeOnWorker(worker, 'analyzePcm', payload, {
+      timeoutMs: 10000
+    })
   }
 
   private _decrementLoad(workerId: number): void {

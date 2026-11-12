@@ -1718,7 +1718,7 @@ export class Player {
             isWebmYouTubePlayback(seekSourceName, this.streamInfo) &&
             this.streamInfo?.url) {
             const cachedUrlData = this.streamInfo;
-            const cachedResult = await this._connectAndPlayStream(cachedUrlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek (cached URL)`, false, true);
+            const cachedResult = await this._connectAndPlayStream(cachedUrlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek (cached URL)`, true, true);
             if (this.destroying || this.track !== seekTrack)
                 return false;
             if (cachedResult)
@@ -1738,7 +1738,7 @@ export class Player {
             return false;
         }
         try {
-            const result = await this._connectAndPlayStream(urlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek`);
+            const result = await this._connectAndPlayStream(urlData, position, 'source-seek', 'seekPrepare', `Playing resource for guild ${this.guildId} after source seek`, true);
             if (this.destroying || this.track !== seekTrack) {
                 seekHandoff?.cancelSeekHandoff();
                 return false;
@@ -1885,8 +1885,9 @@ export class Player {
             return false;
         const seekTrack = this.track;
         if (position < 0 ||
-            (this.track.info.length > 0 && position > this.track.info.length))
+            (this.track.info.length > 0 && position > this.track.info.length)) {
             return false;
+        }
         logger('debug', 'Player', `Seeking with legacy method to ${position}ms for guild ${this.guildId}`);
         this.position = position;
         this.track.endTime = endTime;
@@ -1931,7 +1932,7 @@ export class Player {
             this._onError(err);
             return false;
         }
-        this._cleanupCurrentAudioStream('legacy-seek');
+        this._cleanupCurrentAudioStream('legacy-seek', true);
         const resource = fetched.stream;
         if (this.volumePercent !== 100) {
             resource.setVolume(this.volumePercent / 100);
