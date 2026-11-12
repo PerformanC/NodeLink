@@ -2287,6 +2287,65 @@ export default class SpotifySource implements SourceInstance {
     }
     const query = `${track.title} ${track.author}`
     try {
+      const normalizedIsrc = track.isrc?.replace(/-/g, '').toUpperCase()
+      if (normalizedIsrc) {
+        const catalogSources = ['deezer', 'tidal']
+        for (const sourceName of catalogSources) {
+          const source = sm.getSource(sourceName)
+          if (!source?.search || !source.getTrackUrl) continue
+
+          // Tidal can search without a direct stream API, but then getTrackUrl
+          // delegates back to the default source. Only try it when configured.
+          if (sourceName === 'tidal') {
+            const tidalConfig = this.nodelink.options.sources?.tidal as
+              | { hifiApis?: string[] }
+              | undefined
+            if (
+              !tidalConfig?.hifiApis?.some((api) => /^https?:\/\//i.test(api))
+            ) {
+              continue
+            }
+          }
+
+          try {
+            const catalog = await sm.search(sourceName, normalizedIsrc)
+            if (catalog.loadType !== 'search' || !Array.isArray(catalog.data))
+              continue
+
+            const exactMatch = catalog.data.find((candidate) => {
+              const candidateIsrc = candidate.info.isrc
+                ?.replace(/-/g, '')
+                .toUpperCase()
+              return candidateIsrc === normalizedIsrc
+            })
+            if (!exactMatch) continue
+
+            const direct = await sm.getTrackUrl(exactMatch.info)
+            if (
+              direct.exception ||
+              !direct.url ||
+              (direct.newTrack?.info?.sourceName &&
+                direct.newTrack.info.sourceName !== sourceName)
+            ) {
+              continue
+            }
+
+            logger(
+              'info',
+              'Spotify',
+              `Resolved ${track.identifier} via exact ISRC match on ${sourceName}.`
+            )
+            return { ...direct, newTrack: { info: exactMatch.info } }
+          } catch (error) {
+            logger(
+              'debug',
+              'Spotify',
+              `ISRC resolution on ${sourceName} failed: ${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+        }
+      }
+
       let res = await sm.searchWithDefault(
         track.isrc ? `"${track.isrc}"` : query
       )
