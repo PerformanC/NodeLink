@@ -2301,6 +2301,13 @@ export abstract class BaseClient {
   }
 
   /**
+   * Returns client identity headers required by some Innertube clients.
+   */
+  getClientHeaders(): Record<string, string> {
+    return {}
+  }
+
+  /**
    * Whether this client is an embedded player.
    */
   isEmbedded(): boolean {
@@ -2414,6 +2421,7 @@ export abstract class BaseClient {
         method: 'POST',
         headers: {
           'User-Agent': clientContext.client.userAgent,
+          ...this.getClientHeaders(),
           ...(clientContext.client.visitorData
             ? {
                 'X-Goog-Visitor-Id': clientContext.client.visitorData

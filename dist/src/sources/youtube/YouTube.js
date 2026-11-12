@@ -923,10 +923,11 @@ export default class YouTubeSource {
     async setup() {
         logger('info', 'YouTube', 'Setting up YouTube source...');
         this.oauth = new OAuth(this.nodelink);
-        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TV_DOWN }, { default: TVCast }, { default: Web }, { default: WebEmbedded }, { default: VisionOs }] = await Promise.all([
+        const [{ default: Android }, { default: AndroidVR }, { default: IOS }, { default: IOSProducer }, { default: Music }, { default: WebRemix }, { default: TV }, { default: TV_DOWN }, { default: TVCast }, { default: Web }, { default: WebEmbedded }, { default: VisionOs }] = await Promise.all([
             import('./clients/Android.js'),
             import('./clients/AndroidVR.js'),
             import('./clients/IOS.js'),
+            import('./clients/IOSProducer.js'),
             import('./clients/Music.js'),
             import('./clients/Web_Remix.js'),
             import('./clients/TV.js'),
@@ -940,6 +941,7 @@ export default class YouTubeSource {
             Android,
             AndroidVR,
             IOS,
+            IOSProducer,
             Music,
             WebRemix,
             TV,
