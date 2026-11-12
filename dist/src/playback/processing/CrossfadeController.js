@@ -830,8 +830,14 @@ export class CrossfadeController extends Transform {
                 inTotalLeft = inMid + inSide;
                 inTotalRight = inMid - inSide;
             }
-            const left = outTotalLeft + inTotalLeft;
-            const right = outTotalRight + inTotalRight;
+            // Equal-power fades can exceed unity when the two tracks are correlated
+            // (for example, two vocal-heavy tracks with similar phase). Keep the
+            // combined envelope below full scale before writing s16 PCM; otherwise
+            // _clampSample hard-clips the overlap and creates audible distortion.
+            const combinedGain = outGain + inGain;
+            const mixHeadroom = combinedGain > 0.98 ? 0.98 / combinedGain : 1;
+            const left = (outTotalLeft + inTotalLeft) * mixHeadroom;
+            const right = (outTotalRight + inTotalRight) * mixHeadroom;
             if (this.float32) {
                 output.writeFloatLE(left / 32768, offset);
                 output.writeFloatLE(right / 32768, offset + this.bytesPerSample);
