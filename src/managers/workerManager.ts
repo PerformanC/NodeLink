@@ -1500,7 +1500,10 @@ export default class WorkerManager {
       this._rotateSocketServers(socketType, worker.id)
     } else {
       const nodelink = getGlobalNodelink()
-      nodelink?.handleIPCMessage(message)
+      nodelink?.handleIPCMessage({
+        ...message,
+        pid: worker.process?.pid
+      } as typeof message)
     }
   }
 

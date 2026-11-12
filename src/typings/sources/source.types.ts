@@ -225,6 +225,7 @@ export type TaskType =
   | 'loadLiveChat'
   | 'cancelLiveChat'
   | 'sourceHealthProbe'
+  | 'analyzePcm'
   | 'profilerCommand'
 
 /**

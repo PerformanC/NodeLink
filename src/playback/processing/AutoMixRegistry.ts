@@ -32,9 +32,9 @@ import type {
 } from '../../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../../typings/sources/source.types.ts'
 import { logger } from '../../utils.ts'
+import { requestPcmAnalysis } from './analysisDelegation.ts'
 import {
   inspectTrackOutroQuick,
-  MusicalAnalyzer,
   type TrackPreAnalysisProfile,
   TransitionProfileCache
 } from './MusicalAnalyzer.ts'
@@ -409,9 +409,7 @@ export class AutoMixRegistry {
       const fetchMs = performance.now() - startFetchTime
 
       decodeStart = performance.now()
-      const analyzer = new MusicalAnalyzer(48000)
       const expectedBytes = Math.round((windowDurationMs / 1000) * 48000 * 4)
-      const minStopBytes = Math.round(12 * 48000 * 4)
 
       const resultPromise = new Promise<TrackPreAnalysisProfile | null>(
         (resolve) => {
@@ -437,23 +435,6 @@ export class AutoMixRegistry {
 
             chunks.push(chunk)
             bytesRead += chunk.length
-            analyzer.pushPcm(chunk)
-
-            if (
-              bytesRead >= minStopBytes &&
-              bytesRead % (48000 * 4) < chunk.length
-            ) {
-              const currentProfile = analyzer.getProfile()
-              if (
-                currentProfile.confidence >= 0.72 &&
-                currentProfile.keyConfidence >= 0.6
-              ) {
-                stoppedEarly = true
-                onEnd()
-                return
-              }
-            }
-
             if (bytesRead >= expectedBytes) {
               onEnd()
             }
@@ -470,15 +451,26 @@ export class AutoMixRegistry {
             const pcm = Buffer.concat(chunks)
             chunks.length = 0
 
-            const updatedProfile = inspectTrackOutroQuick(
-              pcm,
-              48000,
+            void requestPcmAnalysis({
+              pcmBase64: pcm.toString('base64'),
+              sampleRate: 48000,
               trackId,
               windowStartMs,
-              trackLength
-            )
-
-            finish(updatedProfile)
+              trackLengthMs: trackLength
+            }).then((remoteProfile) => {
+              if (remoteProfile) TransitionProfileCache.set(trackId, remoteProfile)
+              // Preserve compatibility when the specialized source cluster is disabled.
+              finish(
+                remoteProfile ??
+                  inspectTrackOutroQuick(
+                    pcm,
+                    48000,
+                    trackId,
+                    windowStartMs,
+                    trackLength
+                  )
+              )
+            })
           }
 
           const onError = () => {

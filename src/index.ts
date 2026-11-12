@@ -401,6 +401,33 @@ class NodelinkServer extends EventEmitter {
         }
         break
 
+      case 'pcmAnalysisRequest': {
+        const playbackWorker = message.pid
+          ? this.workerManager?.workers.find(
+              (worker) => worker.process?.pid === message.pid
+            )
+          : undefined
+        const reply = (payload: unknown, error?: string) => {
+          playbackWorker?.send({
+            type: 'pcmAnalysisResult',
+            requestId: message.requestId,
+            payload,
+            error
+          })
+        }
+        if (!playbackWorker || !this.sourceWorkerManager) {
+          reply(null, 'Source analysis cluster is unavailable')
+          break
+        }
+        void this.sourceWorkerManager
+          .analyzePcm(message.payload)
+          .then((profile) => reply(profile))
+          .catch((error: unknown) =>
+            reply(null, error instanceof Error ? error.message : String(error))
+          )
+        break
+      }
+
       case 'ipBlock': {
         const payload = message as unknown as {
           ip?: string

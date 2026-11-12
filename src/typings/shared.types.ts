@@ -79,6 +79,18 @@ export type IPCMessage =
       type: 'sourceHealthMetric'
       payload: SourceHealthMetricPayload
     }
+  | {
+      type: 'pcmAnalysisRequest'
+      requestId: string
+      pid?: number
+      payload: {
+        pcmBase64: string
+        sampleRate?: number
+        trackId?: string
+        windowStartMs?: number
+        trackLengthMs?: number
+      }
+    }
 
 /**
  * HTTP Extension route
