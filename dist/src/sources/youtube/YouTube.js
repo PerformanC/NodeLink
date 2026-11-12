@@ -1735,6 +1735,7 @@ export default class YouTubeSource {
         if (!clientList.length)
             clientList = ['Web'];
         const clientErrors = [];
+        const playabilityErrors = [];
         const failingClients = this.failingClientsByTrack.get(decodedTrack.identifier);
         for (const clientName of clientList) {
             if (failingClients?.has(clientName)) {
@@ -1757,6 +1758,27 @@ export default class YouTubeSource {
                 const urlData = await client.getTrackUrl(decodedTrack, this.ytContext, this.cipherManager, itag, proxyToUse);
                 const proxyLatency = Date.now() - proxyStartTime;
                 if (urlData.exception) {
+                    const premiereReason = urlData.exception.cause === 'UpstreamPlayability'
+                        ? urlData.exception.message.match(/Premieres?\s+in\s+[^,.)]+/i)?.[0]
+                        : undefined;
+                    if (premiereReason) {
+                        const message = `YouTube track is not currently playable: ${premiereReason}.`;
+                        logger('info', 'YouTube', message);
+                        return {
+                            loadType: 'error',
+                            exception: {
+                                message,
+                                severity: 'common',
+                                cause: 'UpstreamPlayability'
+                            }
+                        };
+                    }
+                    if (urlData.exception.cause === 'UpstreamPlayability') {
+                        playabilityErrors.push({
+                            client: clientName,
+                            message: urlData.exception.message
+                        });
+                    }
                     const isNoStream = urlData.exception.cause === 'UpstreamNoStream';
                     const isNotFound = urlData.exception.status === 404;
                     if (isNoStream || isNotFound) {
@@ -1918,6 +1940,24 @@ export default class YouTubeSource {
         const mirrored = await this._tryMirrorSourceTrackUrl(decodedTrack, itag, forceRefresh);
         if (mirrored)
             return mirrored;
+        if (playabilityErrors.length > 0) {
+            const upstreamMessage = playabilityErrors[0]?.message ?? '';
+            const reason = upstreamMessage.match(/reason=([^,)]+)/i)?.[1]?.trim();
+            const status = upstreamMessage.match(/status=([^,)]+)/i)?.[1]?.trim();
+            const detail = reason || status;
+            const message = detail
+                ? `YouTube track is not currently playable: ${detail}.`
+                : 'YouTube track is not currently playable.';
+            logger('info', 'YouTube', message);
+            return {
+                loadType: 'error',
+                exception: {
+                    message,
+                    severity: 'common',
+                    cause: 'UpstreamPlayability'
+                }
+            };
+        }
         logger('error', 'YouTube', 'Failed to get a working track URL from any configured client.');
         return {
             loadType: 'error',
