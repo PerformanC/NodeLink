@@ -1,4 +1,5 @@
 import type { Player as PlaybackPlayer } from '../playback/player.ts'
+import type { AudioProcessingMode } from '../playback/processing/audioContract.ts'
 import type { Session } from '../typings/index.types.ts'
 import type {
   CrossfadeConfig,
@@ -356,7 +357,8 @@ export default class PlayerManager {
    */
   async create(
     guildId: string,
-    voice?: Partial<PlayerVoiceState>
+    voice?: Partial<PlayerVoiceState>,
+    audioProcessingMode?: AudioProcessingMode | null
   ): Promise<ManagedPlayer> {
     const session = this.getSessionOrThrow()
     const playerKey = this.getPlayerKey(guildId)
@@ -380,7 +382,8 @@ export default class PlayerManager {
       session,
       guildId,
       voice,
-      playerKey
+      playerKey,
+      audioProcessingMode
     ).finally(() => {
       this.pendingCreates.delete(playerKey)
     })
@@ -397,7 +400,8 @@ export default class PlayerManager {
     session: Session,
     guildId: string,
     voice: Partial<PlayerVoiceState> | undefined,
-    playerKey: string
+    playerKey: string,
+    audioProcessingMode?: AudioProcessingMode | null
   ): Promise<ManagedPlayer> {
     if (this.isCluster) {
       const workerManager = this.getWorkerManagerOrThrow()
@@ -422,7 +426,8 @@ export default class PlayerManager {
             sessionId: this.sessionId,
             guildId,
             userId: this.getSessionUserId(session),
-            voice
+            voice,
+            audioProcessingMode
           }
         )
 
@@ -504,7 +509,8 @@ export default class PlayerManager {
     const player = new Player({
       nodelink: this.nodelink as PlaybackNodeLink,
       session: localSession,
-      guildId
+      guildId,
+      audioProcessingMode
     })
 
     this.players.set(playerKey, player)

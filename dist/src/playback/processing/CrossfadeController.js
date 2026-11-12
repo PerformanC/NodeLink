@@ -25,10 +25,8 @@ import { Transform } from 'node:stream';
 import { logger } from '../../utils.js';
 import { detectIntroBoundary, evaluateMusicalRelationship, getHarmonicDistance, MusicalAnalyzer, matchTempo } from './MusicalAnalyzer.js';
 const CHANNELS = 2;
-const FRAME_SIZE = 3840;
 const SAMPLE_RATE = 48000;
 const FRAME_DURATION_MS = 20;
-const BYTES_PER_FRAME = CHANNELS * 2;
 const HALF_PI = Math.PI / 2;
 const MAX_STARVATION_MS = 5000;
 const MUSICAL_ANALYSIS_MS = 2000;
@@ -69,7 +67,11 @@ function createReverbTailState() {
  * @public
  */
 export class CrossfadeController extends Transform {
-    bytesPerMs = (SAMPLE_RATE * BYTES_PER_FRAME) / 1000;
+    bytesPerSample;
+    bytesPerFrame;
+    frameSize;
+    float32;
+    bytesPerMs;
     next = null;
     bridge = null;
     transition = null;
@@ -86,6 +88,15 @@ export class CrossfadeController extends Transform {
     starvationStartedAt = 0;
     destroyedController = false;
     bridgeLifecycleActive = false;
+    constructor(sampleFormat = 's16le') {
+        super();
+        this.float32 = sampleFormat === 'f32le';
+        this.bytesPerSample = this.float32 ? 4 : 2;
+        this.bytesPerFrame = CHANNELS * this.bytesPerSample;
+        this.frameSize =
+            ((SAMPLE_RATE * FRAME_DURATION_MS) / 1000) * this.bytesPerFrame;
+        this.bytesPerMs = (SAMPLE_RATE * this.bytesPerFrame) / 1000;
+    }
     activePlan = null;
     planFrozen = false;
     reclassificationCount = 0;
@@ -94,7 +105,7 @@ export class CrossfadeController extends Transform {
     /**
      * Buffers a next-track PCM stream using explicit backpressure.
      *
-     * @param stream Decoded 48 kHz stereo s16le stream.
+     * @param stream Decoded 48 kHz stereo stream matching the configured sample format.
      * @param options Buffer limits and transition duration.
      * @param onComplete Called when the next track becomes the active track.
      * @returns True when buffering begins.
@@ -137,8 +148,10 @@ export class CrossfadeController extends Transform {
         const requestedDurationMs = Math.max(1, Math.round(durationMs ?? this.defaultDurationMs));
         const mainProfile = this.mainAnalyzer.getProfile();
         const nextProfile = this.next.analyzer.getProfile();
-        const peek = this._peekTarget(this.next, Math.min(this.next.length, 48000 * 4 * 10));
-        const introBoundary = peek ? detectIntroBoundary(peek, SAMPLE_RATE) : null;
+        const peek = this._peekTarget(this.next, Math.min(this.next.length, Math.round(this.bytesPerMs * 10000)));
+        const introBoundary = peek
+            ? detectIntroBoundary(this.float32 ? this._toAnalyzerPcm(peek) : peek, SAMPLE_RATE)
+            : null;
         const incomingWithIntro = {
             ...nextProfile,
             introProfile: introBoundary
@@ -313,12 +326,12 @@ export class CrossfadeController extends Transform {
             callback();
             return;
         }
-        for (let offset = 0; offset < data.length; offset += FRAME_SIZE) {
-            const frame = data.subarray(offset, Math.min(data.length, offset + FRAME_SIZE));
+        for (let offset = 0; offset < data.length; offset += this.frameSize) {
+            const frame = data.subarray(offset, Math.min(data.length, offset + this.frameSize));
             if (!this.bridge)
-                this.mainAnalyzer.pushPcm(frame);
+                this._pushAnalyzer(this.mainAnalyzer, frame);
             if (this.armed && this.next) {
-                this._advanceArmed(frame.length / BYTES_PER_FRAME);
+                this._advanceArmed(frame.length / this.bytesPerFrame);
             }
             if (this.transition && this.next) {
                 this._pushTransitionFrame(frame);
@@ -389,8 +402,8 @@ export class CrossfadeController extends Transform {
             pending: null,
             ended: false,
             paused: false,
-            maxBytes: Math.max(FRAME_SIZE, maxBytes),
-            resumeBytes: Math.max(FRAME_SIZE, Math.floor(maxBytes * 0.5)),
+            maxBytes: Math.max(this.frameSize, maxBytes),
+            resumeBytes: Math.max(this.frameSize, Math.floor(maxBytes * 0.5)),
             listeners: {
                 data: (_chunk) => { },
                 end: () => { },
@@ -434,7 +447,7 @@ export class CrossfadeController extends Transform {
             const aligned = data.subarray(0, alignedLength);
             target.chunks.push(aligned);
             target.length += alignedLength;
-            target.analyzer.pushPcm(aligned);
+            this._pushAnalyzer(target.analyzer, aligned);
         }
         if (target.length >= target.maxBytes && !target.paused) {
             target.paused = true;
@@ -474,7 +487,7 @@ export class CrossfadeController extends Transform {
         }
         const result = written === output.length ? output : output.subarray(0, written);
         if (analyzePlayback && result.length > 0) {
-            target.playbackAnalyzer.pushPcm(result);
+            this._pushAnalyzer(target.playbackAnalyzer, result);
         }
         return result;
     }
@@ -520,7 +533,7 @@ export class CrossfadeController extends Transform {
             paddedIncoming?.copy(padded);
             paddedIncoming = padded;
         }
-        transition.incomingFrames += main.length / BYTES_PER_FRAME;
+        transition.incomingFrames += main.length / this.bytesPerFrame;
         const mixed = this._mix(main, paddedIncoming, transition);
         const accepted = this.push(mixed);
         if (transition.elapsedFrames >= transition.durationFrames) {
@@ -541,23 +554,23 @@ export class CrossfadeController extends Transform {
         this.push(padded);
     }
     /**
-     * Real-time 16-bit stereo PCM crossover mixing pipeline.
+     * Real-time stereo PCM crossover mixing pipeline (s16le or headroom-preserving f32le).
      *
      * Processes multi-band frequency separation (bass <200Hz, vocal mids 200Hz-3.5kHz, highs >3.5kHz),
      * applies mathematical gain curves, sidechain kick ducking, Mid/Side 3D stereo morphing,
      * asymmetric low-end swapping, and dynamic energy scaling.
      *
-     * @param outgoing 16-bit PCM audio buffer of the playing track.
-     * @param incoming 16-bit PCM audio buffer of the incoming track.
+     * @param outgoing PCM audio buffer of the playing track.
+     * @param incoming PCM audio buffer of the incoming track.
      * @param runtime Active crossfade parameters and DSP crossover state.
-     * @returns Mixed 16-bit stereo PCM audio buffer.
+     * @returns A mixed buffer in the configured PCM representation.
      *
      * @license GPL-3.0-or-later
      * @see GNU General Public License v3
      */
     _mix(outgoing, incoming, runtime) {
         const output = Buffer.allocUnsafe(outgoing.length);
-        const frames = outgoing.length / BYTES_PER_FRAME;
+        const frames = outgoing.length / this.bytesPerFrame;
         const startProgress = Math.min(1, runtime.elapsedFrames / runtime.durationFrames);
         const endProgress = Math.min(1, (runtime.elapsedFrames + frames) / runtime.durationFrames);
         const [outStart, inStart] = this._fadeGains(startProgress, runtime.curve, runtime.strategy, runtime.handoff, runtime.bed);
@@ -606,12 +619,16 @@ export class CrossfadeController extends Transform {
         let outBassGain = outBassStart;
         let inBassGain = inBassStart;
         const crossover = runtime.crossover;
+        const sampleScale = this.float32 ? 32768 : 1;
+        const readSample = (buffer, byteOffset) => (this.float32
+            ? buffer.readFloatLE(byteOffset)
+            : buffer.readInt16LE(byteOffset)) * sampleScale;
         for (let frame = 0; frame < frames; frame++) {
-            const offset = frame * BYTES_PER_FRAME;
-            const outgoingLeft = outgoing.readInt16LE(offset);
-            const outgoingRight = outgoing.readInt16LE(offset + 2);
-            const incomingLeft = incoming.readInt16LE(offset);
-            const incomingRight = incoming.readInt16LE(offset + 2);
+            const offset = frame * this.bytesPerFrame;
+            const outgoingLeft = readSample(outgoing, offset);
+            const outgoingRight = readSample(outgoing, offset + this.bytesPerSample);
+            const incomingLeft = readSample(incoming, offset);
+            const incomingRight = readSample(incoming, offset + this.bytesPerSample);
             crossover.outgoingBassLeft =
                 outgoingLeft +
                     BASS_FILTER_ALPHA * (crossover.outgoingBassLeft - outgoingLeft);
@@ -788,8 +805,14 @@ export class CrossfadeController extends Transform {
             }
             const left = outTotalLeft + inTotalLeft;
             const right = outTotalRight + inTotalRight;
-            output.writeInt16LE(this._clampSample(left), offset);
-            output.writeInt16LE(this._clampSample(right), offset + 2);
+            if (this.float32) {
+                output.writeFloatLE(left / 32768, offset);
+                output.writeFloatLE(right / 32768, offset + this.bytesPerSample);
+            }
+            else {
+                output.writeInt16LE(this._clampSample(left), offset);
+                output.writeInt16LE(this._clampSample(right), offset + this.bytesPerSample);
+            }
             outGain += outStep;
             inGain += inStep;
             outMidGain += outMidStep;
@@ -1071,7 +1094,7 @@ export class CrossfadeController extends Transform {
         const nextProfile = next.analyzer.getProfile();
         const plannedEntryPointMs = plan.entryPointMs ?? 0;
         const rawSkipBytes = Math.floor((plannedEntryPointMs / 1000) * this.bytesPerMs);
-        const skipBytes = Math.min(next.length, rawSkipBytes - (rawSkipBytes % BYTES_PER_FRAME));
+        const skipBytes = Math.min(next.length, rawSkipBytes - (rawSkipBytes % this.bytesPerFrame));
         if (skipBytes > 0) {
             this._readTarget(next, skipBytes, false);
         }
@@ -1093,7 +1116,7 @@ export class CrossfadeController extends Transform {
         this.transition = {
             durationFrames,
             elapsedFrames: 0,
-            incomingFrames: skipBytes / BYTES_PER_FRAME,
+            incomingFrames: skipBytes / this.bytesPerFrame,
             curve: armed.curve,
             strategy: armed.strategy,
             bassSwap: armed.bassSwap,
@@ -1133,6 +1156,7 @@ export class CrossfadeController extends Transform {
             midDuckDb: armed.midDuckDb
         };
         this.armed = null;
+        this.emit('transitionStart');
         this._resumeTarget(next);
         logger('info', 'AutoMix', `[AutoMix][${transitionId}][TRIGGER_SELECTED] reason: ${selectionReason}`, {
             transitionId,
@@ -1212,7 +1236,7 @@ export class CrossfadeController extends Transform {
         }
         let output = null;
         if (this.armed && this.bridge && this.next) {
-            output = this._readTarget(this.bridge, FRAME_SIZE);
+            output = this._readTarget(this.bridge, this.frameSize);
             if (!output?.length && this.bridge.ended) {
                 this._promoteArmedGapless('outgoing bridge ended');
                 this._schedulePump(0);
@@ -1222,7 +1246,7 @@ export class CrossfadeController extends Transform {
                 this._schedulePump(5);
                 return;
             }
-            this._advanceArmed(output.length / BYTES_PER_FRAME);
+            this._advanceArmed(output.length / this.bytesPerFrame);
             const accepted = this.transition
                 ? this._pushTransitionFrame(output)
                 : this.push(output);
@@ -1235,7 +1259,7 @@ export class CrossfadeController extends Transform {
         }
         if (this.transition && this.next) {
             const outgoing = this.bridge
-                ? this._readTarget(this.bridge, FRAME_SIZE)
+                ? this._readTarget(this.bridge, this.frameSize)
                 : null;
             const before = this.transition;
             if (!outgoing?.length && (!this.bridge || this.bridge.ended)) {
@@ -1263,7 +1287,7 @@ export class CrossfadeController extends Transform {
             return;
         }
         if (this.bridge)
-            output = this._readTarget(this.bridge, FRAME_SIZE);
+            output = this._readTarget(this.bridge, this.frameSize);
         if (output?.length) {
             this.starvationStartedAt = 0;
             const accepted = this.push(output);
@@ -1388,7 +1412,23 @@ export class CrossfadeController extends Transform {
     }
     _alignBytes(bytes) {
         const rounded = Math.max(0, Math.floor(bytes));
-        return rounded - (rounded % BYTES_PER_FRAME);
+        return rounded - (rounded % this.bytesPerFrame);
+    }
+    _pushAnalyzer(analyzer, pcm) {
+        if (!this.float32) {
+            analyzer.pushPcm(pcm);
+            return;
+        }
+        analyzer.pushPcm(this._toAnalyzerPcm(pcm));
+    }
+    _toAnalyzerPcm(pcm) {
+        const aligned = pcm.subarray(0, pcm.length - (pcm.length % this.bytesPerFrame));
+        const analysisPcm = Buffer.allocUnsafe((aligned.length / 4) * 2);
+        for (let offset = 0, out = 0; offset < aligned.length; offset += 4, out += 2) {
+            const sample = Math.max(-32768, Math.min(32767, Math.round(aligned.readFloatLE(offset) * 32768)));
+            analysisPcm.writeInt16LE(sample, out);
+        }
+        return analysisPcm;
     }
     _clampSample(sample) {
         return sample < -32768

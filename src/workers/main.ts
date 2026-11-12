@@ -2051,7 +2051,8 @@ async function processQueue(queueKey: string): Promise<void> {
     switch (type) {
       case 'createPlayer': {
         const createPayload = payload as Partial<CreatePlayerPayload>
-        const { sessionId, guildId, userId, voice } = createPayload
+        const { sessionId, guildId, userId, voice, audioProcessingMode } =
+          createPayload
         if (!sessionId || !guildId || !userId) {
           result = { created: false, reason: 'Invalid createPlayer payload' }
           break
@@ -2094,7 +2095,8 @@ async function processQueue(queueKey: string): Promise<void> {
         const player = new PlayerClass({
           nodelink: nodelink as unknown as NodeLink,
           session: mockSession,
-          guildId
+          guildId,
+          audioProcessingMode
         }) as unknown as WorkerPlayer
         players.set(playerKey, player)
 

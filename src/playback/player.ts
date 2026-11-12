@@ -43,6 +43,8 @@ import type {
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'
 import { AutoMixRegistry } from './processing/AutoMixRegistry.ts'
+import type { AudioProcessingMode } from './processing/audioContract.ts'
+import { resolveAudioProcessingMode } from './processing/audioContract.ts'
 import { DuckingController } from './processing/DuckingController.ts'
 
 export type GatewayEventName =
@@ -157,6 +159,7 @@ export class Player {
   public audioMixer: AudioMixer | null = null
   public fading?: FadingConfig
   public loudnessNormalizer: boolean
+  private _audioProcessingModeOverride: AudioProcessingMode | null
   public duckingController: DuckingController | null = null
   private _fadeTimers: FadeTimers = { trackEnd: null, pause: null, stop: null }
   private _isResuming = false
@@ -223,6 +226,11 @@ export class Player {
     this.nodelink = options.nodelink
     this.session = options.session
     this.guildId = options.guildId
+    this._audioProcessingModeOverride = options.audioProcessingMode ?? null
+    resolveAudioProcessingMode(
+      this.nodelink.options?.playback?.audio?.processingMode,
+      this._audioProcessingModeOverride
+    )
     this.volumePercent = this.nodelink.options?.defaultVolume ?? 100
     this.fading = this.nodelink.options?.playback.audio?.fading
     this.crossfade = this.nodelink.options?.playback.audio?.crossfade
@@ -351,6 +359,17 @@ export class Player {
     return this.nodelink.options.playback.audio as
       | AudioOptionsWithTransitions
       | undefined
+  }
+
+  /**
+   * Resolves the mode that will be used when the next audio resource is built.
+   * An explicit per-player override takes precedence over global configuration.
+   */
+  public getAudioProcessingMode(): AudioProcessingMode {
+    return resolveAudioProcessingMode(
+      this.nodelink.options.playback.audio?.processingMode,
+      this._audioProcessingModeOverride
+    )
   }
 
   private _getFilterTransitions(): FilterTransitionsConfig | undefined {
@@ -1299,7 +1318,8 @@ export class Player {
     info: TrackInfoExtended,
     urlData: TrackUrlResult & { protocol?: string; format?: TrackFormat },
     startTime?: number,
-    returnPCM = false
+    returnPCM = false,
+    float32PCMOutput = false
   ): Promise<{ stream: AudioResource } | { exception: { message: string } }> {
     if (this.nodelink.options?.playback.mix?.enabled !== false) {
       await this._ensureAudioMixer()
@@ -1475,7 +1495,9 @@ export class Player {
       returnPCM ? null : this.audioMixer,
       returnPCM,
       returnPCM ? false : this.loudnessNormalizer,
-      !returnPCM && this._getCrossfadeConfig() !== null
+      !returnPCM && this._getCrossfadeConfig() !== null,
+      this.getAudioProcessingMode(),
+      float32PCMOutput
     )
     return { stream: resource }
   }
@@ -1889,7 +1911,8 @@ export class Player {
         this.audioMixer,
         false,
         this.loudnessNormalizer,
-        this._getCrossfadeConfig() !== null
+        this._getCrossfadeConfig() !== null,
+        this.getAudioProcessingMode()
       )
       if (this.destroying || this.track !== playbackTrack) {
         if (!('exception' in seekResult)) seekResult.destroy()
@@ -2665,7 +2688,8 @@ export class Player {
         this.audioMixer,
         false,
         this.loudnessNormalizer,
-        this._getCrossfadeConfig() !== null
+        this._getCrossfadeConfig() !== null,
+        this.getAudioProcessingMode()
       )
 
       if (this.destroying || this.track !== seekTrack) {
@@ -2706,9 +2730,12 @@ export class Player {
       this._fading('seekPrepare', { resource })
       resource.setFilters(this.filters)
 
-      this._destroyCrossfadeResources(true)
+      // A seek is a timeline discontinuity: drain neither the old limiter nor
+      // queued Opus packets into the new position. Tear down the current PCM /
+      // voice stream first, while retaining only the queued track metadata.
+      this._cleanupCurrentAudioStream('seekeable-seek', true)
       this._resetAudioConsumptionBaseline(position)
-      const oldStream = this.connection?.play(resource as unknown)
+      this.connection?.play(resource as unknown)
       await this.waitEvent(
         'playerStateChange',
         (s: VoicePlayerState) => s.status === 'playing'
@@ -2716,14 +2743,6 @@ export class Player {
       if (this.destroying || this.track !== seekTrack) {
         resource.destroy()
         return false
-      }
-      if (oldStream) {
-        oldStream.destroy()
-      }
-      if (this._currentResource && this._currentResource !== resource) {
-        try {
-          this._currentResource.destroy()
-        } catch {}
       }
       this._currentResource = resource
 
@@ -3400,14 +3419,36 @@ export class Player {
     }
 
     /* INFO: Idle players retain accepted filters so the next audio resource inherits them. */
-    this.filters = { ...this.filters, filters: newFilterSettings }
+    const nextFilterState = { ...this.filters, filters: newFilterSettings }
+    if (this.getAudioProcessingMode() === 'protected') {
+      try {
+        this.connection?.audioStream?.setFilters(nextFilterState)
+        if (!this.nextResourceIsCrossfade)
+          this.nextResource?.setFilters(nextFilterState)
+      } catch (error) {
+        logger(
+          'warn',
+          'Player',
+          `Rejected Protected filter update for guild ${this.guildId}: ${error instanceof Error ? error.message : String(error)}`
+        )
+        return false
+      }
+      this.filters = nextFilterState
+    } else {
+      this.filters = nextFilterState
+    }
 
     if (this.connection?.audioStream) {
       this._snapshotPosition()
-      this.connection.audioStream.setFilters(this.filters)
+      if (this.getAudioProcessingMode() !== 'protected') {
+        this.connection.audioStream.setFilters(this.filters)
+      }
       this._fading('trackEndSchedule', { startPosition: this._realPosition() })
     }
-    if (!this.nextResourceIsCrossfade) {
+    if (
+      !this.nextResourceIsCrossfade &&
+      this.getAudioProcessingMode() !== 'protected'
+    ) {
       this.nextResource?.setFilters(this.filters)
     }
     if (this.nextResourceIsCrossfade) this._rescheduleCrossfade()
@@ -4718,7 +4759,13 @@ export class Player {
     const urlData = await this.nodelink.sources.getTrackUrl(trackInfo)
     if (urlData.exception || token !== this._crossfadeToken) return
 
-    const fetched = await this._fetchResource(payload.info, urlData, 0, true)
+    const fetched = await this._fetchResource(
+      payload.info,
+      urlData,
+      0,
+      true,
+      this.getAudioProcessingMode() === 'protected'
+    )
     if ('exception' in fetched || token !== this._crossfadeToken) {
       if (!('exception' in fetched)) fetched.stream.destroy()
       return

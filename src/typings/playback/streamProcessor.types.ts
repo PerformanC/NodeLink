@@ -451,7 +451,10 @@ export type CreateAudioResourceFn = (
   audioMixer?: AudioMixer | null,
   returnPCM?: boolean,
   enableAGC?: boolean,
-  enableCrossfade?: boolean
+  enableCrossfade?: boolean,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null
 ) => Promise<AudioResource>
 
 /**
@@ -465,7 +468,10 @@ export type CreateSeekableAudioResourceFn = (
   initialFilters: FiltersState,
   player: { streamInfo: StreamInfo; loudnessNormalizer?: boolean },
   volume?: number,
-  audioMixer?: AudioMixer | null
+  audioMixer?: AudioMixer | null,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null
 ) => Promise<AudioResource | ErrorResponse>
 
 /**

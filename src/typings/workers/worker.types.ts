@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream'
+import type { AudioProcessingMode } from '../../playback/processing/audioContract.ts'
 import type { HeadQueue } from '../../workers/headQueue.ts'
 import type { NodelinkConfig as NodeLinkConfig } from '../config/config.types.ts'
 import type {
@@ -170,6 +171,7 @@ export interface CreatePlayerPayload {
   guildId: string
   userId: string
   voice?: PlayerVoiceState
+  audioProcessingMode?: AudioProcessingMode | null
 }
 
 /**

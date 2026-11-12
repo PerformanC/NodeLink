@@ -2907,7 +2907,14 @@ export function getBestMatch<T extends BestMatchCandidate>(
 
   scored.sort((a, b) => b.score - a.score)
 
-  return scored[0]?.item || list[0] || null
+  const best = scored[0]
+  if (
+    !best ||
+    (options.minScore !== undefined && best.score < options.minScore)
+  )
+    return null
+
+  return best.item
 }
 
 /**

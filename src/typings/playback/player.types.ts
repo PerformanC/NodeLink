@@ -4,6 +4,7 @@ import type {
   VoiceConnection,
   VoicePlayerState
 } from '@performanc/voice'
+import type { AudioProcessingMode } from '../../playback/processing/audioContract.ts'
 import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 import type { TrackData } from '../index.types.ts'
 import type {
@@ -143,6 +144,9 @@ export interface AudioResource {
   getRMS?: () => number
   isSilent?: () => boolean
   setLoudnessNormalizer?(enabled: boolean): void
+  getAudioProcessingTelemetry?():
+    | import('../../playback/processing/audioContract.ts').AudioProcessingTelemetrySnapshot
+    | null
   destroy(): void
   stream?: VoiceAudioStream | null
 }
@@ -264,6 +268,9 @@ export interface AudioMixer {
   readLayerChunks: (
     chunkSize: number
   ) => Map<string, { buffer: Buffer; volume: number }>
+  readLayerChunksAligned: (
+    frames: number
+  ) => Map<string, { buffer: Buffer; volume: number }>
   mixBuffers: (
     mainPCM: Buffer,
     layersPCM: Map<string, { buffer: Buffer; volume: number }>
@@ -337,6 +344,7 @@ export interface NodeLinkOptions {
     skipMarginMs?: number
   }
   audio?: {
+    processingMode?: AudioProcessingMode
     encryption?: string | null
     fading?: FadingConfig
     loudnessNormalizer?: boolean
@@ -485,7 +493,11 @@ export interface NodeLink {
   lyrics: LyricsManagerLike | null
   statistics?: { players?: number }
   extensions?: {
-    audioInterceptors?: Array<() => import('node:stream').Transform>
+    audioInterceptors?: Array<
+      (() => import('node:stream').Transform) & {
+        audioCapabilities?: import('../../playback/processing/audioContract.ts').AudioCapabilities
+      }
+    >
   } & Record<string, unknown>
   pluginManager?: import('../../managers/pluginManager.ts').default | null
   trackCacheManager?:
@@ -512,6 +524,8 @@ export interface PlayerOptions {
   nodelink: NodeLink
   session: Session
   guildId: string
+  /** Optional per-player audio processing mode override. Null inherits global config. */
+  audioProcessingMode?: AudioProcessingMode | null
 }
 
 /**
@@ -556,7 +570,11 @@ export type CreateAudioResource = (
   audioMixer: AudioMixer | null,
   returnPCM?: boolean,
   loudnessNormalizer?: boolean,
-  enableCrossfade?: boolean
+  enableCrossfade?: boolean,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null,
+  float32PCMOutput?: boolean
 ) => AudioResource
 
 /**
@@ -574,7 +592,10 @@ export type CreateSeekeableAudioResource = (
   audioMixer: AudioMixer | null,
   returnPCM?: boolean,
   enableAGC?: boolean,
-  enableCrossfade?: boolean
+  enableCrossfade?: boolean,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null
 ) => Promise<
   AudioResource | { exception: { message: string; severity?: string } }
 >

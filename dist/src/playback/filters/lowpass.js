@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
@@ -7,6 +8,7 @@ const SUB_BLOCK_FRAMES = 64;
 const TWO_PI = 2 * Math.PI;
 export default class Lowpass extends AnimatableFilter {
     priority = 10;
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     s1L = 0;
     s2L = 0;
     s1R = 0;
@@ -93,6 +95,54 @@ export default class Lowpass extends AnimatableFilter {
             }
         }
         return chunk;
+    }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Lowpass Float32 input must contain complete stereo frames');
+        const startLog = this._currentLogSmoothing;
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        const endLog = this._currentLogSmoothing;
+        if (startLog <= 0.001 && endLog <= 0.001) {
+            this.s1L = this.s2L = this.s1R = this.s2R = 0;
+            return chunk;
+        }
+        const totalFrames = chunk.length / 8;
+        if (Math.abs(endLog - startLog) <= 0.0001) {
+            this._computeCoefficients(endLog);
+            this._processFloat32Block(chunk, 0, totalFrames);
+        }
+        else {
+            for (let frameOffset = 0; frameOffset < totalFrames;) {
+                const blockFrames = Math.min(SUB_BLOCK_FRAMES, totalFrames - frameOffset);
+                this._computeCoefficients(startLog +
+                    (endLog - startLog) *
+                        ((frameOffset + blockFrames * 0.5) / totalFrames));
+                this._processFloat32Block(chunk, frameOffset, blockFrames);
+                frameOffset += blockFrames;
+            }
+        }
+        return chunk;
+    }
+    _processFloat32Block(chunk, frameOffset, frameCount) {
+        const { b0, b1, b2, a1, a2 } = this;
+        let { s1L, s2L, s1R, s2R } = this;
+        let offset = frameOffset * 8;
+        for (let frame = 0; frame < frameCount; frame++, offset += 8) {
+            const xL = chunk.readFloatLE(offset);
+            const yL = b0 * xL + s1L;
+            s1L = b1 * xL - a1 * yL + s2L;
+            s2L = b2 * xL - a2 * yL;
+            chunk.writeFloatLE(yL, offset);
+            const xR = chunk.readFloatLE(offset + 4);
+            const yR = b0 * xR + s1R;
+            s1R = b1 * xR - a1 * yR + s2R;
+            s2R = b2 * xR - a2 * yR;
+            chunk.writeFloatLE(yR, offset + 4);
+        }
+        this.s1L = s1L;
+        this.s2L = s2L;
+        this.s1R = s1R;
+        this.s2R = s2R;
     }
     /**
      * Processes a sub-block of frames using current biquad coefficients.

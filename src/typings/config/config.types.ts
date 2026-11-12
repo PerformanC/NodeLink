@@ -1,3 +1,4 @@
+import type { AudioProcessingMode } from '../../playback/processing/audioContract.ts'
 import type { AdmissionConfig } from '../admission/admission.types.ts'
 import type { DosProtectionConfig } from '../api/dosProtection.types.ts'
 import type { RateLimitConfig } from '../api/rateLimit.types.ts'
@@ -1266,6 +1267,8 @@ export interface NodelinkConfig {
     }
     filters: FilterConfig
     audio: {
+      /** Audio processing path; defaults to the unchanged legacy pipeline. */
+      processingMode?: AudioProcessingMode
       quality: string
       encryption: string
       resamplingQuality: string

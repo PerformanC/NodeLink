@@ -353,6 +353,8 @@ export interface FilterSettings {
  * @public
  */
 export interface FilterInstance {
+  /** Optional explicit PCM/headroom contract for protected processing. */
+  audioCapabilities?: import('../../playback/processing/audioContract.ts').AudioCapabilities
   /**
    * Optional sort priority (lower runs first).
    */
@@ -362,6 +364,8 @@ export interface FilterInstance {
    * Processes PCM audio buffers.
    */
   process: (chunk: Buffer) => Buffer
+  /** Protected-only Float32 processor; must preserve values outside [-1, 1]. */
+  processFloat32?: (chunk: Buffer) => Buffer
 
   /**
    * Updates filter settings from the full filter payload.
@@ -372,6 +376,8 @@ export interface FilterInstance {
    * Flushes any pending buffered data.
    */
   flush?: () => Buffer
+  /** Protected-only state drain preserving the Float32 sample representation. */
+  flushFloat32?: () => Buffer
 
   /**
    * Returns true if the filter is currently active or animating back to its disabled state.

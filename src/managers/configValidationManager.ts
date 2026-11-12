@@ -258,6 +258,12 @@ export default class ConfigValidationManager {
             type: 'object',
             optional: true,
             props: {
+              processingMode: {
+                type: 'string',
+                enum: ['legacy', 'protected'],
+                default: 'legacy',
+                optional: true
+              },
               quality: {
                 type: 'string',
                 enum: ['high', 'medium', 'low', 'lowest']

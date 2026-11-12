@@ -19,6 +19,8 @@ export class AudioMixer extends Readable {
     autoCleanup;
     enabled;
     layerListeners;
+    protectedPlaybackFrames = 0;
+    protectedClockActive = false;
     /**
      * Creates a new AudioMixer.
      * @param config - Mixer configuration.
@@ -124,6 +126,8 @@ export class AudioMixer extends Readable {
             pending: EMPTY_BUFFER,
             paused: false
         };
+        if (this.protectedClockActive)
+            layer.protectedStartFrame = this.protectedPlaybackFrames;
         this.mixLayers.set(id, layer);
         const onData = (chunk) => {
             if (!layer.active)
@@ -202,6 +206,72 @@ export class AudioMixer extends Readable {
             }
         }
         return layerChunks;
+    }
+    /**
+     * Reads Int16 layer audio against the Protected master-frame clock. Missing
+     * data becomes silence at its timeline position; late buffered samples are
+     * discarded instead of shifting a layer later in time.
+     */
+    readLayerChunksAligned(frames) {
+        if (!Number.isInteger(frames) || frames < 0)
+            throw new RangeError('Aligned mixer frame count must be nonnegative');
+        const result = new Map();
+        const bytesPerFrame = 4;
+        const startFrame = this.protectedPlaybackFrames;
+        this.protectedClockActive = true;
+        for (const [id, layer] of this.mixLayers) {
+            if (!layer.active)
+                continue;
+            if (layer.protectedStartFrame === undefined &&
+                layer.ringBuffer.length > 0) {
+                layer.protectedStartFrame = startFrame;
+            }
+            if (layer.protectedStartFrame === null ||
+                layer.protectedStartFrame === undefined) {
+                if (layer.finishedFeeding &&
+                    layer.ringBuffer.length === 0 &&
+                    this.autoCleanup)
+                    this.removeLayer(id, 'FINISHED');
+                continue;
+            }
+            let sourceOffset = layer.protectedSourceFrameOffset ?? 0;
+            const targetOffset = Math.max(0, startFrame - layer.protectedStartFrame);
+            let skipFrames = Math.max(0, targetOffset - sourceOffset);
+            const skipBytes = Math.min(layer.ringBuffer.length - (layer.ringBuffer.length % bytesPerFrame), skipFrames * bytesPerFrame);
+            if (skipBytes > 0) {
+                layer.ringBuffer.read(skipBytes);
+                layer.position += skipBytes;
+                sourceOffset += skipBytes / bytesPerFrame;
+                skipFrames -= skipBytes / bytesPerFrame;
+            }
+            const leadingSilenceFrames = Math.max(0, Math.min(frames, layer.protectedStartFrame - startFrame));
+            const output = Buffer.alloc(frames * bytesPerFrame);
+            const wantedFrames = frames - leadingSilenceFrames;
+            const availableBytes = layer.ringBuffer.length - (layer.ringBuffer.length % bytesPerFrame);
+            const readBytes = Math.min(wantedFrames * bytesPerFrame, availableBytes);
+            if (readBytes > 0) {
+                const chunk = layer.ringBuffer.read(readBytes);
+                if (chunk) {
+                    chunk.copy(output, leadingSilenceFrames * bytesPerFrame);
+                    layer.position += chunk.length;
+                    sourceOffset += chunk.length / bytesPerFrame;
+                }
+            }
+            // Advance this source's timeline with the master clock. If a decoder
+            // starves, later PCM is skipped to the current frame instead of delayed.
+            layer.protectedSourceFrameOffset = Math.max(sourceOffset, Math.max(0, startFrame + frames - layer.protectedStartFrame));
+            result.set(id, { buffer: output, volume: layer.volume });
+            if (layer.paused && layer.ringBuffer.length < LAYER_BUFFER_SIZE * 0.5) {
+                layer.paused = false;
+                layer.stream.resume();
+            }
+            if (layer.finishedFeeding &&
+                layer.ringBuffer.length === 0 &&
+                this.autoCleanup)
+                this.removeLayer(id, 'FINISHED');
+        }
+        this.protectedPlaybackFrames += frames;
+        return result;
     }
     /**
      * Checks if there are any active layers.

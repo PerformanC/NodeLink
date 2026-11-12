@@ -1,7 +1,9 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 import DelayLine from './dsp/delay.js';
+import { Float64DelayLine } from './dsp/float64Delay.js';
 import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 10;
@@ -12,9 +14,11 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
  * @public
  */
 export default class Flanger extends AnimatableFilter {
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     priority = 10;
     lfo;
     delayLine;
+    delayLineFloat = null;
     rate = 0;
     depth = 0;
     feedback = 0;
@@ -76,16 +80,35 @@ export default class Flanger extends AnimatableFilter {
         }
         return chunk;
     }
+    processFloat32(chunk) {
+        if (chunk.length % 4 !== 0)
+            throw new RangeError('Flanger Float32 input must contain complete samples');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        this.delayLineFloat ??= new Float64DelayLine(bufferSize);
+        const maxDelayWidth = this.depth * SAMPLE_RATE * 0.005;
+        for (let i = 0; i < chunk.length; i += 4) {
+            const sample = chunk.readFloatLE(i);
+            const delay = maxDelayWidth + this.lfo.getValue() * maxDelayWidth;
+            const delayed = this.delayLineFloat.read(delay);
+            this.delayLineFloat.write(sample + delayed * this.feedback);
+            chunk.writeFloatLE(sample + this.alpha * delayed, i);
+        }
+        return chunk;
+    }
     /**
      * Flushes any pending data.
      * @returns An empty Buffer.
      */
     flush() {
         this.delayLine.clear();
+        this.delayLineFloat?.clear();
         this.lfo.phase = 0;
         return Buffer.alloc(0);
     }
     destroy() {
         this.delayLine.destroy();
+        this.delayLineFloat?.destroy();
     }
 }

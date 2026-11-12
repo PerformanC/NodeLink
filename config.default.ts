@@ -325,6 +325,7 @@ export const config: NodelinkConfig = {
       }
     },
     audio: {
+      processingMode: 'legacy',
       quality: 'high',
       encryption: 'aead_xchacha20_poly1305_rtpsize',
       resamplingQuality: 'best',
@@ -451,6 +452,7 @@ export const config: NodelinkConfig = {
         'soundcloud',
         'deezer',
         'jiosaavn',
+        'tidal',
         'qobuz',
         'gaana',
         'vkmusic',
@@ -474,7 +476,8 @@ export const config: NodelinkConfig = {
           'WebEmbedded',
           'WebParentTools',
           'Web',
-          'IOS'
+          'IOS',
+          'IOSProducer'
         ],
         resolve: [
           'VisionOs',
@@ -485,7 +488,8 @@ export const config: NodelinkConfig = {
           'WebEmbedded',
           'WebParentTools',
           'IOS',
-          'Web'
+          'Web',
+          'IOSProducer'
         ],
         settings: {
           TV: {

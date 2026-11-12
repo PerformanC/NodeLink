@@ -1497,7 +1497,7 @@ async function processQueue(queueKey) {
         switch (type) {
             case 'createPlayer': {
                 const createPayload = payload;
-                const { sessionId, guildId, userId, voice } = createPayload;
+                const { sessionId, guildId, userId, voice, audioProcessingMode } = createPayload;
                 if (!sessionId || !guildId || !userId) {
                     result = { created: false, reason: 'Invalid createPlayer payload' };
                     break;
@@ -1532,7 +1532,8 @@ async function processQueue(queueKey) {
                 const player = new PlayerClass({
                     nodelink: nodelink,
                     session: mockSession,
-                    guildId
+                    guildId,
+                    audioProcessingMode
                 });
                 players.set(playerKey, player);
                 if (voice)

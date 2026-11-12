@@ -80,11 +80,11 @@ export class AnimatableFilter extends BaseFilter {
      * @param chunkLength - The byte length of the incoming PCM buffer.
      * @param channels - The number of audio channels (e.g. 2).
      */
-    processAnimation(sampleRate, chunkLength, channels) {
+    processAnimation(sampleRate, chunkLength, channels, sampleFormat = 's16le') {
         if (!this.animation)
             return;
         // Calculate how many milliseconds this chunk represents
-        const numSamples = chunkLength / 2; // 16-bit PCM = 2 bytes per sample
+        const numSamples = chunkLength / (sampleFormat === 'f32le' ? 4 : 2);
         const numFrames = numSamples / channels;
         const chunkDurationMs = (numFrames / sampleRate) * 1000;
         this.animation.elapsedMs += chunkDurationMs;

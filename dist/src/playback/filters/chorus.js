@@ -1,7 +1,9 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 import DelayLine from './dsp/delay.js';
+import { Float64DelayLine } from './dsp/float64Delay.js';
 import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 50;
@@ -12,9 +14,11 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
  * @public
  */
 export default class Chorus extends AnimatableFilter {
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     priority = 10;
     lfos;
     delays;
+    floatDelays = null;
     rate = 0;
     depth = 0;
     delay = 25;
@@ -139,6 +143,39 @@ export default class Chorus extends AnimatableFilter {
         }
         return chunk;
     }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Chorus Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        this.floatDelays ??= Array.from({ length: 4 }, () => new Float64DelayLine(bufferSize));
+        const delayWidth = this.depth * SAMPLE_RATE * 0.004;
+        const center = (this.delay * SAMPLE_RATE) / 1000;
+        for (let i = 0; i < chunk.length; i += 8) {
+            const left = chunk.readFloatLE(i);
+            const right = chunk.readFloatLE(i + 4);
+            const lfo = this.lfos;
+            const d = this.floatDelays;
+            const l1 = lfo[0]?.getValue() ?? 0, r1 = lfo[1]?.getValue() ?? 0;
+            const l2 = lfo[2]?.getValue() ?? 0, r2 = lfo[3]?.getValue() ?? 0;
+            const dl1 = d[0]?.read(center + l1 * delayWidth) ?? 0;
+            const dr1 = d[1]?.read(center + r1 * delayWidth) ?? 0;
+            const dl2 = d[2]?.read(center * 1.2 + l2 * delayWidth) ?? 0;
+            const dr2 = d[3]?.read(center * 1.2 + r2 * delayWidth) ?? 0;
+            const wetLeft = (dl1 + dl2) * 0.5;
+            const wetRight = (dr1 + dr2) * 0.5;
+            const chorusLeft = left * (1 - this.mix) + wetLeft * this.mix;
+            const chorusRight = right * (1 - this.mix) + wetRight * this.mix;
+            d[0]?.write(left + dl1 * this.feedback);
+            d[1]?.write(right + dr1 * this.feedback);
+            d[2]?.write(left + dl2 * this.feedback);
+            d[3]?.write(right + dr2 * this.feedback);
+            chunk.writeFloatLE(left + this.alpha * (chorusLeft - left), i);
+            chunk.writeFloatLE(right + this.alpha * (chorusRight - right), i + 4);
+        }
+        return chunk;
+    }
     /**
      * Clears the chorus state.
      */
@@ -146,6 +183,8 @@ export default class Chorus extends AnimatableFilter {
         for (const delay of this.delays) {
             delay.clear();
         }
+        for (const delay of this.floatDelays ?? [])
+            delay.clear();
         const lfos = this.lfos;
         if (lfos[0])
             lfos[0].phase = 0;
@@ -161,5 +200,7 @@ export default class Chorus extends AnimatableFilter {
         for (const delay of this.delays) {
             delay.destroy();
         }
+        for (const delay of this.floatDelays ?? [])
+            delay.destroy();
     }
 }

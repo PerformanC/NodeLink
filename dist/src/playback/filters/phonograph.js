@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 import LFO from './dsp/lfo.js';
@@ -141,6 +142,7 @@ function softClip(x) {
  */
 export default class Phonograph extends AnimatableFilter {
     priority = 10;
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     frequency = 0.8;
     depth = 0.25;
     crackle = 0.18;
@@ -318,6 +320,78 @@ export default class Phonograph extends AnimatableFilter {
             const out = clamp16Bit((x * 32768) | 0);
             chunk.writeInt16LE(out, i);
             chunk.writeInt16LE(out, i + 2);
+        }
+        return chunk;
+    }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Phonograph Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, 2, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        this.recomputeFilters(this.alpha);
+        const fs = SAMPLE_RATE;
+        const wowMax = this.depth * 0.014 * fs, flutterMax = this.flutter * 0.0022 * fs;
+        const center = 1 + wowMax + flutterMax, driftAmount = this.depth * 0.0012 * fs;
+        const hissGain = 0.01 * this.crackle, tickRate = 0.00002 * this.crackle;
+        const scratchRate = 0.0000025 * this.crackle;
+        const d1 = 0.0075 * fs, d2 = 0.012 * fs, d3 = 0.0175 * fs;
+        const roomMix = 0.35 * this.room, agcOn = this.micAgc > 0;
+        const atk = 0.006 + 0.01 * this.micAgc, rel = 0.0006 + 0.0012 * this.micAgc;
+        for (let i = 0; i < chunk.length; i += 8) {
+            let x = (chunk.readFloatLE(i) + chunk.readFloatLE(i + 4)) * 0.5;
+            this.drift += (this.rng.nextNoise() * driftAmount - this.drift) * 0.00015;
+            let delay = center +
+                this.wowLfo.getValue() * wowMax +
+                this.flutterLfo.getValue() * flutterMax +
+                this.drift;
+            delay = Math.max(1, Math.min(MAX_DELAY_SAMPLES - 2, delay));
+            this.delay.write(x);
+            x = this.delay.read(delay);
+            if (this.drive > 0) {
+                const g = 1 + this.drive * 6;
+                x = softClip(x * g) / softClip(g);
+            }
+            x = this.hp1.process(x);
+            x = this.hp2.process(x);
+            x = this.lp1.process(x);
+            x = this.lp2.process(x);
+            x = this.peak1.process(x);
+            x = this.peak2.process(x);
+            if (this.crackle > 0) {
+                const n = this.hissLp.process(this.hissHp.process(this.rng.nextNoise()));
+                x += n * hissGain;
+                if (this.rng.next01() < tickRate) {
+                    this.tickEnv = 1;
+                    this.tickAmp = this.rng.next11() * (0.45 + this.crackle);
+                }
+                this.tickEnv *= 0.965;
+                x += this.tickAmp * this.tickEnv * 0.18;
+                if (this.rng.next01() < scratchRate) {
+                    this.scratchEnv = 1;
+                    this.scratchAmp = this.rng.next11() * (0.35 + this.crackle);
+                }
+                this.scratchEnv *= 0.992;
+                x += this.scratchAmp * this.scratchEnv * 0.06;
+            }
+            if (this.room > 0) {
+                this.roomDamp += 0.08 * (x - this.roomDamp);
+                this.r1.write(this.roomDamp);
+                this.r2.write(this.roomDamp);
+                this.r3.write(this.roomDamp);
+                x =
+                    x * (1 - roomMix) +
+                        ((this.r1.read(d1) + this.r2.read(d2) + this.r3.read(d3)) * roomMix) /
+                            3;
+            }
+            if (agcOn) {
+                const ax = Math.abs(x), coeff = ax > this.env ? atk : rel;
+                this.env += (ax - this.env) * coeff;
+                this.agcGain += (0.22 / (this.env + 1e-6) - this.agcGain) * 0.0015;
+                x *= Math.max(0.35, Math.min(this.agcGain, 2.8));
+            }
+            chunk.writeFloatLE(x, i);
+            chunk.writeFloatLE(x, i + 4);
         }
         return chunk;
     }

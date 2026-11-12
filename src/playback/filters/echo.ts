@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { Float64DelayLine } from './dsp/float64Delay.ts'
 
@@ -26,6 +27,7 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000)
  * @public
  */
 export default class Echo extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 10
   private delayLineL: Float64DelayLine
   private delayLineR: Float64DelayLine
@@ -138,6 +140,31 @@ export default class Echo extends AnimatableFilter {
       )
     }
 
+    return chunk
+  }
+
+  /** Headroom-preserving echo path; feedback state remains Float64. */
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 8 !== 0)
+      throw new RangeError(
+        'Echo Float32 input must contain complete stereo frames'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    const delaySamples = (this.delay * SAMPLE_RATE) / 1000
+    const dry = 1 - this.mix
+    for (let i = 0; i < chunk.length; i += 8) {
+      const inL = chunk.readFloatLE(i)
+      const inR = chunk.readFloatLE(i + 4)
+      const delL = this.delayLineL.read(delaySamples)
+      const delR = this.delayLineR.read(delaySamples)
+      this.delayLineL.write(inL + delL * this.feedback)
+      this.delayLineR.write(inR + delR * this.feedback)
+      const echoL = inL * dry + delL * this.mix
+      const echoR = inR * dry + delR * this.mix
+      chunk.writeFloatLE(inL + this.alpha * (echoL - inL), i)
+      chunk.writeFloatLE(inR + this.alpha * (echoR - inR), i + 4)
+    }
     return chunk
   }
 

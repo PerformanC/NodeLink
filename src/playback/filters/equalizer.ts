@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 
@@ -28,6 +29,7 @@ interface BiquadFilter {
  * @public
  */
 export default class Equalizer extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 5
   private bandGains: number[]
   private filtersL: BiquadFilter[]
@@ -197,6 +199,47 @@ export default class Equalizer extends AnimatableFilter {
       chunk.writeInt16LE(clamp16Bit(right), i + 2)
     }
 
+    return chunk
+  }
+
+  /** Float32 biquad path; filter state stays in signal units and is never clamped. */
+  public processFloat32(chunk: Buffer): Buffer {
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    const activeIndices = this.activeBandIndices
+    if (activeIndices.length === 0) return chunk
+    for (let i = 0; i < chunk.length; i += 8) {
+      let left = chunk.readFloatLE(i)
+      let right = chunk.readFloatLE(i + 4)
+      for (const j of activeIndices) {
+        const fl = this.filtersL[j]
+        const fr = this.filtersR[j]
+        if (!fl || !fr) continue
+        const outL =
+          fl.b0 * left +
+          fl.b1 * fl.x1 +
+          fl.b2 * fl.x2 -
+          fl.a1 * fl.y1 -
+          fl.a2 * fl.y2
+        fl.x2 = fl.x1
+        fl.x1 = left
+        fl.y2 = fl.y1
+        fl.y1 = outL
+        left = outL
+        const outR =
+          fr.b0 * right +
+          fr.b1 * fr.x1 +
+          fr.b2 * fr.x2 -
+          fr.a1 * fr.y1 -
+          fr.a2 * fr.y2
+        fr.x2 = fr.x1
+        fr.x1 = right
+        fr.y2 = fr.y1
+        fr.y1 = outR
+        right = outR
+      }
+      chunk.writeFloatLE(left, i)
+      chunk.writeFloatLE(right, i + 4)
+    }
     return chunk
   }
 

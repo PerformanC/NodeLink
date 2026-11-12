@@ -163,7 +163,7 @@ export default class PlayerManager {
      * @param guildId - Target guild id.
      * @param voice - Optional initial voice payload.
      */
-    async create(guildId, voice) {
+    async create(guildId, voice, audioProcessingMode) {
         const session = this.getSessionOrThrow();
         const playerKey = this.getPlayerKey(guildId);
         const existingPlayer = this.players.get(playerKey);
@@ -175,7 +175,7 @@ export default class PlayerManager {
         if (pendingCreate) {
             return pendingCreate;
         }
-        const createPromise = this._createInternal(session, guildId, voice, playerKey).finally(() => {
+        const createPromise = this._createInternal(session, guildId, voice, playerKey, audioProcessingMode).finally(() => {
             this.pendingCreates.delete(playerKey);
         });
         this.pendingCreates.set(playerKey, createPromise);
@@ -185,7 +185,7 @@ export default class PlayerManager {
      * Internal player creation routine for local and cluster modes.
      * @internal
      */
-    async _createInternal(session, guildId, voice, playerKey) {
+    async _createInternal(session, guildId, voice, playerKey, audioProcessingMode) {
         if (this.isCluster) {
             const workerManager = this.getWorkerManagerOrThrow();
             const worker = workerManager.getWorkerForGuild(playerKey);
@@ -199,7 +199,8 @@ export default class PlayerManager {
                     sessionId: this.sessionId,
                     guildId,
                     userId: this.getSessionUserId(session),
-                    voice
+                    voice,
+                    audioProcessingMode
                 });
                 if (createResult?.created === false &&
                     createResult?.reason !== 'Player already exists') {
@@ -256,7 +257,8 @@ export default class PlayerManager {
         const player = new Player({
             nodelink: this.nodelink,
             session: localSession,
-            guildId
+            guildId,
+            audioProcessingMode
         });
         this.players.set(playerKey, player);
         this.nodelink.statistics.players += 1;

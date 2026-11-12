@@ -379,6 +379,9 @@ export interface FilterExtension {
    */
   apply: (data: Buffer, options?: FilterOptions) => Buffer | Promise<Buffer>
 
+  /** Declares the format/amplitude contract required before Protected execution. */
+  audioCapabilities?: import('../playback/processing/audioContract.ts').AudioCapabilities
+
   /**
    * Additional filter-specific properties
    */
@@ -386,6 +389,8 @@ export interface FilterExtension {
     | string
     | number
     | boolean
+    | import('../playback/processing/audioContract.ts').AudioCapabilities
+    | undefined
     | ((data: Buffer, options?: FilterOptions) => Buffer | Promise<Buffer>)
 }
 
@@ -520,7 +525,10 @@ export type WebSocketInterceptorExtension = (
  * @returns Audio transform stream
  * @public
  */
-export type AudioInterceptorExtension = () => import('node:stream').Transform
+export type AudioInterceptorExtension =
+  (() => import('node:stream').Transform) & {
+    audioCapabilities?: import('../playback/processing/audioContract.ts').AudioCapabilities
+  }
 
 /**
  * Player instance (either active local playback player or cluster snapshot)

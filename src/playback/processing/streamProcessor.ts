@@ -65,6 +65,15 @@ import {
   type CrossfadePrepareOptions
 } from './CrossfadeController.ts'
 import { SilenceDetector } from './SilenceDetector.ts'
+import {
+  assertAudioCapabilities,
+  resolveAudioProcessingMode,
+  type AudioProcessingMode
+} from './audioContract.ts'
+import {
+  ProtectedLimiterOutput,
+  ProtectedPcmInput
+} from './ProtectedAudioTransforms.ts'
 
 type LibSampleRateModule = typeof import('@alexanderolsen/libsamplerate-js')
 let libSampleRatePromise: Promise<LibSampleRateModule> | null = null
@@ -619,10 +628,14 @@ class PCMFrameCounter extends Transform {
   private sampleRate: number
   private bytesPerFrame: number
 
-  constructor(sampleRate = 48000, channels = 2) {
+  constructor(
+    sampleRate = 48000,
+    channels = 2,
+    sampleFormat: 's16le' | 'f32le' = 's16le'
+  ) {
     super()
     this.sampleRate = sampleRate
-    this.bytesPerFrame = channels * 2 // 16-bit PCM (2 bytes per channel)
+    this.bytesPerFrame = channels * (sampleFormat === 'f32le' ? 4 : 2)
   }
 
   override _transform(
@@ -708,6 +721,9 @@ class BaseAudioResource {
           curve?: string
         ) => void
         setLoudnessNormalizer?: (enabled: boolean) => void
+        getAudioProcessingTelemetry?: () =>
+          | import('./audioContract.ts').AudioProcessingTelemetrySnapshot
+          | null
         isPipelineFinished?: () => boolean
       }
     voiceStream.setVolume = (volume: number) => this.setVolume(volume)
@@ -732,6 +748,8 @@ class BaseAudioResource {
     ) => this.tapeTo(durationMs, type, curve)
     voiceStream.setLoudnessNormalizer = (enabled: boolean) =>
       this.setLoudnessNormalizer(enabled)
+    voiceStream.getAudioProcessingTelemetry = () =>
+      this.getAudioProcessingTelemetry()
     voiceStream.isPipelineFinished = () => this.isPipelineFinished()
 
     /*
@@ -836,6 +854,12 @@ class BaseAudioResource {
       (p) => p instanceof SilenceDetector
     ) as SilenceDetector | undefined
     return silenceDetector?.getRMS() ?? 0
+  }
+
+  getAudioProcessingTelemetry():
+    | import('./audioContract.ts').AudioProcessingTelemetrySnapshot
+    | null {
+    return null
   }
 
   isSilent(): boolean {
@@ -2808,6 +2832,7 @@ class FLVToAACStream extends Transform {
 class StreamAudioResource extends BaseAudioResource {
   private nodelink: NodeLink
   private frameCounter: PCMFrameCounter | null = null
+  private protectedLimiterOutput: ProtectedLimiterOutput | null = null
 
   constructor(
     guildId: string,
@@ -2819,11 +2844,38 @@ class StreamAudioResource extends BaseAudioResource {
     audioMixer: AudioMixer | null = null,
     returnPCM = false,
     enableAGC = true,
-    enableCrossfade = false
+    enableCrossfade = false,
+    processingMode?: AudioProcessingMode | null,
+    float32PCMOutput = false
   ) {
     super(guildId)
 
     this.nodelink = nodelink
+    const mode = resolveAudioProcessingMode(
+      nodelink.options.playback.audio?.processingMode,
+      processingMode
+    )
+    const preparedProtectedInterceptors: Transform[] = []
+    if (!returnPCM && mode === 'protected') {
+      // Validate filter capabilities before starting decoder streams. The real
+      // manager is then constructed below as the resource-owned instance.
+      new FiltersManager(nodelink, initialFilters, {}, 'protected')
+      for (const factory of nodelink.extensions?.audioInterceptors ?? []) {
+        const caps = factory.audioCapabilities
+        if (
+          !caps ||
+          !caps.sampleFormats.includes('f32le') ||
+          caps.amplitudeBehavior !== 'preserves-headroom'
+        ) {
+          throw new Error(
+            'Protected mode requires every audio interceptor to declare f32le support and headroom preservation'
+          )
+        }
+        assertAudioCapabilities(caps)
+        const interceptor = factory()
+        if (interceptor) preparedProtectedInterceptors.push(interceptor)
+      }
+    }
     this._validateInputStream(stream)
 
     const resamplingQuality =
@@ -2848,7 +2900,12 @@ class StreamAudioResource extends BaseAudioResource {
     )
 
     if (returnPCM) {
-      this._createPCMOutputPipeline(pcmStream, volume, enableAGC)
+      this._createPCMOutputPipeline(
+        pcmStream,
+        volume,
+        enableAGC,
+        float32PCMOutput && mode === 'protected'
+      )
     } else {
       this._createOutputPipeline(
         pcmStream,
@@ -2857,7 +2914,9 @@ class StreamAudioResource extends BaseAudioResource {
         volume,
         audioMixer,
         enableAGC,
-        enableCrossfade
+        enableCrossfade,
+        mode,
+        preparedProtectedInterceptors
       )
     }
 
@@ -3044,20 +3103,31 @@ class StreamAudioResource extends BaseAudioResource {
     volume: number,
     audioMixer: AudioMixer | null = null,
     enableAGC = true,
-    enableCrossfade = false
+    enableCrossfade = false,
+    processingMode: AudioProcessingMode = 'legacy',
+    preparedProtectedInterceptors: Transform[] = []
   ): void {
     const frameCounter = new PCMFrameCounter(
       AUDIO_CONFIG.sampleRate,
-      AUDIO_CONFIG.channels
+      AUDIO_CONFIG.channels,
+      processingMode === 'protected' ? 'f32le' : 's16le'
     )
     this.frameCounter = frameCounter // Saves the reference to get the time later
 
-    const filters = new FiltersManager(nodelink, initialFilters)
+    const filters = new FiltersManager(
+      nodelink,
+      initialFilters,
+      {},
+      processingMode
+    )
     const volumeTransformer = new VolumeTransformer({
       type: 's16le',
       volume,
       enableAGC,
-      lookaheadMs: nodelink.options.playback.audio?.lookaheadMs,
+      lookaheadMs:
+        processingMode === 'protected'
+          ? 0
+          : nodelink.options.playback.audio?.lookaheadMs,
       gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
     })
     const fadeTransformer = new FadeTransformer({
@@ -3078,6 +3148,7 @@ class StreamAudioResource extends BaseAudioResource {
     const silenceDetector = new SilenceDetector({
       sampleRate: AUDIO_CONFIG.sampleRate,
       channels: AUDIO_CONFIG.channels,
+      sampleFormat: processingMode === 'protected' ? 'f32le' : 's16le',
       thresholdDb:
         nodelink.options.playback.audio?.automix?.silenceThresholdDb ?? -40
     })
@@ -3087,7 +3158,8 @@ class StreamAudioResource extends BaseAudioResource {
       fadeTransformer,
       tapeTransformer,
       scratchTransformer,
-      audioMixer
+      audioMixer,
+      processingMode
     )
 
     const opusEncoder = new OpusEncoder({
@@ -3099,9 +3171,25 @@ class StreamAudioResource extends BaseAudioResource {
     opusEncoder.setDTX(false)
 
     const streams: Transform[] = [pcmStream]
+    if (processingMode === 'protected') {
+      const protectedInput = new ProtectedPcmInput()
+      streams.push(protectedInput)
+      this.pipes?.push(protectedInput)
+    }
     if (enableCrossfade) {
-      const crossfadeController = new CrossfadeController()
+      const crossfadeController = new CrossfadeController(
+        processingMode === 'protected' ? 'f32le' : 's16le'
+      )
+      if (processingMode === 'protected') {
+        // A crossfade changes track identity while this output pipeline remains
+        // alive. Reset AGC history at both overlap start and promotion so the
+        // incoming song cannot inherit the previous song's gain estimate.
+        crossfadeController.on('transitionStart', () =>
+          volumeTransformer.resetAGC()
+        )
+      }
       crossfadeController.on('bridgeStart', () => {
+        if (processingMode === 'protected') volumeTransformer.resetAGC()
         this.canStop = false
       })
       crossfadeController.on('bridgeEnd', () => {
@@ -3113,10 +3201,18 @@ class StreamAudioResource extends BaseAudioResource {
       streams.push(crossfadeController)
       this.pipes?.push(crossfadeController)
     }
-    streams.push(frameCounter, silenceDetector, filters, flowController)
-    this.pipes?.push(frameCounter, silenceDetector, filters, flowController)
+    streams.push(frameCounter, silenceDetector, filters)
+    this.pipes?.push(frameCounter, silenceDetector, filters)
+    let protectedOutput: ProtectedLimiterOutput | null = null
+    streams.push(flowController)
+    this.pipes?.push(flowController)
 
-    if (nodelink.extensions?.audioInterceptors) {
+    if (processingMode === 'protected') {
+      for (const interceptorStream of preparedProtectedInterceptors) {
+        streams.push(interceptorStream)
+        this.pipes?.push(interceptorStream)
+      }
+    } else if (nodelink.extensions?.audioInterceptors) {
       for (const interceptorFactory of nodelink.extensions.audioInterceptors) {
         try {
           const interceptorStream = interceptorFactory()
@@ -3134,7 +3230,16 @@ class StreamAudioResource extends BaseAudioResource {
       }
     }
 
+    if (processingMode === 'protected') {
+      protectedOutput = new ProtectedLimiterOutput(() =>
+        volumeTransformer.getRequestedVolume()
+      )
+      this.protectedLimiterOutput = protectedOutput
+      streams.push(protectedOutput)
+    }
+
     streams.push(opusEncoder)
+    if (protectedOutput) this.pipes?.push(protectedOutput)
     this.pipes?.push(opusEncoder)
 
     pipeline(streams as unknown as Readable[], (err: Error | null): void => {
@@ -3148,6 +3253,10 @@ class StreamAudioResource extends BaseAudioResource {
 
   getConsumedMs(): number {
     return this.frameCounter?.getConsumedMs() ?? 0
+  }
+
+  override getAudioProcessingTelemetry() {
+    return this.protectedLimiterOutput?.snapshot() ?? null
   }
 
   override getMainEnergy(): { rms: number; peak: number } | null {
@@ -3235,8 +3344,18 @@ class StreamAudioResource extends BaseAudioResource {
   _createPCMOutputPipeline(
     pcmStream: Transform,
     volume: number,
-    enableAGC = true
+    enableAGC = true,
+    float32Output = false
   ): void {
+    if (float32Output) {
+      const converter = new ProtectedPcmInput()
+      pipeline(pcmStream, converter, (err: Error | null): void => {
+        if (err && !this._destroyed) emitResourceError(converter, err)
+      })
+      this.pipes?.push(converter)
+      this._assignStream(converter)
+      return
+    }
     if (volume !== 1.0 || enableAGC) {
       const volumeTransformer = new VolumeTransformer({
         type: 's16le',
@@ -3328,7 +3447,9 @@ export const createAudioResource = (
   audioMixer: AudioMixer | null = null,
   returnPCM: boolean = false,
   enableAGC: boolean = true,
-  enableCrossfade: boolean = false
+  enableCrossfade: boolean = false,
+  processingMode?: AudioProcessingMode | null,
+  float32PCMOutput = false
 ): StreamAudioResource =>
   new StreamAudioResource(
     guildId,
@@ -3340,7 +3461,9 @@ export const createAudioResource = (
     audioMixer,
     returnPCM,
     enableAGC,
-    enableCrossfade
+    enableCrossfade,
+    processingMode,
+    float32PCMOutput
   )
 
 export const createSeekeableAudioResource = async (
@@ -3355,7 +3478,8 @@ export const createSeekeableAudioResource = async (
   audioMixer: AudioMixer | null = null,
   returnPCM: boolean = false,
   enableAGC: boolean = true,
-  enableCrossfade: boolean = false
+  enableCrossfade: boolean = false,
+  processingMode?: AudioProcessingMode | null
 ): Promise<StreamAudioResource | ErrorResponse> => {
   try {
     /* INFO: Source format objects describe a rendition, not a MIME type. */
@@ -3416,7 +3540,8 @@ export const createSeekeableAudioResource = async (
         audioMixer,
         returnPCM,
         player.loudnessNormalizer ?? enableAGC,
-        enableCrossfade
+        enableCrossfade,
+        processingMode
       )
     }
 
@@ -3459,7 +3584,8 @@ export const createSeekeableAudioResource = async (
       audioMixer,
       returnPCM,
       player.loudnessNormalizer ?? enableAGC,
-      enableCrossfade
+      enableCrossfade,
+      processingMode
     )
   } catch (err) {
     const cause = err instanceof SeekError ? err.code : 'UNKNOWN'

@@ -375,6 +375,8 @@ export interface BestMatchOptions {
   durationTolerance?: number
   /** Whether explicit tracks are allowed. */
   allowExplicit?: boolean
+  /** Reject the best candidate when its score is below this threshold. */
+  minScore?: number
 }
 
 /**

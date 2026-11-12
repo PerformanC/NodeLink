@@ -6,6 +6,7 @@ import { EndReasons, GatewayEvents } from '../constants.js';
 import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.js';
 import { logger } from '../utils.js';
 import { AutoMixRegistry } from './processing/AutoMixRegistry.js';
+import { resolveAudioProcessingMode } from './processing/audioContract.js';
 import { DuckingController } from './processing/DuckingController.js';
 let createAudioResource = null;
 let createSeekeableAudioResource = null;
@@ -100,6 +101,7 @@ export class Player {
     audioMixer = null;
     fading;
     loudnessNormalizer;
+    _audioProcessingModeOverride;
     duckingController = null;
     _fadeTimers = { trackEnd: null, pause: null, stop: null };
     _isResuming = false;
@@ -144,6 +146,8 @@ export class Player {
         this.nodelink = options.nodelink;
         this.session = options.session;
         this.guildId = options.guildId;
+        this._audioProcessingModeOverride = options.audioProcessingMode ?? null;
+        resolveAudioProcessingMode(this.nodelink.options?.playback?.audio?.processingMode, this._audioProcessingModeOverride);
         this.volumePercent = this.nodelink.options?.defaultVolume ?? 100;
         this.fading = this.nodelink.options?.playback.audio?.fading;
         this.crossfade = this.nodelink.options?.playback.audio?.crossfade;
@@ -224,6 +228,13 @@ export class Player {
     }
     _getAudioOptions() {
         return this.nodelink.options.playback.audio;
+    }
+    /**
+     * Resolves the mode that will be used when the next audio resource is built.
+     * An explicit per-player override takes precedence over global configuration.
+     */
+    getAudioProcessingMode() {
+        return resolveAudioProcessingMode(this.nodelink.options.playback.audio?.processingMode, this._audioProcessingModeOverride);
     }
     _getFilterTransitions() {
         return this._getAudioOptions()?.filterTransitions;
@@ -900,7 +911,7 @@ export class Player {
     /**
      * Fetches an audio resource for playback.
      */
-    async _fetchResource(info, urlData, startTime, returnPCM = false) {
+    async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false) {
         if (this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
         }
@@ -1021,7 +1032,7 @@ export class Player {
             streamForResource.on('end', cleanupListeners);
             streamForResource._cleanupListeners = cleanupListeners;
         }
-        const resource = audioResourceFactory(this.guildId, streamForResource, fetched.type || resolvedUrlData.format, this.nodelink, this.filters, returnPCM ? 1 : this.volumePercent / 100, returnPCM ? null : this.audioMixer, returnPCM, returnPCM ? false : this.loudnessNormalizer, !returnPCM && this._getCrossfadeConfig() !== null);
+        const resource = audioResourceFactory(this.guildId, streamForResource, fetched.type || resolvedUrlData.format, this.nodelink, this.filters, returnPCM ? 1 : this.volumePercent / 100, returnPCM ? null : this.audioMixer, returnPCM, returnPCM ? false : this.loudnessNormalizer, !returnPCM && this._getCrossfadeConfig() !== null, this.getAudioProcessingMode(), float32PCMOutput);
         return { stream: resource };
     }
     /**
@@ -1286,7 +1297,7 @@ export class Player {
         let resource;
         if (seekUrl && createSeekeableAudioResource) {
             logger('debug', 'Player', `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`);
-            const seekResult = await createSeekeableAudioResource(this.guildId, seekUrl, position, this.track?.endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer, this._getCrossfadeConfig() !== null);
+            const seekResult = await createSeekeableAudioResource(this.guildId, seekUrl, position, this.track?.endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer, this._getCrossfadeConfig() !== null, this.getAudioProcessingMode());
             if (this.destroying || this.track !== playbackTrack) {
                 if (!('exception' in seekResult))
                     seekResult.destroy();
@@ -1806,7 +1817,7 @@ export class Player {
                 return false;
             if (!url)
                 return false;
-            const resourceResult = await seekResourceFactory(this.guildId, url, position, endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer, this._getCrossfadeConfig() !== null);
+            const resourceResult = await seekResourceFactory(this.guildId, url, position, endTime, this.nodelink, this.filters, this, this.volumePercent / 100, this.audioMixer, false, this.loudnessNormalizer, this._getCrossfadeConfig() !== null, this.getAudioProcessingMode());
             if (this.destroying || this.track !== seekTrack) {
                 if (!('exception' in resourceResult))
                     resourceResult.destroy();
@@ -1828,22 +1839,16 @@ export class Player {
             }
             this._fading('seekPrepare', { resource });
             resource.setFilters(this.filters);
-            this._destroyCrossfadeResources(true);
+            // A seek is a timeline discontinuity: drain neither the old limiter nor
+            // queued Opus packets into the new position. Tear down the current PCM /
+            // voice stream first, while retaining only the queued track metadata.
+            this._cleanupCurrentAudioStream('seekeable-seek', true);
             this._resetAudioConsumptionBaseline(position);
-            const oldStream = this.connection?.play(resource);
+            this.connection?.play(resource);
             await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
             if (this.destroying || this.track !== seekTrack) {
                 resource.destroy();
                 return false;
-            }
-            if (oldStream) {
-                oldStream.destroy();
-            }
-            if (this._currentResource && this._currentResource !== resource) {
-                try {
-                    this._currentResource.destroy();
-                }
-                catch { }
             }
             this._currentResource = resource;
             this._lyricsBasePosition = position;
@@ -2346,13 +2351,31 @@ export class Player {
             }
         }
         /* INFO: Idle players retain accepted filters so the next audio resource inherits them. */
-        this.filters = { ...this.filters, filters: newFilterSettings };
+        const nextFilterState = { ...this.filters, filters: newFilterSettings };
+        if (this.getAudioProcessingMode() === 'protected') {
+            try {
+                this.connection?.audioStream?.setFilters(nextFilterState);
+                if (!this.nextResourceIsCrossfade)
+                    this.nextResource?.setFilters(nextFilterState);
+            }
+            catch (error) {
+                logger('warn', 'Player', `Rejected Protected filter update for guild ${this.guildId}: ${error instanceof Error ? error.message : String(error)}`);
+                return false;
+            }
+            this.filters = nextFilterState;
+        }
+        else {
+            this.filters = nextFilterState;
+        }
         if (this.connection?.audioStream) {
             this._snapshotPosition();
-            this.connection.audioStream.setFilters(this.filters);
+            if (this.getAudioProcessingMode() !== 'protected') {
+                this.connection.audioStream.setFilters(this.filters);
+            }
             this._fading('trackEndSchedule', { startPosition: this._realPosition() });
         }
-        if (!this.nextResourceIsCrossfade) {
+        if (!this.nextResourceIsCrossfade &&
+            this.getAudioProcessingMode() !== 'protected') {
             this.nextResource?.setFilters(this.filters);
         }
         if (this.nextResourceIsCrossfade)

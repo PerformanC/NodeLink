@@ -313,6 +313,7 @@ export const config = {
             }
         },
         audio: {
+            processingMode: 'legacy',
             quality: 'high',
             encryption: 'aead_xchacha20_poly1305_rtpsize',
             resamplingQuality: 'best',
@@ -435,6 +436,7 @@ export const config = {
                 'soundcloud',
                 'deezer',
                 'jiosaavn',
+                'tidal',
                 'qobuz',
                 'gaana',
                 'vkmusic',
@@ -458,7 +460,8 @@ export const config = {
                     'WebEmbedded',
                     'WebParentTools',
                     'Web',
-                    'IOS'
+                    'IOS',
+                    'IOSProducer'
                 ],
                 resolve: [
                     'VisionOs',
@@ -469,7 +472,8 @@ export const config = {
                     'WebEmbedded',
                     'WebParentTools',
                     'IOS',
-                    'Web'
+                    'Web',
+                    'IOSProducer'
                 ],
                 settings: {
                     TV: {

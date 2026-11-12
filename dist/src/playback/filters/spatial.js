@@ -1,7 +1,9 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 import DelayLine from './dsp/delay.js';
+import { Float64DelayLine } from './dsp/float64Delay.js';
 import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 30;
@@ -12,9 +14,12 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
  * @public
  */
 export default class Spatial extends AnimatableFilter {
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     priority = 10;
     leftDelay;
     rightDelay;
+    leftDelayFloat = null;
+    rightDelayFloat = null;
     lfo;
     depth = 0;
     rate = 0;
@@ -84,16 +89,43 @@ export default class Spatial extends AnimatableFilter {
         }
         return chunk;
     }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Spatial Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        this.leftDelayFloat ??= new Float64DelayLine(bufferSize);
+        this.rightDelayFloat ??= new Float64DelayLine(bufferSize);
+        const wet = this.depth * 0.5;
+        const dry = 1 - wet;
+        for (let i = 0; i < chunk.length; i += 8) {
+            const left = chunk.readFloatLE(i);
+            const right = chunk.readFloatLE(i + 4);
+            const lfoValue = this.lfo.getValue();
+            const delayedLeft = this.leftDelayFloat.read((5 + lfoValue * 2) * (SAMPLE_RATE / 1000));
+            const delayedRight = this.rightDelayFloat.read((5 - lfoValue * 2) * (SAMPLE_RATE / 1000));
+            this.leftDelayFloat.write(left + delayedLeft * -0.3);
+            this.rightDelayFloat.write(right + delayedRight * -0.3);
+            chunk.writeFloatLE(left + this.alpha * (dry * left + wet * delayedRight - left), i);
+            chunk.writeFloatLE(right + this.alpha * (dry * right + wet * delayedLeft - right), i + 4);
+        }
+        return chunk;
+    }
     /**
      * Clears the spatial state.
      */
     flush() {
         this.leftDelay.clear();
         this.rightDelay.clear();
+        this.leftDelayFloat?.clear();
+        this.rightDelayFloat?.clear();
         return Buffer.alloc(0);
     }
     destroy() {
         this.leftDelay.destroy();
         this.rightDelay.destroy();
+        this.leftDelayFloat?.destroy();
+        this.rightDelayFloat?.destroy();
     }
 }
