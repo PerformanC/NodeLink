@@ -22,7 +22,7 @@
     "@performanc/pwsl-server": "github:performanc/internals#PWSL-server",
     "@performanc/voice": "github:PerformanC/voice",
     "@toddynnn/symphonia-decoder": "^1.2.3",
-    "@toddynnn/voice-opus": "^1.0.1",
+    "@toddynnn/voice-opus": "^2.0.0",
     "fastest-validator": "^1.19.1",
     "mp4box": "^2.5.0",
     "prom-client": "^15.1.3",
