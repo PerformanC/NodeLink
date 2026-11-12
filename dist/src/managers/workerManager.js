@@ -1012,7 +1012,10 @@ export default class WorkerManager {
         }
         else {
             const nodelink = getGlobalNodelink();
-            nodelink?.handleIPCMessage(message);
+            nodelink?.handleIPCMessage({
+                ...message,
+                pid: worker.process?.pid
+            });
         }
     }
     _handleCommandResponse(requestId, payload, error) {

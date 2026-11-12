@@ -23,7 +23,8 @@
  */
 import { performance } from 'node:perf_hooks';
 import { logger } from '../../utils.js';
-import { inspectTrackOutroQuick, MusicalAnalyzer, TransitionProfileCache } from './MusicalAnalyzer.js';
+import { requestPcmAnalysis } from './analysisDelegation.js';
+import { inspectTrackOutroQuick, TransitionProfileCache } from './MusicalAnalyzer.js';
 const PRIORITY_ORDER = {
     IMMINENT_TRANSITION: 1,
     CURRENT_OUTRO: 2,
@@ -255,9 +256,7 @@ export class AutoMixRegistry {
             const stream = fetched.stream.stream;
             const fetchMs = performance.now() - startFetchTime;
             decodeStart = performance.now();
-            const analyzer = new MusicalAnalyzer(48000);
             const expectedBytes = Math.round((windowDurationMs / 1000) * 48000 * 4);
-            const minStopBytes = Math.round(12 * 48000 * 4);
             const resultPromise = new Promise((resolve) => {
                 let finished = false;
                 const finish = (profile) => {
@@ -280,17 +279,6 @@ export class AutoMixRegistry {
                     }
                     chunks.push(chunk);
                     bytesRead += chunk.length;
-                    analyzer.pushPcm(chunk);
-                    if (bytesRead >= minStopBytes &&
-                        bytesRead % (48000 * 4) < chunk.length) {
-                        const currentProfile = analyzer.getProfile();
-                        if (currentProfile.confidence >= 0.72 &&
-                            currentProfile.keyConfidence >= 0.6) {
-                            stoppedEarly = true;
-                            onEnd();
-                            return;
-                        }
-                    }
                     if (bytesRead >= expectedBytes) {
                         onEnd();
                     }
@@ -305,8 +293,19 @@ export class AutoMixRegistry {
                     }
                     const pcm = Buffer.concat(chunks);
                     chunks.length = 0;
-                    const updatedProfile = inspectTrackOutroQuick(pcm, 48000, trackId, windowStartMs, trackLength);
-                    finish(updatedProfile);
+                    void requestPcmAnalysis({
+                        pcmBase64: pcm.toString('base64'),
+                        sampleRate: 48000,
+                        trackId,
+                        windowStartMs,
+                        trackLengthMs: trackLength
+                    }).then((remoteProfile) => {
+                        if (remoteProfile)
+                            TransitionProfileCache.set(trackId, remoteProfile);
+                        // Preserve compatibility when the specialized source cluster is disabled.
+                        finish(remoteProfile ??
+                            inspectTrackOutroQuick(pcm, 48000, trackId, windowStartMs, trackLength));
+                    });
                 };
                 const onError = () => {
                     finish(null);

@@ -115,6 +115,20 @@ if (isMainThread) {
     const SCALE_UP_COOLDOWN_MS = specConfig.scaleCooldownMs ?? 1000;
     const workerPool = [];
     const taskQueue = createHeadQueue();
+    const analysisQueue = [];
+    let analysisBusy = false;
+    const analysisWorker = new Worker(new URL(`./sourceAnalysis.${import.meta.url.endsWith('.ts') ? 'ts' : 'js'}`, import.meta.url));
+    analysisWorker.on('message', (msg) => {
+        if (msg.type !== 'analysisResult')
+            return;
+        finishTask(msg.socketPath, msg.id, msg.result, msg.error);
+        analysisBusy = false;
+        const next = analysisQueue.shift();
+        if (next) {
+            analysisBusy = true;
+            analysisWorker.postMessage(next);
+        }
+    });
     let lastScaleUpAt = 0;
     let nextThreadId = initialThreadCount + 1;
     nodelink.logger('info', 'SourceWorker', `Starting ${initialThreadCount}/${maxThreadCount} micro-worker(s) for API tasks...`);
@@ -413,6 +427,27 @@ if (isMainThread) {
         if (msg.type !== 'sourceTask')
             return;
         if (msg.payload) {
+            if (msg.payload.task === 'analyzePcm') {
+                const analysisPayload = msg.payload.payload;
+                if (typeof analysisPayload?.pcmBase64 !== 'string' ||
+                    analysisPayload.pcmBase64.length > 7 * 1024 * 1024) {
+                    finishTask(msg.payload.socketPath, msg.payload.id, undefined, 'Invalid or oversized PCM analysis window');
+                    return;
+                }
+                if (analysisQueue.length >= 2) {
+                    finishTask(msg.payload.socketPath, msg.payload.id, undefined, 'PCM analysis queue is full');
+                    return;
+                }
+                analysisQueue.push(msg.payload);
+                if (!analysisBusy) {
+                    const task = analysisQueue.shift();
+                    if (task) {
+                        analysisBusy = true;
+                        analysisWorker.postMessage(task);
+                    }
+                }
+                return;
+            }
             enqueueHeadQueue(taskQueue, msg.payload);
             maybeScaleUpMicroWorkers();
             processNextTask();

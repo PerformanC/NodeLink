@@ -361,6 +361,15 @@ class SourceWorkerManager {
             throw new Error('No source worker is available for health probe');
         await this._executeOnWorker(worker, 'sourceHealthProbe', { sourceName }, { timeoutMs: 7000 });
     }
+    /** Offloads bounded PCM feature extraction to a source analysis micro-worker. */
+    async analyzePcm(payload) {
+        const worker = this.workers
+            .filter((candidate) => candidate?.isConnected?.())
+            .sort((a, b) => (this.workerLoads.get(a.id) || 0) - (this.workerLoads.get(b.id) || 0))[0];
+        if (!worker)
+            throw new Error('No source worker is available for PCM analysis');
+        return this._executeOnWorker(worker, 'analyzePcm', payload, { timeoutMs: 10000 });
+    }
     _decrementLoad(workerId) {
         const load = this.workerLoads.get(workerId) || 0;
         this.workerLoads.set(workerId, Math.max(0, load - 1));
