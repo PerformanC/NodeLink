@@ -499,6 +499,18 @@ export interface TrackInfo {
 
   /** Track author/artist */
   author: string
+  /** Optional duration in milliseconds. */
+  length?: number
+  /** Optional ISRC. */
+  isrc?: string | null
+  /** Optional provider identifier. */
+  identifier?: string
+  /** Optional album title. */
+  albumName?: string
+  /** Source key. */
+  sourceName?: string
+  /** Track URL. */
+  uri?: string
 }
 
 /**
@@ -514,6 +526,13 @@ export interface LyricsLine {
 
   /** Duration in milliseconds */
   duration: number
+  /** Optional word or syllable timing spans. */
+  words?: Array<{
+    text?: string
+    time?: number | string
+    timestamp?: number | string
+    duration?: number
+  }>
 }
 
 /**
@@ -547,6 +566,13 @@ export interface LyricsResultData {
 
   /** Lyrics provider (e.g., 'musixmatch', 'genius') */
   provider?: string
+
+  /** Required source credit where applicable. */
+  attribution?: {
+    name: string
+    url: string
+    submitter?: { name: string; url: string }
+  }
 
   /** Error message if applicable */
   message?: string

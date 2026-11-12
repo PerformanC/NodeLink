@@ -847,6 +847,12 @@ export const config = {
         lrclib: {
             enabled: true
         },
+        unison: {
+            enabled: true
+        },
+        lrcRed: {
+            enabled: false
+        },
         letrasmus: {
             enabled: true
         },

@@ -1335,6 +1335,25 @@ export interface NodelinkConfig {
     preferredSources?: string[]
     /** Musixmatch lyrics provider configuration. */
     musixmatch?: MusixmatchConfig
+    /** Provider-specific proxy settings and identifiers are supported. */
+    unison?: FeatureToggle & {
+      proxy?:
+        | import('../utils.types.ts').HttpProxyConfig
+        | string
+        | Array<import('../utils.types.ts').HttpProxyConfig | string>
+    }
+    lrcRed?: FeatureToggle & {
+      proxy?:
+        | import('../utils.types.ts').HttpProxyConfig
+        | string
+        | Array<import('../utils.types.ts').HttpProxyConfig | string>
+    }
+    lrclib?: FeatureToggle & {
+      proxy?:
+        | import('../utils.types.ts').HttpProxyConfig
+        | string
+        | Array<import('../utils.types.ts').HttpProxyConfig | string>
+    }
     [source: string]: unknown
   }
 

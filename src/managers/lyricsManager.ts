@@ -26,6 +26,16 @@ export interface TrackInfoLike {
   uri?: string
   /** Human-readable track title. */
   title?: string
+  /** Track artist. */
+  author?: string
+  /** Duration in milliseconds. */
+  length?: number
+  /** International Standard Recording Code. */
+  isrc?: string | null
+  /** Provider identifier (for example a YouTube video ID). */
+  identifier?: string
+  /** Album name when known. */
+  albumName?: string
 }
 
 /**
@@ -56,6 +66,12 @@ export interface LyricsData {
   lines?: LyricsLine[]
   /** Provider that produced the final payload. */
   provider?: string
+  /** Attribution required by some lyrics providers. */
+  attribution?: {
+    name: string
+    url: string
+    submitter?: { name: string; url: string }
+  }
 }
 
 /**
@@ -90,6 +106,15 @@ export interface LyricsManagerContext {
     /** Re-resolves a track URI into reliable source metadata. */
     resolve: (uri: string) => Promise<SourceResult>
   } | null
+  /** Shared proxy pool. */
+  proxyManager?: {
+    getBestProxy: (
+      sourceName: string
+    ) =>
+      | { target?: { url: string; username?: string; password?: string } }
+      | undefined
+    report?: (proxyUrl: string, success: boolean, statusCode: number) => void
+  }
 }
 
 /**

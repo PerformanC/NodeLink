@@ -915,6 +915,12 @@ export const config: NodelinkConfig = {
     lrclib: {
       enabled: true
     },
+    unison: {
+      enabled: true
+    },
+    lrcRed: {
+      enabled: false
+    },
     letrasmus: {
       enabled: true
     },
