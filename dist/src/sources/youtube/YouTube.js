@@ -1964,7 +1964,6 @@ export default class YouTubeSource {
             'songlink',
             'spotify',
             'telegram',
-            'tidal',
             'twitch',
             'tumblr',
             'twitter',
@@ -1982,6 +1981,7 @@ export default class YouTubeSource {
             ...configuredFallbackSources,
             ...defaultSources,
             'soundcloud',
+            'tidal',
             'deezer',
             'jiosaavn',
             'qobuz',
@@ -2004,6 +2004,8 @@ export default class YouTubeSource {
                 !['youtube', 'ytmusic'].includes(name) &&
                 !blockedFallbackSources.has(name) &&
                 sourcesConfig[name]?.enabled &&
+                (name !== 'tidal' ||
+                    sourcesConfig.tidal?.hifiApis?.some((api) => /^https?:\/\//i.test(api))) &&
                 source &&
                 !!source.search &&
                 !!source.getTrackUrl);
@@ -2023,19 +2025,37 @@ export default class YouTubeSource {
                         search.data.length === 0) {
                         continue;
                     }
-                    const bestMatch = getBestMatch(search.data, decodedTrack);
-                    const bestInfo = bestMatch?.info;
-                    if (!bestInfo ||
-                        ['youtube', 'ytmusic'].includes(bestInfo.sourceName)) {
-                        continue;
-                    }
-                    const stream = await this.nodelink.sources?.getTrackUrl(bestInfo, itag ?? undefined, forceRefresh);
-                    if (!stream?.exception) {
-                        logger('warn', 'YouTube', `Fallback source succeeded via ${bestInfo.sourceName} for "${bestInfo.title}".`);
-                        return {
-                            ...stream,
-                            newTrack: bestMatch
-                        };
+                    const candidates = [...search.data];
+                    const maxCandidates = Math.min(candidates.length, 5);
+                    let attemptedCandidates = 0;
+                    while (attemptedCandidates < maxCandidates) {
+                        const bestMatch = getBestMatch(candidates, decodedTrack, {
+                            minScore: 300
+                        });
+                        const bestInfo = bestMatch?.info;
+                        if (!bestMatch ||
+                            !bestInfo ||
+                            ['youtube', 'ytmusic'].includes(bestInfo.sourceName)) {
+                            break;
+                        }
+                        const candidateIndex = candidates.indexOf(bestMatch);
+                        if (candidateIndex >= 0)
+                            candidates.splice(candidateIndex, 1);
+                        attemptedCandidates++;
+                        try {
+                            const stream = await this.nodelink.sources?.getTrackUrl(bestInfo, itag ?? undefined, forceRefresh);
+                            if (!stream?.exception) {
+                                logger('warn', 'YouTube', `Fallback source succeeded via ${bestInfo.sourceName} for "${bestInfo.title}".`);
+                                return {
+                                    ...stream,
+                                    newTrack: bestMatch
+                                };
+                            }
+                            logger('debug', 'YouTube', `Mirror candidate ${bestInfo.sourceName}:${bestInfo.identifier} was not playable: ${stream?.exception?.message || 'no stream URL returned'}`);
+                        }
+                        catch (error) {
+                            logger('debug', 'YouTube', `Mirror candidate ${bestInfo.sourceName}:${bestInfo.identifier} failed: ${error instanceof Error ? error.message : String(error)}`);
+                        }
                     }
                 }
                 catch (e) {

@@ -2618,7 +2618,6 @@ export default class YouTubeSource implements SourceVariantHandler {
       'songlink',
       'spotify',
       'telegram',
-      'tidal',
       'twitch',
       'tumblr',
       'twitter',
@@ -2641,6 +2640,7 @@ export default class YouTubeSource implements SourceVariantHandler {
       ...configuredFallbackSources,
       ...defaultSources,
       'soundcloud',
+      'tidal',
       'deezer',
       'jiosaavn',
       'qobuz',
@@ -2658,7 +2658,7 @@ export default class YouTubeSource implements SourceVariantHandler {
       const source = this.nodelink.sources?.getSource(name)
       const sourcesConfig = (opts.sources ?? {}) as Record<
         string,
-        { enabled?: boolean } | undefined
+        { enabled?: boolean; hifiApis?: string[] } | undefined
       >
       return (
         typeof name === 'string' &&
@@ -2667,6 +2667,10 @@ export default class YouTubeSource implements SourceVariantHandler {
         !['youtube', 'ytmusic'].includes(name) &&
         !blockedFallbackSources.has(name) &&
         sourcesConfig[name]?.enabled &&
+        (name !== 'tidal' ||
+          sourcesConfig.tidal?.hifiApis?.some((api) =>
+            /^https?:\/\//i.test(api)
+          )) &&
         source &&
         !!source.search &&
         !!source.getTrackUrl
@@ -2695,29 +2699,55 @@ export default class YouTubeSource implements SourceVariantHandler {
             continue
           }
 
-          const bestMatch = getBestMatch(search.data, decodedTrack)
-          const bestInfo = (bestMatch as { info?: TrackInfo })?.info
-          if (
-            !bestInfo ||
-            ['youtube', 'ytmusic'].includes(bestInfo.sourceName)
-          ) {
-            continue
-          }
+          const candidates = [...search.data]
+          const maxCandidates = Math.min(candidates.length, 5)
+          let attemptedCandidates = 0
 
-          const stream = await this.nodelink.sources?.getTrackUrl(
-            bestInfo,
-            itag ?? undefined,
-            forceRefresh
-          )
-          if (!(stream as TrackUrlData)?.exception) {
-            logger(
-              'warn',
-              'YouTube',
-              `Fallback source succeeded via ${bestInfo.sourceName} for "${bestInfo.title}".`
-            )
-            return {
-              ...(stream as TrackUrlData),
-              newTrack: bestMatch as { info: TrackInfo }
+          while (attemptedCandidates < maxCandidates) {
+            const bestMatch = getBestMatch(candidates, decodedTrack, {
+              minScore: 300
+            })
+            const bestInfo = (bestMatch as { info?: TrackInfo } | null)?.info
+            if (
+              !bestMatch ||
+              !bestInfo ||
+              ['youtube', 'ytmusic'].includes(bestInfo.sourceName)
+            ) {
+              break
+            }
+
+            const candidateIndex = candidates.indexOf(bestMatch)
+            if (candidateIndex >= 0) candidates.splice(candidateIndex, 1)
+            attemptedCandidates++
+
+            try {
+              const stream = await this.nodelink.sources?.getTrackUrl(
+                bestInfo,
+                itag ?? undefined,
+                forceRefresh
+              )
+              if (!(stream as TrackUrlData)?.exception) {
+                logger(
+                  'warn',
+                  'YouTube',
+                  `Fallback source succeeded via ${bestInfo.sourceName} for "${bestInfo.title}".`
+                )
+                return {
+                  ...(stream as TrackUrlData),
+                  newTrack: bestMatch as { info: TrackInfo }
+                }
+              }
+              logger(
+                'debug',
+                'YouTube',
+                `Mirror candidate ${bestInfo.sourceName}:${bestInfo.identifier} was not playable: ${(stream as TrackUrlData)?.exception?.message || 'no stream URL returned'}`
+              )
+            } catch (error) {
+              logger(
+                'debug',
+                'YouTube',
+                `Mirror candidate ${bestInfo.sourceName}:${bestInfo.identifier} failed: ${error instanceof Error ? error.message : String(error)}`
+              )
             }
           }
         } catch (e) {

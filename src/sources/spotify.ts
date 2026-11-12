@@ -2370,19 +2370,50 @@ export default class SpotifySource implements SourceInstance {
           }
         }
       }
-      const best = getBestMatch(res.data, track, {
-        allowExplicit: this.config.allowExplicit
-      })
-      if (!best) {
-        return {
-          exception: {
-            message: 'No suitable matching alternative was found.',
-            severity: 'fault'
+      const candidates = [...res.data]
+      const maxCandidates = Math.min(candidates.length, 5)
+      let attemptedCandidates = 0
+
+      while (attemptedCandidates < maxCandidates) {
+        const best = getBestMatch(candidates, track, {
+          allowExplicit: this.config.allowExplicit,
+          minScore: 300
+        })
+        if (!best) break
+
+        const candidateIndex = candidates.indexOf(best)
+        if (candidateIndex >= 0) candidates.splice(candidateIndex, 1)
+        attemptedCandidates++
+
+        try {
+          const url = await sm.getTrackUrl(best.info as TrackInfo)
+          if (url.exception) {
+            logger(
+              'debug',
+              'Spotify',
+              `Mirror candidate ${best.info.sourceName}:${best.info.identifier} was not playable: ${url.exception.message}`
+            )
+            continue
           }
+          return { newTrack: { info: best.info as TrackInfo }, ...url }
+        } catch (error) {
+          logger(
+            'debug',
+            'Spotify',
+            `Mirror candidate ${best.info.sourceName}:${best.info.identifier} failed: ${error instanceof Error ? error.message : String(error)}`
+          )
         }
       }
-      const url = await sm.getTrackUrl(best.info as TrackInfo)
-      return { newTrack: { info: best.info as TrackInfo }, ...url }
+
+      return {
+        exception: {
+          message:
+            attemptedCandidates === 0
+              ? 'No suitable matching alternative was found.'
+              : `No playable alternative found among ${attemptedCandidates} matching candidates.`,
+          severity: 'common'
+        }
+      }
     } catch (e) {
       return {
         exception: {
