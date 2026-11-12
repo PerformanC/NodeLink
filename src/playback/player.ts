@@ -450,7 +450,13 @@ export class Player {
   }
 
   private _ensureVoiceConnection(): void {
-    if (this.destroying || this._isVoiceReady()) return
+    if (
+      this.destroying ||
+      this._isVoiceReady() ||
+      this.connStatus === 'connecting'
+    ) {
+      return
+    }
     if (!this.voice.sessionId || !this.voice.token || !this.voice.endpoint)
       return
     try {

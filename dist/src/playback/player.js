@@ -302,8 +302,11 @@ export class Player {
         return (this.connStatus === 'connected' && !!this.connection?.udpInfo?.secretKey);
     }
     _ensureVoiceConnection() {
-        if (this.destroying || this._isVoiceReady())
+        if (this.destroying ||
+            this._isVoiceReady() ||
+            this.connStatus === 'connecting') {
             return;
+        }
         if (!this.voice.sessionId || !this.voice.token || !this.voice.endpoint)
             return;
         try {
@@ -3375,7 +3378,7 @@ export class Player {
         const urlData = await this.nodelink.sources.getTrackUrl(trackInfo);
         if (urlData.exception || token !== this._crossfadeToken)
             return;
-        const fetched = await this._fetchResource(payload.info, urlData, 0, true);
+        const fetched = await this._fetchResource(payload.info, urlData, 0, true, this.getAudioProcessingMode() === 'protected');
         if ('exception' in fetched || token !== this._crossfadeToken) {
             if (!('exception' in fetched))
                 fetched.stream.destroy();
