@@ -2,14 +2,138 @@ import { PassThrough } from 'node:stream';
 import HLSHandler from '../playback/hls/HLSHandler.js';
 import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 const TWITTER_AUTH_BEARER = 'AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA';
-const TWITTER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const TWITTER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
 const TWITTER_PATTERN = /https?:\/\/(?:(?:www|m(?:obile)?)\.)?(?:twitter|x)\.com\/(?:[^/]+)\/status\/(\d+)/i;
 const TWITTER_TOKEN_TTL_MS = 1000 * 60 * 60 * 3;
 const TWITTER_TRACK_CACHE_TTL_MS = 1000 * 60 * 60 * 2;
 /**
+ * GraphQL features payload required by Twitter/X web client endpoints.
+ * @internal
+ */
+const GRAPHQL_FEATURES = {
+    creator_subscriptions_tweet_preview_api_enabled: true,
+    tweetypie_unmention_optimization_enabled: true,
+    responsive_web_edit_tweet_api_enabled: true,
+    graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
+    view_counts_everywhere_api_enabled: true,
+    longform_notetweets_consumption_enabled: true,
+    responsive_web_twitter_article_tweet_consumption_enabled: false,
+    tweet_awards_web_tipping_enabled: false,
+    freedom_of_speech_not_reach_fetch_enabled: true,
+    standardized_nudges_misinfo: true,
+    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+    longform_notetweets_rich_text_read_enabled: true,
+    longform_notetweets_inline_media_enabled: true,
+    responsive_web_graphql_exclude_directive_enabled: true,
+    verified_phone_label_enabled: false,
+    responsive_web_media_download_video_enabled: false,
+    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+    responsive_web_graphql_timeline_navigation_enabled: true,
+    responsive_web_enhance_cards_enabled: false
+};
+/**
+ * GraphQL field toggles payload required by Twitter/X web client endpoints.
+ * @internal
+ */
+const GRAPHQL_FIELD_TOGGLES = {
+    withArticleRichContentState: false
+};
+/**
  * Twitter/X source implementation.
+ *
+ * Resolves public tweets from Twitter/X using the GraphQL API and streams
+ * direct MP4 audio/video or HLS playlists.
+ *
+ * @public
  */
 export default class TwitterSource {
+    /**
+     * Declarative test suite for validating Twitter/X source behavior.
+     */
+    static _TESTS = [
+        {
+            id: 'twitter.video.historyinmemes',
+            name: 'Twitter/X video playback (historyinmemes)',
+            input: {
+                type: 'resolve',
+                value: 'https://x.com/historyinmemes/status/1790637656616943991'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'One of the most intense moments in history'
+                    },
+                    author: {
+                        op: 'matches',
+                        value: 'Historic Vids'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'twitter'
+                    }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 50000,
+                    validFormats: [{ container: 'mp4', codec: 'aac' }]
+                }
+            }
+        },
+        {
+            id: 'twitter.video.captainamerica',
+            name: 'Twitter legacy video resolution (captainamerica)',
+            input: {
+                type: 'resolve',
+                value: 'https://twitter.com/captainamerica/status/719944021058060289'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    author: {
+                        op: 'matches',
+                        value: 'Captain America'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'twitter'
+                    }
+                }
+            }
+        },
+        {
+            id: 'twitter.video.topheroes',
+            name: 'Twitter unified card video resolution (topheroes)',
+            input: {
+                type: 'resolve',
+                value: 'https://x.com/TopHeroes_/status/2001950365332455490'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    author: {
+                        op: 'matches',
+                        value: 'Top Heroes'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'twitter'
+                    }
+                }
+            }
+        }
+    ];
     /**
      * Runtime worker context used by the source implementation.
      */
@@ -136,19 +260,13 @@ export default class TwitterSource {
             return { loadType: 'empty', data: {} };
         }
         try {
-            const features = {
-                creator_subscriptions_tweet_preview_api_enabled: true,
-                responsive_web_graphql_timeline_navigation_enabled: true,
-                longform_notetweets_inline_media_enabled: true,
-                tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true
-            };
             const variables = {
                 tweetId: identifier,
                 withCommunity: false,
                 includePromotedContent: false,
-                withVoice: true
+                withVoice: false
             };
-            const graphResponse = await this.callGraphQL('2ICDjqPd81tulZcYrtpTuQ/TweetResultByRestId', variables, features);
+            const graphResponse = await this.callGraphQL('2ICDjqPd81tulZcYrtpTuQ/TweetResultByRestId', variables);
             const graphPayload = this.parseJsonBody(graphResponse.body);
             if (graphPayload) {
                 const resultRecord = this.getNestedRecord(graphPayload, [
@@ -188,7 +306,7 @@ export default class TwitterSource {
      * @param track Decoded Twitter track information.
      * @param _itag Unused itag placeholder kept for source-manager compatibility.
      * @param forceRefresh Whether to bypass the cache.
-     * @returns Direct playback URL metadata or a structured exception.
+     * @returns Direct playback URL metadata.
      */
     async getTrackUrl(track, _itag, forceRefresh = false) {
         const cacheManager = this.nodelink.trackCacheManager;
@@ -206,13 +324,7 @@ export default class TwitterSource {
         const resolvedTrack = await this.resolve(track.uri);
         const trackData = this.extractTrackFromResult(resolvedTrack);
         if (!trackData) {
-            return {
-                loadType: 'error',
-                exception: {
-                    message: 'Failed to extract Twitter media URL',
-                    severity: 'fault'
-                }
-            };
+            throw new Error('Failed to extract Twitter media URL');
         }
         const resolved = this.createTrackUrlResult(trackData.pluginInfo.directUrl, trackData.pluginInfo.isHLS);
         cacheManager?.set('twitter', track.identifier, resolved, TWITTER_TRACK_CACHE_TTL_MS);
@@ -220,71 +332,131 @@ export default class TwitterSource {
     }
     /**
      * Loads a Twitter media stream. HLS playback is delegated to the HLS handler;
-     * direct MP4 playback is proxied through a `PassThrough` stream.
+     * direct MP4 playback is proxied through a `PassThrough` stream with backpressure.
      *
      * @param _decodedTrack Decoded Twitter track information.
      * @param url Resolved playback URL.
      * @param _protocol Optional protocol hint.
      * @param additionalData Optional playback modifiers.
-     * @returns A readable stream or a structured exception.
+     * @returns A readable stream descriptor.
      */
     async loadStream(_decodedTrack, url, _protocol, additionalData) {
-        try {
-            const streamHeaders = {
-                'User-Agent': TWITTER_USER_AGENT,
-                Referer: 'https://twitter.com/'
-            };
-            const localAddress = this.nodelink.routePlanner?.getIP?.() ?? null;
-            if (url.includes('.m3u8')) {
-                const stream = new HLSHandler(url, {
-                    type: 'fmp4',
-                    strategy: 'segmented',
-                    headers: streamHeaders,
-                    localAddress,
-                    startTime: additionalData?.startTime ?? 0
-                });
-                return { stream, type: 'fmp4' };
-            }
-            const response = await http1makeRequest(url, {
-                method: 'GET',
+        const streamHeaders = {
+            'User-Agent': TWITTER_USER_AGENT,
+            Referer: 'https://x.com/'
+        };
+        const localAddress = this.nodelink.routePlanner?.getIP?.() ?? null;
+        if (url.includes('.m3u8')) {
+            const stream = new HLSHandler(url, {
+                type: 'fmp4',
+                strategy: 'segmented',
                 headers: streamHeaders,
-                streamOnly: true
+                localAddress,
+                startTime: additionalData?.startTime ?? 0
             });
-            if (response.error || !response.stream) {
-                throw new Error(response.error ?? 'Failed to get Twitter media stream');
+            return { stream, type: 'fmp4' };
+        }
+        const response = await http1makeRequest(url, {
+            method: 'GET',
+            headers: streamHeaders,
+            streamOnly: true
+        });
+        if (response.error || !response.stream) {
+            throw new Error(response.error ?? 'Failed to get Twitter media stream');
+        }
+        const stream = new PassThrough();
+        const upstream = response.stream;
+        upstream.on('data', (chunk) => {
+            if (!stream.write(chunk))
+                upstream.pause();
+        });
+        stream.on('drain', () => {
+            if (!stream.destroyed)
+                upstream.resume();
+        });
+        upstream.on('end', () => {
+            if (!stream.writableEnded) {
+                stream.emit('finishBuffering');
+                stream.end();
             }
-            const stream = new PassThrough();
-            let finished = false;
-            const finish = () => {
-                if (finished) {
-                    return;
-                }
-                finished = true;
-                if (!stream.writableEnded) {
-                    stream.emit('finishBuffering');
-                    stream.end();
-                }
+        });
+        upstream.on('error', (err) => {
+            if (!stream.destroyed)
+                stream.destroy(err);
+        });
+        stream.on('close', () => {
+            if (!upstream.destroyed)
+                upstream.destroy();
+        });
+        return { stream, type: 'video/mp4' };
+    }
+    /**
+     * Executes a test variant against the Twitter source.
+     *
+     * @param variant - The test variant to execute.
+     * @param track - The track information.
+     * @param streamSpec - Optional stream validation specifications.
+     * @returns A result object detailing resolution and stream state.
+     */
+    async executeVariant(variant, track, streamSpec) {
+        let urlData;
+        try {
+            urlData = await this.getTrackUrl(track);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: err instanceof Error
+                    ? err.message
+                    : 'Failed to resolve track streaming URL'
             };
-            response.stream.on('data', (chunk) => {
-                if (!stream.destroyed) {
-                    stream.write(chunk);
-                }
-            });
-            response.stream.on('end', finish);
-            response.stream.on('close', finish);
-            response.stream.on('error', (error) => {
-                logger('error', 'Twitter', `External stream error: ${error.message}`);
-                if (!stream.destroyed) {
-                    stream.destroy(error);
-                }
-            });
-            return { stream, type: 'video/mp4' };
         }
-        catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            logger('error', 'Twitter', `Failed to load stream: ${message}`);
-            return { loadType: 'error', exception: { message, severity: 'fault' } };
+        if (!urlData.url) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: 'Failed to resolve track streaming URL'
+            };
         }
+        const container = 'mp4';
+        const codec = 'aac';
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: urlData.newTrack?.info || track,
+                container,
+                codec
+            };
+        }
+        let streamResult;
+        try {
+            streamResult = await this.loadStream(track, urlData.url, urlData.protocol, urlData.additionalData);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: err instanceof Error ? err.message : 'Failed to load audio stream'
+            };
+        }
+        if (!streamResult.stream) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: 'Failed to load audio stream'
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track: urlData.newTrack?.info || track,
+            stream: streamResult.stream,
+            container,
+            codec,
+            httpStatus: 200
+        };
     }
     /**
      * Activates or refreshes the Twitter guest token required by GraphQL calls.
@@ -292,24 +464,32 @@ export default class TwitterSource {
      * @returns `true` when a guest token was obtained.
      */
     async refreshGuestToken() {
-        try {
-            const response = await http1makeRequest('https://api.twitter.com/1.1/guest/activate.json', {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${TWITTER_AUTH_BEARER}`,
-                    'User-Agent': TWITTER_USER_AGENT
+        const endpoints = [
+            'https://api.x.com/1.1/guest/activate.json',
+            'https://api.twitter.com/1.1/guest/activate.json'
+        ];
+        for (const endpoint of endpoints) {
+            try {
+                const response = await http1makeRequest(endpoint, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${TWITTER_AUTH_BEARER}`,
+                        'User-Agent': TWITTER_USER_AGENT
+                    }
+                });
+                const payload = this.parseJsonBody(response.body);
+                const guestToken = payload
+                    ? this.getString(payload, 'guest_token')
+                    : null;
+                if (response.statusCode === 200 && guestToken) {
+                    this.guestToken = guestToken;
+                    this.tokenExpiry = Date.now() + TWITTER_TOKEN_TTL_MS;
+                    return true;
                 }
-            });
-            const payload = this.parseJsonBody(response.body);
-            const guestToken = payload ? this.getString(payload, 'guest_token') : null;
-            if (response.statusCode === 200 && guestToken) {
-                this.guestToken = guestToken;
-                this.tokenExpiry = Date.now() + TWITTER_TOKEN_TTL_MS;
-                return true;
             }
-        }
-        catch (error) {
-            logger('error', 'Twitter', `Guest token activation failed: ${error instanceof Error ? error.message : String(error)}`);
+            catch (error) {
+                logger('debug', 'Twitter', `Guest token activation failed on ${endpoint}: ${error instanceof Error ? error.message : String(error)}`);
+            }
         }
         return false;
     }
@@ -330,24 +510,46 @@ export default class TwitterSource {
      * @param operation GraphQL operation identifier.
      * @param variables GraphQL variables payload.
      * @param features GraphQL features payload.
+     * @param fieldToggles GraphQL field toggles payload.
      * @returns Raw HTTP response from the GraphQL endpoint.
      */
-    async callGraphQL(operation, variables, features) {
+    async callGraphQL(operation, variables, features = GRAPHQL_FEATURES, fieldToggles = GRAPHQL_FIELD_TOGGLES) {
         if (!this.guestToken || Date.now() > this.tokenExpiry) {
             await this.refreshGuestToken();
         }
-        const url = `https://twitter.com/i/api/graphql/${operation}?variables=${encodeURIComponent(JSON.stringify(variables))}` +
-            `&features=${encodeURIComponent(JSON.stringify(features))}`;
-        return http1makeRequest(url, {
-            headers: {
-                Authorization: `Bearer ${TWITTER_AUTH_BEARER}`,
-                'x-guest-token': this.guestToken ?? '',
-                'x-twitter-active-user': 'yes',
-                'x-twitter-client-language': 'en',
-                'User-Agent': TWITTER_USER_AGENT,
-                Referer: 'https://twitter.com/'
+        const queryParts = [
+            `variables=${encodeURIComponent(JSON.stringify(variables))}`,
+            `features=${encodeURIComponent(JSON.stringify(features))}`
+        ];
+        if (fieldToggles && Object.keys(fieldToggles).length > 0) {
+            queryParts.push(`fieldToggles=${encodeURIComponent(JSON.stringify(fieldToggles))}`);
+        }
+        const queryString = queryParts.join('&');
+        const endpoints = [
+            `https://x.com/i/api/graphql/${operation}?${queryString}`,
+            `https://twitter.com/i/api/graphql/${operation}?${queryString}`
+        ];
+        for (const url of endpoints) {
+            try {
+                const response = await http1makeRequest(url, {
+                    headers: {
+                        Authorization: `Bearer ${TWITTER_AUTH_BEARER}`,
+                        'x-guest-token': this.guestToken ?? '',
+                        'x-twitter-active-user': 'yes',
+                        'x-twitter-client-language': 'en',
+                        'User-Agent': TWITTER_USER_AGENT,
+                        Referer: 'https://x.com/'
+                    }
+                });
+                if (response.statusCode === 200) {
+                    return response;
+                }
             }
-        });
+            catch {
+                // Fallback to next endpoint
+            }
+        }
+        return { statusCode: 500, body: null, headers: {} };
     }
     /**
      * Reads the configured maximum number of search results.
@@ -408,29 +610,96 @@ export default class TwitterSource {
     }
     /**
      * Extracts normalized track fields from a GraphQL tweet result.
+     * Supports standard media, retweeted/quoted status media, and unified_card video entities.
      *
      * @param result Unwrapped tweet result.
      * @param url Canonical tweet URL.
      * @returns Normalized track fields or `null` when no playable media exists.
      */
     extractTrackInputFromGraphql(result, url) {
-        const legacy = this.getRecord(result, 'legacy');
+        let tweet = result;
+        if (this.getString(tweet, '__typename') === 'TweetWithVisibilityResults') {
+            const unwrapped = this.getRecord(tweet, 'tweet');
+            if (unwrapped)
+                tweet = unwrapped;
+        }
+        const legacy = this.getRecord(tweet, 'legacy');
         if (!legacy) {
             return null;
         }
-        const identifier = this.getString(legacy, 'id_str');
-        const text = this.getString(legacy, 'full_text');
-        const media = this.findMediaRecord(this.getNestedRecord(legacy, ['extended_entities']));
-        if (!identifier || !media) {
-            return null;
+        const identifier = this.getString(legacy, 'id_str') ?? this.getString(tweet, 'rest_id');
+        const text = this.getString(legacy, 'full_text') ?? this.getString(legacy, 'text');
+        // 1. Direct extended_entities media
+        let media = this.findMediaRecord(this.getNestedRecord(legacy, ['extended_entities']));
+        // 2. Retweeted / Quoted status media
+        if (!media) {
+            const retweeted = this.getNestedRecord(legacy, [
+                'retweeted_status_result',
+                'result'
+            ]);
+            if (retweeted) {
+                media = this.findMediaRecord(this.getNestedRecord(retweeted, ['legacy', 'extended_entities']));
+            }
         }
-        const videoInfo = this.getRecord(media, 'video_info');
-        const variants = videoInfo ? this.getVariants(videoInfo, 'variants') : [];
+        if (!media) {
+            const quoted = this.getNestedRecord(tweet, [
+                'quoted_status_result',
+                'result'
+            ]);
+            if (quoted) {
+                media = this.findMediaRecord(this.getNestedRecord(quoted, ['legacy', 'extended_entities']));
+            }
+        }
+        // 3. Unified card media
+        let cardArtworkUrl = null;
+        let cardDuration = null;
+        let cardVariants = [];
+        if (!media) {
+            const card = this.getRecord(tweet, 'card');
+            const bindingValues = card
+                ? this.getArray(this.getRecord(card, 'legacy') ?? card, 'binding_values')
+                : [];
+            for (const val of bindingValues) {
+                const bindingRecord = this.getRecordFromValue(val);
+                if (this.getString(bindingRecord ?? {}, 'key') === 'unified_card') {
+                    const stringVal = this.getNestedRecord(bindingRecord ?? {}, ['value']);
+                    const jsonStr = this.getString(stringVal ?? {}, 'string_value');
+                    if (jsonStr) {
+                        try {
+                            const parsed = JSON.parse(jsonStr);
+                            const mediaEntities = parsed.media_entities;
+                            if (mediaEntities && typeof mediaEntities === 'object') {
+                                for (const entity of Object.values(mediaEntities)) {
+                                    const entRecord = entity;
+                                    if (entRecord.type === 'video' ||
+                                        entRecord.type === 'animated_gif') {
+                                        const videoInfo = this.getRecord(entRecord, 'video_info');
+                                        if (videoInfo) {
+                                            cardVariants = this.getVariants(videoInfo, 'variants');
+                                            cardArtworkUrl = this.getString(entRecord, 'media_url_https');
+                                            cardDuration = this.getNumber(videoInfo, 'duration_millis');
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch {
+                            // Ignore invalid JSON in unified_card
+                        }
+                    }
+                }
+            }
+        }
+        const variants = media
+            ? this.getVariants(this.getRecord(media, 'video_info') ?? {}, 'variants')
+            : cardVariants;
         const bestVariant = this.selectBestVariant(variants);
-        if (!bestVariant?.url) {
+        if (!identifier || !bestVariant?.url) {
             return null;
         }
-        const authorName = this.getString(this.getNestedRecord(result, [
+        const videoInfo = media ? this.getRecord(media, 'video_info') : null;
+        const authorName = this.getString(this.getNestedRecord(tweet, [
             'core',
             'user_results',
             'result',
@@ -439,12 +708,14 @@ export default class TwitterSource {
         return {
             identifier,
             author: authorName,
-            length: videoInfo
-                ? (this.getNumber(videoInfo, 'duration_millis') ?? 0)
-                : 0,
+            length: (videoInfo ? this.getNumber(videoInfo, 'duration_millis') : null) ??
+                cardDuration ??
+                0,
             title: this.normalizeTitle(text),
             uri: url,
-            artworkUrl: this.getString(media, 'media_url_https'),
+            artworkUrl: media
+                ? this.getString(media, 'media_url_https')
+                : cardArtworkUrl,
             directUrl: bestVariant.url
         };
     }

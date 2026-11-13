@@ -12,6 +12,17 @@ const CHANNELS = 2
  */
 export default class Distortion extends AnimatableFilter {
   public priority = 10
+  public override audioCapabilities = {
+    sampleFormats: ['f32le'] as const,
+    amplitudeBehavior: 'bounded' as const,
+    amplitudeProcessing: 'nonlinear' as const,
+    amplitudeBounds: {
+      min: -1,
+      max: 1,
+      method: 'hard-clamp' as const,
+      intentional: true
+    }
+  }
   private sinOffset = 0
   private sinScale = 1
   private cosOffset = 0
@@ -103,6 +114,28 @@ export default class Distortion extends AnimatableFilter {
       chunk.writeInt16LE(clamp16Bit(out * 32768), i)
     }
 
+    return chunk
+  }
+
+  /** Float32 distortion path; its explicit hard clamp is the configured effect. */
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 4 !== 0)
+      throw new RangeError(
+        'Distortion Float32 input must contain complete samples'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    for (let i = 0; i < chunk.length; i += 4) {
+      const sample = chunk.readFloatLE(i)
+      let processed =
+        Math.sin(sample * this.sinScale + this.sinOffset) +
+        Math.cos(sample * this.cosScale + this.cosOffset) +
+        Math.tan(sample * this.tanScale + this.tanOffset) +
+        sample * this.scale +
+        this.offset
+      processed = Math.max(-1, Math.min(1, processed))
+      chunk.writeFloatLE(sample + this.alpha * (processed - sample), i)
+    }
     return chunk
   }
 

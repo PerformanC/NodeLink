@@ -6,6 +6,44 @@ import { encodeTrack, logger, makeRequest } from '../utils.js';
  */
 export default class FlowerySource {
     /**
+     * Declarative test suite for validating Flowery TTS source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'flowery.tts.resolve',
+            name: 'Flowery TTS URL resolution (ftts://)',
+            input: {
+                type: 'resolve',
+                value: 'ftts://Hello%20world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    author: { op: 'equals', value: 'Flowery TTS' },
+                    sourceName: { op: 'equals', value: 'flowery' }
+                }
+            }
+        },
+        {
+            id: 'flowery.tts.search',
+            name: 'Flowery TTS Search query (ftts:)',
+            input: {
+                type: 'search',
+                searchType: 'ftts',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    sourceName: { op: 'equals', value: 'flowery' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -483,7 +521,17 @@ export default class FlowerySource {
                 return cached;
             }
         }
-        const normalized = this.forceMp3Url(track.uri);
+        let uriToUse = track.uri;
+        try {
+            const parsed = new URL(uriToUse);
+            if (parsed.origin !== 'https://api.flowery.pw') {
+                uriToUse = this.buildUrl(track.title.replace(/^TTS:\s*/, ''));
+            }
+        }
+        catch {
+            uriToUse = this.buildUrl(track.title.replace(/^TTS:\s*/, ''));
+        }
+        const normalized = this.forceMp3Url(uriToUse);
         try {
             this.nodelink.trackCacheManager?.set('flowery', track.identifier, normalized);
         }
@@ -510,6 +558,10 @@ export default class FlowerySource {
         logger('debug', 'Sources', `Loading Flowery TTS stream for "${decodedTrack.title}"`);
         const finalUrl = this.forceMp3Url(url).url;
         try {
+            const parsed = new URL(finalUrl);
+            if (parsed.origin !== 'https://api.flowery.pw') {
+                throw new Error('Invalid Flowery TTS URL destination.');
+            }
             const response = await makeRequest(finalUrl, {
                 method: 'GET',
                 streamOnly: true,

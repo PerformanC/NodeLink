@@ -105,6 +105,8 @@ export interface HttpRequestOptions {
   disableBodyCompression?: boolean
   /** Maximum number of redirects to follow. */
   maxRedirects?: number
+  /** Validates a redirect target before following it. Returning false aborts the redirect. */
+  shouldFollowRedirect?: (nextUrl: URL, currentUrl: URL) => boolean
   /** Local interface address to bind to. */
   localAddress?: string
   /** Custom HTTP agent override. */
@@ -314,7 +316,7 @@ export interface PlayerConnectionRuntime {
  */
 export interface PlayerRuntime {
   /** Voice connection for the player. */
-  connection: PlayerConnectionRuntime | null
+  connection?: PlayerConnectionRuntime | null
 }
 
 /**
@@ -373,6 +375,8 @@ export interface BestMatchOptions {
   durationTolerance?: number
   /** Whether explicit tracks are allowed. */
   allowExplicit?: boolean
+  /** Reject the best candidate when its score is below this threshold. */
+  minScore?: number
 }
 
 /**
@@ -400,12 +404,43 @@ export interface BestMatchCandidate {
 }
 
 /**
+ * Sensitive data redaction settings.
+ * @public
+ */
+export interface LoggingRedactionConfig {
+  /** Enables log redaction of sensitive data. */
+  enabled?: boolean
+  /** Redaction mode: 'mask' (default), 'trace' (pseudonymization), or 'off'. */
+  mode?: 'mask' | 'trace' | 'off'
+  /** Redact IPv4 and IPv6 addresses (including inside URLs). */
+  ips?: boolean
+  /** Redact tokens and keys with prefix preservation. */
+  tokens?: boolean
+  /** Redact passwords and proxy credentials. */
+  passwords?: boolean
+  /** Redact local OS user home paths. */
+  userPaths?: boolean
+  /** Redact Wi-Fi SSIDs and network details. */
+  networkInfo?: boolean
+  /** Redact cookies. */
+  cookies?: boolean
+  /** Redact email addresses. */
+  emails?: boolean
+  /** Redact Discord snowflake IDs (guildId, userId). */
+  discordIds?: boolean
+  /** Redact logged account names and IDs. */
+  accountInfo?: boolean
+}
+
+/**
  * Logging configuration used by NodeLink utilities.
  * @public
  */
 export interface LoggingConfig {
   /** Minimum log level to output. */
   level?: 'debug' | 'info' | 'warn' | 'error'
+  /** Sensitive data redaction settings. */
+  redaction?: LoggingRedactionConfig
   /** File logging configuration. */
   file?: {
     /** Whether file logging is enabled. */
@@ -416,6 +451,8 @@ export interface LoggingConfig {
     rotation?: 'session' | 'hourly' | 'daily'
     /** Time-to-live for log files in days. */
     ttlDays?: number
+    /** Whether to redact sensitive information in log files. */
+    redactSensitive?: boolean
   }
   /** Debug category toggles. */
   debug?: Record<string, boolean> & {

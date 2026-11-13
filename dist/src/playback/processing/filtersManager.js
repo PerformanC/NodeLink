@@ -18,6 +18,7 @@ import Tesseract from '../filters/tesseract.js';
 import Timescale from '../filters/timescale.js';
 import Tremolo from '../filters/tremolo.js';
 import Vibrato from '../filters/vibrato.js';
+import { assertAudioCapabilities } from './audioContract.js';
 const FILTER_CLASSES = {
     tremolo: Tremolo,
     vibrato: Vibrato,
@@ -68,6 +69,8 @@ export class FiltersManager extends Transform {
      * @internal
      */
     filterInstances;
+    processingMode;
+    completedInitialUpdate = false;
     /**
      * When true, _transform passes chunks through without processing.
      * Used by transition handling to avoid double-processing: the upstream
@@ -82,9 +85,10 @@ export class FiltersManager extends Transform {
      * @param initialFilters - Initial filter payload.
      * @param options - Transform options for the stream pipeline.
      */
-    constructor(nodelink, initialFilters = {}, options = {}) {
+    constructor(nodelink, initialFilters = {}, options = {}, processingMode = 'legacy') {
         super(options);
         this.nodelink = nodelink;
+        this.processingMode = processingMode;
         this.activeFilters = [];
         this.filterInstances = {};
         if (this.nodelink.extensions?.filters) {
@@ -104,6 +108,11 @@ export class FiltersManager extends Transform {
         for (const name in settings) {
             const canonical = CANONICAL_KEY_MAP[name.toLowerCase()] ?? name.toLowerCase();
             normalizedSettings[canonical] = settings[name];
+        }
+        if (this.processingMode === 'protected') {
+            this._updateProtected(normalizedSettings);
+            this.completedInitialUpdate = true;
+            return;
         }
         const updatedKeys = new Set();
         for (const name in normalizedSettings) {
@@ -132,6 +141,58 @@ export class FiltersManager extends Transform {
             }
         }
         this.activeFilters.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+        this.completedInitialUpdate = true;
+    }
+    _updateProtected(settings) {
+        const updatedKeys = new Set();
+        const staged = { ...this.filterInstances };
+        const replaced = [];
+        for (const [name, config] of Object.entries(settings)) {
+            if (!config)
+                continue;
+            updatedKeys.add(name);
+            const Filter = FILTER_CLASSES[name];
+            const existing = this.filterInstances[name];
+            if (!Filter && existing && this.completedInitialUpdate) {
+                throw new Error(`Protected mode cannot atomically update extension filter '${name}' while it is active; recreate the audio resource to apply the change`);
+            }
+            const candidate = Filter ? new Filter() : existing;
+            const capabilities = candidate?.audioCapabilities;
+            if (!capabilities)
+                throw new Error(`Protected mode rejected filter '${name}' without an explicit Float32/amplitude capability declaration`);
+            assertAudioCapabilities(capabilities);
+            const deliberateBound = capabilities.amplitudeBehavior === 'bounded' &&
+                capabilities.amplitudeBounds.intentional;
+            if (!capabilities.sampleFormats.includes('f32le') ||
+                (capabilities.amplitudeBehavior !== 'preserves-headroom' &&
+                    !deliberateBound)) {
+                throw new Error(`Protected mode requires filter '${name}' to accept f32le and preserve headroom or declare intentional amplitude shaping`);
+            }
+            if (!candidate?.processFloat32)
+                throw new Error(`Protected mode filter '${name}' declares Float32 support without a processFloat32 implementation`);
+            if (Filter) {
+                candidate.update?.(settings);
+                staged[name] = candidate;
+                if (existing)
+                    replaced.push(existing);
+            }
+            else if (candidate) {
+                candidate.update?.(settings);
+            }
+        }
+        const active = [];
+        for (const [name, instance] of Object.entries(staged)) {
+            if (!instance)
+                continue;
+            if (updatedKeys.has(name) || instance.isActive?.())
+                active.push(instance);
+        }
+        active.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+        // Commit only after all validation and construction succeeded.
+        this.filterInstances = staged;
+        this.activeFilters = active;
+        for (const instance of replaced)
+            instance.destroy?.();
     }
     /**
      * Processes a PCM buffer through the active filter chain.
@@ -146,7 +207,14 @@ export class FiltersManager extends Transform {
         for (const filter of this.activeFilters) {
             if (filter.isActive?.() === false)
                 continue;
-            processed = filter.process(processed);
+            if (this.processingMode === 'protected') {
+                if (!filter.processFloat32)
+                    throw new Error('Protected filter has no Float32 processor');
+                processed = filter.processFloat32(processed);
+            }
+            else {
+                processed = filter.process(processed);
+            }
         }
         return processed;
     }
@@ -157,8 +225,11 @@ export class FiltersManager extends Transform {
         const flushedChunks = [];
         let totalLength = 0;
         for (const filter of this.activeFilters) {
-            if (filter.flush) {
-                const flushed = filter.flush();
+            const flush = this.processingMode === 'protected'
+                ? (filter.flushFloat32 ?? filter.flush)
+                : filter.flush;
+            if (flush) {
+                const flushed = flush.call(filter);
                 if (flushed && flushed.length > 0) {
                     flushedChunks.push(flushed);
                     totalLength += flushed.length;

@@ -28,6 +28,7 @@ import {
   BaseClient,
   buildTrack,
   checkURLType,
+  extractPlaylistSelection,
   YOUTUBE_CONSTANTS
 } from '../common.ts'
 
@@ -82,6 +83,14 @@ export default class AndroidVR extends BaseClient {
    * @returns Always false for the ANDROID_VR client
    */
   override requirePlayerScript(): boolean {
+    return false
+  }
+
+  /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
     return false
   }
 
@@ -294,9 +303,13 @@ export default class AndroidVR extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
 
-        if (!playlistIdMatch?.[1]) {
+        if (!playlistId) {
           logger(
             'error',
             'YouTube-AndroidVR',
@@ -311,10 +324,6 @@ export default class AndroidVR extends BaseClient {
             }
           }
         }
-
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
 
         const requestBody: Record<string, unknown> = {
           context: this.getClient(context),
@@ -357,7 +366,9 @@ export default class AndroidVR extends BaseClient {
           playlistId,
           currentVideoId,
           playlistResponse,
-          sourceName
+          sourceName,
+          context,
+          targetIndex
         )
       }
 

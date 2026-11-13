@@ -1,11 +1,19 @@
-import { PassThrough } from 'node:stream'
+import { PassThrough, Readable } from 'node:stream'
 import HLSHandler from '../../playback/hls/HLSHandler.ts'
 import type { SabrStreamConfig } from '../../typings/sources/sabr.types.ts'
 import type {
+  PlaylistData,
   SourceResult,
   TrackInfo,
   WorkerNodeLink
 } from '../../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../../typings/sources/test.types.ts'
 import type {
   CancelSignal,
   ClientClassMap,
@@ -24,6 +32,7 @@ import type {
   TrackEncodeInput
 } from '../../typings/utils.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -34,10 +43,12 @@ import CipherManager from './CipherManager.ts'
 import {
   checkURLType,
   YOUTUBE_CONSTANTS,
+  YOUTUBE_WEBM_ITAGS,
   type YouTubeContext
 } from './common.ts'
 import YouTubeLiveChat from './LiveChat.ts'
 import OAuth from './OAuth.ts'
+import { parsePlaylistMeta, type YouTubePlaylistMeta } from './playlistMeta.ts'
 import { SabrStream } from './sabr/sabr.ts'
 
 /** Size in bytes of each range-request chunk for direct HTTP streaming. */
@@ -54,6 +65,14 @@ const VISITOR_DATA_INTERVAL = 3_600_000
 
 /** PassThrough buffer size. 48KB = ~3s of 128kbps Opus, enough to cover reconnect gaps. */
 const STREAM_BUFFER_SIZE = 48 * 1024
+
+/** WebM Cluster element header bytes (0x1F, 0x43, 0xB6, 0x75). */
+const WEBM_CLUSTER_MAGIC = Buffer.from([0x1f, 0x43, 0xb6, 0x75])
+
+/** Header probe windows (bytes) for the Cluster search on seek. Long
+ * files carry big Cues/SeekHead sections, so the first Cluster may sit
+ * well past 32KB; each window costs one small range request. */
+const WEBM_SEEK_PROBE_WINDOWS = [32767, 262143, 1048575]
 
 /** Refresh URL before YouTube's ~6h expiry. */
 const URL_MAX_AGE_MS = 4.5 * 60 * 60 * 1000
@@ -181,7 +200,690 @@ class YouTubeProxyManager {
  *
  * @public
  */
-export default class YouTubeSource {
+export default class YouTubeSource implements SourceVariantHandler {
+  /**
+   * Declarative test suite covering all supported YouTube URL types, client variants,
+   * search protocols, recommendations, and playback validation.
+   */
+  public static readonly _TESTS: readonly SourceTestCase[] = [
+    {
+      id: 'youtube.video.standard_film',
+      name: 'Full-length open movie standard playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.youtube.com/watch?v=eRsGyueVLvQ'
+      },
+      matrix: {
+        variants: [
+          { id: 'Web', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'IOS' },
+          { id: 'TV' },
+          { id: 'AndroidVR' },
+          { id: 'VisionOs' }
+        ]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'eRsGyueVLvQ' },
+          title: { op: 'matches', value: 'Sintel' },
+          author: { op: 'matches', value: 'Blender' },
+          length: { op: 'between', min: 850000, max: 950000 }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 1000000,
+          validFormats: [
+            { container: 'webm', codec: 'opus' },
+            { container: 'mp4', codec: 'aac' }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist'],
+        metadata: {
+          length: { op: 'at-most', value: 0 }
+        }
+      }
+    },
+    {
+      id: 'youtube.video.standard_music',
+      name: 'Original music video standard playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.youtube.com/watch?v=K4DyBUG242c'
+      },
+      matrix: {
+        variants: [
+          { id: 'Web', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'IOS' },
+          { id: 'TV' },
+          { id: 'AndroidVR' },
+          { id: 'VisionOs' }
+        ]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'K4DyBUG242c' },
+          title: { op: 'matches', value: 'On & On' },
+          author: { op: 'matches', value: 'NoCopyrightSounds' },
+          length: { op: 'between', min: 200000, max: 230000 }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 1000000,
+          validFormats: [
+            { container: 'webm', codec: 'opus' },
+            { container: 'mp4', codec: 'aac' }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist'],
+        metadata: {
+          length: { op: 'at-most', value: 0 }
+        }
+      }
+    },
+    {
+      id: 'youtube.video.short_url',
+      name: 'Shortened URL format resolution (youtu.be)',
+      input: {
+        type: 'resolve',
+        value: 'https://youtu.be/K4DyBUG242c'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'K4DyBUG242c' },
+          title: { op: 'matches', value: 'On & On' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.video.short_url_alt',
+      name: 'Alternative shortened URL format resolution (youtu.be)',
+      input: {
+        type: 'resolve',
+        value: 'https://youtu.be/7-rXQALDv-4'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: '7-rXQALDv-4' },
+          title: { op: 'matches', value: 'Sneaky Snitch' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.video.short_url_timestamp',
+      name: 'Shortened URL with timestamp parameter',
+      input: {
+        type: 'resolve',
+        value: 'https://youtu.be/eRsGyueVLvQ?t=15s'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'eRsGyueVLvQ' },
+          title: { op: 'matches', value: 'Sintel' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.video.complex_query',
+      name: 'Video URL with mixed query and tracking parameters',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/watch?v=41hv2tW5Lc4&t=30s&feature=shared&si=nodelink_test'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: '41hv2tW5Lc4' },
+          title: { op: 'matches', value: 'Tears of Steel' },
+          author: { op: 'matches', value: 'Blender' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.video.complex_query_alt',
+      name: 'Alternative video URL with timestamp and channel parameters',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/watch?v=eRsGyueVLvQ&t=1m30s&ab_channel=Blender'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'eRsGyueVLvQ' },
+          title: { op: 'matches', value: 'Sintel' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.video.duplicate_param',
+      name: 'Multiple video ID parameters (preserve first ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://www.youtube.com/watch?v=K4DyBUG242c&v=41hv2tW5Lc4'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'K4DyBUG242c' },
+          title: { op: 'matches', value: 'On & On' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.video.duplicate_param_alt',
+      name: 'Alternative duplicate video ID parameters (preserve first ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://www.youtube.com/watch?v=7-rXQALDv-4&v=eRsGyueVLvQ'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: '7-rXQALDv-4' },
+          title: { op: 'matches', value: 'Sneaky Snitch' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.video.shorts',
+      name: 'YouTube Shorts playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.youtube.com/shorts/SysWMs3zfHg'
+      },
+      matrix: {
+        variants: [
+          { id: 'Web', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'IOS' }
+        ]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'SysWMs3zfHg' },
+          length: { op: 'at-least', value: 5000 }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [
+            { container: 'webm', codec: 'opus' },
+            { container: 'mp4', codec: 'aac' }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist'],
+        metadata: {
+          length: { op: 'at-most', value: 0 }
+        }
+      }
+    },
+    {
+      id: 'youtube.video.live_route',
+      name: 'Live route URL normalization (/live/)',
+      input: {
+        type: 'resolve',
+        value: 'https://www.youtube.com/live/qVv6vCqciTM'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'qVv6vCqciTM' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.music.track_ncs',
+      name: 'YouTube Music track resolution and playback',
+      input: {
+        type: 'resolve',
+        value: 'https://music.youtube.com/watch?v=K4DyBUG242c'
+      },
+      matrix: {
+        variants: [
+          { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'IOS' }
+        ]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'K4DyBUG242c' },
+          title: { op: 'matches', value: 'On & On' }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 1000000,
+          validFormats: [
+            { container: 'webm', codec: 'opus' },
+            { container: 'mp4', codec: 'aac' }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.music.track_bgm',
+      name: 'YouTube Music background score track resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://music.youtube.com/watch?v=7-rXQALDv-4'
+      },
+      matrix: {
+        variants: [
+          { id: 'Android', skip: { reason: 'SABR streaming skipped for now' } },
+          { id: 'IOS' }
+        ]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          identifier: { op: 'equals', value: '7-rXQALDv-4' },
+          title: { op: 'matches', value: 'Sneaky Snitch' }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 500000,
+          validFormats: [
+            { container: 'webm', codec: 'opus' },
+            { container: 'mp4', codec: 'aac' }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'playlist']
+      }
+    },
+    {
+      id: 'youtube.playlist.standard',
+      name: 'YouTube Playlist collection',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/playlist?list=PLFgquLnL59alCl_2TQvOiD5Vgm1hCaGSI'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 2,
+          maxItems: 500,
+          selectTrackForStream: 'first'
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
+      id: 'youtube.playlist.selected_track_with_index',
+      name: 'YouTube Playlist with selected video ID and index parameter',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/watch?v=eHKoKmM-IgQ&list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=2'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 2,
+          maxItems: 50,
+          expectedSelectedTrack: 1
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'eHKoKmM-IgQ' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
+      id: 'youtube.playlist.music_selected_track',
+      name: 'YouTube Music playlist with selected video ID',
+      input: {
+        type: 'resolve',
+        value:
+          'https://music.youtube.com/watch?v=MMvlxSupSVE&list=PLWmSicW7P1ks'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 20,
+          maxItems: 150,
+          expectedSelectedTrack: { op: 'at-least', value: 0 }
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'MMvlxSupSVE' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
+      id: 'youtube.playlist.short_url_with_index',
+      name: 'Short youtu.be link with playlist and index parameter',
+      input: {
+        type: 'resolve',
+        value:
+          'https://youtu.be/eHKoKmM-IgQ?list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=2'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 2,
+          maxItems: 50,
+          expectedSelectedTrack: 1
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'eHKoKmM-IgQ' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
+      id: 'youtube.playlist.conflict_video_priority',
+      name: 'Video ID takes precedence over conflicting index parameter',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/watch?v=eHKoKmM-IgQ&list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=15'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 2,
+          maxItems: 50,
+          expectedSelectedTrack: 1
+        },
+        metadata: {
+          identifier: { op: 'equals', value: 'eHKoKmM-IgQ' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
+      id: 'youtube.playlist.invalid_index_fallback',
+      name: 'Out-of-bounds index falls back safely to initial track',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/playlist?list=PLKNR-cZEnyGX_yldhMWMAps-4rOSdzTvO&index=9999'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 2,
+          maxItems: 50,
+          expectedSelectedTrack: 0
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'track']
+      }
+    },
+    {
+      id: 'youtube.search.video_standard',
+      name: 'YouTube standard search query (ytsearch)',
+      input: {
+        type: 'search',
+        value: 'blender foundation sintel open movie',
+        searchType: 'ytsearch'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1,
+          maxItems: 50,
+          selectTrackForStream: 'first'
+        }
+      },
+      forbid: {
+        resultTypes: ['empty']
+      }
+    },
+    {
+      id: 'youtube.search.music',
+      name: 'YouTube Music search query (ytmsearch)',
+      input: {
+        type: 'search',
+        value: 'kevin macleod sneaky snitch',
+        searchType: 'ytmsearch'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1,
+          maxItems: 50,
+          selectTrackForStream: 'first'
+        }
+      },
+      forbid: {
+        resultTypes: ['empty']
+      }
+    },
+    {
+      id: 'youtube.search.video_ncs',
+      name: 'Alternative YouTube standard search query (ytsearch)',
+      input: {
+        type: 'search',
+        value: 'nocopyrightsounds cartoon on & on',
+        searchType: 'ytsearch'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1,
+          maxItems: 50,
+          selectTrackForStream: 'first'
+        }
+      },
+      forbid: {
+        resultTypes: ['empty']
+      }
+    },
+    {
+      id: 'youtube.recommendations_ncs',
+      name: 'YouTube track recommendations query for NCS track (ytrec)',
+      input: {
+        type: 'search',
+        value: 'K4DyBUG242c',
+        searchType: 'ytrec'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 1,
+          maxItems: 50,
+          selectTrackForStream: 'first'
+        }
+      },
+      forbid: {
+        resultTypes: ['empty']
+      }
+    },
+    {
+      id: 'youtube.recommendations_bgm',
+      name: 'YouTube track recommendations query for BGM track (ytrec)',
+      input: {
+        type: 'search',
+        value: '7-rXQALDv-4',
+        searchType: 'ytrec'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 1,
+          maxItems: 50,
+          selectTrackForStream: 'first'
+        }
+      },
+      forbid: {
+        resultTypes: ['empty']
+      }
+    },
+    {
+      id: 'youtube.url.search_music',
+      name: 'YouTube Music browser search URL resolution (/search?q=...)',
+      input: {
+        type: 'resolve',
+        value:
+          'https://music.youtube.com/search?q=Flua+em+mim+Esther+e+Alexsander+L%C3%BAcio'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'youtube.url.search_standard',
+      name: 'YouTube standard browser search URL resolution (/results?search_query=...)',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.youtube.com/results?search_query=nocopyrightsounds+cartoon'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'youtube.url.browse_album',
+      name: 'YouTube Music browse album URL resolution (/browse/MPREb_...)',
+      input: {
+        type: 'resolve',
+        value: 'https://music.youtube.com/browse/MPREb_9NVCyyrFYjX'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
   /** Reference to the global NodeLink context used for configuration, caching, and source delegation. */
   private nodelink: WorkerNodeLink
 
@@ -260,9 +962,9 @@ export default class YouTubeSource {
     this.searchTerms = ['ytsearch', 'ytmsearch']
     this.recommendationTerm = ['ytrec']
     this.patterns = [
-      /^https?:\/\/(?:www\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|live\/[\w-]+)|youtu\.be\/[\w-]+)/,
-      /^https?:\/\/(?:www\.)?youtube\.com\/shorts\/[\w-]+/,
-      /^https?:\/\/music\.youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+)/
+      /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|live\/[\w-]+|results\?(?:[^#]*&)?(?:search_query|q)=[^&#]+|browse\/[\w-]+)|youtu\.be\/[\w-]+)/,
+      /^https?:\/\/(?:www\.|m\.)?youtube\.com\/shorts\/[\w-]+/,
+      /^https?:\/\/music\.youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|search\?(?:[^#]*&)?(?:q|search_query)=[^&#]+|browse\/[\w-]+)/
     ]
 
     this.priority = 100
@@ -333,6 +1035,7 @@ export default class YouTubeSource {
       { default: Android },
       { default: AndroidVR },
       { default: IOS },
+      { default: IOSProducer },
       { default: Music },
       { default: WebRemix },
       { default: TV },
@@ -345,6 +1048,7 @@ export default class YouTubeSource {
       import('./clients/Android.ts'),
       import('./clients/AndroidVR.ts'),
       import('./clients/IOS.ts'),
+      import('./clients/IOSProducer.ts'),
       import('./clients/Music.ts'),
       import('./clients/Web_Remix.ts'),
       import('./clients/TV.ts'),
@@ -359,6 +1063,7 @@ export default class YouTubeSource {
       Android,
       AndroidVR,
       IOS,
+      IOSProducer,
       Music,
       WebRemix,
       TV,
@@ -493,28 +1198,14 @@ export default class YouTubeSource {
     }
   }
   /**
-   * Fetches visitor data and player script URL from YouTube embed pages.
-   *
-   * Tries the embed endpoint first, then falls back to the guide API.
-   * Both visitor data and player script URL are cached in the credential
-   * manager for use by innertube clients.
-   *
-   * @returns Promise that resolves when the fetch attempt completes.
+   * Refreshes the shared visitor from service-worker data, falling back to guide.
+   * Keeps the current visitor when both requests fail. Player-script discovery
+   * and caching are handled separately by the cipher manager.
+   * @returns Promise that resolves when the refresh attempt completes.
+   * @internal
    */
   private async _fetchVisitorData(): Promise<void> {
-    // this should prevent the visitorData getting initialized twice.
-    if (process.env.WORKER_TYPE === 'source') return
-
-    const cachedPlayerScript = this.nodelink.credentialManager?.get<string>(
-      'yt_player_script_url'
-    )
-    if (cachedPlayerScript) {
-      this.cipherManager.setPlayerScriptUrl(cachedPlayerScript)
-      logger('debug', 'YouTube', 'Player script URL loaded from cache.')
-    }
-
-    let visitorFound = false
-    let playerScriptUrl: string | null = null
+    const proxy = this.getProxy()
 
     try {
       const { body, error, statusCode } = await http1makeRequest(
@@ -522,142 +1213,66 @@ export default class YouTubeSource {
         {
           method: 'GET',
           responseType: 'buffer',
-          disableBodyCompression: true
+          disableBodyCompression: true,
+          proxy
         }
       )
       if (!error && statusCode === 200) {
         const text = (body as Buffer).toString('utf-8')
         const json = text.slice(text.indexOf('\n') + 1)
-        const visitorData = this._extractVisitorData(JSON.parse(json))
+        const data = JSON.parse(json) as Array<[string, unknown, unknown[]]>
 
-        if (visitorData) {
+        // Structure is [key, timestamp, payload[]]
+        // and in payload[6] is visitorData value, from what i tested, it was always at that index.
+        const visitorData = data.find(
+          ([name]) => name === 'yt.sw.adr'
+        )?.[2]?.[6]
+
+        if (typeof visitorData === 'string' && visitorData) {
           this.ytContext.client.visitorData = visitorData
-          visitorFound = true
-          logger(
-            'debug',
-            'YouTube',
-            `visitorData obtained from sw.js_data endpoint (len=${visitorData.length})`
-          )
+          logger('debug', 'YouTube', 'visitorData refreshed from sw.js_data.')
+          return
         }
       }
-    } catch (e) {
+    } catch (error) {
       logger(
         'debug',
         'YouTube',
-        `sw.js_data endpoint failed: ${(e as Error).message}`
+        `sw.js_data endpoint failed: ${(error as Error).message}`
       )
     }
-    if (!visitorFound) {
-      try {
-        const {
-          body: data,
-          error,
-          statusCode
-        } = await makeRequest('https://www.youtube.com/embed', {
-          method: 'GET',
-          headers: {
-            Cookie: 'YSC=LUAfwHpna4E; VISITOR_INFO1_LIVE=Zuih2uZbq3I;'
-          }
-        })
 
-        if (!error && statusCode === 200) {
-          const bodyStr = data as string
-          const visitorMatch = bodyStr?.match(/"VISITOR_DATA":"([^"]+)"/)
-          if (visitorMatch?.[1]) {
-            this.ytContext.client.visitorData = visitorMatch[1]
-            visitorFound = true
-            logger('debug', 'YouTube', 'visitorData refreshed from embed.')
-          }
-
-          if (!cachedPlayerScript) {
-            const playerScriptMatch = bodyStr?.match(/"jsUrl":"([^"]+)"/)
-            if (playerScriptMatch?.[1]) {
-              playerScriptUrl = playerScriptMatch[1].replace(
-                /\/[a-z]{2}_[A-Z]{2}\//,
-                '/en_US/'
-              )
-              this.nodelink.credentialManager?.set(
-                'yt_player_script_url',
-                playerScriptUrl,
-                12 * 60 * 60 * 1000
-              )
-              logger(
-                'debug',
-                'YouTube',
-                `Player script URL: ${playerScriptUrl}`
-              )
-            }
-          }
-        } else {
-          logger(
-            'warn',
-            'YouTube',
-            `Embed request failed: ${(error as { message?: string })?.message || `Status ${statusCode}`}`
-          )
+    try {
+      const { body, error, statusCode } = await makeRequest(
+        'https://www.youtube.com/youtubei/v1/guide',
+        {
+          method: 'POST',
+          body: { context: this.clients.Web?.getClient(this.ytContext) },
+          disableBodyCompression: true,
+          proxy
         }
-
-        if (!visitorFound) {
-          const {
-            body: guideData,
-            error: guideError,
-            statusCode: guideStatusCode
-          } = await makeRequest('https://www.youtube.com/youtubei/v1/guide', {
-            method: 'POST',
-            body: { context: this.ytContext },
-            disableBodyCompression: true
-          })
-
-          const guideBody = guideData as {
-            responseContext?: { visitorData?: string }
-          }
-          if (
-            !guideError &&
-            guideStatusCode === 200 &&
-            guideBody?.responseContext?.visitorData
-          ) {
-            this.ytContext.client.visitorData =
-              guideBody.responseContext.visitorData
-            visitorFound = true
-            logger('debug', 'YouTube', 'visitorData refreshed via guide.')
-          } else {
-            logger(
-              'warn',
-              'YouTube',
-              'Failed to refresh visitorData via guide.'
-            )
-          }
-        }
-      } catch (e) {
-        logger(
-          'error',
-          'YouTube',
-          `Error fetching visitor data: ${(e as Error).message}`
-        )
+      )
+      const visitorData = (
+        body as { responseContext?: { visitorData?: string } }
+      )?.responseContext?.visitorData
+      if (
+        !error &&
+        statusCode === 200 &&
+        typeof visitorData === 'string' &&
+        visitorData
+      ) {
+        this.ytContext.client.visitorData = visitorData
+        logger('debug', 'YouTube', 'visitorData refreshed via guide.')
+      } else {
+        logger('warn', 'YouTube', 'Failed to refresh visitorData via guide.')
       }
+    } catch (error) {
+      logger(
+        'warn',
+        'YouTube',
+        `Error refreshing visitor data: ${(error as Error).message}`
+      )
     }
-
-    if (playerScriptUrl) this.cipherManager.setPlayerScriptUrl(playerScriptUrl)
-  }
-
-  /**
-   * Recursively searches the parsed `sw.js_data` payload for the visitor data
-   * token. The token is a protobuf-encoded base64 string embedded somewhere in
-   * the nested response arrays, so its exact position cannot be relied upon.
-   * @param node - Current payload node (array or string) being inspected.
-   * @returns The visitor data token, or `null` when not found.
-   * @internal
-   */
-  private _extractVisitorData(node: unknown): string | null {
-    if (typeof node === 'string') {
-      return /^Cg[A-Za-z0-9+/=_%-]{100,}$/.test(node) ? node : null
-    }
-    if (Array.isArray(node)) {
-      for (const child of node) {
-        const found = this._extractVisitorData(child)
-        if (found) return found
-      }
-    }
-    return null
   }
 
   /**
@@ -880,7 +1495,139 @@ export default class YouTubeSource {
    * @returns Promise resolving to a source result with track/playlist data or an exception.
    */
   async resolve(url: string, type?: string): Promise<SourceResult> {
+    try {
+      const parsedUrl = new URL(url)
+      if (
+        parsedUrl.hostname === 'music.youtube.com' &&
+        parsedUrl.pathname === '/search'
+      ) {
+        const query =
+          parsedUrl.searchParams.get('q') ||
+          parsedUrl.searchParams.get('search_query')
+        if (query) {
+          logger(
+            'debug',
+            'YouTube',
+            `Resolved YouTube Music search URL to query: "${query}"`
+          )
+          return await this.search(query, 'ytmsearch')
+        }
+      }
+
+      if (
+        (parsedUrl.hostname === 'www.youtube.com' ||
+          parsedUrl.hostname === 'youtube.com' ||
+          parsedUrl.hostname === 'm.youtube.com') &&
+        (parsedUrl.pathname === '/results' || parsedUrl.pathname === '/search')
+      ) {
+        const query =
+          parsedUrl.searchParams.get('search_query') ||
+          parsedUrl.searchParams.get('q')
+        if (query) {
+          logger(
+            'debug',
+            'YouTube',
+            `Resolved YouTube search URL to query: "${query}"`
+          )
+          return await this.search(query, 'ytsearch')
+        }
+      }
+
+      if (
+        (parsedUrl.hostname === 'music.youtube.com' ||
+          parsedUrl.hostname === 'www.youtube.com' ||
+          parsedUrl.hostname === 'youtube.com' ||
+          parsedUrl.hostname === 'm.youtube.com') &&
+        parsedUrl.pathname.startsWith('/browse/')
+      ) {
+        const browseId = parsedUrl.pathname
+          .slice('/browse/'.length)
+          .split('/')[0]
+        if (browseId) {
+          logger(
+            'debug',
+            'YouTube',
+            `Resolving YouTube browse URL with browseId: "${browseId}"`
+          )
+
+          if (browseId.startsWith('VL')) {
+            const playlistId = browseId.slice(2)
+            const targetUrl =
+              parsedUrl.hostname === 'music.youtube.com'
+                ? `https://music.youtube.com/playlist?list=${playlistId}`
+                : `https://www.youtube.com/playlist?list=${playlistId}`
+            return await this.resolve(targetUrl, type)
+          }
+
+          const isMusic = parsedUrl.hostname === 'music.youtube.com'
+          const clientContext = isMusic
+            ? (this.clients.WebRemix?.getClient(this.ytContext) ??
+              this.clients.Web?.getClient(this.ytContext))
+            : this.clients.Web?.getClient(this.ytContext)
+
+          const endpoint = isMusic
+            ? 'https://music.youtube.com/youtubei/v1/browse'
+            : 'https://www.youtube.com/youtubei/v1/browse'
+
+          const proxy = this.getProxy()
+          const startedAt = Date.now()
+          const { body, statusCode } = await makeRequest(endpoint, {
+            method: 'POST',
+            body: {
+              context: clientContext,
+              browseId
+            },
+            headers: {
+              'User-Agent': clientContext?.client?.userAgent || '',
+              'X-Goog-Api-Format-Version': '2'
+            },
+            disableBodyCompression: true,
+            proxy: proxy as unknown as HttpProxyConfig
+          })
+
+          this.reportProxyStatus(
+            proxy,
+            statusCode === 200,
+            statusCode ?? 0,
+            Date.now() - startedAt
+          )
+
+          if (statusCode === 200 && body && typeof body === 'object') {
+            const typedBody = body as Record<string, unknown>
+            const microformat = typedBody.microformat as
+              | { microformatDataRenderer?: { urlCanonical?: string } }
+              | undefined
+            const canonicalUrl =
+              microformat?.microformatDataRenderer?.urlCanonical
+
+            if (canonicalUrl && canonicalUrl !== url) {
+              return await this.resolve(canonicalUrl, type)
+            }
+
+            const bodyStr = JSON.stringify(body)
+            const playlistMatch = bodyStr.match(
+              /"watchPlaylistEndpoint":\s*\{\s*"playlistId":\s*"([^"]+)"/
+            )
+            if (playlistMatch?.[1]) {
+              const targetUrl = isMusic
+                ? `https://music.youtube.com/playlist?list=${playlistMatch[1]}`
+                : `https://www.youtube.com/playlist?list=${playlistMatch[1]}`
+              return await this.resolve(targetUrl, type)
+            }
+          }
+
+          return { loadType: 'empty', data: {} }
+        }
+      }
+    } catch {
+      // not a valid URL, continue standard flow
+    }
+
     const result = await this._resolveWorker(url, type)
+
+    if (result.loadType === 'playlist') {
+      await this._applyPlaylistMeta(url, result.data as PlaylistData)
+    }
 
     if (
       this.config.mirrorOfficialAlbums &&
@@ -905,6 +1652,93 @@ export default class YouTubeSource {
     }
 
     return result
+  }
+
+  /**
+   * Fills the collection metadata (`type`, `identifier`, `url`, `artworkUrl`,
+   * `author`, `totalTracks`) in `pluginInfo` on a resolved playlist.
+   *
+   * The innertube `next`/`browse` responses used by the clients don't carry the
+   * playlist owner or cover art, so those are read from the public playlist
+   * page instead. Best-effort: any failure leaves them empty, and values a
+   * client already provided are never overwritten.
+   * @internal
+   */
+  private async _applyPlaylistMeta(
+    url: string,
+    playlist: PlaylistData
+  ): Promise<void> {
+    if (!playlist?.info) return
+
+    const playlistId = url.match(/[?&]list=([\w-]+)/)?.[1]
+    if (!playlistId) return
+
+    const current = playlist.pluginInfo ?? {}
+    const meta =
+      current.author && current.artworkUrl
+        ? { author: '', thumbnail: '' }
+        : await this._fetchPlaylistMeta(playlistId)
+
+    playlist.pluginInfo = {
+      ...current,
+      type: current.type ?? 'playlist',
+      identifier: current.identifier ?? playlistId,
+      url: current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
+      artworkUrl: current.artworkUrl || meta.thumbnail,
+      author: current.author || meta.author,
+      totalTracks: capTotalTracks(
+        current.totalTracks ?? playlist.tracks.length,
+        this.nodelink.options.playback?.maxPlaylistLength
+      )
+    }
+  }
+
+  /**
+   * Scrapes the playlist page for its owner and thumbnail.
+   * @param playlistId - YouTube playlist ID (`PL...`, `OLAK...`, etc.).
+   * @internal
+   */
+  private async _fetchPlaylistMeta(
+    playlistId: string
+  ): Promise<YouTubePlaylistMeta> {
+    const empty: YouTubePlaylistMeta = { author: '', thumbnail: '' }
+    const proxy = this.getProxy()
+    const startedAt = Date.now()
+
+    try {
+      const { body, statusCode } = await makeRequest(
+        `https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}&hl=en`,
+        {
+          method: 'GET',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            // Skips the EU cookie-consent interstitial.
+            Cookie: 'SOCS=CAI'
+          },
+          timeout: 5000,
+          proxy: proxy as unknown as HttpProxyConfig
+        }
+      )
+
+      this.reportProxyStatus(
+        proxy,
+        statusCode === 200,
+        statusCode ?? 0,
+        Date.now() - startedAt
+      )
+
+      if (statusCode !== 200 || typeof body !== 'string') return empty
+      return parsePlaylistMeta(body)
+    } catch (err: unknown) {
+      logger(
+        'debug',
+        'YouTube',
+        `Failed to fetch playlist metadata for ${playlistId}: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return empty
+    }
   }
 
   /**
@@ -993,6 +1827,10 @@ export default class YouTubeSource {
                 fallbackUrl = `https://www.youtube.com/playlist?list=${listId}`
                 if (videoId) {
                   fallbackUrl += `&v=${videoId}`
+                }
+                const indexMatch = url.match(/[?&]index=(\d+)/)
+                if (indexMatch) {
+                  fallbackUrl += `&index=${indexMatch[1]}`
                 }
               } else {
                 fallbackUrl = `https://www.youtube.com/watch?v=${videoId}`
@@ -1140,6 +1978,13 @@ export default class YouTubeSource {
       const client = this.clients[clientName]
       if (!client) continue
 
+      const oauthRejection = this.rejectOAuthClientWithoutToken(clientName)
+      if (oauthRejection) {
+        clientErrors.push({ client: clientName, message: oauthRejection })
+        logger('error', 'YouTube', oauthRejection)
+        continue
+      }
+
       if (!isMusicUrl && clientName === 'Music') continue
       if (isMusicUrl && clientName !== 'Music' && type !== 'youtube-fallback') {
         continue
@@ -1277,6 +2122,26 @@ export default class YouTubeSource {
     }
   }
   /**
+   * Rejects OAuth-only clients (TV family) without a configured refresh
+   * token, before they waste a resolve attempt and fail confusingly.
+   * Token-less metadata lookups go through oEmbed, not clients.
+   *
+   * @param clientName - Client to check.
+   * @returns Skip message, or null when the client can be used.
+   */
+  private rejectOAuthClientWithoutToken(clientName: string): string | null {
+    const client = this.clients[clientName]
+    if (client?.requiresOAuth?.() && !client.oauth?.hasRefreshToken?.()) {
+      return (
+        `Client ${clientName} requires a YouTube refresh token and none is ` +
+        `configured (enable sources.youtube.getOAuthToken to generate one ` +
+        `or set clients.settings.${clientName}.refreshToken). Skipping.`
+      )
+    }
+    return null
+  }
+
+  /**
    * Resolves the playable stream URL for a decoded track.
    *
    * Checks the track cache first (unless `forceRefresh` is set), then
@@ -1382,6 +2247,7 @@ export default class YouTubeSource {
     let clientList = [...this.config.clients.playback]
     if (!clientList.length) clientList = ['Web']
     const clientErrors: Array<{ client: string; message: string }> = []
+    const playabilityErrors: Array<{ client: string; message: string }> = []
 
     const failingClients = this.failingClientsByTrack.get(
       decodedTrack.identifier
@@ -1399,6 +2265,13 @@ export default class YouTubeSource {
 
       const client = this.clients[clientName]
       if (!client) continue
+
+      const oauthRejection = this.rejectOAuthClientWithoutToken(clientName)
+      if (oauthRejection) {
+        clientErrors.push({ client: clientName, message: oauthRejection })
+        logger('error', 'YouTube', oauthRejection)
+        continue
+      }
 
       try {
         logger(
@@ -1419,6 +2292,32 @@ export default class YouTubeSource {
         const proxyLatency = Date.now() - proxyStartTime
 
         if (urlData.exception) {
+          const premiereReason =
+            urlData.exception.cause === 'UpstreamPlayability'
+              ? urlData.exception.message.match(
+                  /Premieres?\s+in\s+[^,.)]+/i
+                )?.[0]
+              : undefined
+          if (premiereReason) {
+            const message = `YouTube track is not currently playable: ${premiereReason}.`
+            logger('info', 'YouTube', message)
+            return {
+              loadType: 'error',
+              exception: {
+                message,
+                severity: 'common',
+                cause: 'UpstreamPlayability'
+              }
+            }
+          }
+
+          if (urlData.exception.cause === 'UpstreamPlayability') {
+            playabilityErrors.push({
+              client: clientName,
+              message: urlData.exception.message
+            })
+          }
+
           const isNoStream = urlData.exception.cause === 'UpstreamNoStream'
           const isNotFound = urlData.exception.status === 404
 
@@ -1692,6 +2591,25 @@ export default class YouTubeSource {
     )
     if (mirrored) return mirrored
 
+    if (playabilityErrors.length > 0) {
+      const upstreamMessage = playabilityErrors[0]?.message ?? ''
+      const reason = upstreamMessage.match(/reason=([^,)]+)/i)?.[1]?.trim()
+      const status = upstreamMessage.match(/status=([^,)]+)/i)?.[1]?.trim()
+      const detail = reason || status
+      const message = detail
+        ? `YouTube track is not currently playable: ${detail}.`
+        : 'YouTube track is not currently playable.'
+      logger('info', 'YouTube', message)
+      return {
+        loadType: 'error',
+        exception: {
+          message,
+          severity: 'common',
+          cause: 'UpstreamPlayability'
+        }
+      }
+    }
+
     logger(
       'error',
       'YouTube',
@@ -1746,7 +2664,6 @@ export default class YouTubeSource {
       'songlink',
       'spotify',
       'telegram',
-      'tidal',
       'twitch',
       'tumblr',
       'twitter',
@@ -1769,6 +2686,7 @@ export default class YouTubeSource {
       ...configuredFallbackSources,
       ...defaultSources,
       'soundcloud',
+      'tidal',
       'deezer',
       'jiosaavn',
       'qobuz',
@@ -1786,7 +2704,7 @@ export default class YouTubeSource {
       const source = this.nodelink.sources?.getSource(name)
       const sourcesConfig = (opts.sources ?? {}) as Record<
         string,
-        { enabled?: boolean } | undefined
+        { enabled?: boolean; hifiApis?: string[] } | undefined
       >
       return (
         typeof name === 'string' &&
@@ -1795,6 +2713,10 @@ export default class YouTubeSource {
         !['youtube', 'ytmusic'].includes(name) &&
         !blockedFallbackSources.has(name) &&
         sourcesConfig[name]?.enabled &&
+        (name !== 'tidal' ||
+          sourcesConfig.tidal?.hifiApis?.some((api) =>
+            /^https?:\/\//i.test(api)
+          )) &&
         source &&
         !!source.search &&
         !!source.getTrackUrl
@@ -1823,29 +2745,55 @@ export default class YouTubeSource {
             continue
           }
 
-          const bestMatch = getBestMatch(search.data, decodedTrack)
-          const bestInfo = (bestMatch as { info?: TrackInfo })?.info
-          if (
-            !bestInfo ||
-            ['youtube', 'ytmusic'].includes(bestInfo.sourceName)
-          ) {
-            continue
-          }
+          const candidates = [...search.data]
+          const maxCandidates = Math.min(candidates.length, 5)
+          let attemptedCandidates = 0
 
-          const stream = await this.nodelink.sources?.getTrackUrl(
-            bestInfo,
-            itag ?? undefined,
-            forceRefresh
-          )
-          if (!(stream as TrackUrlData)?.exception) {
-            logger(
-              'warn',
-              'YouTube',
-              `Fallback source succeeded via ${bestInfo.sourceName} for "${bestInfo.title}".`
-            )
-            return {
-              ...(stream as TrackUrlData),
-              newTrack: bestMatch as { info: TrackInfo }
+          while (attemptedCandidates < maxCandidates) {
+            const bestMatch = getBestMatch(candidates, decodedTrack, {
+              minScore: 300
+            })
+            const bestInfo = (bestMatch as { info?: TrackInfo } | null)?.info
+            if (
+              !bestMatch ||
+              !bestInfo ||
+              ['youtube', 'ytmusic'].includes(bestInfo.sourceName)
+            ) {
+              break
+            }
+
+            const candidateIndex = candidates.indexOf(bestMatch)
+            if (candidateIndex >= 0) candidates.splice(candidateIndex, 1)
+            attemptedCandidates++
+
+            try {
+              const stream = await this.nodelink.sources?.getTrackUrl(
+                bestInfo,
+                itag ?? undefined,
+                forceRefresh
+              )
+              if (!(stream as TrackUrlData)?.exception) {
+                logger(
+                  'warn',
+                  'YouTube',
+                  `Fallback source succeeded via ${bestInfo.sourceName} for "${bestInfo.title}".`
+                )
+                return {
+                  ...(stream as TrackUrlData),
+                  newTrack: bestMatch as { info: TrackInfo }
+                }
+              }
+              logger(
+                'debug',
+                'YouTube',
+                `Mirror candidate ${bestInfo.sourceName}:${bestInfo.identifier} was not playable: ${(stream as TrackUrlData)?.exception?.message || 'no stream URL returned'}`
+              )
+            } catch (error) {
+              logger(
+                'debug',
+                'YouTube',
+                `Mirror candidate ${bestInfo.sourceName}:${bestInfo.identifier} failed: ${error instanceof Error ? error.message : String(error)}`
+              )
             }
           }
         } catch (e) {
@@ -2811,8 +3759,9 @@ export default class YouTubeSource {
    * Streams audio using chunked range requests. This tries to "Replicate" on how the browser
    * streams audio directly from youtube with code status 206.
    *
-   * Uses dynamic chunk sizing (256 KB – 512 KB) based on per-stream bandwidth
-   * The limit is around ~570 KB per chunk. But setted to 512KB for better memory efficiency.
+   * Uses dynamic chunk sizing (64 KiB min, 512 KiB until 3 clean
+   * 206s, then up to 4 MiB) based on per-stream bandwidth EWMA and
+   * PassThrough buffer fill, with ±5% jitter above 512 KiB.
    * Fast-reconnects on ECONNRESET without refreshing the URL until the third consecutive failure.
    * Opens only 1 connection per stream, reusing it for multiple chunks.
    * This is the same ideia used for _streamWithRangeRequests, but this tries to limit to 1 connection only.
@@ -2849,6 +3798,13 @@ export default class YouTubeSource {
     let isDestroyed = false
     let isBackpressured = false
     let totalBytesReceived = 0
+    const initialSeekMs =
+      typeof additionalData?.startTime === 'number' &&
+      additionalData.startTime > 0
+        ? additionalData.startTime
+        : 0
+    let needsClusterAlignment = false
+    let clusterSearchRemainder = Buffer.alloc(0)
     let currentItag = additionalData?.itag
     let currentClient =
       (additionalData?.client as string | undefined) || undefined
@@ -2858,6 +3814,7 @@ export default class YouTubeSource {
     const failedItags = new Set<number>()
     let refreshAttempts = 0
     let consecutiveResets = 0
+    let cleanChunks = 0
     let activeResponseStream:
       | (NodeJS.ReadableStream & {
           destroyed: boolean
@@ -3058,6 +4015,7 @@ export default class YouTubeSource {
         }
         urlFetchTime = Date.now()
         consecutiveResets = 0
+        cleanChunks = 0
 
         logger(
           'debug',
@@ -3075,6 +4033,28 @@ export default class YouTubeSource {
       }
     }
 
+    // Mid-file jumps only work for WebM: we prepend the file header and
+    // resume audio from the seek point, which m4a can't decode. So a
+    // startTime on non-WebM is dropped and playback starts from zero,
+    // same as before; m4a seeks keep using the seekable path instead.
+    let effectiveSeekMs = initialSeekMs
+    if (initialSeekMs > 0) {
+      const seekMime =
+        availableFormats.find((formatEntry) => formatEntry.itag === currentItag)
+          ?.mimeType || ''
+      const seekIsWebm =
+        seekMime.toLowerCase().includes('webm') ||
+        (typeof currentItag === 'number' && YOUTUBE_WEBM_ITAGS.has(currentItag))
+      if (!seekIsWebm) {
+        logger(
+          'warn',
+          'YouTube',
+          `Ignoring startTime seek for non-WebM itag ${currentItag} on "${decodedTrack.title}", playing from start`
+        )
+        effectiveSeekMs = 0
+      }
+    }
+
     const startStreaming = async (): Promise<void> => {
       const MIN_TARGET_SECONDS = 2
       const MAX_TARGET_SECONDS = 12
@@ -3083,6 +4063,8 @@ export default class YouTubeSource {
 
       const ABS_MIN_BYTES = 64 * 1024
       const ABS_MAX_BYTES = 512 * 1024
+      const HEALTHY_MAX_BYTES = 4 * 1024 * 1024
+      const CLEAN_TO_UNLOCK = 3
 
       const trackBytesPerSecond =
         contentLength > 0 && decodedTrack.length > 0
@@ -3091,12 +4073,117 @@ export default class YouTubeSource {
 
       let chunkCount = 0
 
+      if (
+        effectiveSeekMs > 0 &&
+        totalContentLength > 0 &&
+        decodedTrack.length > 0
+      ) {
+        try {
+          let headerData: Buffer | null = null
+          let firstClusterIndex = -1
+          for (const windowEnd of WEBM_SEEK_PROBE_WINDOWS) {
+            if (isDestroyed || cancelSignal.aborted) break
+            const headerResult = await http1makeRequest(currentUrl, {
+              method: 'GET',
+              streamOnly: true,
+              proxy: currentProxy,
+              timeout: 15000,
+              headers: {
+                Range: `bytes=0-${windowEnd}`,
+                'Accept-Encoding': 'identity;q=1, *;q=0',
+                'Sec-Fetch-Dest': 'video',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'same-origin',
+                Referer: currentUrl,
+                Accept: '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Cache-Control': 'no-cache',
+                Pragma: 'no-cache',
+                Priority: 'i'
+              }
+            })
+            const headerStream = headerResult.stream as
+              | (NodeJS.ReadableStream & { destroy: () => void })
+              | undefined
+            if (
+              headerResult.error ||
+              (headerResult.statusCode !== 206 &&
+                headerResult.statusCode !== 200) ||
+              !headerStream
+            ) {
+              try {
+                headerStream?.destroy()
+              } catch {}
+              logger(
+                'warn',
+                'YouTube',
+                `WebM header prefetch failed for "${decodedTrack.title}" (status ${headerResult.statusCode}), seeking from start`
+              )
+              break
+            }
+            const headerChunks: Buffer[] = []
+            let headerBytes = 0
+            for await (const headerChunk of headerStream as unknown as AsyncIterable<Buffer>) {
+              if (isDestroyed || cancelSignal.aborted) break
+              headerChunks.push(headerChunk)
+              headerBytes += headerChunk.length
+              if (headerBytes > windowEnd) break
+            }
+            try {
+              headerStream.destroy()
+            } catch {}
+            headerData = Buffer.concat(headerChunks)
+            firstClusterIndex = headerData.indexOf(WEBM_CLUSTER_MAGIC)
+            if (firstClusterIndex > 0) break
+          }
+          if (!isDestroyed && !cancelSignal.aborted) {
+            if (headerData && firstClusterIndex > 0) {
+              stream.write(headerData.subarray(0, firstClusterIndex))
+              const seekRatio = Math.min(
+                Math.max(effectiveSeekMs / decodedTrack.length, 0),
+                1
+              )
+              totalBytesReceived = Math.min(
+                Math.floor(seekRatio * totalContentLength),
+                totalContentLength - 1
+              )
+              needsClusterAlignment = true
+              logger(
+                'debug',
+                'YouTube',
+                `Prepared WebM seek to ${effectiveSeekMs}ms at target byte ${totalBytesReceived}/${totalContentLength} for "${decodedTrack.title}"`
+              )
+            } else if (headerData) {
+              logger(
+                'warn',
+                'YouTube',
+                `No WebM Cluster found in first ${WEBM_SEEK_PROBE_WINDOWS[WEBM_SEEK_PROBE_WINDOWS.length - 1]} bytes for "${decodedTrack.title}", seeking from start`
+              )
+            }
+          }
+        } catch (error) {
+          logger(
+            'warn',
+            'YouTube',
+            `WebM header prefetch threw for "${decodedTrack.title}": ${(error as Error).message}, seeking from start`
+          )
+        }
+      }
+
       while (
         !isDestroyed &&
         !cancelSignal.aborted &&
         !parkedForRecovery &&
         totalBytesReceived < totalContentLength
       ) {
+        // Hard backpressure: never fetch ahead while the downstream has a
+        // full buffer. Without this the loop downloads the whole remainder
+        // (e.g: ~180MB files from the video that i tested.) into the PassThrough while voice consumes realtime.
+        if (stream.writableLength > STREAM_BUFFER_SIZE) {
+          await Promise.race([waitForDrainOrClose(), sleep(30000)])
+          continue
+        }
+
         const urlAge = Date.now() - urlFetchTime
         if (urlAge > URL_MAX_AGE_MS) {
           const refreshed = await refreshUrl('URL age > 4.5h')
@@ -3110,12 +4197,30 @@ export default class YouTubeSource {
         const proxyToUse = currentProxy
         const fetchStartTime = Date.now()
 
+        if (stream.writableLength > STREAM_BUFFER_SIZE * 0.75) {
+          targetSeconds = Math.max(MIN_TARGET_SECONDS, targetSeconds - 2)
+        } else if (
+          stream.writableLength === 0 &&
+          cleanChunks >= CLEAN_TO_UNLOCK
+        ) {
+          targetSeconds = Math.min(MAX_TARGET_SECONDS, targetSeconds + 2)
+        }
+
+        const maxBytes =
+          cleanChunks >= CLEAN_TO_UNLOCK ? HEALTHY_MAX_BYTES : ABS_MAX_BYTES
         const bytesPerSecond = bandwidthEstimate / 8
         let dynamicChunkSize = Math.floor(bytesPerSecond * targetSeconds)
         dynamicChunkSize = Math.max(
           ABS_MIN_BYTES,
-          Math.min(dynamicChunkSize, ABS_MAX_BYTES)
+          Math.min(dynamicChunkSize, maxBytes)
         )
+        if (dynamicChunkSize > ABS_MAX_BYTES) {
+          const jitter = 0.95 + Math.random() * 0.1
+          dynamicChunkSize = Math.min(
+            Math.floor(dynamicChunkSize * jitter),
+            maxBytes
+          )
+        }
 
         const start = totalBytesReceived
         const end = Math.min(
@@ -3167,8 +4272,12 @@ export default class YouTubeSource {
             result.error ||
             (result.statusCode !== 200 && result.statusCode !== 206)
           ) {
+            /* INFO: Release rejected responses before retrying or refreshing the URL. */
+            const responseStream = result.stream as Readable | undefined
+            responseStream?.destroy()
+
             if (result.statusCode === 416) {
-              if (totalBytesReceived > 0) {
+              if (totalBytesReceived >= totalContentLength) {
                 logger(
                   'debug',
                   'YouTube',
@@ -3183,9 +4292,11 @@ export default class YouTubeSource {
               logger(
                 'warn',
                 'YouTube',
-                `HTTP 416 at byte 0 for "${decodedTrack.title}" -- refreshing...`
+                `HTTP 416 at ${totalBytesReceived}/${totalContentLength} bytes for "${decodedTrack.title}" -- refreshing...`
               )
-              if (currentItag) failedItags.add(currentItag)
+              if (totalBytesReceived === 0 && currentItag) {
+                failedItags.add(currentItag)
+              }
               const refreshed = await refreshUrl('HTTP 416')
               if (refreshed) continue
               if (parkedForRecovery) return
@@ -3221,6 +4332,7 @@ export default class YouTubeSource {
               'YouTube',
               `HTTP ${result.statusCode}, retrying in ${retryDelay}ms...`
             )
+            cleanChunks = 0
             await sleep(retryDelay)
             continue
           }
@@ -3286,9 +4398,31 @@ export default class YouTubeSource {
               if (dataStartTime === 0) dataStartTime = Date.now()
               bytesThisChunk += chunk.length
               totalBytesReceived += chunk.length
-              if (!stream.write(chunk)) {
-                isBackpressured = true
-                responseStream.pause()
+
+              let dataToWrite: Buffer | null = chunk
+              if (needsClusterAlignment) {
+                const combined =
+                  clusterSearchRemainder.length > 0
+                    ? Buffer.concat([clusterSearchRemainder, chunk])
+                    : chunk
+                const magicIndex = combined.indexOf(WEBM_CLUSTER_MAGIC)
+                if (magicIndex !== -1) {
+                  needsClusterAlignment = false
+                  clusterSearchRemainder = Buffer.alloc(0)
+                  dataToWrite = Buffer.from(combined.subarray(magicIndex))
+                } else {
+                  clusterSearchRemainder = Buffer.from(
+                    combined.subarray(Math.max(0, combined.length - 3))
+                  )
+                  dataToWrite = null
+                }
+              }
+
+              if (dataToWrite && dataToWrite.length > 0) {
+                if (!stream.write(dataToWrite)) {
+                  isBackpressured = true
+                  responseStream.pause()
+                }
               }
             }
 
@@ -3322,6 +4456,7 @@ export default class YouTubeSource {
           updateBandwidthEstimate(bytesThisChunk, transferDuration)
 
           chunkCount++
+          cleanChunks++
           if (chunkCount <= 2) {
             targetSeconds = MIN_TARGET_SECONDS
           } else if (chunkCount <= 5) {
@@ -3362,6 +4497,7 @@ export default class YouTubeSource {
             error.code === 'ERR_STREAM_DESTROYED'
           ) {
             bandwidthEstimate = Math.max(128_000, bandwidthEstimate * 0.7)
+            cleanChunks = 0
 
             if (isBackpressured) {
               consecutiveResets = 0
@@ -3436,6 +4572,7 @@ export default class YouTubeSource {
             'YouTube',
             `Stream error for "${decodedTrack.title}": ${error.message}. Retrying in ${retryDelay}ms...`
           )
+          cleanChunks = 0
           await sleep(retryDelay)
         }
       }
@@ -3483,5 +4620,163 @@ export default class YouTubeSource {
    */
   async handleLiveChat(socket: unknown, id: string): Promise<unknown> {
     return this.liveChat.handleConnection(socket as YouTubeLiveChatSocket, id)
+  }
+
+  /**
+   * Executes an operation for a specific YouTube client variant in complete isolation.
+   * Standardized implementation of SourceVariantHandler.
+   */
+  async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    const client = this.clients[variant.id]
+    if (!client) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: new Error(
+          `Variant client "${variant.id}" is not available on YouTube source`
+        )
+      }
+    }
+
+    try {
+      const urlData = await client.getTrackUrl(
+        track,
+        this.ytContext,
+        this.cipherManager,
+        null,
+        null
+      )
+
+      if (!urlData || urlData.exception) {
+        return {
+          variant: variant.id,
+          resolved: false,
+          error:
+            urlData?.exception?.message || 'Client returned no track URL data'
+        }
+      }
+
+      const hasUrl = Boolean(urlData.url)
+      const hasSabr = Boolean(
+        urlData.additionalData?.sabr || urlData.protocol === 'sabr'
+      )
+
+      if (!hasUrl && !hasSabr) {
+        return {
+          variant: variant.id,
+          resolved: false,
+          error: 'Client produced neither a direct URL nor SABR stream data'
+        }
+      }
+
+      let container = 'unknown'
+      let codec = 'unknown'
+      const formatStr =
+        typeof urlData.format === 'string' ? urlData.format.toLowerCase() : ''
+
+      if (
+        formatStr.includes('webm') ||
+        (urlData.itag && [249, 250, 251].includes(urlData.itag))
+      ) {
+        container = 'webm'
+        codec = 'opus'
+      } else if (
+        formatStr.includes('mp4') ||
+        formatStr.includes('m4a') ||
+        (urlData.itag && [139, 140, 18].includes(urlData.itag))
+      ) {
+        container = 'mp4'
+        codec = 'aac'
+      } else if (hasSabr) {
+        container = 'webm'
+        codec = 'opus'
+      }
+
+      if (!streamSpec?.required) {
+        return {
+          variant: variant.id,
+          resolved: true,
+          track: urlData.newTrack?.info || track,
+          container,
+          codec
+        }
+      }
+
+      if (hasSabr) {
+        return {
+          variant: variant.id,
+          resolved: true,
+          skipped: true,
+          skipReason: 'SABR streaming skipped for now',
+          track: urlData.newTrack?.info || track,
+          container: 'webm',
+          codec: 'opus'
+        }
+      }
+
+      const clientUa =
+        client.getClient?.(this.ytContext)?.client?.userAgent ||
+        (typeof client.userAgent === 'string' ? client.userAgent : undefined)
+      const userAgent =
+        typeof clientUa === 'string'
+          ? clientUa
+          : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+
+      const res = await fetch(urlData.url, {
+        headers: {
+          'User-Agent': userAgent
+        }
+      })
+
+      const headersRecord: Record<string, string> = {}
+      res.headers.forEach((val, key) => {
+        headersRecord[key.toLowerCase()] = val
+      })
+
+      if (res.status !== 200 && res.status !== 206) {
+        const text = await res.text()
+        return {
+          variant: variant.id,
+          resolved: true,
+          track: urlData.newTrack?.info || track,
+          httpStatus: res.status,
+          headers: headersRecord,
+          error: `HTTP ${res.status}: ${text.slice(0, 300)}`
+        }
+      }
+
+      const cl = headersRecord['content-length']
+      const cr = headersRecord['content-range']
+      const contentLength = cl ? Number.parseInt(cl, 10) : undefined
+
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        stream: res.body
+          ? Readable.fromWeb(
+              res.body as import('node:stream/web').ReadableStream<Uint8Array>
+            )
+          : undefined,
+        httpStatus: res.status,
+        headers: headersRecord,
+        contentLength: Number.isFinite(contentLength)
+          ? contentLength
+          : undefined,
+        contentRange: cr,
+        container,
+        codec
+      }
+    } catch (err) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: err instanceof Error ? err : String(err)
+      }
+    }
   }
 }

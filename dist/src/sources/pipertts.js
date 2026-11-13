@@ -5,6 +5,44 @@ import { encodeTrack, logger, makeRequest } from '../utils.js';
  */
 export default class PiperSource {
     /**
+     * Declarative test suite for validating Piper TTS source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'pipertts.tts.resolve',
+            name: 'Piper TTS resolution',
+            input: {
+                type: 'resolve',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    author: { op: 'equals', value: 'Piper TTS' },
+                    sourceName: { op: 'equals', value: 'pipertts' }
+                }
+            }
+        },
+        {
+            id: 'pipertts.tts.search',
+            name: 'Piper TTS Search query (pipertts:)',
+            input: {
+                type: 'search',
+                searchType: 'pipertts',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    sourceName: { op: 'equals', value: 'pipertts' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -191,8 +229,7 @@ export default class PiperSource {
         if (!query) {
             return { loadType: 'empty', data: {} };
         }
-        const text = query.startsWith('pipertts:') ? query.slice(9) : query;
-        const track = this.buildTrack(text);
+        const track = this.buildTrack(query);
         return {
             loadType: 'track',
             data: track
@@ -201,14 +238,11 @@ export default class PiperSource {
     /**
      * Resolves a Piper request into a synthesized track payload.
      *
-     * The legacy source treats resolve and search the same way, so this method
-     * delegates to {@link search}.
-     *
-     * @param query - Raw Piper TTS query or `pipertts:` URI.
+     * @param url - Raw Piper TTS query or `pipertts:` URI.
      * @returns Same payload produced by {@link search}.
      */
-    async resolve(query) {
-        return this.search(query);
+    async resolve(url) {
+        return this.search(url);
     }
     /**
      * Resolves the internal Piper track URL.

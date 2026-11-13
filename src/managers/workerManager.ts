@@ -20,6 +20,14 @@ import { logger } from '../utils.ts'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+/* INFO: Player state and voice connections live on one worker; retrying elsewhere cannot recover that state. */
+const PLAYER_STATE_COMMANDS = new Set([
+  'playerCommand',
+  'createPlayer',
+  'destroyPlayer',
+  'restorePlayer'
+])
+
 /**
  * Cluster worker with NodeLink playback metadata.
  * @internal
@@ -323,12 +331,12 @@ const buildWorkerExecArgv = (
 export default class WorkerManager {
   private config: NodelinkConfig
   workers: PlaybackWorker[]
-  private workersById: Map<number, PlaybackWorker>
-  private guildToWorker: Map<string, number>
-  private workerToGuilds: Map<number, Set<string>>
+  workersById: Map<number, PlaybackWorker>
+  guildToWorker: Map<string, number>
+  workerToGuilds: Map<number, Set<string>>
   private nextStatelessWorkerIndex: number
-  private pendingRequests: Map<string, PendingCommandRequest>
-  private streamRequests: Map<string, StreamRequestEntry>
+  pendingRequests: Map<string, PendingCommandRequest>
+  streamRequests: Map<string, StreamRequestEntry>
   private maxWorkers: number
   private minWorkers: number
   workerLoad: Map<number, number>
@@ -341,7 +349,7 @@ export default class WorkerManager {
   private statsUpdateTimer: NodeJS.Timeout | null
   private workerHealth: Map<number, number>
   private workerStartTime: Map<number, number>
-  private workerUniqueId: Map<number, number>
+  workerUniqueId: Map<number, number>
   private workerReady: Set<number>
   private nextWorkerId: number
   private liveYoutubeConfig: LiveYoutubeConfig
@@ -439,6 +447,7 @@ export default class WorkerManager {
         const index = this.workers.indexOf(playbackWorker)
         if (index !== -1) this.workers.splice(index, 1)
         this.workersById.delete(playbackWorker.id)
+        this.cachedSources = null
         return
       }
 
@@ -537,6 +546,13 @@ export default class WorkerManager {
       if (request.workerId === workerId) {
         clearTimeout(request.timeout)
         this.pendingRequests.delete(requestId)
+
+        if (PLAYER_STATE_COMMANDS.has(request.type)) {
+          request.reject(
+            new Error(`Worker ${workerId} exited before completing request`)
+          )
+          continue
+        }
 
         if (request.retryCount < this.maxRetries) {
           logger(
@@ -1310,6 +1326,7 @@ export default class WorkerManager {
     this.workers.push(worker)
     this.workersById.set(worker.id, worker)
     this.workerLoad.set(worker.id, 0)
+    this.cachedSources = null
 
     this.workerStats.set(worker.id, { players: 0, playingPlayers: 0 })
 
@@ -1351,6 +1368,7 @@ export default class WorkerManager {
     if (index !== -1) this.workers.splice(index, 1)
 
     this.workersById.delete(workerId)
+    this.cachedSources = null
     this.workerReady.delete(workerId)
     this.workerLoad.delete(workerId)
     this.workerStats.delete(workerId)
@@ -1482,7 +1500,10 @@ export default class WorkerManager {
       this._rotateSocketServers(socketType, worker.id)
     } else {
       const nodelink = getGlobalNodelink()
-      nodelink?.handleIPCMessage(message)
+      nodelink?.handleIPCMessage({
+        ...message,
+        pid: worker.process?.pid
+      } as typeof message)
     }
   }
 
@@ -1743,6 +1764,27 @@ export default class WorkerManager {
     return workerMetrics
   }
 
+  private cachedSources: string[] | null = null
+
+  async getSources(): Promise<string[]> {
+    if (this.cachedSources) return this.cachedSources
+
+    const worker = this.getBestWorker()
+    if (!worker) {
+      logger('warn', 'Cluster', 'No worker available to get sources from.')
+      return []
+    }
+    const sources = (await this.execute(worker, 'getSources', {})) as string[]
+    this.cachedSources = sources
+    return sources
+  }
+
+  updateWorkerLoad(pid: number, players: number): void {
+    const worker = this.workers.find(({ process }) => process.pid === pid)
+    if (!worker) return
+    this.workerLoad.set(worker.id, players)
+  }
+
   destroy(): void {
     this.isDestroying = true
     this._stopScalingCheck()
@@ -1760,6 +1802,7 @@ export default class WorkerManager {
     this.workerStartTime.clear()
     this.workerUniqueId.clear()
     this.idleWorkers.clear()
+    this.cachedSources = null
 
     for (const worker of this.workers) {
       if (worker.isConnected()) {
@@ -1916,6 +1959,7 @@ export default class WorkerManager {
     isFast: boolean,
     timeoutOverride?: number
   ): void {
+    const ownsPlayerState = PLAYER_STATE_COMMANDS.has(type)
     const requestId = crypto.randomBytes(16).toString('hex')
     const timeoutMs =
       typeof timeoutOverride === 'number' &&
@@ -1952,7 +1996,9 @@ export default class WorkerManager {
         }
 
         setTimeout(() => {
-          const newWorker = this.getBestWorker() || worker
+          const newWorker = ownsPlayerState
+            ? worker
+            : this.getBestWorker() || worker
           this._executeCommand(
             newWorker,
             type,
@@ -1999,6 +2045,15 @@ export default class WorkerManager {
         clearTimeout(timeout)
         this.pendingRequests.delete(requestId)
 
+        if (ownsPlayerState) {
+          reject(
+            new Error(
+              `Worker ${worker.id} disconnected before completing player command`
+            )
+          )
+          return
+        }
+
         if (retryCount < this.maxRetries) {
           const newWorker = this.getBestWorker()
           if (newWorker) {
@@ -2029,6 +2084,11 @@ export default class WorkerManager {
         )
         let attempts = 0
         const checkReady = setInterval(() => {
+          /* INFO: A timed-out or exited request must not be sent later by its old readiness poll. */
+          if (!this.pendingRequests.has(requestId)) {
+            clearInterval(checkReady)
+            return
+          }
           attempts++
           if (
             this.workerReady.has(worker.id) ||
@@ -2061,7 +2121,9 @@ export default class WorkerManager {
                 nodelink.statsManager.incrementCommandRetry(type)
               }
               setTimeout(() => {
-                const newWorker = this.getBestWorker() || worker
+                const newWorker = ownsPlayerState
+                  ? worker
+                  : this.getBestWorker() || worker
                 this._executeCommand(
                   newWorker,
                   type,
@@ -2103,7 +2165,7 @@ export default class WorkerManager {
           nodelink.statsManager.incrementCommandRetry(type)
         }
         setTimeout(() => {
-          const newWorker = this.getBestWorker()
+          const newWorker = ownsPlayerState ? worker : this.getBestWorker()
           if (newWorker) {
             this._executeCommand(
               newWorker,

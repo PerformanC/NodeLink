@@ -7,6 +7,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestResult,
   TrackEncodeInput
@@ -230,6 +231,45 @@ interface FloweryTrackUrlResult extends TrackUrlResult {
  * Flowery TTS source implementation.
  */
 export default class FlowerySource {
+  /**
+   * Declarative test suite for validating Flowery TTS source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'flowery.tts.resolve',
+      name: 'Flowery TTS URL resolution (ftts://)',
+      input: {
+        type: 'resolve',
+        value: 'ftts://Hello%20world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          author: { op: 'equals', value: 'Flowery TTS' },
+          sourceName: { op: 'equals', value: 'flowery' }
+        }
+      }
+    },
+    {
+      id: 'flowery.tts.search',
+      name: 'Flowery TTS Search query (ftts:)',
+      input: {
+        type: 'search',
+        searchType: 'ftts',
+        value: 'Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          sourceName: { op: 'equals', value: 'flowery' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -835,7 +875,17 @@ export default class FlowerySource {
       }
     }
 
-    const normalized = this.forceMp3Url(track.uri)
+    let uriToUse = track.uri
+    try {
+      const parsed = new URL(uriToUse)
+      if (parsed.origin !== 'https://api.flowery.pw') {
+        uriToUse = this.buildUrl(track.title.replace(/^TTS:\s*/, ''))
+      }
+    } catch {
+      uriToUse = this.buildUrl(track.title.replace(/^TTS:\s*/, ''))
+    }
+
+    const normalized = this.forceMp3Url(uriToUse)
 
     try {
       this.nodelink.trackCacheManager?.set(
@@ -879,6 +929,11 @@ export default class FlowerySource {
     const finalUrl = this.forceMp3Url(url).url
 
     try {
+      const parsed = new URL(finalUrl)
+      if (parsed.origin !== 'https://api.flowery.pw') {
+        throw new Error('Invalid Flowery TTS URL destination.')
+      }
+
       const response = await makeRequest(finalUrl, {
         method: 'GET',
         streamOnly: true,

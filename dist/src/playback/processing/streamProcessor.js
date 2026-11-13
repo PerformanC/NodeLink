@@ -17,6 +17,8 @@ import { FiltersManager } from './filtersManager.js';
 import { VolumeTransformer } from './VolumeTransformer.js';
 import { CrossfadeController } from './CrossfadeController.js';
 import { SilenceDetector } from './SilenceDetector.js';
+import { assertAudioCapabilities, resolveAudioProcessingMode } from './audioContract.js';
+import { ProtectedLimiterOutput, ProtectedPcmInput } from './ProtectedAudioTransforms.js';
 let libSampleRatePromise = null;
 let mp4BoxPromise = null;
 const getMP4Box = async () => {
@@ -356,9 +358,9 @@ async function _buildMp4SeekOptions(url, seekTimeMs, proxy) {
             }
         });
         const info = readyInfo;
-        const audioTrack = info?.tracks.find((t) => t.codec?.startsWith('mp4a'));
+        const audioTrack = info?.tracks.find((t) => t.codec?.startsWith('mp4a') || t.codec === 'Opus');
         if (!audioTrack) {
-            throw new Error('No AAC track found in MP4/M4A');
+            throw new Error('No supported track found in MP4/M4A');
         }
         mp4.setExtractionOptions(audioTrack.id, null, { nbSamples: 1 });
         const seekTimeSec = seekTimeMs / 1000;
@@ -412,10 +414,10 @@ class PCMFrameCounter extends Transform {
     totalFrames = 0;
     sampleRate;
     bytesPerFrame;
-    constructor(sampleRate = 48000, channels = 2) {
+    constructor(sampleRate = 48000, channels = 2, sampleFormat = 's16le') {
         super();
         this.sampleRate = sampleRate;
-        this.bytesPerFrame = channels * 2; // 16-bit PCM (2 bytes per channel)
+        this.bytesPerFrame = channels * (sampleFormat === 'f32le' ? 4 : 2);
     }
     _transform(chunk, _encoding, callback) {
         this.totalFrames += chunk.length / this.bytesPerFrame;
@@ -431,7 +433,7 @@ class PCMFrameCounter extends Transform {
  * Emitting with zero 'error' listeners throws, which escapes as an uncaught
  * exception and kills the worker, so teardown races must never emit blindly.
  */
-const emitResourceError = (target, error) => {
+export const emitResourceError = (target, error) => {
     if (!target || !error)
         return;
     try {
@@ -474,6 +476,7 @@ class BaseAudioResource {
         voiceStream.fadeTo = (volume, durationMs, curve) => this.fadeTo(volume, durationMs, curve);
         voiceStream.tapeTo = (durationMs, type, curve) => this.tapeTo(durationMs, type, curve);
         voiceStream.setLoudnessNormalizer = (enabled) => this.setLoudnessNormalizer(enabled);
+        voiceStream.getAudioProcessingTelemetry = () => this.getAudioProcessingTelemetry();
         voiceStream.isPipelineFinished = () => this.isPipelineFinished();
         /*
          * This will prevent a race condition where fast CDN/network streams finish buffering and emit
@@ -532,7 +535,7 @@ class BaseAudioResource {
             pipe.abort?.();
             pipe.unpipe?.();
             pipe.cleanup?.();
-            pipe.removeAllListeners?.();
+            // Keep pipeline listeners for pending error and close events.
             pipe.destroy?.();
         }
         this.pipes.length = 0;
@@ -550,6 +553,9 @@ class BaseAudioResource {
             return 0;
         const silenceDetector = this.pipes.find((p) => p instanceof SilenceDetector);
         return silenceDetector?.getRMS() ?? 0;
+    }
+    getAudioProcessingTelemetry() {
+        return null;
     }
     isSilent() {
         if (!this.pipes)
@@ -696,6 +702,7 @@ class SymphoniaDecoderStream extends Transform {
     decoder;
     codecRegistryHint;
     flushCallback;
+    transformCallback;
     inputClosed;
     isFinished;
     _aborted;
@@ -712,6 +719,7 @@ class SymphoniaDecoderStream extends Transform {
         this.decoder = new SymphoniaDecoder();
         this.codecRegistryHint = codecRegistryHint ?? null;
         this.flushCallback = null;
+        this.transformCallback = null;
         this.inputClosed = false;
         this.isFinished = false;
         this._aborted = false;
@@ -750,7 +758,13 @@ class SymphoniaDecoderStream extends Transform {
                 this.decoder.initialize(this.codecRegistryHint);
             }
             this._scheduleDecode();
-            callback();
+            if (this.decoder.isProbed &&
+                this.decoder.bufferedBytes >= BUFFER_THRESHOLDS.maxCompressed) {
+                this.transformCallback = callback;
+            }
+            else {
+                callback();
+            }
         }
         catch (err) {
             callback(err);
@@ -824,6 +838,13 @@ class SymphoniaDecoderStream extends Transform {
         }
         finally {
             this._isDecoding = false;
+            if (this.transformCallback &&
+                this.decoder &&
+                this.decoder.bufferedBytes < BUFFER_THRESHOLDS.minCompressed) {
+                const callback = this.transformCallback;
+                this.transformCallback = null;
+                callback();
+            }
         }
     }
     _finishDecode() {
@@ -834,8 +855,9 @@ class SymphoniaDecoderStream extends Transform {
         callback?.();
     }
     _failDecode(err) {
-        const callback = this.flushCallback;
+        const callback = this.flushCallback ?? this.transformCallback;
         this.flushCallback = null;
+        this.transformCallback = null;
         this.isFinished = true;
         this._cleanup();
         const error = err instanceof Error ? err : new Error(`Symphonia decode failed: ${err}`);
@@ -843,7 +865,7 @@ class SymphoniaDecoderStream extends Transform {
             callback(error);
         }
         else {
-            this.emit('error', error);
+            emitResourceError(this, error);
         }
     }
     _flush(callback) {
@@ -882,10 +904,10 @@ class SymphoniaDecoderStream extends Transform {
             this.flushCallback = null;
             cb(err);
         }
-        this._cleanup();
+        this._cleanup(err);
         super._destroy(err, callback);
     }
-    _cleanup() {
+    _cleanup(error) {
         this._cancelTimers();
         if (this.decoder) {
             try {
@@ -893,6 +915,11 @@ class SymphoniaDecoderStream extends Transform {
             }
             catch { }
             this.decoder = null;
+        }
+        if (this.transformCallback) {
+            const callback = this.transformCallback;
+            this.transformCallback = null;
+            callback(error);
         }
     }
 }
@@ -1074,7 +1101,7 @@ class AACDecoderStream extends Transform {
             this.isDecoderReady = true;
             this._processPendingChunks();
         })
-            .catch((err) => this.emit('error', err));
+            .catch((err) => emitResourceError(this, err));
     }
     cleanup() {
         this.ringBuffer.dispose();
@@ -1179,35 +1206,47 @@ class AACDecoderStream extends Transform {
     async _processPendingChunks() {
         if (!this.isDecoderReady || this.pendingChunks.length === 0)
             return;
-        for (const item of this.pendingChunks) {
+        while (this.pendingChunks.length > 0) {
+            const item = this.pendingChunks.shift();
             await this._decodeChunk(item.chunk, item.encoding, item.callback);
         }
-        this.pendingChunks = [];
     }
     _findADTSFrame() {
         const buffer = this.ringBuffer.peek(this.ringBuffer.length);
         if (!buffer)
             return null;
-        const buf = buffer;
-        for (let i = 0; i < buf.length - 7; i++) {
-            const syncword = ((buf[i] ?? 0) << 4) | ((buf[i + 1] ?? 0) >> 4);
-            if (syncword === 0xfff) {
-                const frameLength = (((buf[i + 3] ?? 0) & 0x03) << 11) |
-                    ((buf[i + 4] ?? 0) << 3) |
-                    (((buf[i + 5] ?? 0) >> 5) & 0x07);
-                if (buf.length >= i + frameLength) {
-                    return {
-                        start: i,
-                        end: i + frameLength,
-                        frame: buf.subarray(i, i + frameLength)
-                    };
-                }
+        for (let offset = 0; offset + 7 <= buffer.length; offset++) {
+            const flags = buffer[offset + 1] ?? 0;
+            const samplingIndex = ((buffer[offset + 2] ?? 0) >> 2) & 0x0f;
+            if (buffer[offset] !== 0xff ||
+                (flags & 0xf0) !== 0xf0 ||
+                (flags & 0x06) !== 0 ||
+                samplingIndex >= 13) {
+                continue;
             }
+            const headerLength = (flags & 1) === 0 ? 9 : 7;
+            const frameLength = (((buffer[offset + 3] ?? 0) & 0x03) << 11) |
+                ((buffer[offset + 4] ?? 0) << 3) |
+                (((buffer[offset + 5] ?? 0) >> 5) & 0x07);
+            if (frameLength <= headerLength)
+                continue;
+            // Wait for the rest of this frame instead of scanning its payload.
+            if (offset + frameLength > buffer.length) {
+                this.ringBuffer.skip(offset);
+                return null;
+            }
+            return {
+                start: offset,
+                end: offset + frameLength,
+                frame: buffer.subarray(offset, offset + frameLength)
+            };
         }
+        // Retain a partial header for the next chunk.
+        this.ringBuffer.skip(Math.max(0, buffer.length - 6));
         return null;
     }
     _transform(chunk, encoding, callback) {
-        if (this.state?.isAlac) {
+        if (this.state?.isPcm) {
             this.push(chunk);
             callback();
             return;
@@ -1305,7 +1344,7 @@ class AACDecoderStream extends Transform {
         }
     }
     _flush(callback) {
-        if (this.state?.isAlac) {
+        if (this.state?.isPcm) {
             callback();
             return;
         }
@@ -1404,7 +1443,7 @@ class MP4ToAACStream extends Transform {
     _opts;
     _initPromise;
     state;
-    symphoniaDecoder;
+    pcmDecoder;
     headerChunks;
     constructor(options = {}) {
         super({ ...options, highWaterMark: AUDIO_CONFIG.highWaterMark });
@@ -1416,7 +1455,7 @@ class MP4ToAACStream extends Transform {
         this._prefetchDone = false;
         this._initPromise = null;
         this.state = options.state ?? null;
-        this.symphoniaDecoder = null;
+        this.pcmDecoder = null;
         this.headerChunks = [];
     }
     async _initMp4Box() {
@@ -1436,8 +1475,8 @@ class MP4ToAACStream extends Transform {
     abort() {
         this._aborted = true;
         this._cleanupMp4Box();
-        if (this.symphoniaDecoder) {
-            this.symphoniaDecoder.abort?.();
+        if (this.pcmDecoder instanceof SymphoniaDecoderStream) {
+            this.pcmDecoder.abort?.();
         }
     }
     _appendPrefetchIfNeeded() {
@@ -1461,56 +1500,72 @@ class MP4ToAACStream extends Transform {
         this.mp4boxFile.onReady = (info) => {
             if (this._aborted || !this.mp4boxFile)
                 return;
-            const audioTrack = info.tracks.find((t) => t.codec?.startsWith('mp4a') || t.codec?.startsWith('alac'));
+            const audioTrack = info.tracks.find((t) => t.codec?.startsWith('mp4a') ||
+                t.codec?.startsWith('alac') ||
+                t.codec === 'Opus');
             if (!audioTrack) {
                 throw new Error('No supported track found in MP4');
             }
-            if (audioTrack.codec?.startsWith('alac')) {
+            const isAlac = audioTrack.codec?.startsWith('alac');
+            if (isAlac || audioTrack.codec === 'Opus') {
+                /* INFO: These decoders emit PCM, so the AAC stage must pass it through. */
                 if (this.state)
-                    this.state.isAlac = true;
-                this._cleanupMp4Box();
-                this.symphoniaDecoder = new SymphoniaDecoderStream({
-                    codecRegistryHint: 'm4a'
-                });
-                this.symphoniaDecoder.on('data', (pcm) => {
+                    this.state.isPcm = true;
+                this.pcmDecoder = isAlac
+                    ? new SymphoniaDecoderStream({ codecRegistryHint: 'm4a' })
+                    : new OpusDecoder({
+                        rate: AUDIO_CONFIG.sampleRate,
+                        channels: AUDIO_CONFIG.channels
+                    });
+                this.pcmDecoder.on('data', (pcm) => {
                     this.push(pcm);
                 });
-                this.symphoniaDecoder.on('error', (err) => {
-                    this.emit('error', err);
+                this.pcmDecoder.on('error', (err) => {
+                    this.destroy(err);
                 });
-                const fullBuffer = Buffer.concat(this.headerChunks);
-                const reordered = reorderMp4Boxes(fullBuffer);
-                this.headerChunks = [];
-                this.symphoniaDecoder.write(reordered);
+                if (isAlac) {
+                    this._cleanupMp4Box();
+                    const fullBuffer = Buffer.concat(this.headerChunks);
+                    this.headerChunks = [];
+                    this.pcmDecoder.write(reorderMp4Boxes(fullBuffer));
+                    return;
+                }
             }
             else {
                 this.audioConfig = this._getAudioConfig(audioTrack);
-                this.headerChunks = [];
-                this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
-                    nbSamples: 50
-                });
-                if (typeof this._opts.seekTimeSec === 'number') {
-                    const mp4boxFile = this.mp4boxFile;
-                    const seekRes = mp4boxFile.seek(this._opts.seekTimeSec, true);
-                    const expectedOffset = _seekOffset(seekRes);
-                    if (typeof this._opts.baseFileStart === 'number' &&
-                        this._opts.baseFileStart !== expectedOffset) {
-                        logger('warn', 'MP4ToAACStream', `MP4 seek mismatch: stream starts at ${this._opts.baseFileStart} but MP4Box requested ${expectedOffset}`);
-                    }
-                    if (typeof this._opts.baseFileStart !== 'number') {
-                        this.offset = expectedOffset;
-                    }
-                }
-                this.mp4boxFile.start();
             }
+            this.headerChunks = [];
+            this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
+                nbSamples: 50
+            });
+            if (typeof this._opts.seekTimeSec === 'number') {
+                const mp4boxFile = this.mp4boxFile;
+                const seekRes = mp4boxFile.seek(this._opts.seekTimeSec, true);
+                const expectedOffset = _seekOffset(seekRes);
+                if (typeof this._opts.baseFileStart === 'number' &&
+                    this._opts.baseFileStart !== expectedOffset) {
+                    logger('warn', 'MP4ToAACStream', `MP4 seek mismatch: stream starts at ${this._opts.baseFileStart} but MP4Box requested ${expectedOffset}`);
+                }
+                if (typeof this._opts.baseFileStart !== 'number') {
+                    this.offset = expectedOffset;
+                }
+            }
+            this.mp4boxFile.start();
         };
         this.mp4boxFile.onSamples = (id, _user, samples) => {
             if (this._aborted || !this.mp4boxFile)
                 return;
             if (!samples?.length)
                 return;
-            for (const sample of samples)
-                this._emitSampleWithADTS(sample);
+            for (const sample of samples) {
+                if (this.pcmDecoder) {
+                    /* INFO: MP4 Opus samples are packets, so they need no ADTS header. */
+                    this.pcmDecoder.write(Buffer.from(sample.data));
+                }
+                else {
+                    this._emitSampleWithADTS(sample);
+                }
+            }
             const last = samples[samples.length - 1];
             if (last && typeof last === 'object' && 'number' in last) {
                 const mp4boxFile = this.mp4boxFile;
@@ -1565,12 +1620,12 @@ class MP4ToAACStream extends Transform {
             callback();
             return;
         }
-        if (this.symphoniaDecoder) {
-            this.symphoniaDecoder.write(chunk);
+        if (this.pcmDecoder && !this.mp4boxFile) {
+            this.pcmDecoder.write(chunk);
             callback();
             return;
         }
-        if (!this.audioConfig)
+        if (!this.audioConfig && !this.pcmDecoder)
             this.headerChunks.push(chunk);
         try {
             await this._initMp4Box();
@@ -1593,22 +1648,15 @@ class MP4ToAACStream extends Transform {
         }
     }
     _flush(callback) {
-        const decoderInstance = this
-            .symphoniaDecoder;
-        if (decoderInstance) {
-            decoderInstance.end(callback);
-            return;
-        }
         if (!this._aborted && this.mp4boxFile) {
             try {
                 this.mp4boxFile.flush();
             }
             catch { }
         }
-        const decoderInstanceAfter = this
-            .symphoniaDecoder;
-        if (decoderInstanceAfter) {
-            decoderInstanceAfter.end(callback);
+        if (this.pcmDecoder) {
+            this._cleanupMp4Box();
+            this.pcmDecoder.end(callback);
             return;
         }
         this._cleanupMp4Box();
@@ -1618,9 +1666,9 @@ class MP4ToAACStream extends Transform {
         this._aborted = true;
         this._cleanupMp4Box();
         this.headerChunks = [];
-        if (this.symphoniaDecoder) {
-            this.symphoniaDecoder.destroy();
-            this.symphoniaDecoder = null;
+        if (this.pcmDecoder) {
+            this.pcmDecoder.destroy();
+            this.pcmDecoder = null;
         }
         super._destroy(err, callback);
     }
@@ -2074,7 +2122,7 @@ class FLVToAACStream extends Transform {
         });
         this.demuxer.on('error', (err) => {
             if (!this._aborted)
-                this.emit('error', err);
+                emitResourceError(this, err);
         });
     }
     abort() {
@@ -2119,19 +2167,46 @@ class FLVToAACStream extends Transform {
 class StreamAudioResource extends BaseAudioResource {
     nodelink;
     frameCounter = null;
-    constructor(guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false) {
+    protectedLimiterOutput = null;
+    constructor(guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode, float32PCMOutput = false) {
         super(guildId);
         this.nodelink = nodelink;
+        const mode = resolveAudioProcessingMode(nodelink.options.playback.audio?.processingMode, processingMode);
+        const preparedProtectedInterceptors = [];
+        if (!returnPCM && mode === 'protected') {
+            // Validate filter capabilities before starting decoder streams. The real
+            // manager is then constructed below as the resource-owned instance.
+            new FiltersManager(nodelink, initialFilters, {}, 'protected');
+            for (const factory of nodelink.extensions?.audioInterceptors ?? []) {
+                const caps = factory.audioCapabilities;
+                if (!caps?.sampleFormats.includes('f32le') ||
+                    caps.amplitudeBehavior !== 'preserves-headroom') {
+                    throw new Error('Protected mode requires every audio interceptor to declare f32le support and headroom preservation');
+                }
+                assertAudioCapabilities(caps);
+                const interceptor = factory();
+                if (interceptor)
+                    preparedProtectedInterceptors.push(interceptor);
+            }
+        }
         this._validateInputStream(stream);
         const resamplingQuality = nodelink.options.playback.audio?.resamplingQuality || 'fastest';
-        const normalizedType = normalizeFormat(type);
+        /*
+          INFO: MP4 can contain AAC, ALAC or Opus. Select its codec after
+            demuxing, even when the MIME parameters already name a codec.
+          SOURCES:
+            - https://github.com/gpac/mp4box.js#onreadyinfo
+        */
+        const normalizedType = _isMp4Format(type.toLowerCase())
+            ? SupportedFormats.AAC
+            : normalizeFormat(type);
         this.pipes = [stream];
         const pcmStream = this._createDecoderPipeline(stream, type, normalizedType, resamplingQuality);
         if (returnPCM) {
-            this._createPCMOutputPipeline(pcmStream, volume, enableAGC);
+            this._createPCMOutputPipeline(pcmStream, volume, enableAGC, float32PCMOutput && mode === 'protected');
         }
         else {
-            this._createOutputPipeline(pcmStream, nodelink, initialFilters, volume, audioMixer, enableAGC, enableCrossfade);
+            this._createOutputPipeline(pcmStream, nodelink, initialFilters, volume, audioMixer, enableAGC, enableCrossfade, mode, preparedProtectedInterceptors);
         }
         this._setupEventHandlers(stream);
     }
@@ -2177,7 +2252,7 @@ class StreamAudioResource extends BaseAudioResource {
         const lowerType = type.toLowerCase();
         const _aacStream = stream;
         const streams = [stream];
-        const state = { isAlac: false };
+        const state = { isPcm: false };
         if (_isFmp4Format(lowerType)) {
             const bufferMode = lowerType.includes('fmp4-buffered');
             const demuxer = new FMP4ToAACStream({ bufferMode });
@@ -2260,15 +2335,17 @@ class StreamAudioResource extends BaseAudioResource {
         });
         return decoder;
     }
-    _createOutputPipeline(pcmStream, nodelink, initialFilters, volume, audioMixer = null, enableAGC = true, enableCrossfade = false) {
-        const frameCounter = new PCMFrameCounter(AUDIO_CONFIG.sampleRate, AUDIO_CONFIG.channels);
+    _createOutputPipeline(pcmStream, nodelink, initialFilters, volume, audioMixer = null, enableAGC = true, enableCrossfade = false, processingMode = 'legacy', preparedProtectedInterceptors = []) {
+        const frameCounter = new PCMFrameCounter(AUDIO_CONFIG.sampleRate, AUDIO_CONFIG.channels, processingMode === 'protected' ? 'f32le' : 's16le');
         this.frameCounter = frameCounter; // Saves the reference to get the time later
-        const filters = new FiltersManager(nodelink, initialFilters);
+        const filters = new FiltersManager(nodelink, initialFilters, {}, processingMode);
         const volumeTransformer = new VolumeTransformer({
             type: 's16le',
             volume,
             enableAGC,
-            lookaheadMs: nodelink.options.playback.audio?.lookaheadMs,
+            lookaheadMs: processingMode === 'protected'
+                ? 0
+                : nodelink.options.playback.audio?.lookaheadMs,
             gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
         });
         const fadeTransformer = new FadeTransformer({
@@ -2288,18 +2365,33 @@ class StreamAudioResource extends BaseAudioResource {
         const silenceDetector = new SilenceDetector({
             sampleRate: AUDIO_CONFIG.sampleRate,
             channels: AUDIO_CONFIG.channels,
+            sampleFormat: processingMode === 'protected' ? 'f32le' : 's16le',
             thresholdDb: nodelink.options.playback.audio?.automix?.silenceThresholdDb ?? -40
         });
-        const flowController = new FlowController(volumeTransformer, fadeTransformer, tapeTransformer, scratchTransformer, audioMixer);
+        const flowController = new FlowController(volumeTransformer, fadeTransformer, tapeTransformer, scratchTransformer, audioMixer, processingMode);
         const opusEncoder = new OpusEncoder({
             rate: AUDIO_CONFIG.sampleRate,
-            channels: AUDIO_CONFIG.channels
+            channels: AUDIO_CONFIG.channels,
+            complexity: nodelink.options.playback.audio?.opusComplexity
         });
         opusEncoder.setDTX(false);
         const streams = [pcmStream];
+        if (processingMode === 'protected') {
+            const protectedInput = new ProtectedPcmInput();
+            streams.push(protectedInput);
+            this.pipes?.push(protectedInput);
+        }
         if (enableCrossfade) {
-            const crossfadeController = new CrossfadeController();
+            const crossfadeController = new CrossfadeController(processingMode === 'protected' ? 'f32le' : 's16le');
+            if (processingMode === 'protected') {
+                // A crossfade changes track identity while this output pipeline remains
+                // alive. Reset AGC history at both overlap start and promotion so the
+                // incoming song cannot inherit the previous song's gain estimate.
+                crossfadeController.on('transitionStart', () => volumeTransformer.resetAGC());
+            }
             crossfadeController.on('bridgeStart', () => {
+                if (processingMode === 'protected')
+                    volumeTransformer.resetAGC();
                 this.canStop = false;
             });
             crossfadeController.on('bridgeEnd', () => {
@@ -2312,9 +2404,18 @@ class StreamAudioResource extends BaseAudioResource {
             streams.push(crossfadeController);
             this.pipes?.push(crossfadeController);
         }
-        streams.push(frameCounter, silenceDetector, filters, flowController);
-        this.pipes?.push(frameCounter, silenceDetector, filters, flowController);
-        if (nodelink.extensions?.audioInterceptors) {
+        streams.push(frameCounter, silenceDetector, filters);
+        this.pipes?.push(frameCounter, silenceDetector, filters);
+        let protectedOutput = null;
+        streams.push(flowController);
+        this.pipes?.push(flowController);
+        if (processingMode === 'protected') {
+            for (const interceptorStream of preparedProtectedInterceptors) {
+                streams.push(interceptorStream);
+                this.pipes?.push(interceptorStream);
+            }
+        }
+        else if (nodelink.extensions?.audioInterceptors) {
             for (const interceptorFactory of nodelink.extensions.audioInterceptors) {
                 try {
                     const interceptorStream = interceptorFactory();
@@ -2328,7 +2429,14 @@ class StreamAudioResource extends BaseAudioResource {
                 }
             }
         }
+        if (processingMode === 'protected') {
+            protectedOutput = new ProtectedLimiterOutput(() => volumeTransformer.getRequestedVolume());
+            this.protectedLimiterOutput = protectedOutput;
+            streams.push(protectedOutput);
+        }
         streams.push(opusEncoder);
+        if (protectedOutput)
+            this.pipes?.push(protectedOutput);
         this.pipes?.push(opusEncoder);
         pipeline(streams, (err) => {
             if (err && !this._destroyed) {
@@ -2339,6 +2447,9 @@ class StreamAudioResource extends BaseAudioResource {
     }
     getConsumedMs() {
         return this.frameCounter?.getConsumedMs() ?? 0;
+    }
+    getAudioProcessingTelemetry() {
+        return this.protectedLimiterOutput?.snapshot() ?? null;
     }
     getMainEnergy() {
         return null;
@@ -2389,14 +2500,24 @@ class StreamAudioResource extends BaseAudioResource {
             flowController.setLoudnessNormalizer(enabled);
         }
     }
-    _createPCMOutputPipeline(pcmStream, volume, enableAGC = true) {
+    _createPCMOutputPipeline(pcmStream, volume, enableAGC = true, float32Output = false) {
+        if (float32Output) {
+            const converter = new ProtectedPcmInput();
+            pipeline(pcmStream, converter, (err) => {
+                if (err && !this._destroyed)
+                    emitResourceError(converter, err);
+            });
+            this.pipes?.push(converter);
+            this._assignStream(converter);
+            return;
+        }
         if (volume !== 1.0 || enableAGC) {
             const volumeTransformer = new VolumeTransformer({
                 type: 's16le',
                 volume,
                 enableAGC,
-                lookaheadMs: this.nodelink?.options?.audio?.lookaheadMs,
-                gateThresholdLUFS: this.nodelink?.options?.audio?.gateThresholdLUFS
+                lookaheadMs: this.nodelink?.options?.playback?.audio?.lookaheadMs,
+                gateThresholdLUFS: this.nodelink?.options?.playback?.audio?.gateThresholdLUFS
             });
             pipeline(pcmStream, volumeTransformer, (err) => {
                 if (err && !this._destroyed) {
@@ -2423,13 +2544,13 @@ class StreamAudioResource extends BaseAudioResource {
         const wrappedSource = inputStream._sourceStream;
         wrappedSource?.on?.('finishBuffering', forwardFinishBuffering);
         inputStream.on('error', (err) => {
-            emitResourceError(this.stream, err);
+            this.stream?.destroy(err);
         });
         if (this.pipes) {
             for (const pipe of this.pipes) {
                 if (pipe !== this.stream) {
                     pipe.on?.('error', (err) => {
-                        emitResourceError(this.stream, err);
+                        this.stream?.destroy(err);
                     });
                 }
             }
@@ -2455,10 +2576,13 @@ class StreamAudioResource extends BaseAudioResource {
             supportedFormats.map((f) => `  • ${f}`).join('\n'));
     }
 }
-export const createAudioResource = (guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false) => new StreamAudioResource(guildId, stream, type, nodelink, initialFilters, volume, audioMixer, returnPCM, enableAGC, enableCrossfade);
-export const createSeekeableAudioResource = async (guildId, url, seekTime, endTime, nodelink, initialFilters, player, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false) => {
+export const createAudioResource = (guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode, float32PCMOutput = false) => new StreamAudioResource(guildId, stream, type, nodelink, initialFilters, volume, audioMixer, returnPCM, enableAGC, enableCrossfade, processingMode, float32PCMOutput);
+export const createSeekeableAudioResource = async (guildId, url, seekTime, endTime, nodelink, initialFilters, player, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode) => {
     try {
-        const hinted = String(player.streamInfo?.format ?? '').toLowerCase();
+        /* INFO: Source format objects describe a rendition, not a MIME type. */
+        const hinted = typeof player.streamInfo?.format === 'string'
+            ? player.streamInfo.format.toLowerCase()
+            : '';
         const ext = _extFromUrl(url);
         const containerGuess = hinted || ext;
         const seekProxy = _extractSeekProxy(player.streamInfo);
@@ -2478,7 +2602,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
                     emitResourceError(passthroughStream, err);
             });
             const format = hinted || (ext ? ext : 'm4a');
-            return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, returnPCM ? true : (player.loudnessNormalizer ?? enableAGC), enableCrossfade);
+            return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, player.loudnessNormalizer ?? enableAGC, enableCrossfade, processingMode);
         }
         const { stream, meta } = (await seekableStream(url, seekTime, endTime, {}, _createSeekableProxyRequest(seekProxy)));
         const passthroughStream = new PassThrough({
@@ -2491,22 +2615,32 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
             if (err)
                 emitResourceError(passthroughStream, err);
         });
-        const format = meta.codec?.container || player.streamInfo?.format;
-        return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, returnPCM ? true : (player.loudnessNormalizer ?? enableAGC), enableCrossfade);
+        /*
+          INFO: seekable-stream may omit codec metadata for MP4 but still
+            report contentType. Extensionless URLs can also lack a format
+            hint, so use that detected MIME type to select the decoder.
+          SOURCES:
+            - @ecliptia/seekable-stream/src/index.js
+        */
+        const format = meta.codec?.container || hinted || meta.contentType;
+        return new StreamAudioResource(guildId, passthroughStream, format, nodelink, initialFilters, volume, audioMixer, returnPCM, player.loudnessNormalizer ?? enableAGC, enableCrossfade, processingMode);
     }
     catch (err) {
         const cause = err instanceof SeekError ? err.code : 'UNKNOWN';
         return _createErrorResponse(err.message, cause);
     }
 };
-export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, filters = {}) => {
+export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, filters = {}, enableAGC = false) => {
     const resamplingQuality = nodelink.options.playback.audio?.resamplingQuality || 'fastest';
-    const normalizedType = normalizeFormat(type);
+    /* INFO: Keep MP4 codec selection in the demuxer, as in playback. */
+    const normalizedType = _isMp4Format(type.toLowerCase())
+        ? SupportedFormats.AAC
+        : normalizeFormat(type);
     const streams = [stream];
     switch (normalizedType) {
         case SupportedFormats.AAC: {
             const lowerType = type.toLowerCase();
-            const state = { isAlac: false };
+            const state = { isPcm: false };
             if (_isFmp4Format(lowerType)) {
                 const bufferMode = lowerType.includes('fmp4-buffered');
                 streams.push(new FMP4ToAACStream({ bufferMode }));
@@ -2563,7 +2697,13 @@ export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, 
         default:
             throw new Error(`Unsupported audio format: '${type}'`);
     }
-    streams.push(new VolumeTransformer({ type: 's16le', volume }));
+    streams.push(new VolumeTransformer({
+        type: 's16le',
+        volume,
+        enableAGC,
+        lookaheadMs: nodelink.options.playback.audio?.lookaheadMs,
+        gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
+    }));
     streams.push(new FiltersManager(nodelink, filters));
     for (const s of streams) {
         if (s !== stream) {

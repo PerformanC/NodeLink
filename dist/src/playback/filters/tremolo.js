@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 import LFO from './dsp/lfo.js';
@@ -10,6 +11,7 @@ const CHANNELS = 2;
  */
 export default class Tremolo extends AnimatableFilter {
     priority = 10;
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     lfo;
     targetFrequency = 0;
     targetDepth = 0;
@@ -65,6 +67,21 @@ export default class Tremolo extends AnimatableFilter {
             const multiplier = this.lfo.process();
             const blendedMultiplier = 1.0 + alpha * (multiplier - 1.0);
             chunk.writeInt16LE(clamp16Bit(sample * blendedMultiplier), i);
+        }
+        return chunk;
+    }
+    processFloat32(chunk) {
+        if (chunk.length % 4 !== 0)
+            throw new RangeError('Tremolo Float32 input must be sample-aligned');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        const alpha = this.alpha;
+        for (let i = 0; i < chunk.length; i += 4) {
+            const sample = chunk.readFloatLE(i);
+            const multiplier = this.lfo.process();
+            const blendedMultiplier = 1 + alpha * (multiplier - 1);
+            chunk.writeFloatLE(sample * blendedMultiplier, i);
         }
         return chunk;
     }

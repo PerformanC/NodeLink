@@ -71,7 +71,7 @@ export default class PlayerManager {
      * @internal
      */
     isClusterPlayerSnapshot(player) {
-        return typeof player.play !== 'function';
+        return !('play' in player);
     }
     /**
      * Resolves a local playback player or throws when unavailable.
@@ -163,7 +163,7 @@ export default class PlayerManager {
      * @param guildId - Target guild id.
      * @param voice - Optional initial voice payload.
      */
-    async create(guildId, voice) {
+    async create(guildId, voice, audioProcessingMode) {
         const session = this.getSessionOrThrow();
         const playerKey = this.getPlayerKey(guildId);
         const existingPlayer = this.players.get(playerKey);
@@ -175,7 +175,7 @@ export default class PlayerManager {
         if (pendingCreate) {
             return pendingCreate;
         }
-        const createPromise = this._createInternal(session, guildId, voice, playerKey).finally(() => {
+        const createPromise = this._createInternal(session, guildId, voice, playerKey, audioProcessingMode).finally(() => {
             this.pendingCreates.delete(playerKey);
         });
         this.pendingCreates.set(playerKey, createPromise);
@@ -185,7 +185,7 @@ export default class PlayerManager {
      * Internal player creation routine for local and cluster modes.
      * @internal
      */
-    async _createInternal(session, guildId, voice, playerKey) {
+    async _createInternal(session, guildId, voice, playerKey, audioProcessingMode) {
         if (this.isCluster) {
             const workerManager = this.getWorkerManagerOrThrow();
             const worker = workerManager.getWorkerForGuild(playerKey);
@@ -199,7 +199,8 @@ export default class PlayerManager {
                     sessionId: this.sessionId,
                     guildId,
                     userId: this.getSessionUserId(session),
-                    voice
+                    voice,
+                    audioProcessingMode
                 });
                 if (createResult?.created === false &&
                     createResult?.reason !== 'Player already exists') {
@@ -210,7 +211,15 @@ export default class PlayerManager {
                     this.players.set(playerKey, {
                         guildId,
                         userId: this.getSessionUserId(session),
-                        sessionId: this.sessionId
+                        sessionId: this.sessionId,
+                        track: null,
+                        isPaused: false,
+                        connection: null,
+                        connStatus: 'disconnected',
+                        _lastStreamDataTime: 0,
+                        _sendUpdate: () => true,
+                        emitEvent: () => { },
+                        destroy: () => { }
                     });
                 }
                 workerManager.assignGuildToWorker(playerKey, worker);
@@ -248,10 +257,12 @@ export default class PlayerManager {
         const player = new Player({
             nodelink: this.nodelink,
             session: localSession,
-            guildId
+            guildId,
+            audioProcessingMode
         });
         this.players.set(playerKey, player);
         this.nodelink.statistics.players += 1;
+        this.nodelink.admissionManager?.recordPlayerCreate(this.sessionId);
         this.nodelink.pluginManager?.callHook('onPlayerCreate', guildId, this.sessionId, { created: true });
         return player;
     }
@@ -282,6 +293,7 @@ export default class PlayerManager {
             }
             workerManager.unassignGuild(playerKey);
             this.players.delete(playerKey);
+            this.nodelink.admissionManager?.recordPlayerDestroy(this.sessionId);
             this.nodelink.pluginManager?.callHook('onPlayerDestroy', guildId, this.sessionId);
             return;
         }
@@ -289,6 +301,7 @@ export default class PlayerManager {
         player.destroy();
         this.players.delete(playerKey);
         this.nodelink.statistics.players = Math.max(0, this.nodelink.statistics.players - 1);
+        this.nodelink.admissionManager?.recordPlayerDestroy(this.sessionId);
         this.nodelink.pluginManager?.callHook('onPlayerDestroy', guildId, this.sessionId);
     }
     /**
@@ -390,9 +403,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterMutation(guildId, 'setFilters', [
-                filtersPayload
-            ]);
+            return this.runClusterMutation(guildId, 'setFilters', [filtersPayload]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.setFilters(filtersPayload);
@@ -418,9 +429,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterMutation(guildId, 'setCrossfade', [
-                crossfadeConfig
-            ]);
+            return this.runClusterMutation(guildId, 'setCrossfade', [crossfadeConfig]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.setCrossfade(crossfadeConfig);
@@ -438,6 +447,16 @@ export default class PlayerManager {
         return player.setLoudnessNormalizer(enabled);
     }
     /**
+     * Enables or disables auto-ducking.
+     */
+    async setDucking(guildId, enabled) {
+        if (this.isCluster) {
+            return this.runClusterMutation(guildId, 'setDucking', [enabled]);
+        }
+        const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
+        return player.setDucking(enabled);
+    }
+    /**
      * Applies voice state updates to the player.
      */
     async updateVoice(guildId, voicePayload) {
@@ -445,9 +464,7 @@ export default class PlayerManager {
         if (interception?.handled)
             return interception.result;
         if (this.isCluster) {
-            return this.runClusterMutation(guildId, 'updateVoice', [
-                voicePayload
-            ]);
+            return this.runClusterMutation(guildId, 'updateVoice', [voicePayload]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         player.updateVoice(voicePayload);
@@ -470,10 +487,7 @@ export default class PlayerManager {
      */
     async addMix(guildId, trackPayload, volume = null) {
         if (this.isCluster) {
-            return this.runClusterMutation(guildId, 'addMix', [
-                trackPayload,
-                volume
-            ]);
+            return this.runClusterMutation(guildId, 'addMix', [trackPayload, volume]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         return player.addMix(trackPayload, volume);
@@ -547,9 +561,7 @@ export default class PlayerManager {
      */
     async updateSponsorBlock(guildId, updates) {
         if (this.isCluster) {
-            return this.runClusterMutation(guildId, 'updateSponsorBlock', [
-                updates
-            ]);
+            return this.runClusterMutation(guildId, 'updateSponsorBlock', [updates]);
         }
         const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId));
         player.updateSponsorBlock(updates);

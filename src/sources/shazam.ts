@@ -5,6 +5,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   HttpRequestResult,
@@ -18,9 +19,7 @@ import {
 } from '../utils.ts'
 
 const SHAZAM_PATTERN =
-  /^https?:\/\/(?:www\.)?shazam\.com\/song\/\d+(?:\/[^/?#]+)?\/?(?:[?#].*)?$/
-const SHAZAM_SEARCH_BASE =
-  'https://www.shazam.com/services/amapi/v1/catalog/US/search'
+  /^https?:\/\/(?:www\.)?shazam\.com\/(?:song|track)\/\d+(?:\/[^/?#]+)?\/?(?:[?#].*)?$/i
 const APPLE_CATALOG_SEARCH_BASE =
   'https://api.music.apple.com/v1/catalog/US/search'
 const APPLE_CATALOG_SONG_BASE =
@@ -239,6 +238,46 @@ interface ShazamSourceManager {
  */
 export default class ShazamSource {
   /**
+   * Declarative test suite for validating Shazam source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'shazam.track.resolve',
+      name: 'Shazam Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.shazam.com/song/617154366/get-lucky'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'shazam' }
+        }
+      }
+    },
+    {
+      id: 'shazam.search.shsearch',
+      name: 'Shazam Search query (shsearch:)',
+      input: {
+        type: 'search',
+        searchType: 'shsearch',
+        value: 'Daft Punk Get Lucky'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          sourceName: { op: 'equals', value: 'shazam' }
+        }
+      }
+    }
+  ]
+
+  /**
    * Runtime worker context used by the source implementation.
    */
   public readonly nodelink: WorkerNodeLink
@@ -336,12 +375,23 @@ export default class ShazamSource {
         return { loadType: 'empty', data: {} }
       }
 
+      const token = await this.getMediaApiToken()
+      if (!token) {
+        return { loadType: 'empty', data: {} }
+      }
+
       const limit = this.getMaxSearchResults()
       const url =
-        `${SHAZAM_SEARCH_BASE}?types=songs&term=${encodeURIComponent(normalizedQuery)}` +
+        `${APPLE_CATALOG_SEARCH_BASE}?types=songs&term=${encodeURIComponent(normalizedQuery)}` +
         `&limit=${limit}`
 
-      const { body, statusCode, error } = await http1makeRequest(url)
+      const { body, statusCode, error } = await http1makeRequest(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          Origin: 'https://music.apple.com'
+        }
+      })
       if (error || statusCode !== 200) {
         return { loadType: 'empty', data: {} }
       }
@@ -383,7 +433,7 @@ export default class ShazamSource {
       }
 
       const cleanUrl = url.replace(/[?#].*$/, '').replace(/\/$/, '')
-      const match = cleanUrl.match(/\/song\/(\d+)(?:\/[^/?#]+)?$/)
+      const match = cleanUrl.match(/\/(?:song|track)\/(\d+)(?:\/[^/?#]+)?$/)
       const identifier = match?.[1]
       if (!identifier) {
         return { loadType: 'empty', data: {} }
@@ -426,6 +476,14 @@ export default class ShazamSource {
       return this.mediaApiToken
     }
 
+    const cachedToken = this.nodelink.credentialManager?.get<string>(
+      'apple_media_api_token'
+    )
+    if (cachedToken) {
+      this.mediaApiToken = cachedToken
+      return cachedToken
+    }
+
     try {
       const { body: html, statusCode } = await http1makeRequest(
         APPLE_MUSIC_BROWSE_URL
@@ -457,6 +515,11 @@ export default class ShazamSource {
       }
 
       this.mediaApiToken = token
+      this.nodelink.credentialManager?.set(
+        'apple_media_api_token',
+        token,
+        24 * 60 * 60 * 1000
+      )
       return token
     } catch {
       return null

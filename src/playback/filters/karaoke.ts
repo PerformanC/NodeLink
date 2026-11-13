@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 
@@ -12,6 +13,7 @@ const INV_16 = 1 / SCALE_16
  * @public
  */
 export default class Karaoke extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 10
   private level = 0
   private monoLevel = 0
@@ -174,8 +176,8 @@ export default class Karaoke extends AnimatableFilter {
     const level = this.targetLevel
     const monoLevel = this.targetMonoLevel
 
-    this.level = level <= 0 ? 0 : level >= 1 ? 1 : level
-    this.monoLevel = monoLevel <= 0 ? 0 : monoLevel >= 1 ? 1 : monoLevel
+    this.level = level <= 0 ? 0 : Math.min(level, 1)
+    this.monoLevel = monoLevel <= 0 ? 0 : Math.min(monoLevel, 1)
   }
 
   protected override isConfigActive(config?: Record<string, number>): boolean {
@@ -189,7 +191,23 @@ export default class Karaoke extends AnimatableFilter {
    * @returns The processed PCM audio chunk.
    */
   public override process(chunk: Buffer): Buffer {
-    super.processAnimation(SAMPLE_RATE, chunk.length, 2)
+    return this._processAudio(chunk, false)
+  }
+
+  public processFloat32(chunk: Buffer): Buffer {
+    return this._processAudio(chunk, true)
+  }
+
+  private _processAudio(chunk: Buffer, float32: boolean): Buffer {
+    const bytesPerFrame = float32 ? 8 : 4
+    if (chunk.length % bytesPerFrame !== 0)
+      throw new RangeError('Karaoke input must contain complete stereo frames')
+    super.processAnimation(
+      SAMPLE_RATE,
+      chunk.length,
+      2,
+      float32 ? 'f32le' : 's16le'
+    )
 
     if (this.alpha <= 0.001) {
       return chunk
@@ -199,7 +217,7 @@ export default class Karaoke extends AnimatableFilter {
     const monoLevel = this.monoLevel
     if (!level && !monoLevel) return chunk
 
-    const frames = chunk.length >> 2
+    const frames = chunk.length / bytesPerFrame
     if (!frames) return chunk
 
     this._ensureBuffers(frames)
@@ -241,9 +259,13 @@ export default class Karaoke extends AnimatableFilter {
     let originalEnergy = 0
     let processedEnergy = 0
 
-    for (let f = 0, bi = 0; f < frames; f++, bi += 4) {
-      let left = chunk.readInt16LE(bi) * INV_16
-      let right = chunk.readInt16LE(bi + 2) * INV_16
+    for (let f = 0, bi = 0; f < frames; f++, bi += bytesPerFrame) {
+      let left = float32
+        ? chunk.readFloatLE(bi)
+        : chunk.readInt16LE(bi) * INV_16
+      let right = float32
+        ? chunk.readFloatLE(bi + (float32 ? 4 : 2))
+        : chunk.readInt16LE(bi + 2) * INV_16
 
       originalEnergy += left * left + right * right
 
@@ -331,21 +353,25 @@ export default class Karaoke extends AnimatableFilter {
     let current = prev
     const step = (target - prev) / frames
 
-    for (let f = 0, bi = 0; f < frames; f++, bi += 4) {
+    for (let f = 0, bi = 0; f < frames; f++, bi += bytesPerFrame) {
       current += step
 
       let outL = (outLBuf[f] ?? 0) * current
       let outR = (outRBuf[f] ?? 0) * current
 
-      const peak = Math.max(Math.abs(outL), Math.abs(outR))
-      if (peak > 0.9999) {
-        const s = 0.9999 / peak
-        outL *= s
-        outR *= s
+      if (float32) {
+        chunk.writeFloatLE(outL, bi)
+        chunk.writeFloatLE(outR, bi + 4)
+      } else {
+        const peak = Math.max(Math.abs(outL), Math.abs(outR))
+        if (peak > 0.9999) {
+          const s = 0.9999 / peak
+          outL *= s
+          outR *= s
+        }
+        chunk.writeInt16LE(clamp16Bit(outL * SCALE_16), bi)
+        chunk.writeInt16LE(clamp16Bit(outR * SCALE_16), bi + 2)
       }
-
-      chunk.writeInt16LE(clamp16Bit(outL * SCALE_16), bi)
-      chunk.writeInt16LE(clamp16Bit(outR * SCALE_16), bi + 2)
     }
 
     this.lp_left_x1 = lpLx1

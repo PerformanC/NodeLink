@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 const MAX_OUTPUT_GAIN = 0.98;
@@ -9,6 +10,7 @@ const INV_16 = 1 / SCALE_16;
  * @public
  */
 export default class Karaoke extends AnimatableFilter {
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     priority = 10;
     level = 0;
     monoLevel = 0;
@@ -144,8 +146,8 @@ export default class Karaoke extends AnimatableFilter {
         this.alpha = config.alpha ?? 1.0;
         const level = this.targetLevel;
         const monoLevel = this.targetMonoLevel;
-        this.level = level <= 0 ? 0 : level >= 1 ? 1 : level;
-        this.monoLevel = monoLevel <= 0 ? 0 : monoLevel >= 1 ? 1 : monoLevel;
+        this.level = level <= 0 ? 0 : Math.min(level, 1);
+        this.monoLevel = monoLevel <= 0 ? 0 : Math.min(monoLevel, 1);
     }
     isConfigActive(config) {
         const a = config ? config.alpha : this.alpha;
@@ -157,7 +159,16 @@ export default class Karaoke extends AnimatableFilter {
      * @returns The processed PCM audio chunk.
      */
     process(chunk) {
-        super.processAnimation(SAMPLE_RATE, chunk.length, 2);
+        return this._processAudio(chunk, false);
+    }
+    processFloat32(chunk) {
+        return this._processAudio(chunk, true);
+    }
+    _processAudio(chunk, float32) {
+        const bytesPerFrame = float32 ? 8 : 4;
+        if (chunk.length % bytesPerFrame !== 0)
+            throw new RangeError('Karaoke input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, 2, float32 ? 'f32le' : 's16le');
         if (this.alpha <= 0.001) {
             return chunk;
         }
@@ -165,7 +176,7 @@ export default class Karaoke extends AnimatableFilter {
         const monoLevel = this.monoLevel;
         if (!level && !monoLevel)
             return chunk;
-        const frames = chunk.length >> 2;
+        const frames = chunk.length / bytesPerFrame;
         if (!frames)
             return chunk;
         this._ensureBuffers(frames);
@@ -182,9 +193,13 @@ export default class Karaoke extends AnimatableFilter {
         let hpRx1 = this.hp_right_x1, hpRx2 = this.hp_right_x2, hpRy1 = this.hp_right_y1, hpRy2 = this.hp_right_y2;
         let originalEnergy = 0;
         let processedEnergy = 0;
-        for (let f = 0, bi = 0; f < frames; f++, bi += 4) {
-            let left = chunk.readInt16LE(bi) * INV_16;
-            let right = chunk.readInt16LE(bi + 2) * INV_16;
+        for (let f = 0, bi = 0; f < frames; f++, bi += bytesPerFrame) {
+            let left = float32
+                ? chunk.readFloatLE(bi)
+                : chunk.readInt16LE(bi) * INV_16;
+            let right = float32
+                ? chunk.readFloatLE(bi + (float32 ? 4 : 2))
+                : chunk.readInt16LE(bi + 2) * INV_16;
             originalEnergy += left * left + right * right;
             if (monoLevel) {
                 const mid = (left + right) * 0.5;
@@ -256,18 +271,24 @@ export default class Karaoke extends AnimatableFilter {
         const target = prev + (gain - prev) * smooth;
         let current = prev;
         const step = (target - prev) / frames;
-        for (let f = 0, bi = 0; f < frames; f++, bi += 4) {
+        for (let f = 0, bi = 0; f < frames; f++, bi += bytesPerFrame) {
             current += step;
             let outL = (outLBuf[f] ?? 0) * current;
             let outR = (outRBuf[f] ?? 0) * current;
-            const peak = Math.max(Math.abs(outL), Math.abs(outR));
-            if (peak > 0.9999) {
-                const s = 0.9999 / peak;
-                outL *= s;
-                outR *= s;
+            if (float32) {
+                chunk.writeFloatLE(outL, bi);
+                chunk.writeFloatLE(outR, bi + 4);
             }
-            chunk.writeInt16LE(clamp16Bit(outL * SCALE_16), bi);
-            chunk.writeInt16LE(clamp16Bit(outR * SCALE_16), bi + 2);
+            else {
+                const peak = Math.max(Math.abs(outL), Math.abs(outR));
+                if (peak > 0.9999) {
+                    const s = 0.9999 / peak;
+                    outL *= s;
+                    outR *= s;
+                }
+                chunk.writeInt16LE(clamp16Bit(outL * SCALE_16), bi);
+                chunk.writeInt16LE(clamp16Bit(outR * SCALE_16), bi + 2);
+            }
         }
         this.lp_left_x1 = lpLx1;
         this.lp_left_x2 = lpLx2;

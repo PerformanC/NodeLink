@@ -31,8 +31,10 @@ import type {
   EncodedTrackPayload,
   GitInfo,
   HttpProxyConfig,
+  HttpRequestHeaders,
   HttpRequestOptions,
   HttpRequestResult,
+  HttpResponseHeaders,
   LoggingConfig,
   NodelinkRuntime,
   SemverInfo,
@@ -41,6 +43,7 @@ import type {
   TrackEncodeInput,
   VoiceConnectionStats
 } from './typings/utils.types.ts'
+import { defaultSanitizer, LogSanitizer } from './utils/sanitizer.ts'
 
 declare const __BUILD_GIT_INFO__: GitInfo | undefined
 
@@ -131,6 +134,7 @@ type LogLevelName = keyof typeof logLevels
 
 let loggingConfig: LoggingConfig = {}
 let currentLogLevel: (typeof logLevels)[LogLevelName] = logLevels.info
+const logSanitizer: LogSanitizer = defaultSanitizer
 let logStream: fs.WriteStream | null = null
 let gitInfoCache: GitInfo | null = null
 let currentLogFile: string | null = null
@@ -288,6 +292,9 @@ function initFileLogger(): void {
 function initLogger(config: { logging?: LoggingConfig }): void {
   loggingConfig = config.logging || {}
   currentLogLevel = logLevels[loggingConfig.level || 'info']
+  if (loggingConfig.redaction) {
+    logSanitizer.updateOptions(loggingConfig.redaction)
+  }
   initFileLogger()
 }
 
@@ -360,13 +367,21 @@ function logger(level: string, ...args: unknown[]): void {
     return arg
   })
 
-  const msg = util.format(...formattedArgs)
+  const rawMsg = util.format(...formattedArgs)
+  const isRedactionActive =
+    loggingConfig.redaction?.enabled !== false &&
+    loggingConfig.redaction?.mode !== 'off'
 
-  const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${msg}`
+  const consoleMsg = isRedactionActive ? logSanitizer.sanitize(rawMsg) : rawMsg
+  const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${consoleMsg}`
   console.log(consoleOutput)
 
   if (logStream) {
-    const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${msg}\n`
+    const fileMsg =
+      !isRedactionActive && loggingConfig.file?.redactSensitive !== false
+        ? logSanitizer.sanitize(rawMsg)
+        : consoleMsg
+    const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${fileMsg}\n`
     logStream.write(fileOutput)
   }
 }
@@ -472,6 +487,68 @@ function getVersion(
     return packageJson.version
   }
   return undefined
+}
+
+const dependencyVersionCache = new Map<string, string>()
+
+/**
+ * Resolves the installed version and git commit hash of a dependency.
+ *
+ * Checks `node_modules/<depName>/package.json` for the semver version and
+ * inspects `package-lock.json` for resolved git commit references.
+ *
+ * @param depName - Name of the dependency (e.g. '@performanc/voice').
+ * @returns Formatted version string (e.g. "2.2.15 (93f3e3b)") or "unknown".
+ * @public
+ */
+function getDependencyVersion(depName: string): string {
+  const cached = dependencyVersionCache.get(depName)
+  if (cached) return cached
+
+  let version = ''
+  let commit = ''
+
+  try {
+    const pkgPath = path.resolve(
+      process.cwd(),
+      'node_modules',
+      depName,
+      'package.json'
+    )
+    if (fs.existsSync(pkgPath)) {
+      const data = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as {
+        version?: string
+      }
+      if (data.version) {
+        version = data.version
+      }
+    }
+  } catch {}
+
+  try {
+    const lockPath = path.resolve(process.cwd(), 'package-lock.json')
+    if (fs.existsSync(lockPath)) {
+      const lockData = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as {
+        packages?: Record<string, { resolved?: string }>
+      }
+      const resolved = lockData.packages?.[`node_modules/${depName}`]?.resolved
+      if (resolved?.includes('#')) {
+        commit = resolved.split('#')[1]?.slice(0, 7) || ''
+      }
+    }
+  } catch {}
+
+  let result = 'unknown'
+  if (version && commit) {
+    result = `${version} (${commit})`
+  } else if (version) {
+    result = version
+  } else if (commit) {
+    result = commit
+  }
+
+  dependencyVersionCache.set(depName, result)
+  return result
 }
 
 /**
@@ -634,6 +711,33 @@ function getGitInfo(): GitInfo {
   }
 
   if (gitInfoCache) return gitInfoCache
+
+  const envCommit = (
+    process.env.GIT_COMMIT || process.env.NODELINK_GIT_COMMIT
+  )?.trim()
+  if (envCommit && envCommit !== 'unknown') {
+    const branch =
+      (process.env.GIT_BRANCH || process.env.NODELINK_GIT_BRANCH)?.trim() ||
+      'unknown'
+    const rawTime =
+      process.env.GIT_COMMIT_TIME ||
+      process.env.BUILD_TIME ||
+      process.env.NODELINK_BUILD_TIME
+    const parsedTime = rawTime ? Number.parseInt(rawTime.trim(), 10) : 0
+    const commitTime =
+      Number.isFinite(parsedTime) && parsedTime > 0
+        ? parsedTime < 1e12
+          ? parsedTime * 1000
+          : parsedTime
+        : Date.now()
+
+    gitInfoCache = {
+      branch,
+      commit: envCommit.length > 7 ? envCommit.slice(0, 7) : envCommit,
+      commitTime
+    }
+    return gitInfoCache
+  }
 
   try {
     const output = execSync('git log -1 --format=%D%n%h%n%ct', {
@@ -1289,6 +1393,110 @@ setInterval(
   6 * 60 * 60 * 1000
 ).unref()
 
+const CROSS_ORIGIN_SENSITIVE_HEADERS =
+  /^(?:authorization|cookie|proxy-authorization)$/i
+
+/**
+ * Validates and prepares the next request in an HTTP redirect chain.
+ *
+ * Enforces redirect depth limits, blocks HTTPS-to-HTTP downgrades and non-HTTP
+ * schemes, runs the caller's `shouldFollowRedirect` predicate before any
+ * network connection is made to the target, and strips credentials when
+ * crossing origins.
+ * @internal
+ */
+function resolveRedirect(
+  currentUrl: URL,
+  location: string,
+  responseStatus: number,
+  respHeaders: HttpResponseHeaders,
+  options: HttpRequestOptions
+): { url: string; options: HttpRequestOptions } {
+  const {
+    method = 'GET',
+    headers: customHeaders = {},
+    body,
+    maxRedirects = DEFAULT_MAX_REDIRECTS,
+    _redirectsFollowed = 0,
+    shouldFollowRedirect
+  } = options
+
+  if (_redirectsFollowed >= maxRedirects) {
+    throw new Error(
+      `Too many redirects (${maxRedirects}) for ${currentUrl.href}`
+    )
+  }
+
+  const nextUrl = new URL(location, currentUrl)
+  if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
+    throw new Error(
+      `Unsupported redirect protocol "${nextUrl.protocol}" for ${nextUrl.href}`
+    )
+  }
+
+  if (currentUrl.protocol === 'https:' && nextUrl.protocol === 'http:') {
+    throw new Error(
+      `Refusing HTTPS to HTTP redirect downgrade from ${currentUrl.href} to ${nextUrl.href}`
+    )
+  }
+
+  if (shouldFollowRedirect && !shouldFollowRedirect(nextUrl, currentUrl)) {
+    throw new Error(`Redirect to ${nextUrl.href} is not allowed`)
+  }
+
+  let nextMethod = method
+  let nextBody = body
+  if (method === 'HEAD') {
+    nextMethod = 'HEAD'
+    nextBody = undefined
+  } else if (
+    responseStatus === 303 ||
+    ((responseStatus === 301 || responseStatus === 302) &&
+      method !== 'GET' &&
+      method !== 'HEAD')
+  ) {
+    nextMethod = 'GET'
+    nextBody = undefined
+  }
+
+  const isSameOrigin = nextUrl.origin === currentUrl.origin
+  const nextHeaders: HttpRequestHeaders = {}
+  for (const [key, value] of Object.entries(customHeaders)) {
+    if (!isSameOrigin && CROSS_ORIGIN_SENSITIVE_HEADERS.test(key)) {
+      continue
+    }
+    if (value !== undefined) {
+      nextHeaders[key] = value
+    }
+  }
+
+  const setCookie = respHeaders['set-cookie']
+  if (isSameOrigin && setCookie) {
+    const cookies = Array.isArray(setCookie) ? setCookie : [setCookie]
+    const existingCookie = String(
+      nextHeaders.cookie || nextHeaders.Cookie || ''
+    )
+    const newCookies = cookies.map((c) => String(c).split(';')[0]).join('; ')
+    nextHeaders.cookie = existingCookie
+      ? `${existingCookie}; ${newCookies}`
+      : newCookies
+  }
+
+  return {
+    url: nextUrl.href,
+    options: {
+      ...options,
+      _redirectsFollowed: _redirectsFollowed + 1,
+      method: nextMethod,
+      body: nextBody,
+      headers: nextHeaders,
+      disableBodyCompression: nextBody
+        ? options.disableBodyCompression
+        : undefined
+    }
+  }
+}
+
 /**
  * Internal HTTP/1 request handler with redirect and decompression support.
  *
@@ -1320,7 +1528,7 @@ async function _internalHttp1Request(
   const actualLocalAddress =
     localAddress ?? runtime.nodelink?.routePlanner?.getIP?.() ?? undefined
 
-  if (_redirectsFollowed >= maxRedirects) {
+  if (_redirectsFollowed > maxRedirects) {
     throw new Error(`Too many redirects (${maxRedirects}) for ${urlString}`)
   }
 
@@ -1392,6 +1600,7 @@ async function _internalHttp1Request(
     const cleanupReq = () => {
       req.removeListener('error', reqErrorHandler)
       req.removeListener('timeout', reqTimeoutHandler)
+      req.removeListener('close', cleanupReq)
     }
 
     req = lib.request(reqOptions, (res) => {
@@ -1409,37 +1618,19 @@ async function _internalHttp1Request(
         location
       ) {
         res.resume()
-        const nextUrl = new URL(location, currentUrl).href
-        const isGetRedirect = [301, 302, 303].includes(responseStatus)
-        let nextMethod = method
-        let nextBody = body
-        if (method === 'HEAD') {
-          nextMethod = 'HEAD'
-          nextBody = undefined
-        } else if (isGetRedirect) {
-          nextMethod = 'GET'
-          nextBody = undefined
-        }
-        const nextHeaders = { ...customHeaders }
-        const setCookie = respHeaders['set-cookie']
-        if (setCookie) {
-          const cookies = Array.isArray(setCookie) ? setCookie : [setCookie]
-          const existingCookie = String(
-            nextHeaders.cookie || nextHeaders.Cookie || ''
+        cleanupReq()
+        try {
+          const redirect = resolveRedirect(
+            currentUrl,
+            location,
+            responseStatus,
+            respHeaders,
+            options
           )
-          const newCookies = cookies.map((c) => c.split(';')[0]).join('; ')
-          nextHeaders.cookie = existingCookie
-            ? `${existingCookie}; ${newCookies}`
-            : newCookies
+          resolve(http1makeRequest(redirect.url, redirect.options))
+        } catch (err) {
+          reject(err)
         }
-        const nextOptions: HttpRequestOptions = {
-          ...options,
-          _redirectsFollowed: _redirectsFollowed + 1,
-          method: nextMethod,
-          body: nextBody,
-          headers: nextHeaders
-        }
-        resolve(http1makeRequest(nextUrl, nextOptions))
         return
       }
 
@@ -1487,18 +1678,31 @@ async function _internalHttp1Request(
       }
 
       let cleanupBody: (() => void) | undefined
-      res.on('error', (err) => {
+      const responseErrorHandler = (err: Error) => {
         cleanupBody?.()
         cleanupReq()
         reject(new Error(`Response error for ${urlString}: ${err.message}`))
-      })
+      }
+      const responseCloseHandler = () => {
+        res.removeListener('error', responseErrorHandler)
+        if (finalStream === res) cleanupBody?.()
+        cleanupReq()
+      }
+      res.on('error', responseErrorHandler)
+      res.once('close', responseCloseHandler)
       if (finalStream !== res) {
-        finalStream.on('error', (err) => {
+        const decompressionErrorHandler = (err: Error) => {
           cleanupBody?.()
           cleanupReq()
           reject(
             new Error(`Decompression error for ${urlString}: ${err.message}`)
           )
+        }
+        finalStream.on('error', decompressionErrorHandler)
+        finalStream.once('close', () => {
+          finalStream.removeListener('error', decompressionErrorHandler)
+          cleanupBody?.()
+          cleanupReq()
         })
       }
 
@@ -1553,7 +1757,24 @@ async function _internalHttp1Request(
           const isJson = contentType
             .toLowerCase()
             .startsWith('application/json')
-          const responseBody = isJson && text ? JSON.parse(text) : text
+          let responseBody: unknown = text
+          if (isJson && text) {
+            try {
+              responseBody = JSON.parse(text)
+            } catch {
+              const trimmed = text.trim()
+              const firstNewline = trimmed.indexOf('\n')
+              if (firstNewline !== -1) {
+                try {
+                  responseBody = JSON.parse(trimmed.slice(0, firstNewline))
+                } catch {
+                  responseBody = text
+                }
+              } else {
+                responseBody = text
+              }
+            }
+          }
           resolve({
             statusCode,
             headers: respHeaders,
@@ -1584,6 +1805,7 @@ async function _internalHttp1Request(
 
     req.on('error', reqErrorHandler)
     req.on('timeout', reqTimeoutHandler)
+    req.once('close', cleanupReq)
 
     if (payloadBuffer) {
       req.end(payloadBuffer)
@@ -1750,7 +1972,7 @@ async function makeRequest(
     }
   }
 
-  if (_redirectsFollowed >= maxRedirects) {
+  if (_redirectsFollowed > maxRedirects) {
     return Promise.reject(
       new Error(`Too many redirects (${maxRedirects}) for ${urlString}`)
     )
@@ -1768,6 +1990,7 @@ async function makeRequest(
     !body &&
     !localAddress &&
     !options.network?.proxy &&
+    !options.shouldFollowRedirect &&
     (method === 'GET' || method === 'HEAD')
   ) {
     let t: ReturnType<typeof setTimeout> | null = null
@@ -1920,45 +2143,28 @@ async function makeRequest(
           REDIRECT_STATUS_CODES.includes(
             (statusCode ?? 0) as (typeof REDIRECT_STATUS_CODES)[number]
           ) &&
-          location
+          location &&
+          currentUrl
         ) {
-          const newLocation = new URL(location, urlString).href
-          let nextMethod = method
-          let nextBody = body
-          if (method === 'HEAD') {
-            nextMethod = 'HEAD'
-            nextBody = undefined
-          } else if (
-            (statusCode === 301 || statusCode === 302) &&
-            ['POST', 'PUT', 'DELETE'].includes(method)
-          ) {
-            nextMethod = 'GET'
-            nextBody = undefined
-          } else if (statusCode === 303) {
-            nextMethod = 'GET'
-            nextBody = undefined
-          }
-
           if (!reqClosed) {
             reqClosed = true
             req.close(http2.constants.NGHTTP2_NO_ERROR)
           }
           closeSessionGracefully()
-          return resolve(
-            makeRequest(
-              newLocation,
-              {
-                ...options,
-                method: nextMethod,
-                body: nextBody,
-                _redirectsFollowed: _redirectsFollowed + 1,
-                disableBodyCompression: nextBody
-                  ? disableBodyCompression
-                  : undefined
-              },
-              finalNodeLink
+          try {
+            const redirect = resolveRedirect(
+              currentUrl,
+              location,
+              statusCode ?? 0,
+              headers,
+              options
             )
-          )
+            return resolve(
+              makeRequest(redirect.url, redirect.options, finalNodeLink)
+            )
+          } catch (err) {
+            return reject(err)
+          }
         }
 
         const isNoBodyResponse =
@@ -2024,7 +2230,24 @@ async function makeRequest(
           const isJson = contentType
             .toLowerCase()
             .startsWith('application/json')
-          const responseBody = isJson && text ? JSON.parse(text) : text
+          let responseBody: unknown = text
+          if (isJson && text) {
+            try {
+              responseBody = JSON.parse(text)
+            } catch {
+              const trimmed = text.trim()
+              const firstNewline = trimmed.indexOf('\n')
+              if (firstNewline !== -1) {
+                try {
+                  responseBody = JSON.parse(trimmed.slice(0, firstNewline))
+                } catch {
+                  responseBody = text
+                }
+              } else {
+                responseBody = text
+              }
+            }
+          }
 
           if (loggingConfig.debug?.network) {
             const bodySnippet =
@@ -2685,7 +2908,14 @@ export function getBestMatch<T extends BestMatchCandidate>(
 
   scored.sort((a, b) => b.score - a.score)
 
-  return scored[0]?.item || list[0] || null
+  const best = scored[0]
+  if (
+    !best ||
+    (options.minScore !== undefined && best.score < options.minScore)
+  )
+    return null
+
+  return best.item
 }
 
 /**
@@ -2815,21 +3045,43 @@ async function fetchSponsorBlockSegments(
   }
 }
 
+/**
+ * Caps a collection's reported track count at the configured
+ * `playback.maxPlaylistLength`.
+ *
+ * A source may hold more tracks than NodeLink will ever load, so the total it
+ * reports should not exceed what a client can actually receive. An unset,
+ * zero, negative or non-numeric cap means "no cap".
+ *
+ * @param total - Track count as reported by the source.
+ * @param max - Configured `playback.maxPlaylistLength`.
+ * @returns `Math.min(total, max)`, or `total` when there is no usable cap.
+ */
+function capTotalTracks(total: number, max: unknown): number {
+  return typeof max === 'number' && Number.isFinite(max) && max > 0
+    ? Math.min(total, max)
+    : total
+}
+
 export {
   applyEnvOverrides,
+  capTotalTracks,
   checkDependencyUpdates,
   checkForUpdates,
   cleanupHttpAgents,
   cleanupLogger,
   decodeTrack,
+  defaultSanitizer,
   encodeTrack,
   fetchSponsorBlockSegments,
   generateRandomLetters,
+  getDependencyVersion,
   getGitInfo,
   getStats,
   getVersion,
   http1makeRequest,
   initLogger,
+  LogSanitizer,
   logger,
   makeRequest,
   parseClient,

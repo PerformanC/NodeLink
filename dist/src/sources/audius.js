@@ -20,6 +20,56 @@ const ARTWORK_SIZES = [
  */
 export default class AudiusSource {
     /**
+     * Declarative test suite for validating Audius source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'audius.track.resolve',
+            name: 'Audius Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://audius.co/deadmau5/deadmau5-unlucky-work-in-progress-333797'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'deadmau5 - Unlucky' },
+                    author: { op: 'matches', value: 'deadmau5' },
+                    sourceName: { op: 'equals', value: 'audius' }
+                }
+            }
+        },
+        {
+            id: 'audius.playlist.resolve',
+            name: 'Audius Playlist URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://audius.co/FoxMusic/playlist/audius-electronic-hits-43797'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 2 },
+                metadata: {
+                    sourceName: { op: 'equals', value: 'audius' }
+                }
+            }
+        },
+        {
+            id: 'audius.search.ausearch',
+            name: 'Audius Search query (ausearch:)',
+            input: {
+                type: 'search',
+                value: 'deadmau5',
+                searchType: 'ausearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 }
+            }
+        }
+    ];
+    /**
      * The NodeLink worker context.
      * @internal
      */
@@ -34,11 +84,6 @@ export default class AudiusSource {
      * @public
      */
     searchTerms = ['ausearch'];
-    /**
-     * Prefix for recommendation (inspired-by) requests.
-     * @public
-     */
-    recommendationTerm = ['sprec'];
     /**
      * Regular expression patterns for identifying Audius URLs.
      * Supports tracks, playlists, albums, and users.
@@ -206,10 +251,11 @@ export default class AudiusSource {
     /**
      * Executes a search query on the Audius catalog.
      * @param query - The user search string.
+     * @param sourceTerm - Optional source prefix term.
      * @returns Resolves to a SourceResult containing search results.
      * @public
      */
-    async search(query) {
+    async search(query, _sourceTerm) {
         try {
             const limit = this.nodelink.options.search.maxResults || 10;
             const endpoint = `/v1/tracks/search?query=${encodeURIComponent(query)}&limit=${limit}`;
@@ -232,12 +278,60 @@ export default class AudiusSource {
     }
     /**
      * Resolves an Audius URL into a track or collection.
+     * Uses the official Audius resolve API first, then falls back to pattern matchers.
      * @param url - The absolute Audius URL.
      * @returns Resolution result payload.
      * @public
      */
     async resolve(url) {
         try {
+            const isAudius = this.patterns.some((pattern) => pattern.test(url));
+            if (!isAudius) {
+                return { loadType: 'empty', data: {} };
+            }
+            // Try official Audius resolve endpoint first
+            const resolveData = await this._apiRequest(`/v1/resolve?url=${encodeURIComponent(url)}`);
+            if (resolveData) {
+                // Track
+                if (!Array.isArray(resolveData) &&
+                    ('track_id' in resolveData ||
+                        ('id' in resolveData && 'title' in resolveData))) {
+                    const track = this._buildTrack(resolveData);
+                    if (track)
+                        return { loadType: 'track', data: track };
+                }
+                // Playlist / Album
+                const playlistItem = Array.isArray(resolveData)
+                    ? resolveData[0]
+                    : resolveData;
+                if (playlistItem &&
+                    'id' in playlistItem &&
+                    ('playlist_name' in playlistItem || 'is_album' in playlistItem)) {
+                    const pl = playlistItem;
+                    const limit = pl.is_album
+                        ? this.albumLoadLimit
+                        : this.playlistLoadLimit;
+                    const tracks = await this._loadPlaylistTracks(pl.id, limit);
+                    return {
+                        loadType: 'playlist',
+                        data: {
+                            info: {
+                                name: pl.playlist_name ||
+                                    (pl.is_album ? 'Audius Album' : 'Audius Playlist'),
+                                selectedTrack: 0
+                            },
+                            tracks,
+                            pluginInfo: {}
+                        }
+                    };
+                }
+                // User / Artist
+                if (!Array.isArray(resolveData) &&
+                    'handle' in resolveData &&
+                    typeof resolveData.handle === 'string') {
+                    return await this._resolveArtist(resolveData.handle);
+                }
+            }
             // 1. Playlist check
             const playlistPattern = this.patterns[1];
             const playlistMatch = playlistPattern?.exec(url);

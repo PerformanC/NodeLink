@@ -106,12 +106,13 @@ export abstract class AnimatableFilter extends BaseFilter {
   protected processAnimation(
     sampleRate: number,
     chunkLength: number,
-    channels: number
+    channels: number,
+    sampleFormat: 's16le' | 'f32le' = 's16le'
   ): void {
     if (!this.animation) return
 
     // Calculate how many milliseconds this chunk represents
-    const numSamples = chunkLength / 2 // 16-bit PCM = 2 bytes per sample
+    const numSamples = chunkLength / (sampleFormat === 'f32le' ? 4 : 2)
     const numFrames = numSamples / channels
     const chunkDurationMs = (numFrames / sampleRate) * 1000
 

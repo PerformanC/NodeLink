@@ -9,7 +9,7 @@
  * @module YouTubeTVEmbeddedClient
  */
 import { logger, makeRequest } from '../../../utils.js';
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
+import { BaseClient, checkURLType, extractPlaylistSelection, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube TVHTML5_SIMPLY_EMBEDDED_PLAYER innertube client.
  *
@@ -62,6 +62,14 @@ export default class TVEmbedded extends BaseClient {
      * @returns Always true for the TV Embedded client
      */
     isEmbedded() {
+        return true;
+    }
+    /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     * This client (tvembedded) does not work anymore tho :(
+     */
+    requiresOAuth() {
         return true;
     }
     /**
@@ -133,8 +141,8 @@ export default class TVEmbedded extends BaseClient {
                 return await this._handlePlayerResponse(playerResponse, sourceName, videoId);
             }
             case YOUTUBE_CONSTANTS.PLAYLIST: {
-                const playlistIdMatch = url.match(/[?&]list=([\w-]+)/);
-                if (!playlistIdMatch?.[1]) {
+                const { playlistId, videoId: currentVideoId, targetIndex } = extractPlaylistSelection(url);
+                if (!playlistId) {
                     logger('error', 'YouTube-TVEmbedded', `Could not parse playlist ID from URL: ${url}`);
                     return {
                         loadType: 'error',
@@ -145,9 +153,6 @@ export default class TVEmbedded extends BaseClient {
                         }
                     };
                 }
-                const playlistId = playlistIdMatch[1];
-                const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
-                const currentVideoId = videoIdMatch?.[1] ?? null;
                 const requestBody = {
                     context: this.getClient(context),
                     playlistId,
@@ -176,7 +181,7 @@ export default class TVEmbedded extends BaseClient {
                         }
                     };
                 }
-                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName, context);
+                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName, context, targetIndex);
             }
             default:
                 return { loadType: 'empty', data: {} };

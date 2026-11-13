@@ -208,6 +208,8 @@ export interface FMP4StreamState {
  * Metadata provided by seekable streams.
  */
 export interface SeekableStreamMeta {
+  /** Detected MIME type returned by the seek library. */
+  contentType: string
   /** Optional codec information. */
   codec?: {
     /** The container format (e.g., 'mp4', 'mpegts'). */
@@ -426,7 +428,7 @@ export interface SymphoniaDecoderStreamOptions extends TransformOptions {
 export interface AACDecoderStreamOptions extends TransformOptions {
   /** Desired resampling quality. */
   resamplingQuality?: ResamplingQuality
-  state?: { isAlac: boolean }
+  state?: { isPcm: boolean }
 }
 
 /**
@@ -449,7 +451,10 @@ export type CreateAudioResourceFn = (
   audioMixer?: AudioMixer | null,
   returnPCM?: boolean,
   enableAGC?: boolean,
-  enableCrossfade?: boolean
+  enableCrossfade?: boolean,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null
 ) => Promise<AudioResource>
 
 /**
@@ -463,7 +468,10 @@ export type CreateSeekableAudioResourceFn = (
   initialFilters: FiltersState,
   player: { streamInfo: StreamInfo; loudnessNormalizer?: boolean },
   volume?: number,
-  audioMixer?: AudioMixer | null
+  audioMixer?: AudioMixer | null,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null
 ) => Promise<AudioResource | ErrorResponse>
 
 /**

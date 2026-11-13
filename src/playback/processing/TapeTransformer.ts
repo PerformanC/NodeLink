@@ -140,6 +140,15 @@ export class TapeTransformer extends Transform {
   }
 
   public process(chunk: Buffer): Buffer {
+    return this._process(chunk, false)
+  }
+
+  /** Float32 resampling path used by the Protected flow; output keeps headroom. */
+  public processFloat32(chunk: Buffer): Buffer {
+    return this._process(chunk, true)
+  }
+
+  private _process(chunk: Buffer, float32: boolean): Buffer {
     if (chunk.length === 0) return chunk
     if (
       !this.tape &&
@@ -149,7 +158,8 @@ export class TapeTransformer extends Transform {
       return chunk
     }
 
-    const incomingSamples = chunk.length / 2
+    const bytesPerSample = float32 ? 4 : 2
+    const incomingSamples = chunk.length / bytesPerSample
     const incomingFrames = incomingSamples / this.channels
     const inputBuffer = this._ensureInputBuffer()
 
@@ -164,10 +174,14 @@ export class TapeTransformer extends Transform {
     }
 
     for (let i = 0; i < incomingSamples; i++) {
-      inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767
+      inputBuffer[this.inputWritePos++] = float32
+        ? chunk.readFloatLE(i * bytesPerSample)
+        : chunk.readInt16LE(i * bytesPerSample) / 32767
     }
 
-    const outI16 = new Int16Array(incomingSamples)
+    const out = float32
+      ? Buffer.allocUnsafe(incomingSamples * 4)
+      : new Int16Array(incomingSamples)
     const sampleDurationMs = 1000 / this.sampleRate
 
     for (let f = 0; f < incomingFrames; f++) {
@@ -205,10 +219,14 @@ export class TapeTransformer extends Transform {
             (2 * p0 - 5 * p1 + 4 * p2 - p3) * frac * frac +
             (-p0 + 3 * p1 - 3 * p2 + p3) * frac * frac * frac)
 
-        outI16[f * this.channels + c] = Math.max(
-          -32768,
-          Math.min(32767, Math.round(val * 32767))
-        )
+        const sampleIndex = f * this.channels + c
+        if (float32) (out as Buffer).writeFloatLE(val, sampleIndex * 4)
+        else {
+          ;(out as Int16Array)[sampleIndex] = Math.max(
+            -32768,
+            Math.min(32767, Math.round(val * 32767))
+          )
+        }
       }
 
       this.inputReadPos += this.currentRate * this.channels
@@ -218,7 +236,13 @@ export class TapeTransformer extends Transform {
       this._compact()
     }
 
-    return Buffer.from(outI16.buffer, outI16.byteOffset, outI16.byteLength)
+    return float32
+      ? (out as Buffer)
+      : Buffer.from(
+          (out as Int16Array).buffer,
+          (out as Int16Array).byteOffset,
+          (out as Int16Array).byteLength
+        )
   }
 
   override _destroy(

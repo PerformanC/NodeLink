@@ -3,6 +3,44 @@ import { encodeTrack, http1makeRequest, logger } from '../utils.js';
 const TUMBLR_USER_AGENT = 'WhatsApp/2.0';
 const TUMBLR_STREAM_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 export default class TumblrSource {
+    /**
+     * Declarative test suite for validating Tumblr source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'tumblr.post.resolve',
+            name: 'Tumblr Post URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.tumblr.com/tatianamaslanydaily/54196191430'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Orphan Black' },
+                    author: { op: 'matches', value: 'tatianamaslanydaily' },
+                    sourceName: { op: 'equals', value: 'tumblr' }
+                }
+            }
+        },
+        {
+            id: 'tumblr.subdomain.resolve',
+            name: 'Tumblr Subdomain URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'http://tatianamaslanydaily.tumblr.com/post/54196191430'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Orphan Black' },
+                    author: { op: 'matches', value: 'tatianamaslanydaily' },
+                    sourceName: { op: 'equals', value: 'tumblr' }
+                }
+            }
+        }
+    ];
     nodelink;
     config;
     patterns;
@@ -11,8 +49,8 @@ export default class TumblrSource {
         this.nodelink = nodelink;
         this.config = nodelink.options;
         this.patterns = [
-            /https?:\/\/([^/?#&]+)\.tumblr\.com\/(?:post|video|([a-zA-Z\d-]+))\/(\d+)/i,
-            /https?:\/\/(?:www\.)?tumblr\.com\/([^/]+)\/(\d+)/i
+            /^https?:\/\/([^/?#&]+)\.tumblr\.com\/(?:post|video|([a-zA-Z\d-]+))\/(\d+)(?:\/|[?#].*)?$/i,
+            /^https?:\/\/(?:www\.)?tumblr\.com\/([^/?#&]+)\/(\d+)(?:\/|[?#].*)?$/i
         ];
         this.priority = 60;
     }
@@ -73,13 +111,30 @@ export default class TumblrSource {
         };
         return this._buildTrackData(info, { directUrl });
     }
+    _isTumblrUrl(candidate) {
+        try {
+            const parsed = typeof candidate === 'string' ? new URL(candidate) : candidate;
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                return false;
+            }
+            const host = parsed.hostname.toLowerCase();
+            return host === 'tumblr.com' || host.endsWith('.tumblr.com');
+        }
+        catch {
+            return false;
+        }
+    }
     async resolve(url) {
+        if (!this._isTumblrUrl(url))
+            return { loadType: 'empty', data: {} };
         const info = this._extractInfo(url);
         if (!info)
             return { loadType: 'empty', data: {} };
+        const targetUrl = `https://www.tumblr.com/${info.blog}/${info.id}`;
         try {
-            const { body, statusCode } = await http1makeRequest(url, {
-                headers: { 'User-Agent': TUMBLR_USER_AGENT }
+            const { body, statusCode } = await http1makeRequest(targetUrl, {
+                headers: { 'User-Agent': TUMBLR_USER_AGENT },
+                shouldFollowRedirect: (nextUrl) => this._isTumblrUrl(nextUrl)
             });
             const html = typeof body === 'string' ? body : String(body || '');
             if (statusCode !== 200 || !html)

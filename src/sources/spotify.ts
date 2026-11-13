@@ -2,6 +2,7 @@ import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
+  PlaylistPluginInfo,
   SourceInstance,
   SourceResult,
   TrackData,
@@ -14,17 +15,22 @@ import type {
   SpotifyArtist,
   SpotifyGraphQLAlbumResponse,
   SpotifyGraphQLArtistResponse,
+  SpotifyGraphQLEpisodeResponse,
   SpotifyGraphQLOperation,
   SpotifyGraphQLPlaylistResponse,
   SpotifyGraphQLSearchResponse,
+  SpotifyGraphQLShowResponse,
   SpotifyGraphQLTrack,
   SpotifyMetadataResponse,
   SpotifyPagingObject,
+  SpotifyPlaylist,
   SpotifyPlaylistItem,
   SpotifyTokenType,
   SpotifyTrack
 } from '../typings/sources/spotify.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -82,6 +88,34 @@ const QUERIES = {
     name: 'queryArtistOverview',
     hash: 'ae0e2958a4ab645b35ca19ac04d0495ae12d9c5d7b7286217674801a9aab281a'
   },
+  getEpisodeOrChapter: {
+    name: 'getEpisodeOrChapter',
+    hash: '5f77db47e5a2ce6680330bb61317aa09e17ddd1d189513cb218e7cd3e43288be'
+  },
+  queryPodcastEpisodes: {
+    name: 'queryPodcastEpisodes',
+    hash: '3539d746cf882f3909660de40b4ef472b3f5893a0761d617c282541de5d412c5'
+  },
+  queryBookChapters: {
+    name: 'queryBookChapters',
+    hash: '8f342d1c624755901657fa65cbb80dd3bacbcca2f6d802f570ae3269d59a403e'
+  },
+  fetchExtractedColors: {
+    name: 'fetchExtractedColors',
+    hash: '36e90fcaea00d47c695fce31874efeb2519b97d4cd0ee1abfb4f8dc9348596ea'
+  },
+  similarAlbumsBasedOnThisTrack: {
+    name: 'similarAlbumsBasedOnThisTrack',
+    hash: '1d1f93a737498adca2c892c73af87fc0b052afe4e1a33c989540c32413dfae17'
+  },
+  searchSuggestions: {
+    name: 'searchSuggestions',
+    hash: 'f244254b94c0e824d458ac216e0f8406a73f2f69a9ff52831a2f78fa774ff6ce'
+  },
+  fetchLibraryTracks: {
+    name: 'fetchLibraryTracks',
+    hash: '087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240'
+  },
   getRecommendations: {
     name: 'internalLinkRecommenderTrack',
     hash: 'c77098ee9d6ee8ad3eb844938722db60570d040b49f41f5ec6e7be9160a7c86b'
@@ -127,22 +161,23 @@ export default class SpotifySource implements SourceInstance {
    * Prefixes that identify search queries for this source.
    * @public
    */
-  public readonly searchTerms = ['spsearch']
+  public readonly searchTerms = ['spsearch', 'spsuggest']
 
   /**
    * Prefix for recommendation (inspired-by) requests.
    * @public
    */
-  public readonly recommendationTerm = ['sprec']
+  public readonly recommendationTerm = ['sprec', 'spsimilar']
 
   /**
-   * Regular expression patterns for Spotify URLs.
-   * Supports standard resource URLs and local file formats.
+   * Regular expression patterns for Spotify URLs and URIs.
+   * Supports standard resource URLs, embed URLs, legacy user playlists, URI schemes, and short links.
    * @public
    */
   public readonly patterns = [
-    /https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?(track|album|playlist|artist|episode|show)\/([a-zA-Z0-9]+)/,
-    /https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z]{2}\/)?local\/[^?#]+/
+    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:(?:intl-[a-zA-Z0-9_-]+|embed)\/)*(?:user\/[^/?#]+\/)?|spotify:(?:user:[^:]+:)?)(track|album|playlist|artist|episode|show|audiobook|chapter|details|all|colors?|similar|collection)(?:\/|:)([a-zA-Z0-9_-]+)/,
+    /^(?:https?:\/\/(?:open\.)?spotify\.com\/(?:intl-[a-zA-Z0-9_-]+\/)?local\/|spotify:local:)[^?#]+/,
+    /^https?:\/\/(?:spotify\.link|spotify\.app\.link)\/[a-zA-Z0-9]+/
   ]
 
   /**
@@ -201,6 +236,18 @@ export default class SpotifySource implements SourceInstance {
     SpotifyTokenType,
     ReturnType<typeof setTimeout>
   >()
+
+  /**
+   * Prevents duplicate in-flight resolve calls for the same URL or URI.
+   * @internal
+   */
+  private inFlightResolves = new Map<string, Promise<SourceResult>>()
+
+  /**
+   * Prevents duplicate in-flight track delegation lookups.
+   * @internal
+   */
+  private inFlightTrackUrls = new Map<string, Promise<TrackUrlResult>>()
 
   /**
    * Creates a new SpotifySource instance.
@@ -467,7 +514,7 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
-   * Cleans up all pending timers.
+   * Cleans up all pending timers and in-flight operations.
    * @public
    */
   public cleanup(): void {
@@ -475,6 +522,8 @@ export default class SpotifySource implements SourceInstance {
       clearTimeout(timer)
     }
     this.tokenRefreshTimers.clear()
+    this.inFlightResolves.clear()
+    this.inFlightTrackUrls.clear()
   }
 
   /**
@@ -546,12 +595,22 @@ export default class SpotifySource implements SourceInstance {
               : null
         if (next) return this._apiRequest<T>(path, next, options, retry + 1)
 
-        const wait = Number.parseInt(
+        const rawWait = Number.parseInt(
           (res.headers as Record<string, string> | undefined)?.[
             'retry-after'
           ] || '5',
           10
         )
+        const wait = Number.isFinite(rawWait) ? rawWait : 5
+        if (wait > 10) {
+          logger(
+            'warn',
+            'Spotify',
+            `Rate limited on ${path} with excessive Retry-After (${wait}s). Skipping retry.`
+          )
+          return null
+        }
+
         logger(
           'warn',
           'Spotify',
@@ -611,6 +670,7 @@ export default class SpotifySource implements SourceInstance {
    *
    * @param operation - Name and SHA256 hash of the query.
    * @param variables - Input parameters for the GraphQL query.
+   * @param tier - Authentication tier to use (defaults to anonymous).
    * @param retry - Internal retry counter.
    * @returns Resolves to typed data or null if errors were returned.
    * @internal
@@ -618,11 +678,12 @@ export default class SpotifySource implements SourceInstance {
   private async _internalApiRequest<T>(
     operation: SpotifyGraphQLOperation,
     variables: Record<string, unknown>,
+    tier: SpotifyTokenType = 'anonymous',
     retry = 0
   ): Promise<T | null> {
     const res = await this._apiRequest<{ data?: T; errors?: Array<unknown> }>(
       SPOTIFY_INTERNAL_API_URL,
-      'anonymous',
+      tier,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -662,6 +723,7 @@ export default class SpotifySource implements SourceInstance {
     id: string
   ): Promise<SpotifyMetadataResponse | null> {
     const hex = this._base62ToHex(id)
+    if (!hex) return null
     const url = `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`
     const body = await this._apiRequest<unknown>(url, 'mobile', {
       responseType: 'buffer'
@@ -685,14 +747,19 @@ export default class SpotifySource implements SourceInstance {
   /**
    * Transforms a Spotify Base62 identifier into a 32-character hex string.
    * @param id - Base62 encoded ID.
-   * @returns Hex string.
+   * @returns Hex string or empty string if identifier contains invalid characters.
    * @internal
    */
   private _base62ToHex(id: string): string {
+    if (!/^[0-9a-zA-Z]+$/.test(id)) return ''
     const alpha =
       '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
     let bn = 0n
-    for (const char of id) bn = bn * 62n + BigInt(alpha.indexOf(char))
+    for (const char of id) {
+      const idx = alpha.indexOf(char)
+      if (idx === -1) return ''
+      bn = bn * 62n + BigInt(idx)
+    }
     return bn.toString(16).padStart(32, '0')
   }
 
@@ -708,8 +775,9 @@ export default class SpotifySource implements SourceInstance {
     item: SpotifyGraphQLTrack,
     artwork: string | null = null
   ): TrackData | null {
-    if (!item.uri || this._isLocalTrack(item)) return null
+    if (!item?.uri || !item.name || this._isLocalTrack(item)) return null
     const id = item.uri.split(':').pop() || ''
+    if (!id) return null
     const explicit =
       item.contentRating?.label === 'EXPLICIT' || item.explicit === true
     const info: TrackInfo = {
@@ -726,8 +794,8 @@ export default class SpotifySource implements SourceInstance {
       uri: `https://open.spotify.com/track/${id}?explicit=${explicit}`,
       artworkUrl:
         artwork ||
-        item.albumOfTrack?.coverArt?.sources?.[0]?.url ||
-        item.album?.images?.[0]?.url ||
+        this._pickLargestImage(item.albumOfTrack?.coverArt?.sources) ||
+        this._pickLargestImage(item.album?.images) ||
         null,
       isrc: item.externalIds?.isrc || null,
       sourceName: 'spotify'
@@ -751,17 +819,21 @@ export default class SpotifySource implements SourceInstance {
     item: SpotifyTrack,
     artwork: string | null = null
   ): TrackData | null {
-    if (!item.id || this._isLocalTrack(item)) return null
+    if (!item?.id || !item.name || this._isLocalTrack(item)) return null
     const info: TrackInfo = {
       identifier: item.id,
       isSeekable: true,
-      author: item.artists.map((a) => a.name).join(', ') || 'Unknown',
-      length: item.duration_ms,
+      author:
+        item.artists
+          ?.map((a) => a?.name)
+          .filter(Boolean)
+          .join(', ') || 'Unknown',
+      length: typeof item.duration_ms === 'number' ? item.duration_ms : 0,
       isStream: false,
       position: 0,
       title: item.name,
-      uri: `${item.external_urls.spotify}?explicit=${item.explicit}`,
-      artworkUrl: artwork || item.album?.images?.[0]?.url || null,
+      uri: `${item.external_urls?.spotify || `https://open.spotify.com/track/${item.id}`}?explicit=${Boolean(item.explicit)}`,
+      artworkUrl: artwork || this._pickLargestImage(item.album?.images) || null,
       isrc: item.external_ids?.isrc || null,
       sourceName: 'spotify'
     }
@@ -787,12 +859,18 @@ export default class SpotifySource implements SourceInstance {
     term?: string,
     type = 'track'
   ): Promise<SourceResult> {
+    if (term === 'spsuggest' || query.startsWith('spsuggest:'))
+      return await this._resolveSearchSuggestions(
+        query.replace(/^spsuggest:/, '').trim()
+      )
+    if (term === 'spsimilar' || query.startsWith('spsimilar:'))
+      return await this._resolveSimilar(query.replace(/^spsimilar:/, '').trim())
     if (term && this.recommendationTerm.includes(term))
-      return this.getRecommendations(query)
+      return await this.getRecommendations(query)
 
     try {
       const limit = Math.min(
-        Math.max(this.nodelink.options.search.maxResults ?? 10, 1),
+        Math.max(this.nodelink.options.search?.maxResults ?? 10, 1),
         50
       )
 
@@ -1020,36 +1098,31 @@ export default class SpotifySource implements SourceInstance {
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
+      const shortLinkPattern = this.patterns[2]
+      if (shortLinkPattern?.test(url)) return await this._resolveShortLink(url)
+
+      const localPattern = this.patterns[1]
+      if (localPattern?.test(url)) return await this._resolveLocalTrack(url)
+
       const pattern = this.patterns[0]
-      if (this.patterns[1]?.test(url)) return await this._resolveLocalTrack(url)
       if (!pattern) return { loadType: 'empty', data: {} }
 
-      const match = url.match(this.patterns[0] as RegExp)
+      const match = url.match(pattern)
       if (!match) return { loadType: 'empty', data: {} }
 
       const [, type, id] = match
-      if (!id) return { loadType: 'empty', data: {} }
+      if (!type || !id) return { loadType: 'empty', data: {} }
 
-      switch (type) {
-        case 'track':
-          return await this._resolveTrack(id)
-        case 'album':
-          return await this._resolveAlbum(id)
-        case 'playlist':
-          return await this._resolvePlaylist(id)
-        case 'artist':
-          return await this._resolveArtist(id)
-        case 'episode':
-        case 'show':
-          return {
-            loadType: 'error',
-            exception: {
-              message: 'Episodes and podcasts are not supported.',
-              severity: 'common'
-            }
-          }
-        default:
-          return { loadType: 'empty', data: {} }
+      const inflight = this.inFlightResolves.get(url)
+      if (inflight) return await inflight
+
+      const resolvePromise = this._executeResolve(type, id)
+      this.inFlightResolves.set(url, resolvePromise)
+
+      try {
+        return await resolvePromise
+      } finally {
+        this.inFlightResolves.delete(url)
       }
     } catch (e) {
       return {
@@ -1063,37 +1136,123 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
-   * Resolves a track ID using internal and official tiers.
-   *
-   * @param id - Track identifier.
+   * Internal dispatcher for resource resolution.
+   * @param type - Resource type (track, album, playlist, artist, episode, chapter, show, audiobook).
+   * @param id - Spotify resource identifier.
    * @returns Resolution result.
    * @internal
    */
-  private async _resolveTrack(id: string): Promise<SourceResult> {
+  private async _executeResolve(
+    type: string,
+    id: string
+  ): Promise<SourceResult> {
+    switch (type) {
+      case 'track':
+        return await this._resolveTrack(id)
+      case 'details':
+      case 'all':
+      case 'color':
+      case 'colors':
+        return await this._resolveTrack(id, {
+          extractColors: true,
+          forceDetails: true
+        })
+      case 'similar':
+        return await this._resolveSimilar(id)
+      case 'collection':
+        return await this._resolveCollection(id)
+      case 'album':
+        return await this._resolveAlbum(id)
+      case 'playlist':
+        return await this._resolvePlaylist(id)
+      case 'artist':
+        return await this._resolveArtist(id)
+      case 'episode':
+      case 'chapter':
+        return await this._resolveEpisode(id, type as 'episode' | 'chapter')
+      case 'show':
+      case 'audiobook':
+        return await this._resolveShow(id, type as 'show' | 'audiobook')
+      default:
+        return { loadType: 'empty', data: {} }
+    }
+  }
+
+  /**
+   * Resolves a track ID using internal and official tiers.
+   *
+   * @param id - Track identifier.
+   * @param options - Resolution options (e.g. force color extraction or details).
+   * @returns Resolution result.
+   * @internal
+   */
+  private async _resolveTrack(
+    id: string,
+    options?: { extractColors?: boolean; forceDetails?: boolean }
+  ): Promise<SourceResult> {
     if (this.anonymousToken || this.config.sp_dc) {
       const data = await this._internalApiRequest<{
-        trackUnion: SpotifyGraphQLTrack & { __typename: string }
+        trackUnion: SpotifyGraphQLTrack & {
+          __typename: string
+          playcount?: string | number
+        }
       }>(QUERIES.getTrack, { uri: `spotify:track:${id}` })
       if (data?.trackUnion && data.trackUnion.__typename !== 'NotFound') {
         const track = this._buildTrackFromInternal(data.trackUnion)
         if (track) {
+          if (data.trackUnion.playcount) {
+            track.pluginInfo.playcount = data.trackUnion.playcount
+          }
+
+          const shouldExtractColors =
+            options?.extractColors ||
+            options?.forceDetails ||
+            this.config.extractColors === true
+
+          const tasks: Promise<void>[] = []
+
           if (this.mobileToken) {
-            const cv = await fetchCanvas(
-              `spotify:track:${id}`,
-              this.mobileToken
+            tasks.push(
+              fetchCanvas(`spotify:track:${id}`, this.mobileToken)
+                .then((cv) => {
+                  if (cv?.data?.canvasesList?.[0])
+                    track.pluginInfo.canvas = {
+                      canvasesList: [cv.data.canvasesList[0]]
+                    }
+                })
+                .catch(() => {})
             )
-            if (cv?.data?.canvasesList?.[0])
-              track.pluginInfo.canvas = {
-                canvasesList: [cv.data.canvasesList[0]]
-              }
           }
+
           if (!track.info.isrc) {
-            const meta = await this._fetchTrackMetadata(id)
-            if (meta?.external_id?.[0]?.id) {
-              track.info.isrc = meta.external_id[0].id
-              track.encoded = encodeTrack({ ...track.info, details: [] })
-            }
+            tasks.push(
+              this._fetchTrackMetadata(id)
+                .then((meta) => {
+                  if (meta?.external_id?.[0]?.id) {
+                    track.info.isrc = meta.external_id[0].id
+                    track.encoded = encodeTrack({ ...track.info, details: [] })
+                  }
+                })
+                .catch(() => {})
+            )
           }
+
+          if (shouldExtractColors && track.info.artworkUrl) {
+            tasks.push(
+              this._fetchArtworkColors(track.info.artworkUrl)
+                .then((colors) => {
+                  if (colors) {
+                    track.pluginInfo.colors = colors
+                  }
+                })
+                .catch(() => {})
+            )
+          }
+
+          if (tasks.length > 0) {
+            await Promise.all(tasks)
+          }
+
           return { loadType: 'track', data: track }
         }
       }
@@ -1120,7 +1279,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolveAlbum(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
+      (this.nodelink.options.playback?.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Album'
 
@@ -1213,6 +1372,30 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
+   * Picks the highest-resolution image URL from a list of sources.
+   * Sources without dimensions (e.g. user-uploaded playlist covers) count as
+   * width 0, so the first one wins when none report a size.
+   *
+   * @param sources - Image sources from a Spotify GraphQL response.
+   * @returns The best URL, or an empty string when there is none.
+   * @internal
+   */
+  private _pickLargestImage(
+    sources?: Array<{ url: string; width?: number | null }> | null
+  ): string {
+    let best = ''
+    let bestWidth = -1
+    for (const source of sources ?? []) {
+      const width = source.width ?? 0
+      if (source.url && width > bestWidth) {
+        best = source.url
+        bestWidth = width
+      }
+    }
+    return best
+  }
+
+  /**
    * Resolves a playlist collection and its wrapped tracks.
    *
    * @param id - Playlist identifier.
@@ -1221,9 +1404,21 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _resolvePlaylist(id: string): Promise<SourceResult> {
     const maxTracks =
-      (this.nodelink.options.playback.maxPlaylistLength as number) || 1000
+      (this.nodelink.options.playback?.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Playlist'
+    let author = ''
+    let thumbnail = ''
+    let totalTracks = 0
+
+    const buildPluginInfo = (): PlaylistPluginInfo => ({
+      type: 'playlist',
+      identifier: id,
+      url: `https://open.spotify.com/playlist/${id}`,
+      artworkUrl: thumbnail,
+      author,
+      totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
+    })
 
     if (this.anonymousToken || id.startsWith('37i9dQZ')) {
       let offset = 0
@@ -1247,7 +1442,12 @@ export default class SpotifySource implements SourceInstance {
 
         if (offset === 0) {
           name = data.playlistV2.name
+          author = data.playlistV2.ownerV2?.data?.name?.trim() || ''
+          thumbnail = this._pickLargestImage(
+            data.playlistV2.images?.items?.[0]?.sources
+          )
           total = data.playlistV2.content?.totalCount || 0
+          totalTracks = total
         }
 
         const items = data.playlistV2.content?.items || []
@@ -1273,16 +1473,20 @@ export default class SpotifySource implements SourceInstance {
           data: {
             info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildPluginInfo()
           }
         }
       }
     }
 
-    const metaRes = await this._apiRequest<{ name: string }>(
-      `/playlists/${id}?market=${this.market}`
-    )
-    if (metaRes) name = metaRes.name
+    const metaRes = await this._apiRequest<
+      Pick<SpotifyPlaylist, 'name' | 'owner' | 'images'>
+    >(`/playlists/${id}?market=${this.market}`)
+    if (metaRes) {
+      name = metaRes.name
+      author = metaRes.owner?.display_name?.trim() || author
+      thumbnail = metaRes.images?.[0]?.url || thumbnail
+    }
 
     let nextUrl: string | null = `/playlists/${id}/items?market=${this.market}`
     while (nextUrl && tracks.length < maxTracks) {
@@ -1291,6 +1495,7 @@ export default class SpotifySource implements SourceInstance {
           nextUrl
         )
       if (!itemsRes?.items || itemsRes.items.length === 0) break
+      if (!totalTracks) totalTracks = itemsRes.total
 
       for (const it of itemsRes.items) {
         const node = it.item || it.track
@@ -1311,7 +1516,7 @@ export default class SpotifySource implements SourceInstance {
           data: {
             info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildPluginInfo()
           }
         }
       : { loadType: 'empty', data: {} }
@@ -1336,7 +1541,11 @@ export default class SpotifySource implements SourceInstance {
           includePrerelease: false
         }
       )
-      if (data?.artistUnion) {
+      if (
+        data?.artistUnion &&
+        data.artistUnion.__typename !== 'NotFound' &&
+        data.artistUnion.profile?.name
+      ) {
         const tracks = (data.artistUnion.discography?.topTracks?.items || [])
           .map((it) => this._buildTrackFromInternal(it.track))
           .filter(Boolean) as TrackData[]
@@ -1348,7 +1557,51 @@ export default class SpotifySource implements SourceInstance {
               selectedTrack: 0
             },
             tracks,
-            pluginInfo: {}
+            pluginInfo: {
+              type: 'artist',
+              identifier: id,
+              url: `https://open.spotify.com/artist/${id}`,
+              author: data.artistUnion.profile.name,
+              totalTracks: tracks.length
+            }
+          }
+        }
+      }
+    }
+
+    if (this.accessToken) {
+      const res = await this._apiRequest<{ tracks?: SpotifyTrack[] }>(
+        `/artists/${id}/top-tracks?market=${this.market}`,
+        'official'
+      )
+      if (res?.tracks && res.tracks.length > 0) {
+        let artistName = 'Unknown Artist'
+        const meta = await this._apiRequest<SpotifyArtist>(
+          `/artists/${id}`,
+          'official'
+        )
+        if (meta?.name) artistName = meta.name
+
+        const tracks = res.tracks
+          .map((t) => this._buildTrack(t))
+          .filter(Boolean) as TrackData[]
+        if (tracks.length > 0) {
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: `${artistName}'s Top Tracks`,
+                selectedTrack: 0
+              },
+              tracks,
+              pluginInfo: {
+                type: 'artist',
+                identifier: id,
+                url: `https://open.spotify.com/artist/${id}`,
+                author: artistName,
+                totalTracks: tracks.length
+              }
+            }
           }
         }
       }
@@ -1358,13 +1611,671 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
+   * Resolves Spotify shortlinks (spotify.link / spotify.app.link) by capturing redirects.
+   *
+   * @param url - Short URL.
+   * @returns Resolution result from destination URL.
+   * @internal
+   */
+  private async _resolveShortLink(url: string): Promise<SourceResult> {
+    let targetUrl: string | null = null
+    try {
+      await http1makeRequest(url, {
+        method: 'HEAD',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        shouldFollowRedirect: (nextUrl) => {
+          targetUrl = nextUrl.href
+          return false
+        }
+      })
+    } catch {
+      // shouldFollowRedirect = false aborts follow
+    }
+
+    if (!targetUrl) {
+      try {
+        const res = await http1makeRequest(url, {
+          method: 'GET',
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+          },
+          shouldFollowRedirect: (nextUrl) => {
+            targetUrl = nextUrl.href
+            return false
+          }
+        })
+        if (!targetUrl && res.statusCode === 200 && res.body) {
+          const bodyStr =
+            typeof res.body === 'string' ? res.body : res.body.toString()
+          const ogMatch =
+            bodyStr.match(
+              /<meta\s+(?:property|name)=["']og:url["']\s+content=["'](https?:\/\/[^"']+)["']/i
+            ) ||
+            bodyStr.match(
+              /<link\s+rel=["']canonical["']\s+href=["'](https?:\/\/[^"']+)["']/i
+            )
+          if (ogMatch?.[1]) {
+            targetUrl = ogMatch[1]
+          }
+        }
+      } catch {
+        // shouldFollowRedirect abort
+      }
+    }
+
+    if (targetUrl && targetUrl !== url) {
+      return await this.resolve(targetUrl)
+    }
+
+    return { loadType: 'empty', data: {} }
+  }
+
+  /**
+   * Resolves a podcast episode or audiobook chapter using the Pathfinder GraphQL API
+   * with Spotify embed metadata and oEmbed fallbacks.
+   *
+   * @param id - Spotify Episode or Chapter identifier.
+   * @param kind - Resource classification ('episode' or 'chapter').
+   * @returns Resolution result.
+   * @internal
+   */
+  private async _resolveEpisode(
+    id: string,
+    kind: 'episode' | 'chapter' = 'episode'
+  ): Promise<SourceResult> {
+    try {
+      await this._ensureToken('anonymous')
+
+      if (this.anonymousToken) {
+        const data =
+          await this._internalApiRequest<SpotifyGraphQLEpisodeResponse>(
+            QUERIES.getEpisodeOrChapter,
+            { uri: `spotify:episode:${id}` }
+          )
+
+        const ep = data?.episodeUnionV2
+        if (ep && ep.__typename !== 'NotFound' && ep.name) {
+          const title = ep.name
+          const showName =
+            ep.podcastV2?.data?.name ||
+            ep.audiobookV2?.data?.name ||
+            'Unknown Podcast'
+          const duration = ep.duration?.totalMilliseconds ?? 0
+          const artworkUrl =
+            this._pickLargestImage(
+              ep.coverArt?.sources?.map((s) => ({
+                url: s.url,
+                width: s.width ?? undefined
+              }))
+            ) || null
+          const explicit = ep.contentRating?.label === 'EXPLICIT'
+          const previewUrl = ep.audio?.items?.[0]?.url || null
+
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: true,
+            author: showName,
+            length: duration,
+            isStream: false,
+            position: 0,
+            title,
+            uri: `https://open.spotify.com/${kind}/${id}?explicit=${explicit}`,
+            artworkUrl,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+
+          return {
+            loadType: 'track',
+            data: {
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: kind,
+                show: showName,
+                previewUrl
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 1: Embed metadata extraction
+      const embedUrl = `https://open.spotify.com/embed/${kind}/${id}`
+      const res = await http1makeRequest(embedUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      })
+
+      if (res.statusCode === 200 && res.body) {
+        const html =
+          typeof res.body === 'string' ? res.body : res.body.toString()
+        const nextDataMatch = html.match(
+          /<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/
+        )
+        if (nextDataMatch?.[1]) {
+          const parsed = JSON.parse(nextDataMatch[1]) as {
+            props?: {
+              pageProps?: {
+                state?: {
+                  data?: {
+                    entity?: {
+                      name?: string
+                      title?: string
+                      subtitle?: string
+                      duration?: number
+                      duration_ms?: number
+                      isExplicit?: boolean
+                      audioPreview?: { url?: string }
+                      visualIdentity?: {
+                        image?: Array<{ url: string; maxWidth?: number }>
+                      }
+                      relatedEntityCoverArt?: Array<{
+                        url: string
+                        maxWidth?: number
+                      }>
+                    }
+                  }
+                }
+              }
+            }
+          }
+          const entity = parsed?.props?.pageProps?.state?.data?.entity
+          if (entity && (entity.name || entity.title)) {
+            const title = entity.name || entity.title || 'Unknown Episode'
+            const showName = entity.subtitle || 'Unknown Podcast'
+            const duration =
+              typeof entity.duration === 'number'
+                ? entity.duration
+                : typeof entity.duration_ms === 'number'
+                  ? entity.duration_ms
+                  : 0
+            const artworkUrl =
+              this._pickLargestImage(
+                entity.visualIdentity?.image?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              this._pickLargestImage(
+                entity.relatedEntityCoverArt?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              null
+            const explicit = Boolean(entity.isExplicit)
+
+            const info: TrackInfo = {
+              identifier: id,
+              isSeekable: true,
+              author: showName,
+              length: duration,
+              isStream: false,
+              position: 0,
+              title,
+              uri: `https://open.spotify.com/${kind}/${id}?explicit=${explicit}`,
+              artworkUrl,
+              isrc: null,
+              sourceName: 'spotify'
+            }
+
+            return {
+              loadType: 'track',
+              data: {
+                encoded: encodeTrack({ ...info, details: [] }),
+                info,
+                pluginInfo: {
+                  type: kind,
+                  show: showName,
+                  previewUrl: entity.audioPreview?.url || null
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 2: oEmbed endpoint
+      const oembedRes = await http1makeRequest(
+        `https://open.spotify.com/oembed?url=https://open.spotify.com/${kind}/${id}`
+      )
+      if (oembedRes.statusCode === 200 && oembedRes.body) {
+        const body =
+          typeof oembedRes.body === 'string'
+            ? (JSON.parse(oembedRes.body) as {
+                title?: string
+                thumbnail_url?: string
+              })
+            : (oembedRes.body as { title?: string; thumbnail_url?: string })
+        if (body?.title) {
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: true,
+            author: 'Spotify Podcast',
+            length: 0,
+            isStream: false,
+            position: 0,
+            title: body.title,
+            uri: `https://open.spotify.com/${kind}/${id}`,
+            artworkUrl: body.thumbnail_url || null,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+
+          return {
+            loadType: 'track',
+            data: {
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: kind,
+                show: 'Spotify Podcast',
+                previewUrl: null
+              }
+            }
+          }
+        }
+      }
+
+      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
+   * Resolves a podcast show or audiobook using the Pathfinder GraphQL API
+   * with Spotify embed metadata and oEmbed fallbacks.
+   *
+   * @param id - Spotify Show or Audiobook identifier.
+   * @param kind - Resource classification ('show' or 'audiobook').
+   * @returns Resolution result.
+   * @internal
+   */
+  private async _resolveShow(
+    id: string,
+    kind: 'show' | 'audiobook' = 'show'
+  ): Promise<SourceResult> {
+    try {
+      await this._ensureToken('anonymous')
+      const maxTracks =
+        this.nodelink.options.playback?.maxPlaylistLength ?? 1000
+
+      if (this.anonymousToken) {
+        let op =
+          kind === 'audiobook'
+            ? QUERIES.queryBookChapters
+            : QUERIES.queryPodcastEpisodes
+        let data = await this._internalApiRequest<SpotifyGraphQLShowResponse>(
+          op,
+          {
+            uri: `spotify:show:${id}`,
+            offset: 0,
+            limit: Math.min(maxTracks, 100)
+          }
+        )
+
+        if (
+          kind === 'show' &&
+          data?.podcastUnionV2?.__typename === 'Audiobook'
+        ) {
+          op = QUERIES.queryBookChapters
+          data = await this._internalApiRequest<SpotifyGraphQLShowResponse>(
+            op,
+            {
+              uri: `spotify:show:${id}`,
+              offset: 0,
+              limit: Math.min(maxTracks, 100)
+            }
+          )
+        }
+
+        const show = data?.podcastUnionV2
+        if (show && show.__typename !== 'NotFound' && show.name) {
+          const showName = show.name
+          const showArtwork =
+            this._pickLargestImage(
+              show.coverArt?.sources?.map((s) => ({
+                url: s.url,
+                width: s.width ?? undefined
+              }))
+            ) || null
+
+          const isAudiobook = show.__typename === 'Audiobook'
+          const initialItems = isAudiobook
+            ? (show.chaptersV2?.items ?? [])
+            : (show.episodesV2?.items ?? [])
+          const totalCount = isAudiobook
+            ? (show.chaptersV2?.totalCount ?? initialItems.length)
+            : (show.episodesV2?.totalCount ?? initialItems.length)
+
+          const tracks: TrackData[] = []
+
+          const parseItem = (it: (typeof initialItems)[number]): void => {
+            const ep = it.entity?.data
+            if (!ep?.name) return
+            const epUri = ep.uri || it.entity?._uri || ''
+            const epId = ep.id || epUri.split(':').pop() || id
+            const epKind = ep.__typename === 'Chapter' ? 'chapter' : 'episode'
+            const epArtwork =
+              this._pickLargestImage(
+                ep.coverArt?.sources?.map((s) => ({
+                  url: s.url,
+                  width: s.width ?? undefined
+                }))
+              ) || showArtwork
+            const explicit = ep.contentRating?.label === 'EXPLICIT'
+            const previewUrl =
+              ep.audio?.items?.[0]?.url ||
+              ep.previewPlayback?.audioPreview?.cdnUrl ||
+              ep.audioPreview?.url ||
+              null
+
+            const info: TrackInfo = {
+              identifier: epId,
+              isSeekable: true,
+              author:
+                ep.podcastV2?.data?.name ||
+                ep.audiobookV2?.data?.name ||
+                showName,
+              length: ep.duration?.totalMilliseconds ?? 0,
+              isStream: false,
+              position: 0,
+              title: ep.name,
+              uri: `https://open.spotify.com/${epKind}/${epId}?explicit=${explicit}`,
+              artworkUrl: epArtwork,
+              isrc: null,
+              sourceName: 'spotify'
+            }
+
+            tracks.push({
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: epKind,
+                show: showName,
+                previewUrl
+              }
+            })
+          }
+
+          for (const it of initialItems) {
+            parseItem(it)
+            if (tracks.length >= maxTracks) break
+          }
+
+          let offset = initialItems.length
+          while (tracks.length < maxTracks && offset < totalCount) {
+            const limit = Math.min(maxTracks - tracks.length, 100)
+            const pageData =
+              await this._internalApiRequest<SpotifyGraphQLShowResponse>(op, {
+                uri: `spotify:show:${id}`,
+                offset,
+                limit
+              })
+            const pageItems = isAudiobook
+              ? (pageData?.podcastUnionV2?.chaptersV2?.items ?? [])
+              : (pageData?.podcastUnionV2?.episodesV2?.items ?? [])
+            if (!pageItems.length) break
+
+            for (const it of pageItems) {
+              parseItem(it)
+              if (tracks.length >= maxTracks) break
+            }
+            offset += pageItems.length
+          }
+
+          if (tracks.length > 0) {
+            return {
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: showName,
+                  selectedTrack: 0
+                },
+                tracks,
+                pluginInfo: {
+                  type: isAudiobook ? 'audiobook' : 'show',
+                  identifier: id,
+                  url: `https://open.spotify.com/${isAudiobook ? 'audiobook' : 'show'}/${id}`,
+                  author: showName,
+                  totalTracks: totalCount
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 1: Embed metadata extraction
+      const embedUrl = `https://open.spotify.com/embed/${kind}/${id}`
+      const res = await http1makeRequest(embedUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      })
+
+      if (res.statusCode === 200 && res.body) {
+        const html =
+          typeof res.body === 'string' ? res.body : res.body.toString()
+        const nextDataMatch = html.match(
+          /<script id="__NEXT_DATA__" type="application\/json">([^<]+)<\/script>/
+        )
+        if (nextDataMatch?.[1]) {
+          const parsed = JSON.parse(nextDataMatch[1]) as {
+            props?: {
+              pageProps?: {
+                state?: {
+                  data?: {
+                    entity?: {
+                      id?: string
+                      name?: string
+                      title?: string
+                      subtitle?: string
+                      duration?: number
+                      duration_ms?: number
+                      isExplicit?: boolean
+                      audioPreview?: { url?: string }
+                      visualIdentity?: {
+                        image?: Array<{ url: string; maxWidth?: number }>
+                      }
+                      relatedEntityCoverArt?: Array<{
+                        url: string
+                        maxWidth?: number
+                      }>
+                    }
+                  }
+                }
+              }
+            }
+          }
+          const entity = parsed?.props?.pageProps?.state?.data?.entity
+          if (entity && (entity.name || entity.title)) {
+            const title = entity.name || entity.title || 'Unknown Episode'
+            const showName = entity.subtitle || 'Unknown Podcast'
+            const epId = entity.id || id
+            const duration =
+              typeof entity.duration === 'number'
+                ? entity.duration
+                : typeof entity.duration_ms === 'number'
+                  ? entity.duration_ms
+                  : 0
+            const artworkUrl =
+              this._pickLargestImage(
+                entity.visualIdentity?.image?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              this._pickLargestImage(
+                entity.relatedEntityCoverArt?.map((i) => ({
+                  url: i.url,
+                  width: i.maxWidth
+                }))
+              ) ||
+              null
+            const explicit = Boolean(entity.isExplicit)
+
+            const info: TrackInfo = {
+              identifier: epId,
+              isSeekable: true,
+              author: showName,
+              length: duration,
+              isStream: false,
+              position: 0,
+              title,
+              uri: `https://open.spotify.com/episode/${epId}?explicit=${explicit}`,
+              artworkUrl,
+              isrc: null,
+              sourceName: 'spotify'
+            }
+
+            const trackData: TrackData = {
+              encoded: encodeTrack({ ...info, details: [] }),
+              info,
+              pluginInfo: {
+                type: 'episode',
+                show: showName,
+                previewUrl: entity.audioPreview?.url || null
+              }
+            }
+
+            return {
+              loadType: 'playlist',
+              data: {
+                info: {
+                  name: `${showName} (Latest Episode)`,
+                  selectedTrack: 0
+                },
+                tracks: [trackData],
+                pluginInfo: {
+                  type: kind,
+                  identifier: id,
+                  url: `https://open.spotify.com/${kind}/${id}`,
+                  author: showName,
+                  totalTracks: 1
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Fallback 2: oEmbed endpoint
+      const oembedRes = await http1makeRequest(
+        `https://open.spotify.com/oembed?url=https://open.spotify.com/${kind}/${id}`
+      )
+      if (oembedRes.statusCode === 200 && oembedRes.body) {
+        const body =
+          typeof oembedRes.body === 'string'
+            ? (JSON.parse(oembedRes.body) as {
+                title?: string
+                thumbnail_url?: string
+              })
+            : (oembedRes.body as {
+                title?: string
+                thumbnail_url?: string
+              })
+
+        if (body?.title) {
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: true,
+            author: body.title,
+            length: 0,
+            isStream: false,
+            position: 0,
+            title: body.title,
+            uri: `https://open.spotify.com/${kind}/${id}`,
+            artworkUrl: body.thumbnail_url || null,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+
+          const trackData: TrackData = {
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: {
+              type: kind,
+              show: body.title,
+              previewUrl: null
+            }
+          }
+
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: body.title,
+                selectedTrack: 0
+              },
+              tracks: [trackData],
+              pluginInfo: {
+                type: kind,
+                identifier: id,
+                url: `https://open.spotify.com/${kind}/${id}`,
+                author: body.title,
+                totalTracks: 1
+              }
+            }
+          }
+        }
+      }
+
+      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
    * Resolves a playback URL by delegating to alternative sources.
+   * Deduplicates concurrent in-flight delegation requests for the same track.
    *
    * @param track - Metadata of the Spotify track.
    * @returns Delegated stream URL result.
    * @public
    */
   public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
+    const cacheKey = track.identifier || track.uri
+    const inflight = this.inFlightTrackUrls.get(cacheKey)
+    if (inflight) return await inflight
+
+    const trackUrlPromise = this._executeGetTrackUrl(track)
+    this.inFlightTrackUrls.set(cacheKey, trackUrlPromise)
+
+    try {
+      return await trackUrlPromise
+    } finally {
+      this.inFlightTrackUrls.delete(cacheKey)
+    }
+  }
+
+  /**
+   * Internal executor for track URL resolution via delegation.
+   * @internal
+   */
+  private async _executeGetTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
     const sm = this.nodelink.sources
     if (!sm) {
       return {
@@ -1376,11 +2287,80 @@ export default class SpotifySource implements SourceInstance {
     }
     const query = `${track.title} ${track.author}`
     try {
+      const normalizedIsrc = track.isrc?.replace(/-/g, '').toUpperCase()
+      if (normalizedIsrc) {
+        const catalogSources = ['deezer', 'tidal']
+        for (const sourceName of catalogSources) {
+          const source = sm.getSource(sourceName)
+          if (!source?.search || !source.getTrackUrl) continue
+
+          // Tidal can search without a direct stream API, but then getTrackUrl
+          // delegates back to the default source. Only try it when configured.
+          if (sourceName === 'tidal') {
+            const tidalConfig = this.nodelink.options.sources?.tidal as
+              | { hifiApis?: string[] }
+              | undefined
+            if (
+              !tidalConfig?.hifiApis?.some((api) => /^https?:\/\//i.test(api))
+            ) {
+              continue
+            }
+          }
+
+          try {
+            const catalog = await sm.search(sourceName, normalizedIsrc)
+            if (catalog.loadType !== 'search' || !Array.isArray(catalog.data))
+              continue
+
+            const exactMatch = catalog.data.find((candidate) => {
+              const candidateIsrc = candidate.info.isrc
+                ?.replace(/-/g, '')
+                .toUpperCase()
+              return candidateIsrc === normalizedIsrc
+            })
+            if (!exactMatch) continue
+
+            const direct = await sm.getTrackUrl(exactMatch.info)
+            if (
+              direct.exception ||
+              !direct.url ||
+              (direct.newTrack?.info?.sourceName &&
+                direct.newTrack.info.sourceName !== sourceName)
+            ) {
+              continue
+            }
+
+            logger(
+              'info',
+              'Spotify',
+              `Resolved ${track.identifier} via exact ISRC match on ${sourceName}.`
+            )
+            return { ...direct, newTrack: { info: exactMatch.info } }
+          } catch (error) {
+            logger(
+              'debug',
+              'Spotify',
+              `ISRC resolution on ${sourceName} failed: ${error instanceof Error ? error.message : String(error)}`
+            )
+          }
+        }
+      }
+
       let res = await sm.searchWithDefault(
         track.isrc ? `"${track.isrc}"` : query
       )
       if (res.loadType !== 'search' || !res.data.length) {
         res = await sm.searchWithDefault(query)
+      }
+      if (res.loadType !== 'search' || !res.data.length) {
+        const cleanedTitle = track.title
+          .replace(/[|#]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+        const fallbackQuery = `${track.author} ${cleanedTitle}`
+        if (fallbackQuery !== query) {
+          res = await sm.searchWithDefault(fallbackQuery)
+        }
       }
       if (res.loadType !== 'search' || !res.data.length) {
         return {
@@ -1390,19 +2370,50 @@ export default class SpotifySource implements SourceInstance {
           }
         }
       }
-      const best = getBestMatch(res.data, track, {
-        allowExplicit: this.config.allowExplicit
-      })
-      if (!best) {
-        return {
-          exception: {
-            message: 'No suitable matching alternative was found.',
-            severity: 'fault'
+      const candidates = [...res.data]
+      const maxCandidates = Math.min(candidates.length, 5)
+      let attemptedCandidates = 0
+
+      while (attemptedCandidates < maxCandidates) {
+        const best = getBestMatch(candidates, track, {
+          allowExplicit: this.config.allowExplicit,
+          minScore: 300
+        })
+        if (!best) break
+
+        const candidateIndex = candidates.indexOf(best)
+        if (candidateIndex >= 0) candidates.splice(candidateIndex, 1)
+        attemptedCandidates++
+
+        try {
+          const url = await sm.getTrackUrl(best.info as TrackInfo)
+          if (url.exception) {
+            logger(
+              'debug',
+              'Spotify',
+              `Mirror candidate ${best.info.sourceName}:${best.info.identifier} was not playable: ${url.exception.message}`
+            )
+            continue
           }
+          return { newTrack: { info: best.info as TrackInfo }, ...url }
+        } catch (error) {
+          logger(
+            'debug',
+            'Spotify',
+            `Mirror candidate ${best.info.sourceName}:${best.info.identifier} failed: ${error instanceof Error ? error.message : String(error)}`
+          )
         }
       }
-      const url = await sm.getTrackUrl(best.info as TrackInfo)
-      return { newTrack: { info: best.info as TrackInfo }, ...url }
+
+      return {
+        exception: {
+          message:
+            attemptedCandidates === 0
+              ? 'No suitable matching alternative was found.'
+              : `No playable alternative found among ${attemptedCandidates} matching candidates.`,
+          severity: 'common'
+        }
+      }
     } catch (e) {
       return {
         exception: {
@@ -1450,7 +2461,9 @@ export default class SpotifySource implements SourceInstance {
         )
         if (
           playlistResult.loadType === 'playlist' &&
-          Array.isArray((playlistResult.data as { tracks?: TrackData[] }).tracks) &&
+          Array.isArray(
+            (playlistResult.data as { tracks?: TrackData[] }).tracks
+          ) &&
           (playlistResult.data as { tracks: TrackData[] }).tracks.length > 0
         ) {
           return playlistResult
@@ -1466,7 +2479,7 @@ export default class SpotifySource implements SourceInstance {
 
     try {
       const maxTracks =
-        (this.nodelink.options.playback.maxPlaylistLength as number) || 50
+        (this.nodelink.options.playback?.maxPlaylistLength as number) || 50
       const limit = Math.min(Math.max(maxTracks, 1), 50)
 
       const data = await this._internalApiRequest<{
@@ -1513,6 +2526,375 @@ export default class SpotifySource implements SourceInstance {
     }
 
     return { loadType: 'empty', data: {} }
+  }
+
+  /**
+   * Resolves similar albums or recommendations based on a track identifier.
+   *
+   * @param seed - Track identifier or URI.
+   * @returns Playlist containing similar albums or recommended tracks.
+   * @internal
+   */
+  private async _resolveSimilar(seed: string): Promise<SourceResult> {
+    await this._ensureToken('anonymous')
+    if (!this.anonymousToken) return { loadType: 'empty', data: {} }
+
+    let id = seed.trim()
+    if (id.startsWith('spotify:similar:')) {
+      id = id.split(':')[2] || id
+    } else if (id.startsWith('spotify:track:')) {
+      id = id.split(':')[2] || id
+    } else if (id.includes('/track/')) {
+      const match = id.match(/\/track\/([A-Za-z0-9]+)/)
+      if (match?.[1]) id = match[1]
+    }
+
+    try {
+      const data = await this._internalApiRequest<{
+        seoRecommendedTrackAlbum?: {
+          items?: Array<{
+            data: {
+              __typename: string
+              name: string
+              uri: string
+              coverArt?: {
+                sources?: Array<{
+                  url: string
+                  width?: number
+                  height?: number
+                }>
+              }
+              artists?: {
+                items?: Array<{ profile?: { name: string }; uri?: string }>
+              }
+            }
+          }>
+        }
+      }>(QUERIES.similarAlbumsBasedOnThisTrack, {
+        uri: `spotify:track:${id}`,
+        limit: 10
+      })
+
+      const items = data?.seoRecommendedTrackAlbum?.items || []
+      if (items.length > 0) {
+        const tracks: TrackData[] = []
+        for (const item of items) {
+          const a = item.data
+          if (!a?.name) continue
+          const albumId = a.uri?.split(':').pop() || ''
+          const artistName =
+            a.artists?.items
+              ?.map((it) => it.profile?.name)
+              .filter(Boolean)
+              .join(', ') || 'Unknown'
+          const artwork = this._pickLargestImage(a.coverArt?.sources) || null
+
+          const info: TrackInfo = {
+            title: a.name,
+            author: artistName,
+            length: 0,
+            identifier: albumId,
+            isSeekable: false,
+            isStream: false,
+            uri: `https://open.spotify.com/album/${albumId}`,
+            artworkUrl: artwork,
+            isrc: null,
+            sourceName: 'spotify',
+            position: 0
+          }
+
+          tracks.push({
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: { type: 'album' }
+          })
+        }
+
+        if (tracks.length > 0) {
+          return {
+            loadType: 'playlist',
+            data: {
+              info: {
+                name: `Similar to ${id}`,
+                selectedTrack: 0
+              },
+              tracks,
+              pluginInfo: {
+                type: 'similar',
+                identifier: id
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      logger(
+        'debug',
+        'Spotify',
+        `similarAlbumsBasedOnThisTrack failed for ${id}: ${(e as Error).message}`
+      )
+    }
+
+    return await this.getRecommendations(id)
+  }
+
+  /**
+   * Resolves query autocomplete suggestions via the Pathfinder searchSuggestions query.
+   *
+   * @param query - Search term.
+   * @returns Search results containing autocomplete suggestions and top entities.
+   * @internal
+   */
+  private async _resolveSearchSuggestions(
+    query: string
+  ): Promise<SourceResult> {
+    await this._ensureToken('anonymous')
+    if (!this.anonymousToken) return { loadType: 'empty', data: {} }
+
+    try {
+      const data = await this._internalApiRequest<{
+        searchV2?: {
+          topResultsV2?: {
+            itemsV2?: Array<{
+              __typename?: string
+              item?: {
+                __typename?: string
+                data?: {
+                  __typename?: string
+                  id?: string
+                  name?: string
+                  text?: string
+                  uri?: string
+                  duration?: { totalMilliseconds?: number }
+                  artists?: { items?: Array<{ profile?: { name: string } }> }
+                  coverArt?: {
+                    sources?: Array<{
+                      url: string
+                      width?: number
+                      height?: number
+                    }>
+                  }
+                  albumOfTrack?: {
+                    coverArt?: {
+                      sources?: Array<{
+                        url: string
+                        width?: number
+                        height?: number
+                      }>
+                    }
+                  }
+                }
+              }
+            }>
+          }
+        }
+      }>(QUERIES.searchSuggestions, { query })
+
+      const items = data?.searchV2?.topResultsV2?.itemsV2 || []
+      const tracks: TrackData[] = []
+
+      for (const h of items) {
+        const item = h.item
+        if (!item) continue
+
+        if (item.__typename === 'SearchAutoCompleteEntity') {
+          const text = item.data?.text || ''
+          const uri = item.data?.uri || ''
+          const identifier = uri.split(':').pop() || text
+          const info: TrackInfo = {
+            identifier,
+            isSeekable: false,
+            author: 'Spotify Suggestion',
+            length: 0,
+            isStream: false,
+            position: 0,
+            title: text,
+            uri: uri.startsWith('spotify:')
+              ? `https://open.spotify.com/search/${encodeURIComponent(text)}`
+              : uri,
+            artworkUrl: null,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+          tracks.push({
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: { type: 'suggestion', query: text }
+          })
+        } else if (item.data?.name) {
+          const d = item.data
+          const id = d.id || d.uri?.split(':').pop() || ''
+          const author =
+            d.artists?.items
+              ?.map((a) => a.profile?.name)
+              .filter(Boolean)
+              .join(', ') || 'Unknown'
+          const artwork =
+            this._pickLargestImage(d.albumOfTrack?.coverArt?.sources) ||
+            this._pickLargestImage(d.coverArt?.sources) ||
+            null
+          const duration = d.duration?.totalMilliseconds ?? 0
+          const itemType = d.__typename?.toLowerCase() || 'track'
+
+          const info: TrackInfo = {
+            identifier: id,
+            isSeekable: itemType === 'track',
+            author,
+            length: duration,
+            isStream: false,
+            position: 0,
+            title: d.name || 'Unknown',
+            uri: d.uri?.startsWith('spotify:track:')
+              ? `https://open.spotify.com/track/${id}`
+              : `https://open.spotify.com/search/${encodeURIComponent(d.name || '')}`,
+            artworkUrl: artwork,
+            isrc: null,
+            sourceName: 'spotify'
+          }
+          tracks.push({
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: { type: itemType }
+          })
+        }
+      }
+
+      return tracks.length > 0
+        ? {
+            loadType: 'search',
+            data: tracks
+          }
+        : { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
+   * Resolves the user's liked songs/collection tracks.
+   * Requires an authenticated session via sp_dc.
+   *
+   * @param id - Collection identifier (e.g. 'tracks', 'your-episodes').
+   * @returns Playlist containing user library tracks.
+   * @internal
+   */
+  private async _resolveCollection(id: string): Promise<SourceResult> {
+    if (!this.config.sp_dc && !this.mobileToken) {
+      return {
+        loadType: 'error',
+        exception: {
+          message:
+            'Accessing Spotify user collection requires sp_dc cookie authentication.',
+          severity: 'common'
+        }
+      }
+    }
+
+    try {
+      const data = await this._internalApiRequest<{
+        me?: {
+          library?: {
+            tracks?: {
+              totalCount?: number
+              items?: Array<{
+                track?: {
+                  data?: SpotifyGraphQLTrack
+                }
+              }>
+            }
+          }
+        }
+      }>(
+        QUERIES.fetchLibraryTracks,
+        { offset: 0, limit: 50 },
+        this.mobileToken ? 'mobile' : 'anonymous'
+      )
+
+      const items = data?.me?.library?.tracks?.items || []
+      const tracks: TrackData[] = []
+
+      for (const it of items) {
+        const trackData = it.track?.data
+        if (!trackData) continue
+        const track = this._buildTrackFromInternal(trackData)
+        if (track) tracks.push(track)
+      }
+
+      if (tracks.length > 0) {
+        return {
+          loadType: 'playlist',
+          data: {
+            info: {
+              name: 'Liked Songs',
+              selectedTrack: 0
+            },
+            tracks,
+            pluginInfo: {
+              type: 'collection',
+              identifier: id,
+              totalTracks:
+                data?.me?.library?.tracks?.totalCount ?? tracks.length
+            }
+          }
+        }
+      }
+
+      return { loadType: 'empty', data: {} }
+    } catch (e) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: e instanceof Error ? e.message : String(e),
+          severity: 'fault'
+        }
+      }
+    }
+  }
+
+  /**
+   * Extracts dominant color palette from album artwork using Pathfinder.
+   *
+   * @param artworkUrl - Image URL of the artwork.
+   * @returns Color palette or null if extraction fails.
+   * @internal
+   */
+  private async _fetchArtworkColors(
+    artworkUrl: string | null
+  ): Promise<{ dark?: string; light?: string; raw?: string } | null> {
+    if (!artworkUrl) return null
+    const match =
+      artworkUrl.match(/\/image\/([a-f0-9]{32,40})/i) ||
+      artworkUrl.match(/spotify:image:([a-f0-9]{32,40})/i)
+    if (!match?.[1]) return null
+
+    try {
+      const data = await this._internalApiRequest<{
+        extractedColors?: Array<{
+          colorDark?: { hex?: string }
+          colorLight?: { hex?: string }
+          colorRaw?: { hex?: string }
+        }>
+      }>(QUERIES.fetchExtractedColors, {
+        imageUris: [`spotify:image:${match[1]}`]
+      })
+
+      const palette = data?.extractedColors?.[0]
+      if (!palette) return null
+
+      return {
+        dark: palette.colorDark?.hex,
+        light: palette.colorLight?.hex,
+        raw: palette.colorRaw?.hex
+      }
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -1589,15 +2971,437 @@ export default class SpotifySource implements SourceInstance {
     const artists = (it as SpotifyGraphQLTrack).artists?.items
     if (artists) {
       return (
-        artists.map((a) => a.profile?.name || a.name).join(', ') || 'Unknown'
+        artists
+          .map((a) => a?.profile?.name || a?.name)
+          .filter(Boolean)
+          .join(', ') || 'Unknown'
       )
     }
     const first = (it as SpotifyGraphQLTrack).firstArtist?.items?.[0]
     if (first) return first.profile?.name || 'Unknown'
 
     const official = (it as SpotifyTrack).artists
-    if (official) return official.map((a) => a.name).join(', ')
+    if (official) {
+      return (
+        official
+          .map((a) => a?.name)
+          .filter(Boolean)
+          .join(', ') || 'Unknown'
+      )
+    }
 
     return 'Unknown'
   }
+
+  /**
+   * Declarative test suite for Spotify source resolution and query variants.
+   * @public
+   */
+  public static readonly _TESTS: readonly SourceTestCase[] = [
+    {
+      id: 'spotify.track.standard',
+      name: 'Standard HTTPS Track resolution (Billie Eilish - ocean eyes)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/track/4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4eoOQgFQ0rLMKNP8KcUNWc' },
+          title: { op: 'matches', value: 'ocean eyes' },
+          author: { op: 'matches', value: 'Billie Eilish' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.track.uri',
+      name: 'Spotify URI Track format resolution (spotify:track:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:track:4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4eoOQgFQ0rLMKNP8KcUNWc' },
+          title: { op: 'matches', value: 'ocean eyes' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.track.localized',
+      name: 'Localized Regional URL Track resolution (/intl-pt/track/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/intl-pt/track/4IpaCWsYoiRLG4CihCt1Pd'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4IpaCWsYoiRLG4CihCt1Pd' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.track.embed',
+      name: 'Embed URL Track resolution (/embed/track/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/embed/track/6dOtVTDdiauQNBQEDOtlAB'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '6dOtVTDdiauQNBQEDOtlAB' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.album.standard',
+      name: 'Standard HTTPS Album resolution (Billie Eilish - HIT ME HARD AND SOFT)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/album/7aJuG4TFXa2hmE4z1yxc3n'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 10,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.album.uri',
+      name: 'Spotify URI Album format resolution (spotify:album:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:album:7aJuG4TFXa2hmE4z1yxc3n'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 10,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.standard',
+      name: 'Small playlist resolution (5 tracks)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/playlist/0Gf1aUizIT2TLKlu2qYlh2'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 5,
+          maxItems: 5
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.legacy_user',
+      name: 'Legacy user playlist URL format (/user/<username>/playlist/ID)',
+      input: {
+        type: 'resolve',
+        value:
+          'https://open.spotify.com/user/filtr.br/playlist/5HmZtuuIDMtIy21kylqhx6'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.paginated',
+      name: 'Multi-page paginated playlist (101 tracks capped by playback limit)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/playlist/5YFtKCsIIxyzCMZiZ29JDj'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 100,
+          maxItems: 101
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.uri',
+      name: 'Spotify URI Playlist format resolution (spotify:playlist:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:playlist:1QscjgKRfrGpiDFMyT9rwO'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.artist.top_tracks',
+      name: 'Artist top tracks resolution (Billie Eilish)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/artist/6qqNVTkY8uBg9cP3Jd7DAH'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 5,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.artist.uri',
+      name: 'Spotify URI Artist format resolution (spotify:artist:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:artist:6qqNVTkY8uBg9cP3Jd7DAH'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 5,
+          maxItems: 10
+        }
+      }
+    },
+    {
+      id: 'spotify.search.track',
+      name: 'Search track query prefix (spsearch:)',
+      input: {
+        type: 'search',
+        value: 'ocean eyes billie eilish',
+        searchType: 'spsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.recommendations',
+      name: 'Recommendations seed query prefix (sprec:)',
+      input: {
+        type: 'search',
+        value: '4eoOQgFQ0rLMKNP8KcUNWc',
+        searchType: 'sprec'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.episode.standard',
+      name: 'Standard HTTPS Episode resolution (Café Com Crime #204)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/episode/4RYJrq9SflTVb5Mmt6SZzH'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4RYJrq9SflTVb5Mmt6SZzH' },
+          title: { op: 'matches', value: 'ESTRANGULADOR DE VELHINHAS' },
+          author: { op: 'matches', value: 'Café Com Crime' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.episode.uri',
+      name: 'Spotify URI Episode format resolution (spotify:episode:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:episode:4RYJrq9SflTVb5Mmt6SZzH'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4RYJrq9SflTVb5Mmt6SZzH' },
+          title: { op: 'matches', value: 'ESTRANGULADOR DE VELHINHAS' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.show.standard',
+      name: 'Standard HTTPS Show/Podcast resolution (The Daily Podcast)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/show/0F9gK0W6WXJSomup66hq03'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.show.uri',
+      name: 'Spotify URI Show/Podcast format resolution (spotify:show:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:show:0F9gK0W6WXJSomup66hq03'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.playlist.legacy_uri',
+      name: 'Spotify Legacy User Playlist URI resolution (spotify:user:USER:playlist:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:user:filtr.br:playlist:5HmZtuuIDMtIy21kylqhx6'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.audiobook.standard',
+      name: 'Standard HTTPS Audiobook resolution (É para o meu bem)',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/audiobook/4qZuZTP75A5J1o5vilMrYG'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.audiobook.uri',
+      name: 'Spotify URI Audiobook format resolution (spotify:audiobook:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:audiobook:4qZuZTP75A5J1o5vilMrYG'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.chapter.standard',
+      name: 'Standard HTTPS Chapter resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/chapter/0aSCVEDpxaoHjIEzUcsXbz'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '0aSCVEDpxaoHjIEzUcsXbz' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.chapter.uri',
+      name: 'Spotify URI Chapter format resolution (spotify:chapter:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:chapter:0aSCVEDpxaoHjIEzUcsXbz'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '0aSCVEDpxaoHjIEzUcsXbz' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.details.uri',
+      name: 'Spotify URI Details format with palette extraction (spotify:details:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:details:4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '4eoOQgFQ0rLMKNP8KcUNWc' },
+          title: { op: 'matches', value: 'ocean eyes' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
+    {
+      id: 'spotify.similar.uri',
+      name: 'Spotify URI Similar format resolution (spotify:similar:ID)',
+      input: {
+        type: 'resolve',
+        value: 'spotify:similar:4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.search.suggest',
+      name: 'Spotify Autocomplete suggestions prefix (spsuggest:)',
+      input: {
+        type: 'search',
+        value: 'ocean eyes',
+        searchType: 'spsuggest'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: {
+          minItems: 1
+        }
+      }
+    },
+    {
+      id: 'spotify.search.similar',
+      name: 'Spotify Similar recommendations prefix (spsimilar:)',
+      input: {
+        type: 'search',
+        value: '4eoOQgFQ0rLMKNP8KcUNWc',
+        searchType: 'spsimilar'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: {
+          minItems: 1
+        }
+      }
+    }
+  ]
 }

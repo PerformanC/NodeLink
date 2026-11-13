@@ -1,3 +1,5 @@
+import type { SourceHealthMetricPayload } from './sources/sourceHealth.types.ts'
+
 /**
  * Client information from Client-Name header
  * @public
@@ -66,6 +68,27 @@ export type IPCMessage =
       payload: {
         workerId: number
         affectedGuilds: string[]
+      }
+    }
+  | {
+      type: 'ipBlock'
+      ip: string
+      durationMs?: number
+    }
+  | {
+      type: 'sourceHealthMetric'
+      payload: SourceHealthMetricPayload
+    }
+  | {
+      type: 'pcmAnalysisRequest'
+      requestId: string
+      pid?: number
+      payload: {
+        pcmBase64: string
+        sampleRate?: number
+        trackId?: string
+        windowStartMs?: number
+        trackLengthMs?: number
       }
     }
 

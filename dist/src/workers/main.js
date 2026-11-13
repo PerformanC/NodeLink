@@ -1404,7 +1404,7 @@ async function startLoadStream(streamId, payload) {
         throw new Error(fetched.exception.message || 'Failed to load stream');
     }
     const createPCMStream = await getCreatePCMStream();
-    const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {});
+    const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {}, nodelink.options.playback?.audio?.loudnessNormalizer ?? false);
     const entry = {
         pcmStream,
         fetched,
@@ -1497,7 +1497,7 @@ async function processQueue(queueKey) {
         switch (type) {
             case 'createPlayer': {
                 const createPayload = payload;
-                const { sessionId, guildId, userId, voice } = createPayload;
+                const { sessionId, guildId, userId, voice, audioProcessingMode } = createPayload;
                 if (!sessionId || !guildId || !userId) {
                     result = { created: false, reason: 'Invalid createPlayer payload' };
                     break;
@@ -1532,7 +1532,8 @@ async function processQueue(queueKey) {
                 const player = new PlayerClass({
                     nodelink: nodelink,
                     session: mockSession,
-                    guildId
+                    guildId,
+                    audioProcessingMode
                 });
                 players.set(playerKey, player);
                 if (voice)
@@ -1666,7 +1667,7 @@ async function processQueue(queueKey) {
                 break;
             }
             case 'loadLyrics': {
-                const { decodedTrackInfo, language } = (payload ?? {});
+                const { decodedTrackInfo, language, source } = (payload ?? {});
                 const trackInfo = {
                     ...decodedTrackInfo,
                     artworkUrl: decodedTrackInfo.artworkUrl ?? null,
@@ -1674,7 +1675,7 @@ async function processQueue(queueKey) {
                     uri: decodedTrackInfo.uri
                 };
                 const lyrics = await getLyricsManager();
-                result = await lyrics.loadLyrics({ info: trackInfo }, language);
+                result = await lyrics.loadLyrics({ info: trackInfo }, language, undefined, source);
                 break;
             }
             case 'loadMeaning': {

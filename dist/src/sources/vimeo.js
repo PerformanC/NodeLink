@@ -90,6 +90,44 @@ function selectAudioTrack(tracks) {
  * @public
  */
 export default class VimeoSource {
+    /**
+     * Declarative test suite for validating Vimeo source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'vimeo.video.resolve',
+            name: 'Vimeo Video URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://vimeo.com/76979871'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'The New Vimeo Player' },
+                    author: { op: 'matches', value: 'Vimeo' },
+                    sourceName: { op: 'equals', value: 'vimeo' }
+                }
+            }
+        },
+        {
+            id: 'vimeo.player.resolve',
+            name: 'Vimeo Player URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://player.vimeo.com/video/76979871'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'The New Vimeo Player' },
+                    author: { op: 'matches', value: 'Vimeo' },
+                    sourceName: { op: 'equals', value: 'vimeo' }
+                }
+            }
+        }
+    ];
     nodelink;
     config;
     searchTerms;

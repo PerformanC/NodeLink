@@ -1,8 +1,10 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 import DelayLine from './dsp/delay.ts'
+import { Float64DelayLine } from './dsp/float64Delay.ts'
 import LFO from './dsp/lfo.ts'
 
 const CHANNELS = 2
@@ -15,9 +17,11 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000)
  * @public
  */
 export default class Flanger extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 10
   private lfo: LFO
   private delayLine: DelayLine
+  private delayLineFloat: Float64DelayLine | null = null
   private rate = 0
   private depth = 0
   private feedback = 0
@@ -101,17 +105,38 @@ export default class Flanger extends AnimatableFilter {
     return chunk
   }
 
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 4 !== 0)
+      throw new RangeError(
+        'Flanger Float32 input must contain complete samples'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    this.delayLineFloat ??= new Float64DelayLine(bufferSize)
+    const maxDelayWidth = this.depth * SAMPLE_RATE * 0.005
+    for (let i = 0; i < chunk.length; i += 4) {
+      const sample = chunk.readFloatLE(i)
+      const delay = maxDelayWidth + this.lfo.getValue() * maxDelayWidth
+      const delayed = this.delayLineFloat.read(delay)
+      this.delayLineFloat.write(sample + delayed * this.feedback)
+      chunk.writeFloatLE(sample + this.alpha * delayed, i)
+    }
+    return chunk
+  }
+
   /**
    * Flushes any pending data.
    * @returns An empty Buffer.
    */
   public override flush(): Buffer {
     this.delayLine.clear()
+    this.delayLineFloat?.clear()
     this.lfo.phase = 0
     return Buffer.alloc(0)
   }
 
   public destroy(): void {
     this.delayLine.destroy()
+    this.delayLineFloat?.destroy()
   }
 }

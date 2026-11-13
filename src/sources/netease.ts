@@ -1,3 +1,4 @@
+import { PassThrough, type Readable } from 'node:stream'
 import type {
   NeteaseAlbumResponse,
   NeteaseArtist,
@@ -15,7 +16,17 @@ import type {
   NeteaseTrackData,
   NeteaseTrackUrlResult
 } from '../typings/sources/netease.types.ts'
-import type { TrackInfo } from '../typings/sources/source.types.ts'
+import type {
+  SourceInstance,
+  TrackInfo
+} from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   TrackEncodeInput
@@ -28,15 +39,15 @@ import {
 } from '../utils.ts'
 
 const NETEASE_TRACK_PATTERN =
-  /^https?:\/\/(?:www\.)?music\.163\.com\/?#?\/song\?id=(\d+)/
+  /^https?:\/\/(?:(?:www|y)\.)?music\.163\.com\/(?:m\/)?(?:#\/)?song(?:\/|.*?[?&]id=)(\d+)/i
 const NETEASE_ALBUM_PATTERN =
-  /^https?:\/\/(?:www\.)?music\.163\.com\/?#?\/album\?id=(\d+)/
+  /^https?:\/\/(?:(?:www|y)\.)?music\.163\.com\/(?:m\/)?(?:#\/)?album(?:\/|.*?[?&]id=)(\d+)/i
 const NETEASE_PLAYLIST_PATTERN =
-  /^https?:\/\/(?:www\.)?music\.163\.com\/?#?\/playlist\?id=(\d+)/
+  /^https?:\/\/(?:(?:www|y)\.)?music\.163\.com\/(?:m\/)?(?:#\/)?playlist(?:\/|.*?[?&]id=)(\d+)/i
 const NETEASE_ARTIST_PATTERN =
-  /^https?:\/\/(?:www\.)?music\.163\.com\/?#?\/artist\?id=(\d+)/
+  /^https?:\/\/(?:(?:www|y)\.)?music\.163\.com\/(?:m\/)?(?:#\/)?artist(?:\/|.*?[?&]id=)(\d+)/i
 
-const STREAM_URL = 'https://music.163.com/song/media/outer/url?id='
+const STREAM_URL = 'http://music.163.com/song/media/outer/url?id='
 
 const ANDROID_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -57,7 +68,164 @@ const GET_HEADERS = {
  * Netease Cloud Music source implementation.
  * @public
  */
-export default class NeteaseSource {
+export default class NeteaseSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating Netease source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'netease.track.stream',
+      name: 'Netease native audio streaming',
+      input: {
+        type: 'resolve',
+        value: 'https://music.163.com/#/song?id=1430583016'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: { op: 'matches', value: '海底' },
+          author: { op: 'matches', value: '一支榴莲' },
+          sourceName: { op: 'equals', value: 'netease' }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [{ container: 'mp3', codec: 'mp3' }],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'netease.track.nohash',
+      name: 'Netease track resolution without hash fragment',
+      input: {
+        type: 'resolve',
+        value: 'https://music.163.com/song?id=1430583016'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: { op: 'matches', value: '海底' },
+          sourceName: { op: 'equals', value: 'netease' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'netease.track.mobile',
+      name: 'Netease mobile track link resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://y.music.163.com/m/song?id=1430583016'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: { op: 'matches', value: '海底' },
+          sourceName: { op: 'equals', value: 'netease' }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'netease.playlist.resolve',
+      name: 'Netease playlist resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://music.163.com/#/playlist?id=2340621859'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 5
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'netease.album.resolve',
+      name: 'Netease album resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://music.163.com/#/album?id=86447217'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'netease.artist.resolve',
+      name: 'Netease artist top tracks resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://music.163.com/#/artist?id=33694141'
+      },
+      expect: {
+        result: {
+          type: 'playlist'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'netease.search',
+      name: 'Netease track search',
+      input: {
+        type: 'search',
+        value: '海底 一支榴莲',
+        searchType: 'ntsearch'
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -139,7 +307,7 @@ export default class NeteaseSource {
   public async search(
     query: string,
     _sourceTerm?: string,
-    searchType: NeteaseSearchType = 'track'
+    searchType: string = 'track'
   ): Promise<NeteaseSourceResult> {
     try {
       const typeMap: Record<NeteaseSearchType, number> = {
@@ -148,7 +316,9 @@ export default class NeteaseSource {
         artist: 100,
         playlist: 1000
       }
-      const type = typeMap[searchType]
+      const effectiveType: NeteaseSearchType =
+        searchType in typeMap ? (searchType as NeteaseSearchType) : 'track'
+      const type = typeMap[effectiveType]
 
       const postBody = `s=${encodeURIComponent(query)}&limit=${this.maxSearchResults}&type=${type}&offset=0`
 
@@ -172,7 +342,7 @@ export default class NeteaseSource {
         )
       }
 
-      let results = this._mapSearchResults(parsedBody, searchType)
+      let results = this._mapSearchResults(parsedBody, effectiveType)
 
       if (searchType === 'track' && results.length > 0) {
         const ids = results.map((item) => item.info.identifier).filter(Boolean)
@@ -310,7 +480,7 @@ export default class NeteaseSource {
     originalUrl: string
   ): Promise<NeteaseSourceResult> {
     const { body, statusCode, error } = await http1makeRequest(
-      `https://music.163.com/api/album?id=${id}`,
+      `https://music.163.com/api/v1/album/${id}`,
       { method: 'GET', headers: GET_HEADERS }
     )
 
@@ -341,7 +511,7 @@ export default class NeteaseSource {
       loadType: 'playlist',
       data: {
         info: { name: `${name} — ${artist}`, selectedTrack: 0 },
-        pluginInfo: {} as Record<string, unknown> as Record<string, unknown>,
+        pluginInfo: {} as Record<string, unknown>,
         tracks
       }
     }
@@ -405,7 +575,7 @@ export default class NeteaseSource {
     originalUrl: string
   ): Promise<NeteaseSourceResult> {
     const { body, statusCode, error } = await http1makeRequest(
-      `https://music.163.com/api/artist/top?id=${id}&limit=${this.maxSearchResults}&offset=0&total=false`,
+      `https://music.163.com/api/v1/artist/${id}`,
       { method: 'GET', headers: GET_HEADERS }
     )
 
@@ -420,6 +590,7 @@ export default class NeteaseSource {
     const tracks = songs
       .map((song) => this.toSong(song))
       .filter((song): song is NeteaseSong => song !== null)
+      .slice(0, this.maxSearchResults)
       .map((song) => this._buildTrackResult(song, originalUrl))
 
     if (tracks.length === 0) return this.emptyResult()
@@ -434,7 +605,7 @@ export default class NeteaseSource {
       loadType: 'playlist',
       data: {
         info: { name: `${name} — Top Tracks`, selectedTrack: 0 },
-        pluginInfo: {} as Record<string, unknown> as Record<string, unknown>,
+        pluginInfo: {} as Record<string, unknown>,
         tracks
       }
     }
@@ -597,8 +768,23 @@ export default class NeteaseSource {
 
       if (neteaseId && /^\d+$/.test(neteaseId)) {
         const streamUrl = `${STREAM_URL}${neteaseId}.mp3`
-        logger('info', 'Netease', `Returning stream URL for id ${neteaseId}`)
-        return { url: streamUrl, protocol: 'https' }
+        const directUrl = await this._resolveDirectStream(streamUrl)
+        if (directUrl) {
+          logger('info', 'Netease', `Returning stream URL for id ${neteaseId}`)
+          return { url: directUrl, protocol: 'http', format: 'mp3' }
+        }
+        logger(
+          'warn',
+          'Netease',
+          `Direct playback for id ${neteaseId} (${decodedTrack.title}) is unavailable. Falling back to default search matching.`
+        )
+      }
+
+      if (!this.nodelink.sources) {
+        return this.exceptionTrackResult(
+          'Default source search is not available.',
+          'common'
+        )
       }
 
       const query = `${decodedTrack.title} ${decodedTrack.author}`.trim()
@@ -606,6 +792,7 @@ export default class NeteaseSource {
 
       if (
         searchResult.loadType !== 'search' ||
+        !Array.isArray(searchResult.data) ||
         searchResult.data.length === 0
       ) {
         return this.exceptionTrackResult(
@@ -646,25 +833,166 @@ export default class NeteaseSource {
   }
 
   /**
-   * Delegates stream loading to source manager.
-   * @param track - Track payload.
+   * Resolves direct playable CDN URL from outer URL if available.
+   * @param streamUrl - Outer URL candidate.
+   * @returns Final CDN audio URL or null if unavailable / redirected to 404.
+   */
+  private async _resolveDirectStream(
+    streamUrl: string
+  ): Promise<string | null> {
+    try {
+      const state = { location: null as string | null }
+      await http1makeRequest(streamUrl, {
+        method: 'HEAD',
+        headers: GET_HEADERS,
+        proxy: this.config.network?.proxy,
+        shouldFollowRedirect: (nextUrl) => {
+          state.location = nextUrl.href
+          return false
+        }
+      })
+      if (state.location && !state.location.includes('/404')) {
+        return state.location
+      }
+      return null
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.includes('Redirect to ')) {
+        const match = message.match(
+          /Redirect to (https?:\/\/[^\s]+) is not allowed/
+        )
+        const target = match?.[1]
+        if (target && !target.includes('/404')) {
+          return target
+        }
+      }
+      return null
+    }
+  }
+
+  /**
+   * Loads an audio stream for a resolved Netease track.
+   * @param _track - Track metadata.
    * @param url - Stream URL.
-   * @param protocol - Protocol hint.
-   * @param additionalData - Additional stream metadata.
+   * @param _protocol - Protocol hint.
+   * @param _additionalData - Additional stream metadata.
    * @returns Stream payload.
    */
   public async loadStream(
-    track: TrackInfo,
+    _track: TrackInfo,
     url: string,
-    protocol?: string,
-    additionalData?: Record<string, unknown>
+    _protocol?: string,
+    _additionalData?: Record<string, unknown>
   ): Promise<NeteaseLoadStreamResult> {
-    return this.nodelink.sources.getTrackStream(
-      track,
-      url,
-      protocol,
-      additionalData
-    )
+    const proxy = this.config.network?.proxy
+    const res = await http1makeRequest(url, {
+      method: 'GET',
+      streamOnly: true,
+      headers: GET_HEADERS,
+      proxy
+    })
+
+    const contentType = (res.headers?.['content-type'] as string) || ''
+    if (
+      res.error ||
+      !res.stream ||
+      (res.statusCode && res.statusCode >= 400) ||
+      contentType.includes('text/html')
+    ) {
+      return {
+        exception: {
+          message:
+            res.error || `HTTP error ${res.statusCode} loading audio stream`,
+          severity: 'fault'
+        }
+      }
+    }
+
+    const passthrough = new PassThrough()
+    const source = res.stream as Readable
+
+    source.on('data', (chunk: Buffer) => {
+      if (!passthrough.write(chunk)) source.pause()
+    })
+
+    passthrough.on('drain', () => {
+      source.resume()
+    })
+
+    source.on('end', () => {
+      if (!passthrough.writableEnded) {
+        passthrough.emit('finishBuffering')
+        passthrough.end()
+      }
+    })
+
+    source.on('error', (err) => {
+      logger('error', 'Netease', `Underlying stream error: ${err.message}`)
+      if (!passthrough.destroyed) passthrough.destroy(err)
+    })
+
+    return {
+      stream: passthrough,
+      type: 'audio/mpeg'
+    }
+  }
+
+  /**
+   * Executes a test variant for declarative test runner.
+   * @param variant - Test variant definition.
+   * @param track - Resolved canonical track info.
+   * @param streamSpec - Optional stream validation specifications.
+   * @returns Variant test execution result.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    const urlData = await this.getTrackUrl(track)
+    if (!urlData || 'exception' in urlData || !urlData.url) {
+      const errorMsg =
+        urlData && 'exception' in urlData && urlData.exception?.message
+          ? urlData.exception.message
+          : 'Failed to resolve track streaming URL'
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: errorMsg
+      }
+    }
+
+    const container = 'mp3'
+    const codec = 'mp3'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    const streamResult = await this.loadStream(track, urlData.url)
+    if (!('stream' in streamResult)) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: streamResult.exception?.message || 'Failed to load audio stream'
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
+    }
   }
 
   /**
@@ -762,7 +1090,7 @@ export default class NeteaseSource {
     message: string,
     severity = 'fault'
   ): NeteaseSourceResult {
-    return { exception: { message, severity } }
+    return { loadType: 'error', exception: { message, severity } }
   }
 
   /**

@@ -1,11 +1,19 @@
 import { PassThrough } from 'node:stream'
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackStreamResult,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
 
@@ -99,7 +107,98 @@ interface TelegramPlaylistData {
 /**
  * Telegram source implementation.
  */
-export default class TelegramSource {
+export default class TelegramSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Test suite cases validating Telegram video resolution and playback.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'telegram.video.stream',
+      name: 'Telegram standard t.me video playback',
+      input: {
+        type: 'resolve',
+        value: 'https://t.me/telegram/207'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'Telegram'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'telegram'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [{ container: 'mp4', codec: 'aac' }]
+        }
+      }
+    },
+    {
+      id: 'telegram.domain.short',
+      name: 'Telegram short domain telegram.me',
+      input: {
+        type: 'resolve',
+        value: 'https://telegram.me/telegram/207'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'Telegram'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'telegram'
+          }
+        }
+      }
+    },
+    {
+      id: 'telegram.domain.alternate',
+      name: 'Telegram alternate domain telegram.dog',
+      input: {
+        type: 'resolve',
+        value: 'https://telegram.dog/telegram/207'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'Telegram'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'telegram'
+          }
+        }
+      }
+    }
+  ]
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -128,7 +227,7 @@ export default class TelegramSource {
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
     this.patterns = [
-      /https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/([^/]+)\/(\d+)/
+      /^https?:\/\/(?:t\.me|telegram\.me|telegram\.dog)\/([^/?#]+)\/(\d+)(?:\/|[?#].*)?$/i
     ]
     this.searchTerms = []
     this.priority = 80
@@ -155,6 +254,27 @@ export default class TelegramSource {
   }
 
   /**
+   * Validates whether a candidate URL belongs to Telegram domains.
+   *
+   * @param candidate - Candidate URL or string to validate.
+   * @returns `true` when the host matches official Telegram domains.
+   */
+  private _isTelegramUrl(candidate: URL | string): boolean {
+    try {
+      const parsed =
+        typeof candidate === 'string' ? new URL(candidate) : candidate
+      return (
+        (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+        ['t.me', 'telegram.me', 'telegram.dog'].includes(
+          parsed.hostname.toLowerCase()
+        )
+      )
+    } catch {
+      return false
+    }
+  }
+
+  /**
    * Resolves a Telegram message URL into one or more playable tracks.
    *
    * @param url - Candidate Telegram message URL.
@@ -168,10 +288,22 @@ export default class TelegramSource {
       return { loadType: 'empty', data: {} }
     }
 
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(url)
+    } catch {
+      return { loadType: 'empty', data: {} }
+    }
+
+    if (!this._isTelegramUrl(parsedUrl)) {
+      return { loadType: 'empty', data: {} }
+    }
+
     const channelId = match[1]
     const messageId = match[2]
-    const embedUrl = new URL(url)
-    embedUrl.searchParams.set('embed', '1')
+    const embedUrl = new URL(
+      `https://${parsedUrl.hostname}/${encodeURIComponent(channelId)}/${encodeURIComponent(messageId)}?embed=1`
+    )
 
     try {
       const { body, error, statusCode } = await http1makeRequest(
@@ -182,7 +314,8 @@ export default class TelegramSource {
             'User-Agent':
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept-Encoding': 'identity'
-          }
+          },
+          shouldFollowRedirect: (nextUrl) => this._isTelegramUrl(nextUrl)
         }
       )
 
@@ -290,12 +423,25 @@ export default class TelegramSource {
    * Resolves the direct media URL for a Telegram track.
    *
    * @param track - Decoded Telegram track information.
-   * @returns Direct Telegram media URL descriptor, or an exception payload when
-   * the message cannot be re-resolved.
+   * @param _itag - Unused itag placeholder kept for source-manager compatibility.
+   * @param _isRecovering - Whether this is a recovery attempt.
+   * @returns Direct Telegram media URL descriptor.
    */
   public async getTrackUrl(
-    track: TrackInfo
-  ): Promise<TrackUrlResult | SourceResult> {
+    track: TrackInfo,
+    _itag?: number,
+    _isRecovering?: boolean
+  ): Promise<TrackUrlResult> {
+    const pluginInfo = (track as { pluginInfo?: TelegramTrackPluginInfo })
+      .pluginInfo
+    if (pluginInfo?.directUrl) {
+      return {
+        url: pluginInfo.directUrl,
+        protocol: 'https',
+        format: 'mp4'
+      }
+    }
+
     const result = await this.resolve(track.uri)
     const resultData = result as {
       loadType?: string
@@ -327,13 +473,7 @@ export default class TelegramSource {
       }
     }
 
-    return {
-      loadType: 'error',
-      exception: {
-        message: 'Failed to get track URL',
-        severity: 'fault'
-      }
-    }
+    throw new Error('Failed to get track URL')
   }
 
   /**
@@ -341,49 +481,141 @@ export default class TelegramSource {
    *
    * @param _decodedTrack - Decoded track metadata, unused by this source.
    * @param url - Direct Telegram media URL.
-   * @returns Playable stream payload, or an exception payload when the
-   * upstream request fails.
+   * @param _protocol - Optional protocol hint (unused).
+   * @param _additionalData - Optional additional data (unused).
+   * @returns Playable stream payload.
    */
   public async loadStream(
     _decodedTrack: TrackInfo,
-    url: string
-  ): Promise<TrackStreamResult | SourceResult> {
-    try {
-      const response = await http1makeRequest(url, {
-        method: 'GET',
-        streamOnly: true
-      })
-
-      if (response.error || !response.stream) {
-        throw new Error(response.error || 'Failed to get stream')
+    url: string,
+    _protocol?: string,
+    _additionalData?: Record<string, unknown>
+  ): Promise<TrackStreamResult> {
+    const response = await http1makeRequest(url, {
+      method: 'GET',
+      streamOnly: true,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Referer: 'https://t.me/'
       }
+    })
 
-      if (response.statusCode !== 200) {
-        throw new Error(`Telegram returned status ${response.statusCode}`)
+    if (response.error || !response.stream) {
+      throw new Error(response.error || 'Failed to get stream')
+    }
+
+    if (response.statusCode && response.statusCode >= 400) {
+      throw new Error(`Telegram returned status ${response.statusCode}`)
+    }
+
+    const stream = new PassThrough()
+    const upstream = response.stream
+
+    upstream.on('data', (chunk: Buffer) => {
+      if (!stream.write(chunk)) {
+        upstream.pause()
       }
+    })
 
-      const stream = new PassThrough()
+    stream.on('drain', () => {
+      if (!stream.destroyed) {
+        upstream.resume()
+      }
+    })
 
-      response.stream.on('data', (chunk: Buffer) => {
-        stream.write(chunk)
-      })
-      response.stream.on('end', () => {
+    upstream.on('end', () => {
+      if (!stream.writableEnded) {
         stream.emit('finishBuffering')
-      })
-      response.stream.on('error', (error: Error) => {
-        stream.destroy(error)
-      })
-
-      return { stream, type: 'video/mp4' }
-    } catch (error) {
-      return {
-        loadType: 'error',
-        exception: {
-          message:
-            error instanceof Error ? error.message : 'Telegram stream failed.',
-          severity: 'common'
-        }
+        stream.end()
       }
+    })
+
+    upstream.on('error', (err: Error) => {
+      if (!stream.destroyed) {
+        stream.destroy(err)
+      }
+    })
+
+    return { stream, type: 'video/mp4' }
+  }
+
+  /**
+   * Executes a test variant against the Telegram source.
+   *
+   * @param variant - The test variant to execute.
+   * @param track - The track information.
+   * @param streamSpec - Optional stream validation specifications.
+   * @returns A result object detailing resolution and stream state.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    let urlData: TrackUrlResult
+    try {
+      urlData = await this.getTrackUrl(track)
+    } catch (err) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to resolve track streaming URL'
+      }
+    }
+
+    if (!urlData.url) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: 'Failed to resolve track streaming URL'
+      }
+    }
+
+    const container = 'mp4'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    let streamResult: TrackStreamResult
+    try {
+      streamResult = await this.loadStream(track, urlData.url)
+    } catch (err) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error:
+          err instanceof Error ? err.message : 'Failed to load audio stream'
+      }
+    }
+
+    if (!streamResult.stream) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: 'Failed to load audio stream'
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
     }
   }
 

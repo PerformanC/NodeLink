@@ -1,8 +1,20 @@
 name: Docker Image CI
 
 on:
+  push:
+    branches:
+      - dev
+      - v3
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   release:
-    types: [created]
+    types: [published, created]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build:
@@ -17,6 +29,25 @@ jobs:
         id: package-version
         uses: martinbeentjes/npm-get-version-action@v1.3.1
 
+      - name: Get build timestamp
+        id: build-time
+        run: echo "timestamp=$(date +%s%3N)" >> $GITHUB_OUTPUT
+
+      - name: Determine Docker images
+        id: images
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          IMAGES="ghcr.io/${{ github.repository }}"
+          HAS_DOCKERHUB="false"
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            IMAGES="${DOCKERHUB_USERNAME}/nodelink,${IMAGES}"
+            HAS_DOCKERHUB="true"
+          fi
+          echo "images=${IMAGES}" >> $GITHUB_OUTPUT
+          echo "has_dockerhub=${HAS_DOCKERHUB}" >> $GITHUB_OUTPUT
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -27,21 +58,49 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/nodelink
+          images: ${{ steps.images.outputs.images }}
+          flavor: |
+            latest=false
           tags: |
-            type=raw,value=${{ steps.package-version.outputs.current-version}}
-            type=raw,value=latest
+            # Release tags
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=raw,value=${{ steps.package-version.outputs.current-version }},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'release' }}
+
+            # Dev branch push tags
+            type=raw,value=dev,enable=${{ github.ref_name == 'dev' }}
+            type=raw,value=dev-{{sha}},enable=${{ github.ref_name == 'dev' }}
+
+            # Other branch push tags
+            type=raw,value=${{ github.ref_name }},enable=${{ github.ref_name != 'dev' && github.event_name != 'release' }}
+            type=raw,value=${{ github.ref_name }}-{{sha}},enable=${{ github.ref_name != 'dev' && github.event_name != 'release' }}
 
       - name: Login to Docker Hub
+        if: steps.images.outputs.has_dockerhub == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and Push
         uses: docker/build-push-action@v5
         with:
+          context: .
           push: true
           platforms: linux/amd64, linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_COMMIT=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
+            BUILD_TIME=${{ steps.build-time.outputs.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

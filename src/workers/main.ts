@@ -1949,7 +1949,8 @@ async function startLoadStream(
     fetched.type || (urlResult.format as string) || 'unknown',
     nodelink as unknown as NodeLink,
     (payload?.volume ?? 100) / 100,
-    payload?.filters || {}
+    payload?.filters || {},
+    nodelink.options.playback?.audio?.loudnessNormalizer ?? false
   ) as unknown as PCMStream
 
   const entry: ActiveStreamEntry = {
@@ -2050,7 +2051,8 @@ async function processQueue(queueKey: string): Promise<void> {
     switch (type) {
       case 'createPlayer': {
         const createPayload = payload as Partial<CreatePlayerPayload>
-        const { sessionId, guildId, userId, voice } = createPayload
+        const { sessionId, guildId, userId, voice, audioProcessingMode } =
+          createPayload
         if (!sessionId || !guildId || !userId) {
           result = { created: false, reason: 'Invalid createPlayer payload' }
           break
@@ -2093,7 +2095,8 @@ async function processQueue(queueKey: string): Promise<void> {
         const player = new PlayerClass({
           nodelink: nodelink as unknown as NodeLink,
           session: mockSession,
-          guildId
+          guildId,
+          audioProcessingMode
         }) as unknown as WorkerPlayer
         players.set(playerKey, player)
 
@@ -2278,9 +2281,10 @@ async function processQueue(queueKey: string): Promise<void> {
       }
 
       case 'loadLyrics': {
-        const { decodedTrackInfo, language } = (payload ?? {}) as {
+        const { decodedTrackInfo, language, source } = (payload ?? {}) as {
           decodedTrackInfo: TrackInfo
           language?: string
+          source?: string
         }
         const trackInfo: TrackInfoExtended = {
           ...decodedTrackInfo,
@@ -2289,7 +2293,12 @@ async function processQueue(queueKey: string): Promise<void> {
           uri: decodedTrackInfo.uri
         }
         const lyrics = await getLyricsManager()
-        result = await lyrics.loadLyrics({ info: trackInfo }, language)
+        result = await lyrics.loadLyrics(
+          { info: trackInfo },
+          language,
+          undefined,
+          source
+        )
         break
       }
       case 'loadMeaning': {

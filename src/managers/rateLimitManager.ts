@@ -33,6 +33,11 @@ const DEFAULT_PER_GUILD: RateLimitRule = {
   timeWindowMs: 5000
 }
 
+const DEFAULT_UPGRADE_RULE: RateLimitRule = {
+  maxRequests: 30,
+  timeWindowMs: 10000
+}
+
 const DEFAULT_CONFIG: RateLimitConfig = {
   enabled: true,
   global: {
@@ -45,6 +50,16 @@ const DEFAULT_CONFIG: RateLimitConfig = {
   },
   perUserId: DEFAULT_PER_USER,
   perGuildId: DEFAULT_PER_GUILD,
+  upgrade: DEFAULT_UPGRADE_RULE,
+  routeWeights: {
+    '/loadtracks': 5,
+    '/loadstream': 5,
+    '/loadlyrics': 3,
+    '/meaning': 3,
+    '/decodetracks': 2
+  },
+  defaultCost: 1,
+  ipv6SubnetMask: 64,
   ignorePaths: [],
   ignore: {
     userIds: [],
@@ -53,6 +68,7 @@ const DEFAULT_CONFIG: RateLimitConfig = {
     paths: []
   },
   trustProxy: false,
+  trustedProxies: [],
   maxEntries: 10000
 }
 
@@ -61,8 +77,8 @@ const MIN_CLEANUP_INTERVAL_MS = 1000
 const MAX_CLEANUP_INTERVAL_MS = 60000
 
 /**
- * Enforces per-scope rate limits (global, IP, user, guild).
- * @remarks Uses a rolling window with cleanup and bounded storage.
+ * Enforces Token Bucket rate limits across global, IP, user, guild, and WebSocket scopes.
+ * @remarks O(1) memory and CPU per key with LRU cache eviction and IPv6 subnet grouping.
  * @public
  */
 export default class RateLimitManager {
@@ -87,21 +103,23 @@ export default class RateLimitManager {
       () => this._cleanup(),
       this._resolveCleanupInterval()
     )
-    this.cleanupInterval.unref?.()
+    this.cleanupInterval?.unref?.()
   }
 
   /**
-   * Checks the incoming request against configured rate limits.
+   * Checks the incoming REST request against configured rate limits.
    * @param req - Incoming API request.
    * @param parsedUrl - Parsed request URL.
    */
   check(req: ApiRequest, parsedUrl: URL): ApiRateLimitResult {
-    if (!this.config.enabled) {
+    const isEnabled = this.config.enabled
+    if (!isEnabled) {
       return { allowed: true }
     }
 
-    const pathname = parsedUrl.pathname || ''
-    if (this._isIgnoredPath(pathname)) {
+    const pathname = parsedUrl.pathname ?? ''
+    const isIgnored = this._isIgnoredPath(pathname)
+    if (isIgnored) {
       return { allowed: true }
     }
 
@@ -110,33 +128,42 @@ export default class RateLimitManager {
     const userId = this._getHeaderValue(req.headers, 'user-id')
     const guildId = this._extractGuildId(pathname)
 
-    if (this._shouldIgnore(pathname, remoteAddress, userId, guildId)) {
+    const shouldBypass = this._shouldIgnore(
+      pathname,
+      remoteAddress,
+      userId,
+      guildId
+    )
+    if (shouldBypass) {
       return { allowed: true }
     }
 
+    const cost = this._resolveRouteCost(pathname)
     let bestResult: ApiRateLimitResult | null = null
 
-    const globalResult = this._checkAndIncrement(
+    const globalResult = this._checkAndConsumeToken(
       'global',
       'all',
       this.config.global,
+      cost,
       now
     )
     if (!globalResult.allowed) {
       logger(
         'warn',
         'RateLimit',
-        `Global rate limit exceeded for ${remoteAddress}`
+        `Global rate limit exceeded for ${remoteAddress ?? 'unknown'}`
       )
       return globalResult
     }
     bestResult = this._pickBestResult(bestResult, globalResult)
 
     if (remoteAddress) {
-      const ipResult = this._checkAndIncrement(
+      const ipResult = this._checkAndConsumeToken(
         'ip',
         remoteAddress,
         this.config.perIp,
+        cost,
         now
       )
       if (!ipResult.allowed) {
@@ -150,36 +177,40 @@ export default class RateLimitManager {
       bestResult = this._pickBestResult(bestResult, ipResult)
     }
 
-    if (userId && this.config.perUserId) {
-      const userResult = this._checkAndIncrement(
+    const userRule = this.config.perUserId
+    if (userId && userRule) {
+      const userResult = this._checkAndConsumeToken(
         'userId',
         userId,
-        this.config.perUserId,
+        userRule,
+        cost,
         now
       )
       if (!userResult.allowed) {
         logger(
           'warn',
           'RateLimit',
-          `User-Id rate limit exceeded for ${userId} (IP: ${remoteAddress || 'unknown'})`
+          `User-Id rate limit exceeded for ${userId} (IP: ${remoteAddress ?? 'unknown'})`
         )
         return userResult
       }
       bestResult = this._pickBestResult(bestResult, userResult)
     }
 
-    if (guildId && this.config.perGuildId) {
-      const guildResult = this._checkAndIncrement(
+    const guildRule = this.config.perGuildId
+    if (guildId && guildRule) {
+      const guildResult = this._checkAndConsumeToken(
         'guildId',
         guildId,
-        this.config.perGuildId,
+        guildRule,
+        cost,
         now
       )
       if (!guildResult.allowed) {
         logger(
           'warn',
           'RateLimit',
-          `Guild-Id rate limit exceeded for ${guildId} (IP: ${remoteAddress || 'unknown'}, User: ${userId || 'unknown'})`
+          `Guild-Id rate limit exceeded for ${guildId} (IP: ${remoteAddress ?? 'unknown'}, User: ${userId ?? 'unknown'})`
         )
         return guildResult
       }
@@ -187,6 +218,54 @@ export default class RateLimitManager {
     }
 
     return bestResult ?? { allowed: true }
+  }
+
+  /**
+   * Checks incoming WebSocket upgrade requests against rate limits.
+   * @param req - Incoming HTTP upgrade request.
+   * @param parsedUrl - Parsed URL.
+   */
+  checkUpgrade(req: ApiRequest, parsedUrl: URL): ApiRateLimitResult {
+    const isEnabled = this.config.enabled
+    if (!isEnabled) {
+      return { allowed: true }
+    }
+
+    const upgradeRule = this.config.upgrade ?? DEFAULT_UPGRADE_RULE
+    const now = Date.now()
+    const remoteAddress = this._resolveRemoteAddress(req)
+    const userId = this._getHeaderValue(req.headers, 'user-id')
+
+    const shouldBypass = this._shouldIgnore(
+      parsedUrl.pathname,
+      remoteAddress,
+      userId,
+      null
+    )
+    if (shouldBypass) {
+      return { allowed: true }
+    }
+
+    if (remoteAddress) {
+      const result = this._checkAndConsumeToken(
+        'wsUpgrade',
+        remoteAddress,
+        upgradeRule,
+        1,
+        now
+      )
+      if (!result.allowed) {
+        logger(
+          'warn',
+          'RateLimit',
+          `WebSocket upgrade rate limit exceeded for ${remoteAddress}`
+        )
+        return result
+      }
+      return result
+    }
+
+    return { allowed: true }
   }
 
   /**
@@ -208,6 +287,25 @@ export default class RateLimitManager {
   }
 
   /**
+   * Resolves the token cost for a specific route.
+   * @param pathname - Request pathname.
+   * @internal
+   */
+  private _resolveRouteCost(pathname: string): number {
+    const weights = this.config.routeWeights ?? {}
+    const entries = Object.entries(weights)
+
+    for (const [routePrefix, weight] of entries) {
+      const matches = pathname.includes(routePrefix)
+      if (matches) {
+        return Math.max(1, weight)
+      }
+    }
+
+    return this.config.defaultCost ?? 1
+  }
+
+  /**
    * Builds a rate limit key for storage.
    * @param type - Bucket type.
    * @param id - Identifier value.
@@ -218,45 +316,65 @@ export default class RateLimitManager {
   }
 
   /**
-   * Applies a single rate limit rule and updates tracking counters.
+   * Applies the Token Bucket algorithm to consume tokens and enforce limits.
    * @param type - Bucket type.
    * @param id - Bucket identifier.
    * @param rule - Rate limit rule.
+   * @param cost - Tokens to consume.
    * @param now - Current timestamp.
    * @internal
    */
-  private _checkAndIncrement(
+  private _checkAndConsumeToken(
     type: string,
     id: string,
     rule: RateLimitRule,
+    cost: number,
     now: number
   ): ApiRateLimitResult {
     const maxRequests = Math.max(1, rule.maxRequests)
     const timeWindowMs = Math.max(MIN_WINDOW_MS, rule.timeWindowMs)
     const key = this._getKey(type, id)
 
-    const entry = this._getOrCreateEntry(key, now)
-    const activeCount = this._pruneEntry(entry, timeWindowMs, now)
+    const entry = this._getOrCreateEntry(key, maxRequests, now)
+    const elapsed = Math.max(0, now - entry.lastRefill)
+    const refillRate = maxRequests / timeWindowMs
+    const replenishedTokens = Math.min(
+      maxRequests,
+      entry.tokens + elapsed * refillRate
+    )
 
-    const remainingBefore = Math.max(0, maxRequests - activeCount)
-    const firstRequest = entry.requests[entry.head]
-    const reset =
-      typeof firstRequest === 'number'
-        ? firstRequest + timeWindowMs
-        : now + timeWindowMs
+    entry.tokens = replenishedTokens
+    entry.lastRefill = now
+    entry.lastSeen = now
 
-    if (activeCount >= maxRequests) {
-      return { allowed: false, limit: maxRequests, remaining: 0, reset }
+    // Re-insert into Map to maintain true O(1) LRU order
+    this.store.delete(key)
+    this.store.set(key, entry)
+
+    const hasEnoughTokens = entry.tokens >= cost
+    if (!hasEnoughTokens) {
+      const missingTokens = cost - entry.tokens
+      const waitMs = Math.ceil(missingTokens / refillRate)
+      const resetTimestamp = now + waitMs
+
+      return {
+        allowed: false,
+        limit: maxRequests,
+        remaining: 0,
+        reset: resetTimestamp
+      }
     }
 
-    entry.requests.push(now)
-    entry.lastSeen = now
+    entry.tokens -= cost
+    const remainingTokens = Math.floor(entry.tokens)
+    const fullRefillMs = Math.ceil((maxRequests - entry.tokens) / refillRate)
+    const resetTimestamp = now + fullRefillMs
 
     return {
       allowed: true,
       limit: maxRequests,
-      remaining: Math.max(0, remainingBefore - 1),
-      reset
+      remaining: remainingTokens,
+      reset: resetTimestamp
     }
   }
 
@@ -270,28 +388,29 @@ export default class RateLimitManager {
     current: ApiRateLimitResult | null,
     candidate: ApiRateLimitResult
   ): ApiRateLimitResult {
+    const candRem = candidate.remaining
+    const candLim = candidate.limit
+    const candReset = candidate.reset
+
     if (
-      candidate.limit === undefined ||
-      candidate.remaining === undefined ||
-      candidate.reset === undefined
+      candRem === undefined ||
+      candLim === undefined ||
+      candReset === undefined
     ) {
       return current ?? candidate
     }
 
-    if (!current || current.remaining === undefined) {
+    const currRem = current?.remaining
+    if (currRem === undefined || current === null) {
       return candidate
     }
 
-    if (candidate.remaining < current.remaining) {
+    if (candRem < currRem) {
       return candidate
     }
 
-    if (
-      candidate.remaining === current.remaining &&
-      candidate.reset !== undefined &&
-      current.reset !== undefined &&
-      candidate.reset < current.reset
-    ) {
+    const currReset = current.reset ?? Infinity
+    if (candRem === currRem && candReset < currReset) {
       return candidate
     }
 
@@ -321,6 +440,12 @@ export default class RateLimitManager {
       perGuildId: perGuildId
         ? this._normalizeRule(perGuildId, perGuildFallback)
         : undefined,
+      upgrade: config?.upgrade
+        ? this._normalizeRule(config.upgrade, DEFAULT_UPGRADE_RULE)
+        : DEFAULT_UPGRADE_RULE,
+      routeWeights: config?.routeWeights ?? DEFAULT_CONFIG.routeWeights,
+      defaultCost: Math.max(1, config?.defaultCost ?? 1),
+      ipv6SubnetMask: config?.ipv6SubnetMask ?? 64,
       ignorePaths: config?.ignorePaths ?? DEFAULT_CONFIG.ignorePaths,
       ignore: {
         userIds:
@@ -331,6 +456,8 @@ export default class RateLimitManager {
         paths: config?.ignore?.paths ?? DEFAULT_CONFIG.ignore?.paths ?? []
       },
       trustProxy: config?.trustProxy ?? DEFAULT_CONFIG.trustProxy,
+      trustedProxies:
+        config?.trustedProxies ?? DEFAULT_CONFIG.trustedProxies ?? [],
       maxEntries: Math.max(
         100,
         Number(config?.maxEntries ?? DEFAULT_CONFIG.maxEntries)
@@ -367,17 +494,15 @@ export default class RateLimitManager {
    */
   private _isIgnoredPath(pathname: string): boolean {
     if (!pathname) return false
+
     const ignorePaths = this.config.ignorePaths ?? []
-    if (ignorePaths.some((path) => pathname.startsWith(path))) {
-      return true
-    }
+    const isDirectIgnored = ignorePaths.some((path) =>
+      pathname.startsWith(path)
+    )
+    if (isDirectIgnored) return true
 
     const ignoreList = this.config.ignore?.paths ?? []
-    if (ignoreList.some((path) => pathname.startsWith(path))) {
-      return true
-    }
-
-    return false
+    return ignoreList.some((path) => pathname.startsWith(path))
   }
 
   /**
@@ -397,34 +522,55 @@ export default class RateLimitManager {
     const ignore = this.config.ignore
     if (!ignore) return false
 
-    if (ip && ignore.ips?.includes(ip)) return true
-    if (userId && ignore.userIds?.includes(userId)) return true
-    if (guildId && ignore.guildIds?.includes(guildId)) return true
+    const isIpIgnored = Boolean(ip && ignore.ips?.includes(ip))
+    if (isIpIgnored) return true
 
-    if (pathname && ignore.paths?.length) {
-      return ignore.paths.some((path) => pathname.startsWith(path))
-    }
+    const isUserIgnored = Boolean(userId && ignore.userIds?.includes(userId))
+    if (isUserIgnored) return true
 
-    return false
+    const isGuildIgnored = Boolean(
+      guildId && ignore.guildIds?.includes(guildId)
+    )
+    if (isGuildIgnored) return true
+
+    const pathList = ignore.paths ?? []
+    const isPathIgnored = Boolean(
+      pathname && pathList.some((path) => pathname.startsWith(path))
+    )
+    return isPathIgnored
   }
 
   /**
-   * Resolves the remote address from the request.
+   * Resolves the remote address from the request securely.
    * @param req - Incoming API request.
    * @internal
    */
   private _resolveRemoteAddress(req: ApiRequest): string | null {
     const socketAddress = req.socket?.remoteAddress
-    const forwardedFor = this._getHeaderValue(req.headers, 'x-forwarded-for')
-    const candidate =
-      this.config.trustProxy && forwardedFor
-        ? forwardedFor.split(',')[0]?.trim()
-        : socketAddress || forwardedFor
-    return this._normalizeIp(candidate)
+
+    const trustProxyEnabled = this.config.trustProxy === true
+    if (!trustProxyEnabled) {
+      return this._normalizeIp(socketAddress)
+    }
+
+    const headers = req.headers
+    const cfConnectingIp = this._getHeaderValue(headers, 'cf-connecting-ip')
+    const trueClientIp = this._getHeaderValue(headers, 'true-client-ip')
+    const xRealIp = this._getHeaderValue(headers, 'x-real-ip')
+    const forwardedFor = this._getHeaderValue(headers, 'x-forwarded-for')
+
+    const proxyCandidate =
+      cfConnectingIp ??
+      trueClientIp ??
+      xRealIp ??
+      forwardedFor?.split(',')?.[0]?.trim() ??
+      socketAddress
+
+    return this._normalizeIp(proxyCandidate)
   }
 
   /**
-   * Normalizes IP addresses for consistent keys.
+   * Normalizes IP addresses for consistent keys, including IPv6 subnet masking.
    * @param ip - Raw IP string.
    * @internal
    */
@@ -433,23 +579,37 @@ export default class RateLimitManager {
     let normalized = ip.trim()
     if (!normalized) return null
 
-    if (normalized.startsWith('::ffff:')) {
+    const hasIpv4MappedPrefix = normalized.startsWith('::ffff:')
+    if (hasIpv4MappedPrefix) {
       normalized = normalized.slice(7)
     }
 
-    if (normalized.startsWith('[') && normalized.endsWith(']')) {
+    const hasBrackets = normalized.startsWith('[') && normalized.endsWith(']')
+    if (hasBrackets) {
       normalized = normalized.slice(1, -1)
     }
 
-    const colonCount = normalized.split(':').length - 1
-    if (colonCount === 1 && normalized.includes('.')) {
-      const [ipv4] = normalized.split(':')
-      if (ipv4) {
-        normalized = ipv4
-      }
+    const isIpv6 = normalized.includes(':')
+    if (isIpv6) {
+      return this._maskIpv6(normalized)
     }
 
     return normalized || null
+  }
+
+  /**
+   * Masks IPv6 addresses to group /64 subnets together.
+   * @param ipv6 - Cleaned IPv6 string.
+   * @internal
+   */
+  private _maskIpv6(ipv6: string): string {
+    const segments = ipv6.split(':')
+    const maskSize = this.config.ipv6SubnetMask ?? 64
+
+    // A /64 subnet corresponds to the first 4 segments
+    const segmentCount = Math.min(8, Math.max(1, Math.floor(maskSize / 16)))
+    const prefix = segments.slice(0, segmentCount).join(':')
+    return `${prefix}::/${maskSize}`
   }
 
   /**
@@ -463,8 +623,8 @@ export default class RateLimitManager {
     name: string
   ): string | undefined {
     const raw = headers[name] ?? headers[name.toLowerCase()]
-    if (Array.isArray(raw)) return raw[0]
-    return raw
+    const isArray = Array.isArray(raw)
+    return isArray ? raw[0] : raw
   }
 
   /**
@@ -479,17 +639,29 @@ export default class RateLimitManager {
   }
 
   /**
-   * Retrieves an existing entry or creates a new one.
+   * Retrieves an existing entry or creates a new Token Bucket entry.
    * @param key - Storage key.
+   * @param maxRequests - Max bucket capacity.
    * @param now - Current timestamp.
    * @internal
    */
-  private _getOrCreateEntry(key: string, now: number): RateLimitEntry {
+  private _getOrCreateEntry(
+    key: string,
+    maxRequests: number,
+    now: number
+  ): RateLimitEntry {
     const existing = this.store.get(key)
-    if (existing) return existing
+    if (existing) {
+      return existing
+    }
 
-    const entry = { requests: [], head: 0, lastSeen: now }
+    const entry: RateLimitEntry = {
+      tokens: maxRequests,
+      lastRefill: now,
+      lastSeen: now
+    }
     this.store.set(key, entry)
+    this._enforceMaxEntries()
     return entry
   }
 
@@ -499,23 +671,25 @@ export default class RateLimitManager {
    * @internal
    */
   private _getWindowForKey(key: string): number {
-    if (key.startsWith('global:')) {
-      return this.config.global.timeWindowMs
+    const prefix = key.split(':')[0]
+    switch (prefix) {
+      case 'global':
+        return this.config.global.timeWindowMs
+      case 'ip':
+        return this.config.perIp.timeWindowMs
+      case 'userId':
+        return this.config.perUserId?.timeWindowMs ?? MIN_WINDOW_MS
+      case 'guildId':
+        return this.config.perGuildId?.timeWindowMs ?? MIN_WINDOW_MS
+      case 'wsUpgrade':
+        return this.config.upgrade?.timeWindowMs ?? MIN_WINDOW_MS
+      default:
+        return MIN_WINDOW_MS
     }
-    if (key.startsWith('ip:')) {
-      return this.config.perIp.timeWindowMs
-    }
-    if (key.startsWith('userId:')) {
-      return this.config.perUserId?.timeWindowMs ?? MIN_WINDOW_MS
-    }
-    if (key.startsWith('guildId:')) {
-      return this.config.perGuildId?.timeWindowMs ?? MIN_WINDOW_MS
-    }
-    return MIN_WINDOW_MS
   }
 
   /**
-   * Cleans up stale keys and enforces storage limits.
+   * Cleans up stale keys based on idle duration.
    * @internal
    */
   private _cleanup(): void {
@@ -523,10 +697,10 @@ export default class RateLimitManager {
 
     for (const [key, entry] of this.store.entries()) {
       const windowMs = this._getWindowForKey(key)
-      const pruneAfterMs = windowMs * 3
+      const pruneThreshold = windowMs * 3
+      const isIdle = now - entry.lastSeen > pruneThreshold
 
-      const activeCount = this._pruneEntry(entry, windowMs, now)
-      if (activeCount === 0 && now - entry.lastSeen > pruneAfterMs) {
+      if (isIdle) {
         this.store.delete(key)
       }
     }
@@ -535,22 +709,22 @@ export default class RateLimitManager {
   }
 
   /**
-   * Enforces the maximum entry count by evicting oldest entries.
+   * Enforces max entries using true O(1) LRU eviction without sorting.
    * @internal
    */
   private _enforceMaxEntries(): void {
-    const maxEntries = this.config.maxEntries ?? DEFAULT_CONFIG.maxEntries
-    if (!maxEntries || this.store.size <= maxEntries) return
+    const maxEntries =
+      this.config.maxEntries ?? DEFAULT_CONFIG.maxEntries ?? 10000
+    const isExceeded = this.store.size > maxEntries
+    if (!isExceeded) return
 
-    const entries = Array.from(this.store.entries()).sort(
-      (a, b) => a[1].lastSeen - b[1].lastSeen
-    )
-    const overflow = this.store.size - maxEntries
-    for (let i = 0; i < overflow && i < entries.length; i++) {
-      const entry = entries[i]
-      if (entry) {
-        this.store.delete(entry[0])
-      }
+    const overflowCount = this.store.size - maxEntries
+    const iterator = this.store.keys()
+
+    for (let i = 0; i < overflowCount; i++) {
+      const oldestKey = iterator.next().value
+      if (!oldestKey) break
+      this.store.delete(oldestKey)
     }
   }
 
@@ -559,63 +733,17 @@ export default class RateLimitManager {
    * @internal
    */
   private _resolveCleanupInterval(): number {
-    const interval = this._resolveShortestWindow()
-    const clamped = Math.min(interval, MAX_CLEANUP_INTERVAL_MS)
-    return Math.max(clamped, MIN_CLEANUP_INTERVAL_MS)
-  }
-
-  /**
-   * Finds the shortest configured rate limit window.
-   * @internal
-   */
-  private _resolveShortestWindow(): number {
     const windows = [
       this.config.global.timeWindowMs,
       this.config.perIp.timeWindowMs,
       this.config.perUserId?.timeWindowMs,
-      this.config.perGuildId?.timeWindowMs
+      this.config.perGuildId?.timeWindowMs,
+      this.config.upgrade?.timeWindowMs
     ].filter((value): value is number => typeof value === 'number')
-    return windows.length > 0 ? Math.min(...windows) : MIN_WINDOW_MS
-  }
 
-  /**
-   * Prunes expired timestamps from an entry using a sliding window.
-   * @param entry - Rate limit entry to prune.
-   * @param windowMs - Rolling time window in milliseconds.
-   * @param now - Current timestamp.
-   * @returns Number of active timestamps after pruning.
-   * @internal
-   */
-  private _pruneEntry(
-    entry: RateLimitEntry,
-    windowMs: number,
-    now: number
-  ): number {
-    const cutoff = now - windowMs
-    let head = entry.head
-    const requests = entry.requests
-
-    while (head < requests.length) {
-      const current = requests[head]
-      if (typeof current === 'number' && current <= cutoff) {
-        head += 1
-        continue
-      }
-      break
-    }
-
-    if (head !== entry.head) {
-      entry.head = head
-    }
-
-    if (
-      entry.head > 0 &&
-      (entry.head > 1000 || entry.head > requests.length / 2)
-    ) {
-      entry.requests = requests.slice(entry.head)
-      entry.head = 0
-    }
-
-    return entry.requests.length - entry.head
+    const shortestWindow =
+      windows.length > 0 ? Math.min(...windows) : MIN_WINDOW_MS
+    const clampedInterval = Math.min(shortestWindow, MAX_CLEANUP_INTERVAL_MS)
+    return Math.max(clampedInterval, MIN_CLEANUP_INTERVAL_MS)
   }
 }

@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 
@@ -11,6 +12,7 @@ const CHANNELS = 2
  */
 export default class ChannelMix extends AnimatableFilter {
   public priority = 10
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   private leftToLeft = 1.0
   private leftToRight = 0.0
   private rightToLeft = 0.0
@@ -73,6 +75,31 @@ export default class ChannelMix extends AnimatableFilter {
       chunk.writeInt16LE(clamp16Bit(newRight), i + 2)
     }
 
+    return chunk
+  }
+
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 8 !== 0)
+      throw new RangeError(
+        'ChannelMix Float32 input must contain complete stereo frames'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (
+      this.leftToLeft >= 0.999 &&
+      this.leftToRight <= 0.001 &&
+      this.rightToLeft <= 0.001 &&
+      this.rightToRight >= 0.999
+    )
+      return chunk
+    for (let i = 0; i < chunk.length; i += 8) {
+      const left = chunk.readFloatLE(i)
+      const right = chunk.readFloatLE(i + 4)
+      chunk.writeFloatLE(left * this.leftToLeft + right * this.rightToLeft, i)
+      chunk.writeFloatLE(
+        left * this.leftToRight + right * this.rightToRight,
+        i + 4
+      )
+    }
     return chunk
   }
 

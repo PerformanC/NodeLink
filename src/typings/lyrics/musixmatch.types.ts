@@ -3,6 +3,16 @@
  * @module typings/lyrics/musixmatch.types
  */
 
+import type { HttpProxyConfig } from '../utils.types.ts'
+
+export type { HttpProxyConfig }
+
+/**
+ * Single proxy configuration definition.
+ * @public
+ */
+export type MusixmatchProxyConfig = HttpProxyConfig | string
+
 /**
  * Musixmatch-specific configuration options
  * @public
@@ -13,6 +23,9 @@ export interface MusixmatchConfig {
 
   /** Optional signature secret for manual token authentication */
   signatureSecret?: string
+
+  /** Optional dedicated proxy URL, config, or rotating array of proxies to route Musixmatch requests */
+  proxy?: MusixmatchProxyConfig | MusixmatchProxyConfig[]
 }
 
 /**
@@ -50,6 +63,37 @@ export interface CredentialManager {
 }
 
 /**
+ * Snapshot representation of a proxy target.
+ * @public
+ */
+export interface ProxySnapshotLike {
+  /** Target proxy server parameters */
+  target: {
+    url: string
+    protocol?: string
+    username?: string
+    password?: string
+  }
+}
+
+/**
+ * Proxy manager contract for selecting available proxies.
+ * @public
+ */
+export interface ProxyManagerLike {
+  /** Selects the optimal proxy target for a given provider */
+  getBestProxy: (sourceName: string) => ProxySnapshotLike | undefined
+
+  /** Reports request health feedback for the selected proxy */
+  report?: (
+    proxyUrl: string,
+    success: boolean,
+    statusCode: number,
+    latencyMs?: number
+  ) => void
+}
+
+/**
  * Minimal NodeLink instance shape required by MusixmatchLyrics
  * @public
  */
@@ -59,6 +103,9 @@ export interface NodelinkInstanceForMusixmatch {
 
   /** Credential manager for token persistence */
   credentialManager: CredentialManager
+
+  /** Proxy manager for selecting available proxies */
+  proxyManager?: ProxyManagerLike
 }
 
 /**
@@ -452,6 +499,18 @@ export interface TrackInfo {
 
   /** Track author/artist */
   author: string
+  /** Optional duration in milliseconds. */
+  length?: number
+  /** Optional ISRC. */
+  isrc?: string | null
+  /** Optional provider identifier. */
+  identifier?: string
+  /** Optional album title. */
+  albumName?: string
+  /** Source key. */
+  sourceName?: string
+  /** Track URL. */
+  uri?: string
 }
 
 /**
@@ -467,6 +526,13 @@ export interface LyricsLine {
 
   /** Duration in milliseconds */
   duration: number
+  /** Optional word or syllable timing spans. */
+  words?: Array<{
+    text?: string
+    time?: number | string
+    timestamp?: number | string
+    duration?: number
+  }>
 }
 
 /**
@@ -500,6 +566,13 @@ export interface LyricsResultData {
 
   /** Lyrics provider (e.g., 'musixmatch', 'genius') */
   provider?: string
+
+  /** Required source credit where applicable. */
+  attribution?: {
+    name: string
+    url: string
+    submitter?: { name: string; url: string }
+  }
 
   /** Error message if applicable */
   message?: string

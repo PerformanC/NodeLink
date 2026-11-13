@@ -6,6 +6,27 @@ const PODCAST_RSS_PATTERN = /https?:\/\/.+\/podcast\/rss(\?.*)?$/i;
  */
 export default class RssSource {
     /**
+     * Declarative test suite for validating RSS source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'rss.feed.playlist',
+            name: 'RSS Podcast Feed resolution (Buzzsprout)',
+            input: {
+                type: 'resolve',
+                value: 'https://feeds.buzzsprout.com/1.rss'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 1 },
+                metadata: {
+                    sourceName: { op: 'equals', value: 'rss' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -34,6 +55,14 @@ export default class RssSource {
      */
     async setup() {
         return true;
+    }
+    /**
+     * Search handler for RSS source (returns empty as feeds do not support query search).
+     *
+     * @returns Empty source result.
+     */
+    async search(_query) {
+        return { loadType: 'empty', data: {} };
     }
     /**
      * Resolves an RSS feed into a playlist of playable enclosure items.
@@ -137,7 +166,9 @@ export default class RssSource {
         const url = track.uri;
         if (!url) {
             return {
-                loadType: 'error',
+                url: '',
+                protocol: 'http',
+                format: 'mp3',
                 exception: {
                     message: 'Missing enclosure URL.',
                     severity: 'common'

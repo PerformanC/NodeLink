@@ -33,6 +33,21 @@ function getFreeAddressPayload(body) {
     };
 }
 /**
+ * Resolves the CIDR string of the first configured IP block.
+ *
+ * @param ipBlocks - Configured blocks, either as raw strings or objects.
+ * @returns First CIDR string, or `null` when none is configured.
+ */
+function getFirstBlockCidr(ipBlocks) {
+    const first = ipBlocks?.[0];
+    if (typeof first === 'string')
+        return first;
+    if (first && typeof first === 'object' && typeof first.cidr === 'string') {
+        return first.cidr;
+    }
+    return null;
+}
+/**
  * Builds the route planner status payload.
  *
  * @param nodelink - Route planner runtime.
@@ -57,7 +72,7 @@ function buildStatusResponse(nodelink) {
         class: 'BalancingIpRoutePlanner',
         details: {
             ipBlock: {
-                type: routePlanner.config.ipBlocks[0]?.includes(':')
+                type: getFirstBlockCidr(routePlanner.config.ipBlocks)?.includes(':')
                     ? 'Inet6Address'
                     : 'Inet4Address',
                 size: routePlanner.ipBlocks.length

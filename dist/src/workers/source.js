@@ -115,18 +115,31 @@ if (isMainThread) {
     const SCALE_UP_COOLDOWN_MS = specConfig.scaleCooldownMs ?? 1000;
     const workerPool = [];
     const taskQueue = createHeadQueue();
+    const analysisQueue = [];
+    let analysisBusy = false;
+    const analysisWorker = new Worker(new URL(`./sourceAnalysis.${import.meta.url.endsWith('.ts') ? 'ts' : 'js'}`, import.meta.url));
+    analysisWorker.on('message', (msg) => {
+        if (msg.type !== 'analysisResult')
+            return;
+        finishTask(msg.socketPath, msg.id, msg.result, msg.error);
+        analysisBusy = false;
+        const next = analysisQueue.shift();
+        if (next) {
+            analysisBusy = true;
+            analysisWorker.postMessage(next);
+        }
+    });
     let lastScaleUpAt = 0;
     let nextThreadId = initialThreadCount + 1;
-    const inheritedExecArgv = process.execArgv || [];
     nodelink.logger('info', 'SourceWorker', `Starting ${initialThreadCount}/${maxThreadCount} micro-worker(s) for API tasks...`);
     const createMicroWorker = (threadNumber) => {
+        /* INFO: Default inheritance supports V8 flags that explicit execArgv rejects. */
         const worker = new Worker(__filename, {
             workerData: {
                 config,
                 silentLogs: specConfig.silentLogs ?? false,
                 threadId: threadNumber
-            },
-            ...(inheritedExecArgv.length > 0 ? { execArgv: inheritedExecArgv } : {})
+            }
         });
         worker.ready = false;
         worker.load = 0;
@@ -134,6 +147,12 @@ if (isMainThread) {
             if (msg.type === 'ready') {
                 worker.ready = true;
                 nodelink.logger('info', 'SourceWorker', `Micro-worker ${threadNumber} is ready.`);
+                if (msg.healthProbeSources) {
+                    process.send?.({
+                        type: 'sourceHealthReady',
+                        payload: { sources: msg.healthProbeSources }
+                    });
+                }
                 processNextTask();
             }
             else if (msg.type === 'result') {
@@ -157,6 +176,9 @@ if (isMainThread) {
                 sendStreamError(msg.socketPath, msg.id, msg.error);
                 worker.load = Math.max(0, worker.load - 1);
                 processNextTask();
+            }
+            else if (msg.type === 'sourceHealthMetric') {
+                process.send?.(msg);
             }
         });
         worker.on('exit', (code) => {
@@ -405,6 +427,27 @@ if (isMainThread) {
         if (msg.type !== 'sourceTask')
             return;
         if (msg.payload) {
+            if (msg.payload.task === 'analyzePcm') {
+                const analysisPayload = msg.payload.payload;
+                if (typeof analysisPayload?.pcmBase64 !== 'string' ||
+                    analysisPayload.pcmBase64.length > 7 * 1024 * 1024) {
+                    finishTask(msg.payload.socketPath, msg.payload.id, undefined, 'Invalid or oversized PCM analysis window');
+                    return;
+                }
+                if (analysisQueue.length >= 2) {
+                    finishTask(msg.payload.socketPath, msg.payload.id, undefined, 'PCM analysis queue is full');
+                    return;
+                }
+                analysisQueue.push(msg.payload);
+                if (!analysisBusy) {
+                    const task = analysisQueue.shift();
+                    if (task) {
+                        analysisBusy = true;
+                        analysisWorker.postMessage(task);
+                    }
+                }
+                return;
+            }
             enqueueHeadQueue(taskQueue, msg.payload);
             maybeScaleUpMicroWorkers();
             processNextTask();
@@ -842,7 +885,10 @@ else {
         }
         return { success: false, error: `Unsupported profiler action: ${action}` };
     };
-    parentPort.postMessage({ type: 'ready' });
+    parentPort.postMessage({
+        type: 'ready',
+        healthProbeSources: nodelink.sources?.getHealthProbeSources() ?? []
+    });
     /**
      * Sends stream data chunk to parent thread
      * @param id - Stream identifier
@@ -997,7 +1043,7 @@ else {
             if (urlResult.url && !isHls && !isLocal && !isSabr) {
                 const resource = await createSeekeableAudioResource(id, urlResult.url, payload?.position || 0, undefined, nodelink, {}, {
                     streamInfo: urlResult,
-                    loudnessNormalizer: nodelink.options.audio?.loudnessNormalizer
+                    loudnessNormalizer: nodelink.options.playback?.audio?.loudnessNormalizer ?? false
                 }, (payload?.volume ?? 100) / 100, null, true);
                 if ('exception' in resource) {
                     throw new Error(resource.exception.message);
@@ -1015,7 +1061,7 @@ else {
                 if (!fetched || fetched.exception) {
                     throw new Error(fetched?.exception?.message || 'Failed to load stream');
                 }
-                pcmStream = createPCMStream(id, fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {});
+                pcmStream = createPCMStream(id, fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {}, nodelink.options.playback?.audio?.loudnessNormalizer ?? false);
             }
             pcmStream.on('data', (chunk) => {
                 if (!finished)
@@ -1073,7 +1119,7 @@ else {
                     result = await lyrics.loadLyrics({
                         info: payload
                             .decodedTrackInfo
-                    }, payload.language);
+                    }, payload.language, undefined, payload.source);
                     break;
                 }
                 case 'loadMeaning': {
@@ -1091,6 +1137,10 @@ else {
                     break;
                 case 'profilerCommand':
                     result = await handleProfilerCommand(payload || {});
+                    break;
+                case 'sourceHealthProbe':
+                    await nodelink.sources?.runHealthProbe(payload.sourceName);
+                    result = true;
                     break;
             }
             ;

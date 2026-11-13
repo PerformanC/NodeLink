@@ -8,13 +8,8 @@ import type {
   ApiRouteModule,
   ApiSendResponse
 } from '../typings/api/api.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { sendErrorResponse, sendResponse } from '../utils.ts'
-
-/**
- * Loopback addresses allowed to access the profiler endpoints when external
- * access is disabled.
- */
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
 /**
  * JSON-compatible object used for request payload narrowing.
@@ -134,7 +129,7 @@ function getEndpointConfig(
   const code =
     typeof endpoint?.code === 'string' && endpoint.code.length > 0
       ? endpoint.code
-      : 'CAPYBARA'
+      : ''
 
   return {
     patchEnabled: endpoint?.patchEnabled === true,
@@ -242,6 +237,22 @@ export async function resolveWorkspacePath(
     realRelativePath === '..' ||
     realRelativePath.startsWith(`..${path.sep}`) ||
     path.isAbsolute(realRelativePath)
+  ) {
+    return null
+  }
+
+  const normalizedRel = realRelativePath.replace(/\\/g, '/')
+  const isAllowedDir =
+    normalizedRel.startsWith('src/') || normalizedRel.startsWith('dist/')
+  if (!isAllowedDir) {
+    return null
+  }
+
+  const basename = path.basename(realPath).toLowerCase()
+  if (
+    basename.includes('config') ||
+    basename.startsWith('.env') ||
+    basename.endsWith('.env')
   ) {
     return null
   }
@@ -364,8 +375,8 @@ async function handler(
     return
   }
 
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+  const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers)
+  if (!endpointConfig.allowExternalPatch && !isLocal) {
     sendErrorResponse(
       req,
       res,
@@ -377,8 +388,20 @@ async function handler(
     return
   }
 
+  const serverPassword = nodelink.options.server.password
+  const authHeader = req.headers?.authorization
+  const isServerAuth =
+    authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`
+
   const code = getSuppliedCode(req, parsedUrl)
-  if (code !== endpointConfig.code) {
+  const isCodeAuth =
+    typeof endpointConfig.code === 'string' &&
+    endpointConfig.code.length > 0 &&
+    typeof code === 'string' &&
+    code.length > 0 &&
+    code === endpointConfig.code
+
+  if (!isServerAuth && !isCodeAuth) {
     sendErrorResponse(
       req,
       res,

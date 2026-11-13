@@ -10,9 +10,9 @@ import type {
   ApiRouteModule,
   ApiSendResponse
 } from '../typings/api/api.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { sendErrorResponse, sendResponse } from '../utils.ts'
 
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 const { NODELINK_PROFILER_DIR: profilerDirectoryEnv } = process.env
 const profilerBaseDir = profilerDirectoryEnv || '.profiles'
 
@@ -989,7 +989,7 @@ function getEndpointConfig(nodelink: ProfilerRuntime): ProfilerEndpointConfig {
   const code =
     typeof endpoint.code === 'string' && endpoint.code.length > 0
       ? endpoint.code
-      : 'CAPYBARA'
+      : ''
 
   return {
     patchEnabled: endpoint.patchEnabled === true,
@@ -1153,16 +1153,29 @@ function validateAccess(
     return { ok: false, error: 'Profiler endpoint is disabled.' }
   }
 
-  const remoteAddress = req.socket?.remoteAddress || ''
-  if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+  const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers)
+  if (!endpointConfig.allowExternalPatch && !isLocal) {
     return {
       ok: false,
       error: 'External access to profiler endpoint is blocked.'
     }
   }
 
-  if (suppliedCode !== endpointConfig.code) {
-    return { ok: false, error: 'Invalid profiler code.' }
+  const serverPassword = nodelink.options.server.password
+  const authHeader = req.headers?.authorization
+  const isServerAuth =
+    authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`
+
+  if (isServerAuth) {
+    return { ok: true }
+  }
+
+  if (
+    !endpointConfig.code ||
+    !suppliedCode ||
+    suppliedCode !== endpointConfig.code
+  ) {
+    return { ok: false, error: 'Invalid or missing profiler code.' }
   }
 
   return { ok: true }
@@ -2279,6 +2292,16 @@ async function handler(
     }
 
     const action = parsedUrl.searchParams.get('action') || 'status'
+    if (action !== 'status') {
+      return sendErrorResponse(
+        req,
+        res,
+        405,
+        'Method Not Allowed',
+        'State-changing diagnostic actions require POST method.',
+        parsedUrl.pathname
+      )
+    }
     return handleRequest(runtime, req, res, parsedUrl, action, bodyPayload)
   }
 

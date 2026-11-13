@@ -5,6 +5,44 @@ import { encodeTrack, logger, makeRequest } from '../utils.js';
  */
 export default class GoogleTTSSource {
     /**
+     * Declarative test suite for validating Google TTS source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'googletts.tts.resolve',
+            name: 'Google TTS resolution',
+            input: {
+                type: 'resolve',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    author: { op: 'equals', value: 'Google TTS' },
+                    sourceName: { op: 'equals', value: 'google-tts' }
+                }
+            }
+        },
+        {
+            id: 'googletts.tts.search',
+            name: 'Google TTS Search query (gtts:)',
+            input: {
+                type: 'search',
+                searchType: 'gtts',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    sourceName: { op: 'equals', value: 'google-tts' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime worker context used by the source implementation.
      */
     nodelink;
@@ -202,8 +240,24 @@ export default class GoogleTTSSource {
                 return cached;
             }
         }
+        let url = track.uri;
+        if (track.identifier?.startsWith('gtts:')) {
+            url = this.buildUrl(track.identifier.slice(5));
+        }
+        else {
+            try {
+                const parsed = new URL(track.uri);
+                if (parsed.hostname !== 'translate.google.com' ||
+                    parsed.pathname !== '/translate_tts') {
+                    url = this.buildUrl(track.title.replace(/^TTS:\s*/, ''));
+                }
+            }
+            catch {
+                url = this.buildUrl(track.title.replace(/^TTS:\s*/, ''));
+            }
+        }
         const result = {
-            url: track.uri,
+            url,
             protocol: 'https',
             format: 'mp3'
         };
@@ -232,6 +286,11 @@ export default class GoogleTTSSource {
     async loadStream(decodedTrack, url, _protocol, _additionalData) {
         logger('debug', 'Sources', `Loading Google TTS stream for "${decodedTrack.title}"`);
         try {
+            const parsed = new URL(url);
+            if (parsed.hostname !== 'translate.google.com' ||
+                parsed.pathname !== '/translate_tts') {
+                throw new Error('Invalid Google TTS URL destination.');
+            }
             const response = await makeRequest(url, {
                 method: 'GET',
                 streamOnly: true,

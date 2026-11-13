@@ -9,7 +9,7 @@
  * @module YouTubeMusicClient
  */
 import { logger, makeRequest } from '../../../utils.js';
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
+import { BaseClient, buildTrack, checkURLType, extractPlaylistSelection, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube ANDROID_MUSIC innertube client.
  *
@@ -52,6 +52,13 @@ export default class Music extends BaseClient {
             user: { lockedSafetyMode: false },
             request: { useSsl: true }
         };
+    }
+    /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return false;
     }
     /**
      * Searches YouTube Music for tracks matching the given query.
@@ -188,17 +195,19 @@ export default class Music extends BaseClient {
                 return await this._handlePlayerResponse(playerResponse, sourceName, videoId);
             }
             case YOUTUBE_CONSTANTS.PLAYLIST: {
-                const listIdMatch = url.match(/[?&]list=([\w-]+)/);
-                if (!listIdMatch?.[1]) {
+                const { playlistId, videoId: currentVideoId, targetIndex } = extractPlaylistSelection(url);
+                if (!playlistId) {
                     return { loadType: 'empty', data: {} };
                 }
-                const playlistId = listIdMatch[1];
                 const body = {
                     context: this.getClient(context),
                     playlistId,
                     enablePersistentPlaylistPanel: true,
                     isAudioOnly: true
                 };
+                if (currentVideoId) {
+                    body.videoId = currentVideoId;
+                }
                 const { body: res, statusCode } = await makeRequest('https://music.youtube.com/youtubei/v1/next', {
                     method: 'POST',
                     body,
@@ -212,7 +221,7 @@ export default class Music extends BaseClient {
                 if (statusCode !== 200 || !res) {
                     return { loadType: 'empty', data: {} };
                 }
-                return await this._handlePlaylistResponse(playlistId, null, res, sourceName, context);
+                return await this._handlePlaylistResponse(playlistId, currentVideoId, res, sourceName, context, targetIndex);
             }
             default:
                 return { loadType: 'empty', data: {} };

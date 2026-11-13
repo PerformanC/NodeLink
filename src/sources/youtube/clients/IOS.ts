@@ -23,7 +23,12 @@ import type {
 import type { YouTubeClientRegistry } from '../../../typings/sources/youtubeClient.types.ts'
 import type { HttpProxyConfig } from '../../../typings/utils.types.ts'
 import { logger, makeRequest } from '../../../utils.ts'
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.ts'
+import {
+  BaseClient,
+  checkURLType,
+  extractPlaylistSelection,
+  YOUTUBE_CONSTANTS
+} from '../common.ts'
 
 /**
  * YouTube IOS innertube client.
@@ -69,6 +74,14 @@ export default class IOS extends BaseClient {
       user: { lockedSafetyMode: false },
       request: { useSsl: true }
     }
+  }
+
+  /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
+    return false
   }
 
   /**
@@ -174,8 +187,12 @@ export default class IOS extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!playlistIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           logger(
             'error',
             'youtube-ios',
@@ -190,10 +207,6 @@ export default class IOS extends BaseClient {
             }
           }
         }
-
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
 
         const requestBody: Record<string, unknown> = {
           context: this.getClient(context),
@@ -236,7 +249,9 @@ export default class IOS extends BaseClient {
           playlistId,
           currentVideoId,
           playlistResponse,
-          sourceName
+          sourceName,
+          context,
+          targetIndex
         )
       }
 

@@ -71,6 +71,28 @@ export interface RateLimitConfig {
   perGuildId?: RateLimitRule
 
   /**
+   * Rate limit rule for WebSocket upgrade handshakes.
+   */
+  upgrade?: RateLimitRule
+
+  /**
+   * Cost weights per route pathname prefix (e.g. { '/v4/loadtracks': 5 }).
+   */
+  routeWeights?: Record<string, number>
+
+  /**
+   * Default cost consumed per request when not matched in routeWeights.
+   * @defaultValue 1
+   */
+  defaultCost?: number
+
+  /**
+   * Subnet mask size for grouping IPv6 addresses (e.g. 64 for /64).
+   * @defaultValue 64
+   */
+  ipv6SubnetMask?: number
+
+  /**
    * Paths to bypass rate limits.
    */
   ignorePaths?: string[]
@@ -86,28 +108,43 @@ export interface RateLimitConfig {
   trustProxy?: boolean
 
   /**
-   * Maximum number of tracked keys.
+   * List of trusted proxy IPs or CIDR blocks when trustProxy is enabled.
+   */
+  trustedProxies?: string[]
+
+  /**
+   * Maximum number of tracked keys before LRU eviction.
    */
   maxEntries?: number
 }
 
 /**
- * Runtime tracking data for a rate limit key.
+ * Runtime tracking data for a rate limit key (Token Bucket).
  * @public
  */
 export interface RateLimitEntry {
   /**
-   * Timestamp list for requests in the current window.
+   * Current number of available tokens in bucket.
    */
-  requests: number[]
+  tokens: number
 
   /**
-   * Index of the first valid timestamp in the requests array.
+   * Timestamp of the last token refill.
    */
-  head: number
+  lastRefill: number
 
   /**
    * Last time the key was seen.
    */
   lastSeen: number
+
+  /**
+   * Optional legacy requests list for backwards compatibility.
+   */
+  requests?: number[]
+
+  /**
+   * Optional legacy head index for backwards compatibility.
+   */
+  head?: number
 }

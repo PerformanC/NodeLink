@@ -17,6 +17,9 @@ import type {
 } from '../modules/credential.types.ts'
 import type { LoggerFn, TrackInfoExtended } from '../playback/player.types.ts'
 import type { TrackCacheEntry } from '../playback/trackCache.types.ts'
+import type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
+
+export type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
 
 /**
  * Frame type identifier for socket communication protocol
@@ -91,6 +94,8 @@ export interface ReadyMessage extends WorkerMessage {
   type: 'ready'
   /** Process ID of the worker (optional, main thread only) */
   pid?: number
+  /** Lightweight declarative source cases available in this micro-worker. */
+  healthProbeSources?: string[]
 }
 
 /**
@@ -169,6 +174,15 @@ export interface ErrorMessage extends WorkerMessage {
 }
 
 /**
+ * Source health metric message emitted by worker threads
+ * @public
+ */
+export interface SourceHealthMetricMessage {
+  type: 'sourceHealthMetric'
+  payload: SourceHealthMetricPayload
+}
+
+/**
  * Union type of all possible worker messages
  * @public
  */
@@ -179,6 +193,7 @@ export type WorkerMessageType =
   | ChatActionMessage
   | EndMessage
   | ErrorMessage
+  | SourceHealthMetricMessage
 
 /**
  * Task data structure sent to micro-workers
@@ -209,6 +224,8 @@ export type TaskType =
   | 'loadStream'
   | 'loadLiveChat'
   | 'cancelLiveChat'
+  | 'sourceHealthProbe'
+  | 'analyzePcm'
   | 'profilerCommand'
 
 /**
@@ -425,6 +442,25 @@ export interface TrackData {
 }
 
 /**
+ * Collection-level metadata carried in `PlaylistData.pluginInfo`.
+ * @public
+ */
+export interface PlaylistPluginInfo extends Record<string, unknown> {
+  /** Kind of collection, e.g. `playlist` or `album`. */
+  type?: string
+  /** Source-specific collection ID. */
+  identifier?: string
+  /** Canonical URL of the collection. */
+  url?: string
+  /** Cover image URL. */
+  artworkUrl?: string | null
+  /** Owner / curator / artist name. */
+  author?: string | null
+  /** Total tracks in the collection, which can exceed the tracks returned. */
+  totalTracks?: number
+}
+
+/**
  * Complete playlist object returned by source methods.
  * @public
  */
@@ -436,8 +472,12 @@ export interface PlaylistData {
     /** Selected track index. */
     selectedTrack: number
   }
-  /** Source-specific metadata. */
-  pluginInfo: Record<string, unknown>
+  /**
+   * Collection metadata. Sources that can provide it fill `type`,
+   * `identifier`, `url`, `artworkUrl`, `author` and `totalTracks`; sources may
+   * add their own keys alongside.
+   */
+  pluginInfo: PlaylistPluginInfo
   /** Tracks in the playlist. */
   tracks: TrackData[]
 }
@@ -615,6 +655,10 @@ export interface SourceManager {
   getSource: (name: string) => SourceInstance | null
   /** Load sources from folder */
   loadFolder: () => Promise<void>
+  /** Run a lightweight case from the provider's declarative source tests. */
+  runHealthProbe: (sourceName: string) => Promise<void>
+  /** List providers with a lightweight declarative health case. */
+  getHealthProbeSources: () => string[]
   /** Primary source instances keyed by source name */
   sources: Map<string, SourceInstance>
   /** Get names of all enabled sources */

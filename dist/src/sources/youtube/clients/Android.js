@@ -1,5 +1,5 @@
 import { logger, makeRequest } from '../../../utils.js';
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
+import { BaseClient, buildTrack, checkURLType, extractPlaylistSelection, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube Android innertube client implementation.
  *
@@ -47,6 +47,21 @@ export default class Android extends BaseClient {
      */
     requirePlayerScript() {
         return false;
+    }
+    /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return false;
+    }
+    /**
+     * Returns player parameters for ANDROID playback.
+     *
+     * @returns Base64-encoded player parameters string
+     */
+    getPlayerParams() {
+        return '2AMB';
     }
     /**
      * Searches YouTube for tracks, playlists, channels, or artists.
@@ -228,8 +243,8 @@ export default class Android extends BaseClient {
                 return await this._handlePlayerResponse(playerResponse, sourceName, videoId);
             }
             case YOUTUBE_CONSTANTS.PLAYLIST: {
-                const playlistIdMatch = url.match(/[?&]list=([\w-]+)/);
-                if (!playlistIdMatch?.[1]) {
+                const { playlistId, videoId: currentVideoId, targetIndex } = extractPlaylistSelection(url);
+                if (!playlistId) {
                     logger('error', 'youtube-android', `Could not parse playlist ID from URL: ${url}`);
                     return {
                         loadType: 'error',
@@ -240,9 +255,6 @@ export default class Android extends BaseClient {
                         }
                     };
                 }
-                const playlistId = playlistIdMatch[1];
-                const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
-                const currentVideoId = videoIdMatch?.[1] ?? null;
                 const isRadio = playlistId.startsWith('RD');
                 logger('debug', 'YouTube-Android', `User-Agent for playlist request: ${this.getClient(context).client.userAgent}`);
                 const requestBody = isRadio
@@ -287,9 +299,9 @@ export default class Android extends BaseClient {
                 }
                 const playlistResponse = playlistResponseRaw;
                 if (!isRadio) {
-                    return await this._handleBrowsePlaylistResponse(playlistId, playlistResponse, sourceName, context);
+                    return await this._handleBrowsePlaylistResponse(playlistId, playlistResponse, sourceName, context, currentVideoId, targetIndex);
                 }
-                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName);
+                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName, context, targetIndex);
             }
             default:
                 return { loadType: 'empty', data: {} };

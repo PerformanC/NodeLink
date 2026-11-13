@@ -8,6 +8,7 @@ import discordVoice, {
   type VoicePlayerState
 } from '@performanc/voice'
 import { EndReasons, GatewayEvents } from '../constants.ts'
+import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.ts'
 import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
 import type {
   AudioMixer,
@@ -42,6 +43,8 @@ import type {
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'
 import { AutoMixRegistry } from './processing/AutoMixRegistry.ts'
+import type { AudioProcessingMode } from './processing/audioContract.ts'
+import { resolveAudioProcessingMode } from './processing/audioContract.ts'
 import { DuckingController } from './processing/DuckingController.ts'
 
 export type GatewayEventName =
@@ -55,6 +58,27 @@ const trackFinishMemoryTraceEnabled =
 const SEEK_CROSSFADE_SAFETY_MS = 15000
 const MIN_CROSSFADE_SELECTION_MS = 6000
 const MAX_CROSSFADE_SELECTION_MS = 21000
+
+/**
+ * True for YouTube/ytmusic streams served as WebM/opus. Those must skip
+ * the generic seekable path: it keeps downloading the rest of the file
+ * into RAM while voice plays in realtime (measured: a 180MB file cost
+ * 2.8GB across 19 players). Unknown formats default to WebM, since
+ * itag 251 dominates and itag is always present in practice.
+ */
+function isWebmYouTubePlayback(
+  sourceName: string,
+  data?: Pick<TrackUrlResult, 'additionalData' | 'format'> | null
+): boolean {
+  if (sourceName !== 'youtube' && sourceName !== 'ytmusic') return false
+  const itag = data?.additionalData?.itag
+  if (typeof itag === 'number') return YOUTUBE_WEBM_ITAGS.has(itag)
+  const format = data?.format
+  if (typeof format === 'string') return format.toLowerCase().includes('webm')
+  if (typeof format?.itag === 'number')
+    return YOUTUBE_WEBM_ITAGS.has(format.itag)
+  return true
+}
 
 function getCrossfadeSelectionWindowMs(durationMs: number): number {
   return Math.min(
@@ -92,7 +116,7 @@ export class Player {
   private readonly session: Session
   public readonly guildId: string
 
-  private track: PlayerTrack | null = null
+  public track: PlayerTrack | null = null
   private holoTrack: PlayerTrack | null = null
   private nextTrack: PlayerTrack | null = null
   private nextResource: AudioResource | null = null
@@ -135,6 +159,7 @@ export class Player {
   public audioMixer: AudioMixer | null = null
   public fading?: FadingConfig
   public loudnessNormalizer: boolean
+  private _audioProcessingModeOverride: AudioProcessingMode | null
   public duckingController: DuckingController | null = null
   private _fadeTimers: FadeTimers = { trackEnd: null, pause: null, stop: null }
   private _isResuming = false
@@ -162,8 +187,9 @@ export class Player {
 
   private _lastPosition = 0
   private _stuckTime = 0
-  private _lastStreamDataTime = 0
+  public _lastStreamDataTime = 0
   private _isRecovering = false
+  private _resumePositionMs: number | null = null
   public destroying = false
   public isUpdatingTrack = false
   private _isRestoring = false
@@ -200,6 +226,11 @@ export class Player {
     this.nodelink = options.nodelink
     this.session = options.session
     this.guildId = options.guildId
+    this._audioProcessingModeOverride = options.audioProcessingMode ?? null
+    resolveAudioProcessingMode(
+      this.nodelink.options?.playback?.audio?.processingMode,
+      this._audioProcessingModeOverride
+    )
     this.volumePercent = this.nodelink.options?.defaultVolume ?? 100
     this.fading = this.nodelink.options?.playback.audio?.fading
     this.crossfade = this.nodelink.options?.playback.audio?.crossfade
@@ -330,6 +361,17 @@ export class Player {
       | undefined
   }
 
+  /**
+   * Resolves the mode that will be used when the next audio resource is built.
+   * An explicit per-player override takes precedence over global configuration.
+   */
+  public getAudioProcessingMode(): AudioProcessingMode {
+    return resolveAudioProcessingMode(
+      this.nodelink.options.playback.audio?.processingMode,
+      this._audioProcessingModeOverride
+    )
+  }
+
   private _getFilterTransitions(): FilterTransitionsConfig | undefined {
     return this._getAudioOptions()?.filterTransitions
   }
@@ -401,6 +443,27 @@ export class Player {
     this._audioMixerInitPromise = null
   }
 
+  private _isVoiceReady(): boolean {
+    return (
+      this.connStatus === 'connected' && !!this.connection?.udpInfo?.secretKey
+    )
+  }
+
+  private _ensureVoiceConnection(): void {
+    if (
+      this.destroying ||
+      this._isVoiceReady() ||
+      this.connStatus === 'connecting'
+    ) {
+      return
+    }
+    if (!this.voice.sessionId || !this.voice.token || !this.voice.endpoint)
+      return
+    try {
+      this.updateVoice(this.voice, true)
+    } catch {}
+  }
+
   /**
    * Establishes the voice connection and attaches event listeners.
    */
@@ -440,12 +503,14 @@ export class Player {
     ) => this._onPlay(s)
     this.connection.on('playerStateChange', this._connPlayHandler)
     this._connErrorHandler = (err: Error) => {
+      const daveRecoveryStarted = err.cause === 'DAVE_RECOVERY_STARTED'
       logger(
-        'error',
+        daveRecoveryStarted ? 'warn' : 'error',
         'Player',
         `Voice connection error for guild ${this.guildId} in session ${this.session.id}:`,
         err
       )
+      if (daveRecoveryStarted) return
 
       process.nextTick(() => {
         if (this.destroying) return
@@ -554,13 +619,19 @@ export class Player {
         guildId: this.guildId,
         voice: structuredClone(this.voice)
       })
-      if (this.track && this.isPaused && this.connection?.audioStream) {
-        this.isPaused = false
+      if (this.track && !this.isPaused && this.connection?.audioStream) {
         this.connection.unpause?.('reconnected')
         logger(
           'debug',
           'Player',
-          `Unpaused track on reconnection for guild ${this.guildId}`
+          `Resumed audio transmission on reconnection for guild ${this.guildId}`
+        )
+      } else if (this.track && this.isPaused && this.connection?.audioStream) {
+        this.connection.pause?.('requested')
+        logger(
+          'debug',
+          'Player',
+          `Preserved paused state on reconnection for guild ${this.guildId}`
         )
       }
     } else if (state.status === 'connecting') {
@@ -690,6 +761,8 @@ export class Player {
         this._emitTrackEnd(EndReasons.GAPLESS)
 
         this.track = nextTrack
+        this._isRecovering = false
+        this._isSeeking = false
         this.nextTrack = null
         this.nextResource = null
         this.streamInfo = nextStreamInfo
@@ -753,6 +826,14 @@ export class Player {
       (['requested', 'reconnected', 'unpaused'].includes(state.reason ?? '') ||
         this._pendingTrackStartFade)
     ) {
+      if (
+        this.isPaused &&
+        (state.reason === 'reconnected' || state.reason === 'unpaused')
+      ) {
+        this.connection?.pause?.('requested')
+        return
+      }
+
       const wasResuming = this._isResuming
       this._isResuming = false
       this.isPaused = false
@@ -763,7 +844,7 @@ export class Player {
           startPosition: this._pausedAtPosition ?? this._realPosition()
         })
         this._pausedAtPosition = undefined
-      } else if (!this._isRestoring) {
+      } else if (!this._isRestoring && state.reason !== 'reconnected') {
         this._lyricsBasePackets =
           this.connection?.statistics?.packetsExpected ?? 0
         this._fading('trackStart')
@@ -845,6 +926,19 @@ export class Player {
         severity = 'suspicious'
         cause = 'VOICE_STATE_TIMEOUT'
       } else if (
+        error.message.includes('Voice WS closed with reconnect code')
+      ) {
+        logger(
+          'warn',
+          'Player',
+          `Voice websocket closed during reconnect burst for guild ${this.guildId}. Preserving track for resume.`
+        )
+        severity = 'suspicious'
+        cause = 'VOICE_WS_RECONNECT_FAILED'
+        shouldStop = false
+        this._resumePositionMs = this._realPosition()
+        this.updateVoice(this.voice, true)
+      } else if (
         error.message.includes('stream') ||
         error.message.includes('timeout') ||
         error.message.includes('timed out') ||
@@ -918,10 +1012,13 @@ export class Player {
     this.nextResourceIsCrossfade = false
 
     this.track = null
+    this._isRecovering = false
+    this._isSeeking = false
     this.holoTrack = null
     this.isPaused = false
     this.position = 0
     this._pausedAtPosition = undefined
+    this._resumePositionMs = null
     this._lastStreamDataTime = 0
     this.streamInfo = null
     this.sponsorBlock.segments = []
@@ -1227,7 +1324,8 @@ export class Player {
     info: TrackInfoExtended,
     urlData: TrackUrlResult & { protocol?: string; format?: TrackFormat },
     startTime?: number,
-    returnPCM = false
+    returnPCM = false,
+    float32PCMOutput = false
   ): Promise<{ stream: AudioResource } | { exception: { message: string } }> {
     if (this.nodelink.options?.playback.mix?.enabled !== false) {
       await this._ensureAudioMixer()
@@ -1403,7 +1501,9 @@ export class Player {
       returnPCM ? null : this.audioMixer,
       returnPCM,
       returnPCM ? false : this.loudnessNormalizer,
-      !returnPCM && this._getCrossfadeConfig() !== null
+      !returnPCM && this._getCrossfadeConfig() !== null,
+      this.getAudioProcessingMode(),
+      float32PCMOutput
     )
     return { stream: resource }
   }
@@ -1411,7 +1511,7 @@ export class Player {
   /**
    * Sends player state updates to the client.
    */
-  private _sendUpdate(): boolean {
+  public _sendUpdate(): boolean {
     if (
       !this.connection ||
       (this.isPaused && !this._fadeTimers.pause) ||
@@ -1577,9 +1677,12 @@ export class Player {
 
           const isStream = this.track.info.isStream
           const recoveryPosition = isStream ? 0 : this._lastPosition
+          const recoveryTrack = this.track
 
           this.seek(recoveryPosition, this.track.endTime, true)
             .then((success) => {
+              /* INFO: Recovery belongs to the track that started it, even when the replacement plays the same song. */
+              if (this.destroying || this.track !== recoveryTrack) return
               if (success) {
                 logger(
                   'info',
@@ -1603,6 +1706,7 @@ export class Player {
               this._isRecovering = false
             })
             .catch((err: Error) => {
+              if (this.destroying || this.track !== recoveryTrack) return
               logger(
                 'error',
                 'Player',
@@ -1726,15 +1830,21 @@ export class Player {
     cleanupReason: string,
     fadingAction: 'trackStartArm' | 'seekPrepare',
     playLogMessage: string,
-    preserveQueuedCrossfade = false
+    preserveQueuedCrossfade = false,
+    suppressErrorEvents = false
   ): Promise<boolean> {
     if (!this.track) return false
 
+    const playbackTrack = this.track
     if (!this.connection) {
       this._initConnection()
     }
 
-    if (!this.connection?.udpInfo?.secretKey) {
+    if (!this._isVoiceReady()) {
+      this._ensureVoiceConnection()
+    }
+
+    if (!this._isVoiceReady()) {
       logger(
         'debug',
         'Player',
@@ -1756,13 +1866,17 @@ export class Player {
       }
     }
 
-    if (!this.connection?.udpInfo?.secretKey) {
-      this._onError(
-        new Error(
-          `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
-          { cause: 'VOICE_CONNECTION_TIMEOUT' }
+    if (this.destroying || this.track !== playbackTrack) return false
+
+    if (!this.connection || !this._isVoiceReady()) {
+      if (!suppressErrorEvents) {
+        this._onError(
+          new Error(
+            `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
+            { cause: 'VOICE_CONNECTION_TIMEOUT' }
+          )
         )
-      )
+      }
       return false
     }
 
@@ -1774,11 +1888,15 @@ export class Player {
       position > 0 &&
       !!urlData.url &&
       !unsupportedSeekSources.includes(resolvedSourceName) &&
+      !isWebmYouTubePlayback(resolvedSourceName, urlData) &&
       urlData.protocol !== 'sabr' &&
       urlData.protocol !== 'hls' &&
       urlData.protocol !== 'dash'
     const seekUrl = seekEligible ? urlData.url : undefined
-    if (seekUrl) await getStreamProcessor()
+    if (seekUrl) {
+      await getStreamProcessor()
+      if (this.destroying || this.track !== playbackTrack) return false
+    }
 
     let resource: AudioResource | undefined
     if (seekUrl && createSeekeableAudioResource) {
@@ -1799,8 +1917,13 @@ export class Player {
         this.audioMixer,
         false,
         this.loudnessNormalizer,
-        this._getCrossfadeConfig() !== null
+        this._getCrossfadeConfig() !== null,
+        this.getAudioProcessingMode()
       )
+      if (this.destroying || this.track !== playbackTrack) {
+        if (!('exception' in seekResult)) seekResult.destroy()
+        return false
+      }
       if ('exception' in seekResult) {
         logger(
           'error',
@@ -1818,9 +1941,15 @@ export class Player {
         urlData,
         position
       )
+      if (this.destroying || this.track !== playbackTrack) {
+        if (!('exception' in fetched)) fetched.stream.destroy()
+        return false
+      }
       if ('exception' in fetched) {
-        const err = new Error(fetched.exception.message)
-        this._onError(err)
+        if (!suppressErrorEvents) {
+          const err = new Error(fetched.exception.message)
+          this._onError(err)
+        }
         return false
       }
       resource = fetched.stream
@@ -1853,6 +1982,7 @@ export class Player {
       'playerStateChange',
       (s: VoicePlayerState) => s.status === 'playing'
     )
+    if (this.destroying || this.track !== playbackTrack) return false
 
     this._lyricsBasePosition = position
     this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
@@ -1862,18 +1992,22 @@ export class Player {
 
   private async _startPlayback(startTime = 0): Promise<boolean> {
     if (!this.track) return false
+    const playbackTrack = this.track
 
     const trackInfo: TrackInfoExtended = {
       ...this.track.info,
       audioTrackId: this.track.audioTrackId
     }
 
-    const urlData = await this.nodelink.sources.getTrackUrl(
-      trackInfo,
-      undefined,
-      this._isRecovering
-    )
-    if (!this.track) return false
+    const urlData = await this.nodelink.sources
+      .getTrackUrl(trackInfo, undefined, this._isRecovering)
+      .catch((error) => {
+        if (this.destroying || this.track !== playbackTrack) return null
+        throw error
+      })
+    /* INFO: URL resolution may finish after a replacement track has already started. */
+    if (!urlData || this.destroying || this.track !== playbackTrack)
+      return false
 
     if (
       urlData.newTrack?.info &&
@@ -1902,8 +2036,11 @@ export class Player {
       'start-playback',
       'trackStartArm',
       `Playing resource for guild ${this.guildId}`
-    )
-    if (!result) return false
+    ).catch((error) => {
+      if (this.destroying || this.track !== playbackTrack) return false
+      throw error
+    })
+    if (this.destroying || this.track !== playbackTrack || !result) return false
 
     this._fading('trackEndSchedule', { startPosition: startTime || 0 })
     this._stuckTime = 0
@@ -1912,35 +2049,6 @@ export class Player {
       this._scheduleCrossfadePreparation(startTime || 0)
     }
 
-    const crossfadeConfig = this._getCrossfadeConfig()
-    const trackDurationMs =
-      this.track.endTime && this.track.endTime > 0
-        ? this.track.endTime
-        : this.track.info.length || 0
-    if (
-      crossfadeConfig &&
-      !this.track.info.isStream &&
-      trackDurationMs > 30000
-    ) {
-      const currentTrack = this.track
-      const currentUrlData = urlData
-      AutoMixRegistry.getInstance()
-        .requestOutroAnalysis({
-          track: currentTrack,
-          urlData: currentUrlData,
-          priority: 'CURRENT_OUTRO',
-          triggerSource: `player:${this.guildId}:trackStart`,
-          fetchResource: (info, uData, windowStartMs, returnPcm) =>
-            this._fetchResource(info, uData, windowStartMs, returnPcm)
-        })
-        .catch((err) => {
-          logger(
-            'debug',
-            'Player',
-            `[AutoMix] Background outro analysis failed for ${currentTrack.info.identifier}: ${(err as Error).message}`
-          )
-        })
-    }
     if (
       this.track.info.sourceName === 'youtube' ||
       this.track.info.sourceName === 'ytmusic'
@@ -1958,6 +2066,7 @@ export class Player {
           `[SponsorBlock][${this.guildId}] Initiating segment fetch for video ${videoId}`
         )
         const { fetchSponsorBlockSegments } = await import('../utils.ts')
+        if (this.destroying || this.track !== playbackTrack) return false
         fetchSponsorBlockSegments(
           videoId,
           this.sponsorBlock.categories,
@@ -1965,11 +2074,7 @@ export class Player {
           sbConfig?.api
         )
           .then((segments) => {
-            if (
-              this.destroying ||
-              !this.track ||
-              this.track.info.identifier !== videoId
-            ) {
+            if (this.destroying || this.track !== playbackTrack) {
               logger(
                 'debug',
                 'Player',
@@ -2016,7 +2121,7 @@ export class Player {
    * Starts playback for the provided track payload.
    *
    * @param payload - Track data plus playback options.
-   * @param payload.noReplace - When true, keeps current track if already playing.
+   * @param payload.noReplace - When true, keeps the currently loaded track.
    * @param payload.startTime - Initial seek position in milliseconds.
    * @param payload.endTime - Optional end time to truncate playback.
    * @returns True when the request is accepted (actual start is async).
@@ -2035,6 +2140,15 @@ export class Player {
       'Player',
       `[Action: play] Method invoked for guild ${this.guildId} with track ${info.identifier}`
     )
+    /* INFO: replaces even an identical track unless noReplace protects the loaded track, including pending playback. Compatibility reasons. */
+    if (noReplace && this.track) {
+      logger(
+        'debug',
+        'Player',
+        `play() aborted for guild ${this.guildId} due to noReplace=true and a loaded track`
+      )
+      return false
+    }
     return new Promise((resolve) => {
       this.isUpdatingTrack = true
 
@@ -2056,37 +2170,15 @@ export class Player {
           track: info
         })
 
-        const isAlreadyPlaying =
-          (!!this.track?.info.identifier &&
-            this.track.info.identifier === info.identifier) ||
-          (!!this.track?.encoded && this.track.encoded === encoded)
-
-        if (this.track && this.connection?.audioStream && isAlreadyPlaying) {
-          logger(
-            'info',
-            'Player',
-            `play() for guild ${this.guildId} adopted (already playing/transitioning ${info.identifier})`
-          )
-          this.isUpdatingTrack = false
-          return resolve(true)
-        }
-
-        if (noReplace && this.track && this.connection?.audioStream) {
-          logger(
-            'debug',
-            'Player',
-            `play() aborted for guild ${this.guildId} due to noReplace=true and player is active`
-          )
-          this.isUpdatingTrack = false
-          return resolve(false)
-        }
-
         if (this.track) {
           this._emitTrackEnd(EndReasons.REPLACED)
           this._cleanupCurrentAudioStream('track-replaced')
         }
 
         this._lastStreamDataTime = 0
+        /* INFO: New tracks start with their own operation state; stale callbacks no longer reset these flags. */
+        this._isRecovering = false
+        this._isSeeking = false
         this.track = {
           encoded,
           info,
@@ -2107,6 +2199,7 @@ export class Player {
           return resolve(true)
         }
 
+        const playbackTrack = this.track
         this._startPlayback(
           startTime !== undefined
             ? startTime === 0 && this.position < 1000
@@ -2116,7 +2209,7 @@ export class Player {
         )
           .catch((err) => this._onError(err))
           .finally(() => {
-            this.isUpdatingTrack = false
+            if (this.track === playbackTrack) this.isUpdatingTrack = false
           })
 
         return resolve(true)
@@ -2153,6 +2246,7 @@ export class Player {
       )
       return false
     }
+    const seekTrack = this.track
     if (!this.track.info.isSeekable && !this.track.info.isStream) return false
 
     const streamFormat =
@@ -2201,6 +2295,7 @@ export class Player {
           'No stream info URL available for seek. awaiting getTrackUrl.'
         )
         await sleep(1600)
+        if (this.destroying || this.track !== seekTrack) return false
         if (!this.streamInfo?.url) {
           logger(
             'debug',
@@ -2213,7 +2308,7 @@ export class Player {
               audioTrackId: this.track.audioTrackId
             }
             const urlData = await this.nodelink.sources.getTrackUrl(trackInfo)
-            if (!this.track) return false
+            if (this.destroying || this.track !== seekTrack) return false
             this.streamInfo = { ...urlData, trackInfo: this.track.info }
             logger(
               'debug',
@@ -2235,7 +2330,8 @@ export class Player {
       const canNativeSeek =
         !!hasSourceLoader &&
         (this.streamInfo?.protocol === 'sabr' ||
-          (sourceName === 'deezer' && resolvedSourceName === 'deezer'))
+          (sourceName === 'deezer' && resolvedSourceName === 'deezer') ||
+          isWebmYouTubePlayback(resolvedSourceName, this.streamInfo))
 
       if (forceLegacy) {
         seekPromise = this._legacySeek(
@@ -2266,6 +2362,7 @@ export class Player {
 
       const startPosition = this._realPosition()
       const result = await seekPromise
+      if (this.destroying || this.track !== seekTrack) return false
       if (result) {
         this.emitEvent(GatewayEvents.SEEK, {
           position: this.position,
@@ -2304,11 +2401,12 @@ export class Player {
       }
       return result
     } catch (e) {
+      if (this.destroying || this.track !== seekTrack) return false
       logger('error', 'Player', `Seek failed for guild ${this.guildId}`, e)
       this._onError(e as Error)
       return false
     } finally {
-      this._isSeeking = false
+      if (this.track === seekTrack) this._isSeeking = false
     }
   }
 
@@ -2316,99 +2414,159 @@ export class Player {
    * Seeks using source-native capabilities (e.g., SABR/Deezer).
    */
   private async _seekUsingSource(
-    position: number,
-    endTime?: number
-  ): Promise<boolean> {
-    if (!this.track) return false
+  position: number,
+  endTime?: number
+): Promise<boolean> {
+  if (!this.track) return false
+  const seekTrack = this.track
+
+  logger(
+    'debug',
+    'Player',
+    `Seeking using source (native) to ${position}ms for guild ${this.guildId}`
+  )
+
+  this.position = position
+  this.track.endTime = endTime
+  let reuseUrlData: TrackUrlResult | null = null
+  let seekHandoff: { cancelSeekHandoff: () => void } | null = null
+
+  if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
+    const inputStream = (
+      this.connection.audioStream as {
+        pipes?: Array<{
+          beginSeekHandoff?: () => Promise<unknown>
+          cancelSeekHandoff?: () => void
+        }>
+      }
+    )?.pipes?.[0]
+
+    const previousSession = await inputStream?.beginSeekHandoff?.()
+
+    if (this.destroying || this.track !== seekTrack) {
+      inputStream?.cancelSeekHandoff?.()
+      return false
+    }
+
+    if (previousSession) {
+      seekHandoff = inputStream?.cancelSeekHandoff
+        ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
+        : null
+
+      logger(
+        'debug',
+        'Player',
+        `Extracted SABR session state: rn=${
+          (previousSession as { requestNumber?: number }).requestNumber
+        }, hasCookie=${!!(
+          previousSession as {
+            nextRequestPolicy?: { playbackCookie?: unknown }
+          }
+        ).nextRequestPolicy?.playbackCookie}`
+      )
+
+      reuseUrlData = {
+        newTrack: this.streamInfo.newTrack,
+        protocol: this.streamInfo.protocol,
+        url: this.streamInfo.url,
+        additionalData: {
+          ...this.streamInfo.additionalData,
+          previousSession,
+          startTime: position
+        }
+      } as TrackUrlResult
+
+      logger(
+        'debug',
+        'Player',
+        `Reusing existing SABR streaming URL for seek to maintain session`
+      )
+    }
+  }
+
+  const trackInfo = {
+    ...this.track.info,
+    audioTrackId: this.track.audioTrackId
+  }
+
+  // Reuse the playing URL when it's a native WebM stream: resolving a
+  // fresh URL hits the cipher on every seek. A stale URL just fails
+  // here and falls through to the fresh resolve below.
+  const seekSourceName =
+    (this.streamInfo?.newTrack as { info?: { sourceName?: string } } | null)
+      ?.info?.sourceName ?? this.track.info.sourceName
+
+  if (
+    !reuseUrlData &&
+    this.streamInfo?.protocol !== 'sabr' &&
+    this.streamInfo?.protocol !== 'hls' &&
+    this.streamInfo?.protocol !== 'dash' &&
+    isWebmYouTubePlayback(seekSourceName, this.streamInfo) &&
+    this.streamInfo?.url
+  ) {
+    const cachedUrlData = this.streamInfo as unknown as TrackUrlResult
+
+    const cachedResult = await this._connectAndPlayStream(
+      cachedUrlData,
+      position,
+      'source-seek',
+      'seekPrepare',
+      `Playing resource for guild ${this.guildId} after source seek (cached URL)`,
+      true,
+      true
+    )
+
+    if (this.destroying || this.track !== seekTrack) return false
+    if (cachedResult) return true
 
     logger(
       'debug',
       'Player',
-      `Seeking using source (native) to ${position}ms for guild ${this.guildId}`
+      `Cached URL seek failed for guild ${this.guildId}, resolving fresh URL`
+    )
+  }
+
+  const urlData =
+    reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo))
+
+  if (this.destroying || this.track !== seekTrack) {
+    seekHandoff?.cancelSeekHandoff()
+    return false
+  }
+
+  this.streamInfo = { ...urlData, trackInfo: this.track.info }
+
+  if (urlData.exception) {
+    seekHandoff?.cancelSeekHandoff()
+
+    const err = new Error(urlData.exception.message)
+    this._onError(err)
+    return false
+  }
+
+  try {
+    const result = await this._connectAndPlayStream(
+      urlData,
+      position,
+      'source-seek',
+      'seekPrepare',
+      `Playing resource for guild ${this.guildId} after source seek`,
+      true
     )
 
-    this.position = position
-    this.track.endTime = endTime
-    let reuseUrlData: TrackUrlResult | null = null
-    let seekHandoff: { cancelSeekHandoff: () => void } | null = null
-
-    if (this.streamInfo?.protocol === 'sabr' && this.connection?.audioStream) {
-      const inputStream = (
-        this.connection.audioStream as {
-          pipes?: Array<{
-            beginSeekHandoff?: () => Promise<unknown>
-            cancelSeekHandoff?: () => void
-          }>
-        }
-      )?.pipes?.[0]
-
-      const previousSession = await inputStream?.beginSeekHandoff?.()
-      if (previousSession) {
-        seekHandoff = inputStream?.cancelSeekHandoff
-          ? { cancelSeekHandoff: inputStream.cancelSeekHandoff }
-          : null
-        logger(
-          'debug',
-          'Player',
-          `Extracted SABR session state: rn=${
-            (previousSession as { requestNumber?: number }).requestNumber
-          }, hasCookie=${!!(
-            previousSession as {
-              nextRequestPolicy?: { playbackCookie?: unknown }
-            }
-          ).nextRequestPolicy?.playbackCookie}`
-        )
-
-        reuseUrlData = {
-          newTrack: this.streamInfo.newTrack,
-          protocol: this.streamInfo.protocol,
-          url: this.streamInfo.url,
-          additionalData: {
-            ...this.streamInfo.additionalData,
-            previousSession,
-            startTime: position
-          }
-        } as TrackUrlResult
-
-        logger(
-          'debug',
-          'Player',
-          `Reusing existing SABR streaming URL for seek to maintain session`
-        )
-      }
-    }
-
-    const trackInfo = {
-      ...this.track.info,
-      audioTrackId: this.track.audioTrackId
-    }
-
-    const urlData =
-      reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo))
-    this.streamInfo = { ...urlData, trackInfo: this.track.info }
-
-    if (urlData.exception) {
+    if (this.destroying || this.track !== seekTrack) {
       seekHandoff?.cancelSeekHandoff()
-      const err = new Error(urlData.exception.message)
-      this._onError(err)
       return false
     }
 
-    try {
-      const result = await this._connectAndPlayStream(
-        urlData,
-        position,
-        'source-seek',
-        'seekPrepare',
-        `Playing resource for guild ${this.guildId} after source seek`
-      )
-      if (!result) seekHandoff?.cancelSeekHandoff()
-      return result
-    } catch (error) {
-      seekHandoff?.cancelSeekHandoff()
-      throw error
-    }
+    if (!result) seekHandoff?.cancelSeekHandoff()
+
+    return result
+  } catch (error) {
+    seekHandoff?.cancelSeekHandoff()
+    throw error
   }
+}
 
   /**
    * Seeks using seekable-stream helper for compatible sources.
@@ -2417,11 +2575,15 @@ export class Player {
     position: number,
     endTime?: number
   ): Promise<boolean> {
+    if (!this.track) return false
+    const seekTrack = this.track
     if (this.nodelink.options?.playback.mix?.enabled !== false) {
       await this._ensureAudioMixer()
+      if (this.destroying || this.track !== seekTrack) return false
     }
 
     await getStreamProcessor()
+    if (this.destroying || this.track !== seekTrack) return false
     const seekResourceFactory = createSeekeableAudioResource
     if (!seekResourceFactory) {
       return this._legacySeek(position, endTime)
@@ -2474,6 +2636,7 @@ export class Player {
             undefined,
             true
           )
+          if (this.destroying || this.track !== seekTrack) return false
           if (!fresh.exception && fresh.url && this.track) {
             const oldUrl = url as string
             this.streamInfo = {
@@ -2501,6 +2664,7 @@ export class Player {
           )
         }
       }
+      if (this.destroying || this.track !== seekTrack) return false
       if (!url) return false
 
       const resourceResult = await seekResourceFactory(
@@ -2515,8 +2679,14 @@ export class Player {
         this.audioMixer,
         false,
         this.loudnessNormalizer,
-        this._getCrossfadeConfig() !== null
+        this._getCrossfadeConfig() !== null,
+        this.getAudioProcessingMode()
       )
+
+      if (this.destroying || this.track !== seekTrack) {
+        if (!('exception' in resourceResult)) resourceResult.destroy()
+        return false
+      }
 
       if (
         (
@@ -2551,20 +2721,19 @@ export class Player {
       this._fading('seekPrepare', { resource })
       resource.setFilters(this.filters)
 
-      this._destroyCrossfadeResources(true)
+      // A seek is a timeline discontinuity: drain neither the old limiter nor
+      // queued Opus packets into the new position. Tear down the current PCM /
+      // voice stream first, while retaining only the queued track metadata.
+      this._cleanupCurrentAudioStream('seekeable-seek', true)
       this._resetAudioConsumptionBaseline(position)
-      const oldStream = this.connection?.play(resource as unknown)
+      this.connection?.play(resource as unknown)
       await this.waitEvent(
         'playerStateChange',
         (s: VoicePlayerState) => s.status === 'playing'
       )
-      if (oldStream) {
-        oldStream.destroy()
-      }
-      if (this._currentResource && this._currentResource !== resource) {
-        try {
-          this._currentResource.destroy()
-        } catch {}
+      if (this.destroying || this.track !== seekTrack) {
+        resource.destroy()
+        return false
       }
       this._currentResource = resource
 
@@ -2574,6 +2743,8 @@ export class Player {
 
       return true
     } catch (e) {
+      /* INFO: A failed seek for the previous track must not start a legacy seek on its replacement. */
+      if (this.destroying || this.track !== seekTrack) return false
       const err = e as Error
       logger(
         'error',
@@ -2596,122 +2767,139 @@ export class Player {
   /**
    * Seeks using legacy re-fetch strategy.
    */
-  private async _legacySeek(
-    position: number,
-    endTime?: number
-  ): Promise<boolean> {
-    if (!this.track) return false
-    if (
-      position < 0 ||
-      (this.track.info.length > 0 && position > this.track.info.length)
-    )
-      return false
+ private async _legacySeek(
+  position: number,
+  endTime?: number
+): Promise<boolean> {
+  if (!this.track) return false
+  const seekTrack = this.track
 
-    logger(
-      'debug',
-      'Player',
-      `Seeking with legacy method to ${position}ms for guild ${this.guildId}`
-    )
-
-    this.position = position
-    this.track.endTime = endTime
-
-    const trackInfo = {
-      ...this.track.info,
-      audioTrackId: this.track.audioTrackId
-    }
-
-    const urlData = await this.nodelink.sources.getTrackUrl(
-      trackInfo,
-      undefined,
-      this._isRecovering
-    )
-    if (!this.track) return false
-    this.streamInfo = { ...urlData, trackInfo: this.track.info }
-
-    if (urlData.exception) {
-      const err = new Error(urlData.exception.message)
-      this._onError(err)
-      return false
-    }
-
-    if (!this.connection) {
-      this._initConnection()
-    }
-
-    if (!this.connection?.udpInfo?.secretKey) {
-      logger(
-        'debug',
-        'Player',
-        `Waiting for voice connection to be ready for guild ${this.guildId}`
-      )
-      try {
-        await this.waitEvent(
-          'stateChange',
-          (s: VoiceConnectionState) =>
-            s.status === 'connected' && !!this.connection?.udpInfo?.secretKey
-        )
-      } catch {}
-    }
-
-    if (!this.connection?.udpInfo?.secretKey) {
-      this._onError(
-        new Error(
-          `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
-          { cause: 'VOICE_CONNECTION_TIMEOUT' }
-        )
-      )
-      return false
-    }
-
-    const fetched = await this._fetchResource(
-      this.track.info,
-      urlData,
-      position
-    )
-    if ('exception' in fetched) {
-      const err = new Error(fetched.exception.message)
-      this._onError(err)
-      return false
-    }
-
-    this._cleanupCurrentAudioStream('legacy-seek')
-
-    const resource = fetched.stream
-    if (this.volumePercent !== 100) {
-      resource.setVolume(this.volumePercent / 100)
-    }
-    this._fading('seekPrepare', { resource })
-
-    this.setFilters(this.filters)
-
-    logger(
-      'debug',
-      'Player',
-      `Playing resource for guild ${this.guildId} after legacy seek`
-    )
-    this._currentResource = resource
-    this.connection.play(resource as unknown)
-
-    // Connect ducking controller to the new audio stream
-    if (this.duckingController && resource.fadeTo) {
-      this.duckingController.attach(this.connection)
-      this.duckingController.setStreamControl({
-        fadeTo: (volume: number, durationMs: number, curve?: string) =>
-          resource.fadeTo?.(volume, durationMs, curve)
-      })
-    }
-    await this.waitEvent(
-      'playerStateChange',
-      (s: VoicePlayerState) => s.status === 'playing'
-    )
-
-    this._lyricsBasePosition = position
-    this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
-
-    return true
+  if (
+    position < 0 ||
+    (this.track.info.length > 0 && position > this.track.info.length)
+  ) {
+    return false
   }
 
+  logger(
+    'debug',
+    'Player',
+    `Seeking with legacy method to ${position}ms for guild ${this.guildId}`
+  )
+
+  this.position = position
+  this.track.endTime = endTime
+
+  const trackInfo = {
+    ...this.track.info,
+    audioTrackId: this.track.audioTrackId
+  }
+
+  const urlData = await this.nodelink.sources.getTrackUrl(
+    trackInfo,
+    undefined,
+    this._isRecovering
+  )
+
+  if (this.destroying || this.track !== seekTrack) return false
+
+  this.streamInfo = { ...urlData, trackInfo: this.track.info }
+
+  if (urlData.exception) {
+    const err = new Error(urlData.exception.message)
+    this._onError(err)
+    return false
+  }
+
+  if (!this.connection) {
+    this._initConnection()
+  }
+
+  if (!this._isVoiceReady()) {
+    this._ensureVoiceConnection()
+
+    try {
+      await this.waitEvent(
+        'stateChange',
+        (s: VoiceConnectionState) =>
+          s.status === 'connected' && !!this.connection?.udpInfo?.secretKey
+      )
+    } catch {}
+  }
+
+  if (this.destroying || this.track !== seekTrack) return false
+
+  if (!this.connection || !this._isVoiceReady()) {
+    this._onError(
+      new Error(
+        `Voice connection timed out for guild ${this.guildId} (missing UDP info).`,
+        { cause: 'VOICE_CONNECTION_TIMEOUT' }
+      )
+    )
+
+    return false
+  }
+
+  const fetched = await this._fetchResource(
+    this.track.info,
+    urlData,
+    position
+  )
+
+  /* INFO: A resource fetched for the old track must be released without replacing the current pipeline. */
+  if (this.destroying || this.track !== seekTrack) {
+    if (!('exception' in fetched)) fetched.stream.destroy()
+    return false
+  }
+
+  if ('exception' in fetched) {
+    const err = new Error(fetched.exception.message)
+    this._onError(err)
+    return false
+  }
+
+  this._cleanupCurrentAudioStream('legacy-seek', true)
+
+  const resource = fetched.stream
+
+  if (this.volumePercent !== 100) {
+    resource.setVolume(this.volumePercent / 100)
+  }
+
+  this._fading('seekPrepare', { resource })
+
+  this.setFilters(this.filters)
+
+  logger(
+    'debug',
+    'Player',
+    `Playing resource for guild ${this.guildId} after legacy seek`
+  )
+
+  this._currentResource = resource
+  this.connection.play(resource as unknown)
+
+  // Connect ducking controller to the new audio stream
+  if (this.duckingController && resource.fadeTo) {
+    this.duckingController.attach(this.connection)
+    this.duckingController.setStreamControl({
+      fadeTo: (volume: number, durationMs: number, curve?: string) =>
+        resource.fadeTo?.(volume, durationMs, curve)
+    })
+  }
+
+  await this.waitEvent(
+    'playerStateChange',
+    (s: VoicePlayerState) => s.status === 'playing'
+  )
+
+  if (this.destroying || this.track !== seekTrack) return false
+
+  this._lyricsBasePosition = position
+  this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
+
+  return true
+}
   /**
    * Stops playback and emits STOPPED if applicable.
    *
@@ -2899,6 +3087,12 @@ export class Player {
     )
     if (this.destroying) return false
 
+    if (this.nextResourceIsCrossfade) {
+      this._crossfadeToken += 1
+      this._clearCrossfadeTimer()
+      this._getAudioStream()?.clearCrossfade?.()
+    }
+
     if (this.nextResource) {
       this.nextResource.destroy()
       this.nextResource = null
@@ -2969,9 +3163,10 @@ export class Player {
     } else {
       this.isPaused = false
       this._isResuming = true
-      this._getAudioStream()?.setCrossfadePaused?.(false)
+      const audioStream = this._getAudioStream()
+      audioStream?.setCrossfadePaused?.(false)
       this._fading('resume')
-      this.connection?.unpause?.('requested')
+      if (audioStream) this.connection?.unpause?.('requested')
       this._rescheduleCrossfade(this._pausedAtPosition)
     }
 
@@ -3118,10 +3313,10 @@ export class Player {
   }
 
   /**
-   * Applies audio filters to the active stream.
+   * Stores audio filters and applies them to any active stream.
    *
    * @param filters - Filter payload that replaces the active filter set.
-   * @returns True when filters applied; false if player inactive.
+   * @returns True when filters accepted; false if player is being destroyed.
    */
   public setFilters(filters: FiltersState): boolean {
     logger(
@@ -3129,11 +3324,11 @@ export class Player {
       'Player',
       `[Action: setFilters] Method invoked for guild ${this.guildId}`
     )
-    if (this.destroying || !this.track) {
+    if (this.destroying) {
       logger(
         'debug',
         'Player',
-        `[Action: setFilters] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`
+        `[Action: setFilters] Aborted for guild ${this.guildId}: player is being destroyed`
       )
       return false
     }
@@ -3233,14 +3428,37 @@ export class Player {
       }
     }
 
-    this.filters = { ...this.filters, filters: newFilterSettings }
+    /* INFO: Idle players retain accepted filters so the next audio resource inherits them. */
+    const nextFilterState = { ...this.filters, filters: newFilterSettings }
+    if (this.getAudioProcessingMode() === 'protected') {
+      try {
+        this.connection?.audioStream?.setFilters(nextFilterState)
+        if (!this.nextResourceIsCrossfade)
+          this.nextResource?.setFilters(nextFilterState)
+      } catch (error) {
+        logger(
+          'warn',
+          'Player',
+          `Rejected Protected filter update for guild ${this.guildId}: ${error instanceof Error ? error.message : String(error)}`
+        )
+        return false
+      }
+      this.filters = nextFilterState
+    } else {
+      this.filters = nextFilterState
+    }
 
     if (this.connection?.audioStream) {
       this._snapshotPosition()
-      this.connection.audioStream.setFilters(this.filters)
+      if (this.getAudioProcessingMode() !== 'protected') {
+        this.connection.audioStream.setFilters(this.filters)
+      }
       this._fading('trackEndSchedule', { startPosition: this._realPosition() })
     }
-    if (!this.nextResourceIsCrossfade) {
+    if (
+      !this.nextResourceIsCrossfade &&
+      this.getAudioProcessingMode() !== 'protected'
+    ) {
       this.nextResource?.setFilters(this.filters)
     }
     if (this.nextResourceIsCrossfade) this._rescheduleCrossfade()
@@ -3311,8 +3529,13 @@ export class Player {
     if (this.destroying) return
 
     const { sessionId, token, endpoint, channelId } = voicePayload
+    const channelChanged =
+      channelId != null &&
+      this.voice.channelId != null &&
+      this.voice.channelId !== channelId
 
     let changed = false
+    let serverChanged = false
     if (sessionId !== undefined && this.voice.sessionId !== sessionId) {
       this.voice.sessionId = sessionId
       changed = true
@@ -3320,14 +3543,31 @@ export class Player {
     if (token !== undefined && this.voice.token !== token) {
       this.voice.token = token
       changed = true
+      serverChanged = true
     }
     if (endpoint !== undefined && this.voice.endpoint !== endpoint) {
       this.voice.endpoint = endpoint
       changed = true
+      serverChanged = true
     }
     if (channelId !== undefined && this.voice.channelId !== channelId) {
       this.voice.channelId = channelId
       changed = true
+    }
+
+    /*
+      INFO: Channel state can arrive before fresh server credentials. Reconnecting
+        now would pair the new DAVE group with the previous channel's server.
+      SOURCES:
+        - https://docs.discord.com/developers/topics/voice-connections#retrieving-voice-server-information
+    */
+    if (channelChanged && !serverChanged && this.connection && !force) {
+      logger(
+        'debug',
+        'Player',
+        `Waiting for updated voice server credentials after channel move for guild ${this.guildId}`
+      )
+      return
     }
 
     if (this.voice.sessionId && this.voice.token && this.voice.endpoint) {
@@ -3342,7 +3582,8 @@ export class Player {
         !this.connection ||
         this.connStatus === 'disconnected' ||
         this.connStatus === 'destroyed' ||
-        !this.connection.voiceServer
+        !this.connection.voiceServer ||
+        (this.connStatus === 'connected' && !this.connection.udpInfo?.secretKey)
 
       if (!changed && !force && !connectionDead) {
         logger(
@@ -3381,8 +3622,12 @@ export class Player {
       })
       this.connection?.connect(async () => {
         if (this.destroying) return
-        if (this.connection?.audioStream && !this.isPaused) {
-          this.connection.unpause?.('reconnected')
+        if (this.connection?.audioStream) {
+          if (!this.isPaused) {
+            this.connection.unpause?.('reconnected')
+          } else {
+            this.connection.pause?.('requested')
+          }
         }
 
         if (
@@ -3395,7 +3640,9 @@ export class Player {
             'Player',
             `Voice state updated for guild ${this.guildId}, starting pending track.`
           )
-          await this._startPlayback().catch((err) => {
+          const resumeAt = this._resumePositionMs
+          this._resumePositionMs = null
+          await this._startPlayback(resumeAt ?? 0).catch((err) => {
             logger(
               'error',
               'Player',
@@ -4406,7 +4653,12 @@ export class Player {
       20,
       Math.min(boundedDuration, Math.round(Number(config.minBufferMs) || 250))
     )
-    const mode = config.mode === 'stream' ? 'stream' : 'preload'
+    const mode =
+      config.mode === 'stream'
+        ? 'stream'
+        : config.mode === 'smart'
+          ? 'smart'
+          : 'preload'
     const configuredBuffer = Math.round(Number(config.bufferMs) || 0)
     const bufferMs = Math.max(
       minBufferMs,
@@ -4505,6 +4757,37 @@ export class Player {
       return
     }
 
+    const currentStreamInfo = this.streamInfo
+    let outgoingTailRms: number | undefined
+    if (
+      currentStreamInfo &&
+      !(currentTrack.endTime && currentTrack.endTime < currentTrack.info.length)
+    ) {
+      void AutoMixRegistry.getInstance()
+        .requestOutroAnalysis({
+          track: currentTrack,
+          urlData: currentStreamInfo,
+          windowStartMs: Math.max(0, currentTrack.info.length - 25000),
+          /* INFO: Leave room for imprecise seeks and rounded source lengths to reach EOF. */
+          windowDurationMs: Math.min(25000, currentTrack.info.length) + 5000,
+          priority: 'CURRENT_OUTRO',
+          triggerSource: `player:${this.guildId}:nextTrack`,
+          fetchResource: (info, uData, windowStartMs, returnPcm) =>
+            this._fetchResource(info, uData, windowStartMs, returnPcm)
+        })
+        .then((profile) => {
+          outgoingTailRms = profile?.outroProfile?.sourceEndRms
+        })
+        .catch((error: unknown) => {
+          logger(
+            'error',
+            'AutoMix',
+            `Outro analysis failed for ${currentTrack.info.identifier}`,
+            error
+          )
+        })
+    }
+
     const trackInfo = {
       ...payload.info,
       audioTrackId: payload.audioTrackId
@@ -4517,7 +4800,13 @@ export class Player {
     const urlData = await this.nodelink.sources.getTrackUrl(trackInfo)
     if (urlData.exception || token !== this._crossfadeToken) return
 
-    const fetched = await this._fetchResource(payload.info, urlData, 0, true)
+    const fetched = await this._fetchResource(
+      payload.info,
+      urlData,
+      0,
+      true,
+      this.getAudioProcessingMode() === 'protected'
+    )
     if ('exception' in fetched || token !== this._crossfadeToken) {
       if (!('exception' in fetched)) fetched.stream.destroy()
       return
@@ -4531,6 +4820,7 @@ export class Player {
       fetched.stream.stream as unknown as import('node:stream').Readable,
       {
         durationMs: config.duration,
+        getOutgoingTailRms: () => outgoingTailRms,
         minBufferMs: config.minBufferMs,
         bufferMs: Math.min(
           30000,
@@ -4680,6 +4970,8 @@ export class Player {
     }
 
     this.track = promotedTrack
+    this._isRecovering = false
+    this._isSeeking = false
     this.nextTrack = null
     this.nextResource = null
     this.nextStreamInfo = null

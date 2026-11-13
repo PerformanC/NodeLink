@@ -64,6 +64,14 @@ export {
 }
 
 /**
+ * YouTube's opus-in-WebM itags. Only WebM stays playable when we jump
+ * into the middle of the file, so only these take the native seek path.
+ *
+ * @public
+ */
+export const YOUTUBE_WEBM_ITAGS = new Set([249, 250, 251])
+
+/**
  * Fallback strings used when metadata cannot be retrieved from YouTube.
  * These ensure track objects always have meaningful title/author values.
  *
@@ -534,7 +542,8 @@ function extractThumbnail(
 ): string | null {
   let resultUrl: string | null = null
 
-  const musicThumbnails = renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
+  const musicThumbnails =
+    renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails
   const regularThumbnails = renderer?.thumbnail?.thumbnails
 
   if (Array.isArray(musicThumbnails) && musicThumbnails.length > 0) {
@@ -2030,6 +2039,137 @@ export function checkURLType(
 }
 
 /**
+ * Result of extracting playlist selection parameters from a URL.
+ * @public
+ */
+export interface YouTubePlaylistSelection {
+  playlistId: string | null
+  videoId: string | null
+  targetIndex: number | null
+}
+
+/**
+ * Extracts playlist ID, selected video ID, and 0-based target index from a YouTube URL.
+ *
+ * @param url - YouTube URL
+ * @returns Playlist selection parameters
+ * @public
+ */
+export function extractPlaylistSelection(
+  url: string
+): YouTubePlaylistSelection {
+  let playlistId: string | null = null
+  let videoId: string | null = null
+  let targetIndex: number | null = null
+
+  try {
+    const parsed = new URL(url)
+    const listParam = parsed.searchParams.get('list')
+    if (listParam && /^[\w-]+$/.test(listParam)) {
+      playlistId = listParam
+    }
+
+    const vParam = parsed.searchParams.get('v')
+    if (vParam && /^[\w-]+$/.test(vParam)) {
+      videoId = vParam
+    } else if (
+      parsed.hostname === 'youtu.be' ||
+      parsed.hostname.endsWith('.youtu.be')
+    ) {
+      const pathId = parsed.pathname.slice(1).split('/')[0]
+      if (pathId && /^[\w-]+$/.test(pathId)) {
+        videoId = pathId
+      }
+    } else if (
+      parsed.pathname.startsWith('/embed/') ||
+      parsed.pathname.startsWith('/v/') ||
+      parsed.pathname.startsWith('/shorts/') ||
+      parsed.pathname.startsWith('/live/')
+    ) {
+      const segments = parsed.pathname.split('/').filter(Boolean)
+      const candidate = segments[1]
+      if (candidate && /^[\w-]+$/.test(candidate)) {
+        videoId = candidate
+      }
+    }
+
+    const indexParam = parsed.searchParams.get('index')
+    if (indexParam && /^\d+$/.test(indexParam)) {
+      const parsedNum = parseInt(indexParam, 10)
+      if (parsedNum >= 1) {
+        targetIndex = parsedNum - 1
+      } else {
+        targetIndex = 0
+      }
+    }
+  } catch {
+    const listMatch = url.match(/[?&]list=([\w-]+)/)
+    if (listMatch?.[1]) playlistId = listMatch[1]
+
+    const vMatch = url.match(/[?&]v=([\w-]+)/)
+    if (vMatch?.[1]) {
+      videoId = vMatch[1]
+    } else {
+      const shortMatch = url.match(
+        /(?:youtu\.be\/|(?:\/(?:embed|v|shorts|live)\/))([\w-]+)/
+      )
+      if (shortMatch?.[1]) videoId = shortMatch[1]
+    }
+
+    const indexMatch = url.match(/[?&]index=(\d+)/)
+    if (indexMatch?.[1]) {
+      const parsedNum = parseInt(indexMatch[1], 10)
+      if (parsedNum >= 1) {
+        targetIndex = parsedNum - 1
+      } else {
+        targetIndex = 0
+      }
+    }
+  }
+
+  return { playlistId, videoId, targetIndex }
+}
+
+/**
+ * Resolves the 0-based selected track index from tracks, matching video ID or target index.
+ * @internal
+ */
+function resolveSelectedTrackIndex(
+  tracks: readonly YouTubeTrackData[],
+  currentVideoId?: string | null,
+  targetIndex?: number | null
+): number {
+  if (
+    typeof targetIndex === 'number' &&
+    targetIndex >= 0 &&
+    targetIndex < tracks.length &&
+    currentVideoId &&
+    tracks[targetIndex]?.info?.identifier === currentVideoId
+  ) {
+    return targetIndex
+  }
+
+  if (currentVideoId) {
+    const foundIndex = tracks.findIndex(
+      (t) => t.info?.identifier === currentVideoId
+    )
+    if (foundIndex !== -1) {
+      return foundIndex
+    }
+  }
+
+  if (
+    typeof targetIndex === 'number' &&
+    targetIndex >= 0 &&
+    targetIndex < tracks.length
+  ) {
+    return targetIndex
+  }
+
+  return 0
+}
+
+/**
  * Fetches encryptedHostFlags for a video by inspecting the embed page.
  * @param videoId - YouTube video ID
  * @returns encryptedHostFlags string or null
@@ -2038,6 +2178,23 @@ export function checkURLType(
 export async function fetchEncryptedHostFlags(
   videoId: string
 ): Promise<string | null> {
+  return (await fetchEmbedConfig(videoId))?.encryptedHostFlags ?? null
+}
+
+/**
+ * Fetches host flags and their matching visitor from the same embed page.
+ * @param videoId - YouTube video ID
+ * @param proxy - Proxy used for the player request
+ * @returns Embed configuration or null when the page cannot be fetched
+ * @internal
+ */
+async function fetchEmbedConfig(
+  videoId: string,
+  proxy?: HttpProxyConfig
+): Promise<{
+  encryptedHostFlags: string | null
+  visitorData: string | null
+} | null> {
   try {
     const embedUrl = `https://www.youtube.com/embed/${videoId}`
 
@@ -2048,8 +2205,9 @@ export async function fetchEncryptedHostFlags(
         headers: {
           Referer: 'https://www.google.com',
           'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36'
+        },
+        proxy
       }
     )
 
@@ -2061,23 +2219,11 @@ export async function fetchEncryptedHostFlags(
       )
       return null
     }
-    const match = body.match(/"encryptedHostFlags":"([^"]+)"/)
-
-    if (match?.[1]) {
-      logger(
-        'debug',
-        'fetchEncryptedHostFlags',
-        `Successfully extracted encryptedHostFlags for ${videoId}`
-      )
-      return match[1]
+    return {
+      encryptedHostFlags:
+        body.match(/"encryptedHostFlags"\s*:\s*"([^"]+)"/)?.[1] ?? null,
+      visitorData: body.match(/"VISITOR_DATA"\s*:\s*"([^"]+)"/)?.[1] ?? null
     }
-
-    logger(
-      'debug',
-      'fetchEncryptedHostFlags',
-      'encryptedHostFlags not found in embed page'
-    )
-    return null
   } catch (e: unknown) {
     logger(
       'error',
@@ -2133,6 +2279,14 @@ export abstract class BaseClient {
   }
 
   /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  requiresOAuth(): boolean {
+    return false
+  }
+
+  /**
    * Returns the base API endpoint for this client.
    */
   getApiEndpoint(): string {
@@ -2144,6 +2298,13 @@ export abstract class BaseClient {
    */
   getPlayerParams(): string | null {
     return null
+  }
+
+  /**
+   * Returns client identity headers required by some Innertube clients.
+   */
+  getClientHeaders(): Record<string, string> {
+    return {}
   }
 
   /**
@@ -2186,8 +2347,10 @@ export abstract class BaseClient {
     proxy?: HttpProxyConfig
   ): Promise<HttpRequestResult> {
     const apiEndpoint = this.getApiEndpoint()
+    const clientContext = this.getClient(context)
+    const requestProxy = proxy || this.getProxy()
     const requestBody: Record<string, unknown> = {
-      context: this.getClient(context),
+      context: clientContext,
       videoId: videoId,
       contentCheckOk: true,
       attestationRequest: { omitBotguardData: true },
@@ -2200,8 +2363,14 @@ export abstract class BaseClient {
     }
 
     if (this.isEmbedded()) {
-      const encryptedHostFlags = await fetchEncryptedHostFlags(videoId)
-      if (encryptedHostFlags) {
+      const embedConfig = await fetchEmbedConfig(videoId, requestProxy)
+      if (embedConfig?.encryptedHostFlags) {
+        if (
+          clientContext.client.clientName === 'WEB_EMBEDDED_PLAYER' &&
+          embedConfig.visitorData
+        ) {
+          clientContext.client.visitorData = embedConfig.visitorData
+        }
         const playbackContext =
           (requestBody.playbackContext as
             | Record<string, unknown>
@@ -2212,14 +2381,8 @@ export abstract class BaseClient {
             | undefined) || {}
         ;(
           playbackContext.contentPlaybackContext as Record<string, unknown>
-        ).encryptedHostFlags = encryptedHostFlags
+        ).encryptedHostFlags = embedConfig.encryptedHostFlags
         requestBody.playbackContext = playbackContext
-      }
-      if (context.client.clientName === 'WEB_EMBEDDED_PLAYER') {
-        requestBody.serializedThirdPartyEmbedConfig = {
-          hideInfoBar: true,
-          disableRelatedVideos: true
-        }
       }
     }
 
@@ -2252,16 +2415,16 @@ export abstract class BaseClient {
       }
     }
 
-    const clientCtx = this.getClient(context)
     const response: HttpRequestResult = await makeRequest(
       `${apiEndpoint}/youtubei/v1/player?prettyPrint=false`,
       {
         method: 'POST',
         headers: {
-          'User-Agent': clientCtx.client.userAgent,
-          ...(clientCtx.client.visitorData
+          'User-Agent': clientContext.client.userAgent,
+          ...this.getClientHeaders(),
+          ...(clientContext.client.visitorData
             ? {
-                'X-Goog-Visitor-Id': clientCtx.client.visitorData
+                'X-Goog-Visitor-Id': clientContext.client.visitorData
               }
             : {}),
           ...(this.isEmbedded() ? { Referer: 'https://www.youtube.com' } : {}),
@@ -2269,7 +2432,7 @@ export abstract class BaseClient {
         },
         body: requestBody,
         disableBodyCompression: true,
-        proxy: proxy || this.getProxy()
+        proxy: requestProxy
       }
     )
 
@@ -2373,16 +2536,8 @@ export abstract class BaseClient {
       logger(
         'warn',
         `youtube-${this.name}`,
-        `Video/short ${videoId} not playable: ${message}`
+        `Video/short ${videoId} is currently not playable: ${message}. Retaining its track metadata for playback fallback.`
       )
-      return {
-        loadType: 'error',
-        exception: {
-          message,
-          severity: 'common',
-          cause: 'UpstreamPlayability'
-        }
-      }
     }
 
     if (!videoDetails?.videoId) {
@@ -2442,7 +2597,8 @@ export abstract class BaseClient {
     currentVideoId: string | null,
     playlistResponseRaw: unknown,
     sourceName: string,
-    _context?: YouTubeContext
+    _context?: YouTubeContext,
+    targetIndex?: number | null
   ): Promise<SourceResult> {
     if (!playlistResponseRaw || typeof playlistResponseRaw !== 'object') {
       return { loadType: 'empty', data: {} }
@@ -2525,7 +2681,6 @@ export abstract class BaseClient {
     }
 
     const tracks: YouTubeTrackData[] = []
-    let selectedTrack = 0
     const maxLength =
       (this.config.playback?.maxPlaylistLength as number | undefined) || 100
 
@@ -2597,9 +2752,6 @@ export abstract class BaseClient {
         )
         if (track) {
           tracks.push(track as YouTubeTrackData)
-          if (currentVideoId && track.info.identifier === currentVideoId) {
-            selectedTrack = i
-          }
         }
       } catch (err: unknown) {
         logger(
@@ -2618,6 +2770,12 @@ export abstract class BaseClient {
       )
       return { loadType: 'empty', data: {} }
     }
+
+    const selectedTrack = resolveSelectedTrackIndex(
+      tracks,
+      currentVideoId,
+      targetIndex
+    )
 
     let playlistTitle = 'Unknown Playlist'
     if (plData?.title) {
@@ -2670,7 +2828,9 @@ export abstract class BaseClient {
     playlistId: string,
     browseResponseRaw: unknown,
     sourceName: string,
-    _context?: YouTubeContext
+    _context?: YouTubeContext,
+    currentVideoId?: string | null,
+    targetIndex?: number | null
   ): Promise<SourceResult> {
     if (!browseResponseRaw || typeof browseResponseRaw !== 'object') {
       return { loadType: 'empty', data: {} }
@@ -2851,10 +3011,16 @@ export abstract class BaseClient {
       }
     }
 
+    const selectedTrack = resolveSelectedTrackIndex(
+      tracks,
+      currentVideoId,
+      targetIndex
+    )
+
     return {
       loadType: 'playlist',
       data: {
-        info: { name: playlistTitle, selectedTrack: 0 },
+        info: { name: playlistTitle, selectedTrack },
         pluginInfo: {},
         tracks
       }
@@ -2876,17 +3042,32 @@ export abstract class BaseClient {
     const streamingData = playerResponse.streamingData
 
     if (!streamingData) {
+      const playabilityStatus = playerResponse.playabilityStatus?.status
+      const playabilityReason = playerResponse.playabilityStatus?.reason
+      const responseVideoId = playerResponse.videoDetails?.videoId
+      const detail = [
+        playabilityStatus ? `status=${playabilityStatus}` : null,
+        playabilityReason ? `reason=${playabilityReason}` : null,
+        responseVideoId ? `responseVideoId=${responseVideoId}` : null
+      ]
+        .filter(Boolean)
+        .join(', ')
       logger(
-        'error',
+        'warn',
         `youtube-${this.name}`,
-        `No streaming data found for ${decodedTrack.identifier}`
+        `Player response has no streamingData for ${decodedTrack.identifier}${detail ? ` (${detail})` : ''}`
       )
       return {
         loadType: 'error',
         exception: {
-          message: 'No streaming data available.',
+          message: detail
+            ? `No streaming data available (${detail}).`
+            : 'No streaming data available.',
           severity: 'common',
-          cause: 'UpstreamNoStream'
+          cause:
+            playabilityStatus && playabilityStatus !== 'OK'
+              ? 'UpstreamPlayability'
+              : 'UpstreamNoStream'
         }
       }
     }
@@ -3329,8 +3510,12 @@ export abstract class BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!playlistIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           logger(
             'error',
             `youtube-${this.name}`,
@@ -3346,11 +3531,17 @@ export abstract class BaseClient {
           }
         }
 
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
-
         const headers = this.oauth ? await this.oauth.getAuthHeaders() : {}
+        const requestBody: Record<string, unknown> = {
+          context: { client: this.getClient(context) },
+          playlistId,
+          contentCheckOk: true,
+          racyCheckOk: true
+        }
+        if (currentVideoId) {
+          requestBody.videoId = currentVideoId
+        }
+
         const playlistResponse = await makeRequest(
           `${apiEndpoint}/youtubei/v1/next`,
           {
@@ -3358,12 +3549,7 @@ export abstract class BaseClient {
               'User-Agent': this.getClient(context).client.userAgent,
               ...headers
             },
-            body: {
-              context: { client: this.getClient(context) },
-              playlistId,
-              contentCheckOk: true,
-              racyCheckOk: true
-            },
+            body: requestBody,
             method: 'POST',
             disableBodyCompression: true,
             proxy: this.getProxy()
@@ -3398,7 +3584,8 @@ export abstract class BaseClient {
           currentVideoId,
           plBody ?? {},
           sourceName,
-          context
+          context,
+          targetIndex
         )
       }
 

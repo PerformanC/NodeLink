@@ -9,6 +9,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   HttpRequestHeaders,
@@ -17,6 +18,7 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
+  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -255,6 +257,11 @@ interface DeezerEntity {
    * Smaller collection artwork fallback.
    */
   cover_medium?: string | null
+
+  /**
+   * Redirecting playlist or artist artwork URL, used as a last resort.
+   */
+  picture?: string | null
 
   /**
    * Largest playlist or artist artwork variant.
@@ -624,6 +631,89 @@ interface DeezerSourceManager {
  */
 export default class DeezerSource {
   /**
+   * Declarative test suite for validating Deezer source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'deezer.track.resolve',
+      name: 'Deezer Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.deezer.com/track/138547415'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Creep' },
+          author: { op: 'matches', value: 'Radiohead' },
+          isrc: { op: 'matches', value: 'GBAYE9200070' },
+          sourceName: { op: 'equals', value: 'deezer' }
+        }
+      }
+    },
+    {
+      id: 'deezer.album.resolve',
+      name: 'Deezer Album URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.deezer.com/album/302127'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 10 },
+        metadata: {
+          author: { op: 'matches', value: 'Daft Punk' }
+        }
+      }
+    },
+    {
+      id: 'deezer.playlist.resolve',
+      name: 'Deezer Playlist URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.deezer.com/playlist/908622995'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 20 }
+      }
+    },
+    {
+      id: 'deezer.search.dzsearch',
+      name: 'Deezer Search query (dzsearch:)',
+      input: {
+        type: 'search',
+        value: 'Radiohead Creep',
+        searchType: 'dzsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Creep' }
+        }
+      }
+    },
+    {
+      id: 'deezer.search.dzisrc',
+      name: 'Deezer ISRC search (dzisrc:)',
+      input: {
+        type: 'search',
+        value: 'GBAYE9200070',
+        searchType: 'dzisrc'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          isrc: { op: 'matches', value: 'GBAYE9200070' }
+        }
+      }
+    }
+  ]
+
+  /**
    * Runtime worker context used by the source implementation.
    */
   public readonly nodelink: WorkerNodeLink
@@ -951,9 +1041,31 @@ export default class DeezerSource {
           )
         }
 
-        const artworkUrl = entity.cover_xl ?? entity.picture_xl ?? null
+        // Album track listings don't embed an `album` object, so their tracks
+        // fall back to the album's own cover. Playlist tracks do carry one, so
+        // they must keep their own album cover instead of the playlist picture.
+        const trackArtworkFallback =
+          type === 'album'
+            ? (entity.cover_xl ??
+              entity.cover_big ??
+              entity.cover_medium ??
+              null)
+            : null
+        const author =
+          type === 'album'
+            ? entity.artist?.name?.trim() || ''
+            : entity.creator?.name?.trim() || entity.user?.name?.trim() || ''
+        const thumbnail =
+          entity.cover_xl ||
+          entity.cover_big ||
+          entity.cover_medium ||
+          entity.picture_xl ||
+          entity.picture_big ||
+          entity.picture_medium ||
+          entity.picture ||
+          ''
         const tracks = tracksResponse.data
-          .map((item) => this.buildTrack(item, artworkUrl))
+          .map((item) => this.buildTrack(item, trackArtworkFallback))
           .filter((track): track is DeezerTrackData => track !== null)
 
         if (tracks.length === 0) return { loadType: 'empty', data: {} }
@@ -965,7 +1077,17 @@ export default class DeezerSource {
               name: entity.title ?? 'Unknown Deezer Collection',
               selectedTrack: 0
             },
-            pluginInfo: {} as Record<string, unknown>,
+            pluginInfo: {
+              type,
+              identifier: String(id),
+              url: entity.link ?? `https://www.deezer.com/${type}/${id}`,
+              artworkUrl: thumbnail,
+              author,
+              totalTracks: capTotalTracks(
+                entity.nb_tracks ?? tracks.length,
+                this.config.playback?.maxPlaylistLength
+              )
+            },
             tracks
           } satisfies DeezerPlaylistData
         }
@@ -1187,6 +1309,10 @@ export default class DeezerSource {
    * downstream stream closes or errors, which avoids leaking listeners across
    * interrupted playback attempts.
    *
+   * Backpressure is forwarded to the upstream response: when the consumer
+   * cannot keep up, the HTTP stream is paused instead of buffering the whole
+   * track in memory, which keeps concurrent-player memory usage bounded.
+   *
    * @param decodedTrack Decoded Deezer track metadata being played.
    * @param url Direct encrypted stream URL returned by `getTrackUrl(...)`.
    * @param _format Unused direct-stream format hint.
@@ -1273,6 +1399,7 @@ export default class DeezerSource {
         sourceStream.removeListener('data', handleData)
         sourceStream.removeListener('end', handleEnd)
         sourceStream.removeListener('error', handleSourceError)
+        outputStream.removeListener('drain', handleOutputDrain)
         outputStream.removeListener('close', handleOutputClose)
         outputStream.removeListener('error', handleOutputError)
       }
@@ -1280,6 +1407,31 @@ export default class DeezerSource {
       const destroySource = (error?: Error): void => {
         if (!sourceStream.destroyed) {
           sourceStream.destroy(error)
+        }
+      }
+
+      /**
+       * Forwards bytes to the consumer and propagates backpressure upstream.
+       *
+       * Deezer's CDN is normally much faster than realtime playback, so without
+       * pausing the HTTP response the whole track would be buffered in memory
+       * for every active player.
+       *
+       * @param data Decrypted or passthrough stream bytes.
+       */
+      const writeOutput = (data: Buffer): void => {
+        if (outputStream.destroyed || outputStream.writableEnded) return
+        if (!outputStream.write(data) && !sourceStream.destroyed) {
+          sourceStream.pause()
+        }
+      }
+
+      /**
+       * Resumes the upstream response once the consumer drained the buffer.
+       */
+      const handleOutputDrain = (): void => {
+        if (!sourceStream.destroyed) {
+          sourceStream.resume()
         }
       }
 
@@ -1296,9 +1448,9 @@ export default class DeezerSource {
             const encryptedBlock = data.subarray(offset, offset + bufferSize)
             if (chunkIndex % 3 === 0) {
               blowfish.setIv(IV)
-              outputStream.push(Buffer.from(blowfish.decode(encryptedBlock)))
+              writeOutput(blowfish.decode(encryptedBlock))
             } else {
-              outputStream.push(encryptedBlock)
+              writeOutput(encryptedBlock)
             }
             chunkIndex++
             offset += bufferSize
@@ -1320,11 +1472,15 @@ export default class DeezerSource {
 
       const handleEnd = (): void => {
         cleanup()
-        if (remainder.length > 0 && !outputStream.destroyed) {
-          outputStream.push(remainder)
+        if (
+          remainder.length > 0 &&
+          !outputStream.destroyed &&
+          !outputStream.writableEnded
+        ) {
+          outputStream.write(remainder)
           remainder = Buffer.alloc(0)
         }
-        if (!outputStream.destroyed) {
+        if (!outputStream.destroyed && !outputStream.writableEnded) {
           outputStream.emit('finishBuffering')
           outputStream.end()
         }
@@ -1355,6 +1511,7 @@ export default class DeezerSource {
       sourceStream.on('data', handleData)
       sourceStream.once('end', handleEnd)
       sourceStream.once('error', handleSourceError)
+      outputStream.on('drain', handleOutputDrain)
       outputStream.once('close', handleOutputClose)
       outputStream.once('error', handleOutputError)
 

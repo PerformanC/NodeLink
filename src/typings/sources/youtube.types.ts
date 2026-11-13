@@ -54,6 +54,12 @@ export interface IOAuth {
    * @returns Promise resolving to header key-value map
    */
   getAuthHeaders(): Promise<Record<string, string>>
+
+  /**
+   * Whether any refresh token is configured (without validating it).
+   * @returns True when at least one non-empty refresh token exists
+   */
+  hasRefreshToken(): boolean
 }
 
 /**

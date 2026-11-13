@@ -1,6 +1,6 @@
 {
     "name": "nodelink",
-    "version": "3.9.0",
+    "version": "3.10.0-dev.2026-11-13.0",
     "scripts": {
         "build": "tsc --incremental false",
         "start": "node -e \"const v=process.versions.node.split('.').map(Number); const t=(v[0]===22&&v[1]>=6)||v[0]>=23; require('child_process').spawnSync('node', ['--dns-result-order=ipv4first', ...(t?['--experimental-strip-types','src/index.ts']:['dist/src/index.js']), ...process.argv.slice(1)], {stdio:'inherit'})\" --",
@@ -22,18 +22,18 @@
         "@performanc/pwsl-server": "github:performanc/internals#PWSL-server",
         "@performanc/voice": "github:PerformanC/voice",
         "@toddynnn/symphonia-decoder": "^1.2.3",
-        "@toddynnn/voice-opus": "^1.0.1",
+        "@toddynnn/voice-opus": "^2.0.0",
         "fastest-validator": "^1.19.1",
-        "mp4box": "^2.4.1",
+        "mp4box": "^2.5.0",
         "prom-client": "^15.1.3",
         "proxy-agent": "^8.0.2"
     },
     "devDependencies": {
-        "@biomejs/biome": "^2.5.0",
+        "@biomejs/biome": "^2.6.5",
         "@commitlint/cli": "21.0.2",
         "@commitlint/config-conventional": "21.0.2",
-        "@types/bun": "^1.3.14",
-        "@types/node": "^26.0.0",
+        "@types/bun": "^1.4.4",
+        "@types/node": "^26.6.6",
         "dotenv": "^17.4.2",
         "husky": "9.1.7",
         "typescript": "^7.0.2"

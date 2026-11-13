@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parentPort } from 'node:worker_threads'
 import type {
   FeatureToggle,
   NodelinkConfig,
@@ -15,6 +16,8 @@ import type {
 } from '../typings/playback/player.types.ts'
 import type {
   PlaylistData,
+  SourceHealthMetricMessage,
+  SourceHealthMetricPayload,
   SourceInstance,
   SourceResult,
   TrackCacheManager,
@@ -23,6 +26,10 @@ import type {
   TrackStreamResult,
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestMatcher
+} from '../typings/sources/test.types.ts'
 import { getBestMatch, logger } from '../utils.ts'
 
 /**
@@ -61,7 +68,8 @@ export interface SourcesManagerContext {
   sourceWorkerManager?: unknown
   /** Global plugin manager for hook execution. */
   pluginManager?: import('./pluginManager.ts').default | null
-  [key: string]: unknown
+  /** Global source health and observability manager. */
+  sourceHealthManager?: import('./sourceHealthManager.ts').default | null
 }
 
 /**
@@ -73,6 +81,10 @@ interface SourceModule {
   default?: new (
     ctx: SourcesManagerContext
   ) => SourceInstance
+}
+
+interface SourceTestProvider {
+  readonly _TESTS?: readonly SourceTestCase[]
 }
 
 /**
@@ -184,6 +196,7 @@ export default class SourcesManager implements SourceManagerLike {
             }
           }
         }
+        this.nodelink.sourceHealthManager?.registerSource(sourceKey)
         logger('info', 'Sources', `Loaded source: ${sourceKey}`)
       }
     }
@@ -264,6 +277,204 @@ export default class SourcesManager implements SourceManagerLike {
     )
   }
 
+  /** Runs one bounded, declarative source test without downloading or decoding audio. */
+  public async runHealthProbe(sourceName: string): Promise<void> {
+    const instance = this.sources.get(sourceName)
+    if (!instance) throw new Error(`Source "${sourceName}" is not loaded`)
+
+    const cases = (instance.constructor as SourceTestProvider)._TESTS ?? []
+    const testCase = cases.find(
+      (candidate) =>
+        !candidate.skip &&
+        !candidate.matrix &&
+        !candidate.expect.stream?.required
+    )
+    if (!testCase)
+      throw new Error(
+        `Source "${sourceName}" has no lightweight declarative test`
+      )
+
+    const operation = async (): Promise<SourceResult> => {
+      if (testCase.input.type === 'search') {
+        if (!instance.search)
+          throw new Error('Test requires unsupported search operation')
+        return instance.search(
+          testCase.input.value,
+          sourceName,
+          testCase.input.searchType
+        )
+      }
+      if (!instance.resolve)
+        throw new Error('Test requires unsupported resolve operation')
+      return instance.resolve(testCase.input.value)
+    }
+
+    let timeout: NodeJS.Timeout | undefined
+    const result = await Promise.race([
+      operation(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Declarative source check timed out')),
+          5000
+        )
+        timeout.unref?.()
+      })
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout)
+    })
+    if (result.loadType === 'error') throw new Error(result.exception.message)
+    if (result.loadType === 'empty') throw new Error('Test returned empty')
+
+    const expected = testCase.expect.result.type
+    const actual =
+      result.loadType === 'track' || result.loadType === 'episode'
+        ? 'track'
+        : result.loadType === 'search'
+          ? 'search'
+          : 'playlist'
+    if (expected !== actual) {
+      throw new Error(`Declarative test expected ${expected}, got ${actual}`)
+    }
+
+    const minimum = testCase.expect.collection?.minItems ?? 1
+    const count =
+      result.loadType === 'search'
+        ? result.data.length
+        : result.loadType === 'track' || result.loadType === 'episode'
+          ? 1
+          : (result.data as PlaylistData).tracks.length
+    if (count < minimum)
+      throw new Error(
+        `Test returned ${count} items; expected at least ${minimum}`
+      )
+
+    const primaryTrack =
+      result.loadType === 'track' || result.loadType === 'episode'
+        ? result.data.info
+        : result.loadType === 'search'
+          ? result.data[0]?.info
+          : (result.data as PlaylistData).tracks[0]?.info
+    if (testCase.expect.metadata && !primaryTrack) {
+      throw new Error('Test returned no track metadata to validate')
+    }
+    for (const [key, matcher] of Object.entries(
+      testCase.expect.metadata ?? {}
+    ) as [keyof TrackInfo, SourceTestMatcher][]) {
+      const actual = primaryTrack?.[key]
+      if (!this.matchesSourceTestValue(matcher, actual)) {
+        throw new Error(
+          `Test metadata assertion failed for "${key}" (got ${String(actual)})`
+        )
+      }
+    }
+  }
+
+  private matchesSourceTestValue(
+    matcher: SourceTestMatcher,
+    actual: unknown
+  ): boolean {
+    switch (matcher.op) {
+      case 'equals':
+        return actual === matcher.value
+      case 'not-equals':
+        return actual !== matcher.value
+      case 'matches':
+      case 'not-matches': {
+        const regex =
+          matcher.value instanceof RegExp
+            ? matcher.value
+            : new RegExp(String(matcher.value), 'i')
+        const matches = regex.test(String(actual ?? ''))
+        return matcher.op === 'matches' ? matches : !matches
+      }
+      case 'between': {
+        const value = Number(actual)
+        return value >= matcher.min && value <= matcher.max
+      }
+      case 'at-least':
+        return Number(actual) >= matcher.value
+      case 'at-most':
+        return Number(actual) <= matcher.value
+      case 'exists': {
+        const exists = actual !== undefined && actual !== null && actual !== ''
+        return exists === matcher.value
+      }
+    }
+  }
+
+  /** Returns enabled providers with a declarative case suitable for a lightweight check. */
+  public getHealthProbeSources(): string[] {
+    return Array.from(this.sources.entries())
+      .filter(([, instance]) =>
+        (instance.constructor as SourceTestProvider)._TESTS?.some(
+          (testCase) =>
+            !testCase.skip &&
+            !testCase.matrix &&
+            !testCase.expect.stream?.required
+        )
+      )
+      .map(([name]) => name)
+  }
+
+  /**
+   * Reports an execution metric to the SourceHealthManager or forwards it via IPC.
+   * @param sourceName - Source identifier.
+   * @param success - Whether the call succeeded.
+   * @param duration - Call duration in milliseconds.
+   * @param error - Optional error message or object.
+   * @param httpStatus - Optional HTTP status code.
+   * @private
+   */
+  private _reportHealthMetric(
+    sourceName: string,
+    success: boolean,
+    duration: number,
+    error?: unknown,
+    httpStatus?: number | null
+  ): void {
+    const healthSourceName = sourceName === 'ytmusic' ? 'youtube' : sourceName
+    const healthManager = this.nodelink.sourceHealthManager
+    if (healthManager) {
+      if (success) {
+        healthManager.recordSuccess(healthSourceName, duration)
+      } else {
+        healthManager.recordFailure(healthSourceName, duration, error)
+      }
+      return
+    }
+
+    const errorMsg =
+      error instanceof Error
+        ? error.message
+        : typeof error === 'string'
+          ? error
+          : error
+            ? String(error)
+            : undefined
+
+    const payload: SourceHealthMetricPayload = {
+      sourceName: healthSourceName,
+      success,
+      duration,
+      error: errorMsg,
+      httpStatus
+    }
+
+    if (parentPort) {
+      const msg: SourceHealthMetricMessage = {
+        type: 'sourceHealthMetric',
+        payload
+      }
+      parentPort.postMessage(msg)
+      return
+    }
+
+    process.send?.({
+      type: 'sourceHealthMetric',
+      payload
+    })
+  }
+
   /**
    * Executes a source method with metric tracking and error handling.
    * @param sourceName - The identifier of the source to call.
@@ -290,6 +501,8 @@ export default class SourcesManager implements SourceManagerLike {
       )
     }
 
+    const start = performance.now()
+
     try {
       const fn = (instance as Record<string, unknown>)[method] as
         | ((...a: unknown[]) => Promise<SourceResult>)
@@ -298,6 +511,8 @@ export default class SourcesManager implements SourceManagerLike {
         throw new Error(`Method ${method} not found on source ${sourceName}`)
       }
       const result = await fn.apply(instance, args)
+      const duration = Math.round(performance.now() - start)
+
       if (result.loadType === 'search') {
         for (const track of result.data) track.userData ??= {}
       } else if (result.loadType === 'track' || result.loadType === 'episode') {
@@ -312,12 +527,21 @@ export default class SourcesManager implements SourceManagerLike {
 
       if (result.loadType === 'error') {
         this.nodelink.statsManager?.incrementSourceFailure?.(sourceName)
+        this._reportHealthMetric(
+          sourceName,
+          false,
+          duration,
+          result.exception?.message ?? 'Source returned error loadType'
+        )
       } else {
         this.nodelink.statsManager?.incrementSourceSuccess?.(sourceName)
+        this._reportHealthMetric(sourceName, true, duration)
       }
       return result
     } catch (e) {
+      const duration = Math.round(performance.now() - start)
       this.nodelink.statsManager?.incrementSourceFailure?.(sourceName)
+      this._reportHealthMetric(sourceName, false, duration, e)
       throw e
     }
   }
@@ -617,16 +841,35 @@ export default class SourcesManager implements SourceManagerLike {
         }
       }
 
-      return (await sourceGetTrackUrl.call(
-        instance,
-        track,
-        itag,
-        isRecovering
-      )) as TrackUrlResult & {
-        protocol?: string
-        format?: TrackFormat
-        trackInfo?: TrackInfoExtended
-        additionalData?: Record<string, unknown>
+      const trackStart = performance.now()
+      try {
+        const urlResult = (await sourceGetTrackUrl.call(
+          instance,
+          track,
+          itag,
+          isRecovering
+        )) as TrackUrlResult & {
+          protocol?: string
+          format?: TrackFormat
+          trackInfo?: TrackInfoExtended
+          additionalData?: Record<string, unknown>
+        }
+        const trackDuration = Math.round(performance.now() - trackStart)
+        if (urlResult.exception) {
+          this._reportHealthMetric(
+            track.sourceName,
+            false,
+            trackDuration,
+            urlResult.exception.message
+          )
+        } else {
+          this._reportHealthMetric(track.sourceName, true, trackDuration)
+        }
+        return urlResult
+      } catch (err) {
+        const trackDuration = Math.round(performance.now() - trackStart)
+        this._reportHealthMetric(track.sourceName, false, trackDuration, err)
+        throw err
       }
     })
   }

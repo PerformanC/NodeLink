@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 const CHANNELS = 2;
@@ -8,6 +9,7 @@ const CHANNELS = 2;
  */
 export default class ChannelMix extends AnimatableFilter {
     priority = 10;
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     leftToLeft = 1.0;
     leftToRight = 0.0;
     rightToLeft = 0.0;
@@ -56,6 +58,23 @@ export default class ChannelMix extends AnimatableFilter {
             const newRight = left * this.leftToRight + right * this.rightToRight;
             chunk.writeInt16LE(clamp16Bit(newLeft), i);
             chunk.writeInt16LE(clamp16Bit(newRight), i + 2);
+        }
+        return chunk;
+    }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('ChannelMix Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.leftToLeft >= 0.999 &&
+            this.leftToRight <= 0.001 &&
+            this.rightToLeft <= 0.001 &&
+            this.rightToRight >= 0.999)
+            return chunk;
+        for (let i = 0; i < chunk.length; i += 8) {
+            const left = chunk.readFloatLE(i);
+            const right = chunk.readFloatLE(i + 4);
+            chunk.writeFloatLE(left * this.leftToLeft + right * this.rightToLeft, i);
+            chunk.writeFloatLE(left * this.leftToRight + right * this.rightToRight, i + 4);
         }
         return chunk;
     }

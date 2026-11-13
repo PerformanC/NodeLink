@@ -3,6 +3,24 @@ import type { VoiceAudioStream } from '@performanc/voice'
 import type { PlayerTrack } from './player.types.ts'
 import type { RingBufferLike } from './streamProcessor.types.ts'
 
+export type {
+  AudioAmplitudeBehavior,
+  AudioAmplitudeBounds,
+  AudioAmplitudeProcessing,
+  AudioBlock,
+  AudioBlockGainReductionMetrics,
+  AudioBlockMetadata,
+  AudioCapabilities,
+  AudioChannelLayout,
+  AudioFormat,
+  AudioFormatOptions,
+  AudioProcessingMode,
+  AudioProcessingTelemetrySnapshot,
+  AudioSampleFormat,
+  AudioTelemetryBlockInput,
+  AudioTelemetryWindowSnapshot
+} from '../../playback/processing/audioContract.ts'
+
 /**
  * Supported fading curve types.
  */
@@ -192,4 +210,8 @@ export interface MixLayer {
   pending: Buffer
   /** Whether the layer is currently paused due to buffer fullness. */
   paused: boolean
+  /** Protected-mode master-frame anchor set when decoded PCM first arrives. */
+  protectedStartFrame?: number | null
+  /** Protected-mode source-frame offset consumed against the master clock. */
+  protectedSourceFrameOffset?: number
 }

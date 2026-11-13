@@ -4,4 +4,5 @@
  * @public
  */
 export class BaseFilter {
+    audioCapabilities;
 }

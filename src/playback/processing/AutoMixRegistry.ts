@@ -6,7 +6,8 @@
  * @license GPL-3.0-or-later
  * @copyright (C) 2026 PerformanC
  *
- * @keywords AutoMix, Background Audio Analysis, Concurrency Throttling, Adaptive Early-Stop, Priority Scheduling, PCM Audio Profiling
+ * @keywords AutoMix, Background Audio Analysis, Concurrency Throttling, Adaptive Early-Stop,
+ *   Priority Scheduling, PCM Audio Profiling
  *
  * @description
  * CPU-aware, budget-conscious analysis registry and priority queue for AutoMix.
@@ -32,9 +33,10 @@ import type {
 } from '../../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../../typings/sources/source.types.ts'
 import { logger } from '../../utils.ts'
+import { requestPcmAnalysis } from './analysisDelegation.ts'
 import {
+  calculatePcmRms,
   inspectTrackOutroQuick,
-  MusicalAnalyzer,
   type TrackPreAnalysisProfile,
   TransitionProfileCache
 } from './MusicalAnalyzer.ts'
@@ -42,6 +44,7 @@ import {
 /**
  * Priority levels for background analysis jobs.
  */
+
 export type AnalysisJobPriority =
   /** Transition scheduled in < 15s or immediate. */
   | 'IMMINENT_TRANSITION'
@@ -78,7 +81,9 @@ export interface AnalysisRequestOptions {
 
 interface QueuedJob {
   jobId: string
+  deduplicationKey: string
   trackIdentifier: string
+  promise: Promise<TrackPreAnalysisProfile | null>
   options: AnalysisRequestOptions
   priority: AnalysisJobPriority
   createdAt: number
@@ -88,6 +93,7 @@ interface QueuedJob {
 
 interface InFlightJob {
   jobId: string
+  deduplicationKey: string
   trackIdentifier: string
   priority: AnalysisJobPriority
   startedAt: number
@@ -105,6 +111,7 @@ export class AutoMixRegistry {
   private static instance: AutoMixRegistry | null = null
 
   private readonly inFlightJobs = new Map<string, InFlightJob>()
+  private readonly queuedJobs = new Map<string, QueuedJob>()
   private readonly queue: QueuedJob[] = []
   private readonly MAX_QUEUE_SIZE = 30
   private maxConcurrent = 2
@@ -159,49 +166,45 @@ export class AutoMixRegistry {
     windowDurationMs: number,
     priority: AnalysisJobPriority
   ): boolean {
-    if (priority === 'PASSIVE_REFINEMENT' && cached.confidence >= 0.5) {
-      return true
-    }
-
-    if (cached.outroProfile) {
-      const cachedStart = cached.outroProfile.analyzedWindowStartMs
-      const cachedEnd = cached.outroProfile.analyzedWindowEndMs
-      const requestedEnd = windowStartMs + windowDurationMs
-
-      const overlapStart = Math.max(cachedStart, windowStartMs)
-      const overlapEnd = Math.min(cachedEnd, requestedEnd)
-      const overlapDuration = Math.max(0, overlapEnd - overlapStart)
-      const overlapRatio =
-        windowDurationMs > 0 ? overlapDuration / windowDurationMs : 1.0
-
-      if (
-        overlapRatio >= 0.7 &&
-        cached.outroProfile.analysisConfidence >= 0.45
-      ) {
-        return true
-      }
-    }
-
-    if (
-      (cached.outroProfile?.analysisConfidence ?? cached.confidence) >= 0.65
-    ) {
-      return true
-    }
-
-    return false
+    const profile = cached.outroProfile
+    if (!profile || windowDurationMs <= 0) return false
+    const requestedEnd = windowStartMs + windowDurationMs
+    const overlapStart = Math.max(profile.analyzedWindowStartMs, windowStartMs)
+    const overlapEnd = Math.min(profile.analyzedWindowEndMs, requestedEnd)
+    const overlapDuration = Math.max(0, overlapEnd - overlapStart)
+    const overlapRatio = overlapDuration / windowDurationMs
+    const minimumConfidence = priority === 'IMMINENT_TRANSITION' ? 0.55 : 0.45
+    return (
+      overlapRatio >= 0.7 && profile.analysisConfidence >= minimumConfidence
+    )
   }
 
   /**
-   * Requests background outro analysis for a track with deduplication, priority scheduling, and CPU budget enforcement.
+   * Requests background outro analysis for a track with deduplication, priority scheduling, and CPU
+   * budget enforcement.
    */
   public async requestOutroAnalysis(
     options: AnalysisRequestOptions
   ): Promise<TrackPreAnalysisProfile | null> {
     const trackId = options.track.info.identifier
-    const windowDurationMs = options.windowDurationMs ?? 25000
+    const windowDurationMs = Math.max(1, options.windowDurationMs ?? 25000)
     const trackLength = options.track.info.length || 0
     const windowStartMs =
       options.windowStartMs ?? Math.max(0, trackLength - windowDurationMs)
+    const deduplicationKey = [
+      trackId,
+      Math.round(windowStartMs),
+      Math.round(windowDurationMs)
+    ].join(':')
+    const attachCompletion = (
+      promise: Promise<TrackPreAnalysisProfile | null>
+    ): Promise<TrackPreAnalysisProfile | null> =>
+      options.onComplete
+        ? promise.then((profile) => {
+            if (profile) options.onComplete?.(profile)
+            return profile
+          })
+        : promise
 
     const cached = TransitionProfileCache.get(trackId)
     if (
@@ -241,8 +244,7 @@ export class AutoMixRegistry {
       options.onComplete?.(cached)
       return cached
     }
-
-    const inFlight = this.inFlightJobs.get(trackId)
+    const inFlight = this.inFlightJobs.get(deduplicationKey)
     if (inFlight) {
       logger(
         'info',
@@ -252,7 +254,9 @@ export class AutoMixRegistry {
           trackId,
           reusedExistingJob: true,
           existingJobId: inFlight.jobId,
-          priority: options.priority
+          priority: options.priority,
+          windowStartMs: Math.round(windowStartMs),
+          windowDurationMs: Math.round(windowDurationMs)
         }
       )
       if (
@@ -260,7 +264,26 @@ export class AutoMixRegistry {
       ) {
         inFlight.priority = options.priority
       }
-      return inFlight.promise
+      return attachCompletion(inFlight.promise)
+    }
+    const queued = this.queuedJobs.get(deduplicationKey)
+    if (queued) {
+      if (PRIORITY_ORDER[options.priority] < PRIORITY_ORDER[queued.priority]) {
+        queued.priority = options.priority
+        queued.options.priority = options.priority
+        this.queue.sort(
+          (a, b) =>
+            PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
+            a.createdAt - b.createdAt
+        )
+      }
+      logger(
+        'debug',
+        'AutoMix',
+        `[AutoMix][BackgroundAnalysis] Deduplicated queued job for ${trackId}`,
+        { trackId, jobId: queued.jobId, priority: queued.priority }
+      )
+      return attachCompletion(queued.promise)
     }
 
     if (this.queue.length >= this.MAX_QUEUE_SIZE) {
@@ -270,14 +293,25 @@ export class AutoMixRegistry {
           'AutoMix',
           `[AutoMix][BackgroundAnalysis] Queue saturated, dropping passive refinement for ${trackId}`
         )
-        return cached ?? null
+        return null
       }
       const lowestIndex = this.queue.findIndex(
-        (j) => j.priority === 'PASSIVE_REFINEMENT'
+        (job) => job.priority === 'PASSIVE_REFINEMENT'
       )
       if (lowestIndex >= 0) {
         const evicted = this.queue.splice(lowestIndex, 1)[0]
-        evicted?.resolve(null)
+        if (evicted) {
+          this.queuedJobs.delete(evicted.deduplicationKey)
+          evicted.resolve(null)
+        }
+      } else {
+        logger(
+          'warn',
+          'AutoMix',
+          `[AutoMix][BackgroundAnalysis] Queue full, rejecting ${options.priority} job for ${trackId}`,
+          { trackId, priority: options.priority, queueSize: this.queue.length }
+        )
+        return null
       }
     }
 
@@ -297,25 +331,33 @@ export class AutoMixRegistry {
         windowDurationMs: Math.round(windowDurationMs)
       }
     )
-
-    return new Promise<TrackPreAnalysisProfile | null>((resolve, reject) => {
-      const queuedJob: QueuedJob = {
-        jobId,
-        trackIdentifier: trackId,
-        options: {
-          ...options,
-          windowStartMs,
-          windowDurationMs
-        },
-        priority: options.priority,
-        createdAt: performance.now(),
-        resolve,
-        reject
+    let resolveJob!: (profile: TrackPreAnalysisProfile | null) => void
+    let rejectJob!: (error: Error) => void
+    const promise = new Promise<TrackPreAnalysisProfile | null>(
+      (resolve, reject) => {
+        resolveJob = resolve
+        rejectJob = reject
       }
-
-      this._enqueueJob(queuedJob)
-      this._processQueue()
-    })
+    )
+    const queuedJob: QueuedJob = {
+      jobId,
+      deduplicationKey,
+      trackIdentifier: trackId,
+      promise,
+      options: {
+        ...options,
+        windowStartMs,
+        windowDurationMs
+      },
+      priority: options.priority,
+      createdAt: performance.now(),
+      resolve: resolveJob,
+      reject: rejectJob
+    }
+    this.queuedJobs.set(deduplicationKey, queuedJob)
+    this._enqueueJob(queuedJob)
+    this._processQueue()
+    return promise
   }
 
   private _enqueueJob(job: QueuedJob): void {
@@ -338,18 +380,19 @@ export class AutoMixRegistry {
     if (!job) return
 
     this.activeWorkers++
+    this.queuedJobs.delete(job.deduplicationKey)
     const abortController = new AbortController()
 
     const inFlight: InFlightJob = {
       jobId: job.jobId,
+      deduplicationKey: job.deduplicationKey,
       trackIdentifier: job.trackIdentifier,
       priority: job.priority,
       startedAt: performance.now(),
       abortController,
       promise: this._executeJob(job, abortController)
     }
-
-    this.inFlightJobs.set(job.trackIdentifier, inFlight)
+    this.inFlightJobs.set(job.deduplicationKey, inFlight)
 
     inFlight.promise
       .then((profile) => {
@@ -359,7 +402,7 @@ export class AutoMixRegistry {
         job.reject(err as Error)
       })
       .finally(() => {
-        this.inFlightJobs.delete(job.trackIdentifier)
+        this.inFlightJobs.delete(inFlight.deduplicationKey)
         this.activeWorkers--
         setImmediate(() => this._processQueue())
       })
@@ -409,88 +452,139 @@ export class AutoMixRegistry {
       const fetchMs = performance.now() - startFetchTime
 
       decodeStart = performance.now()
-      const analyzer = new MusicalAnalyzer(48000)
-      const expectedBytes = Math.round((windowDurationMs / 1000) * 48000 * 4)
-      const minStopBytes = Math.round(12 * 48000 * 4)
+      const expectedBytes = Math.max(
+        4,
+        Math.floor(((windowDurationMs / 1000) * 48000 * 4) / 4) * 4
+      )
 
       const resultPromise = new Promise<TrackPreAnalysisProfile | null>(
         (resolve) => {
           let finished = false
+          let analysisStarted = false
+          let streamEnd: 'eof' | 'error' | undefined
+          let streamSafetyTimer: NodeJS.Timeout | null = null
+          let analysisSafetyTimer: NodeJS.Timeout | null = null
+          const detachListeners = () => {
+            stream.removeListener('data', onData)
+            stream.removeListener('end', onEnd)
+            stream.removeListener('error', onError)
+            abortController.signal.removeEventListener('abort', onAbort)
+          }
 
           const finish = (profile: TrackPreAnalysisProfile | null) => {
             if (finished) return
             finished = true
-            stream.removeListener('data', onData)
-            stream.removeListener('end', onEnd)
-            stream.removeListener('error', onError)
+            if (streamSafetyTimer) clearTimeout(streamSafetyTimer)
+            if (analysisSafetyTimer) clearTimeout(analysisSafetyTimer)
+            detachListeners()
             try {
               streamResource?.destroy()
             } catch {}
             resolve(profile)
           }
-
-          const onData = (chunk: Buffer) => {
-            if (abortController.signal.aborted) {
-              finish(null)
-              return
-            }
-
-            chunks.push(chunk)
-            bytesRead += chunk.length
-            analyzer.pushPcm(chunk)
-
-            if (
-              bytesRead >= minStopBytes &&
-              bytesRead % (48000 * 4) < chunk.length
-            ) {
-              const currentProfile = analyzer.getProfile()
-              if (
-                currentProfile.confidence >= 0.72 &&
-                currentProfile.keyConfidence >= 0.6
-              ) {
-                stoppedEarly = true
-                onEnd()
-                return
-              }
-            }
-
-            if (bytesRead >= expectedBytes) {
-              onEnd()
-            }
-          }
-
-          const onEnd = () => {
-            if (finished) return
-            analyzeStart = performance.now()
-            if (chunks.length === 0) {
-              finish(null)
-              return
-            }
-
-            const pcm = Buffer.concat(chunks)
-            chunks.length = 0
-
-            const updatedProfile = inspectTrackOutroQuick(
+          const createFallbackProfile = (pcm: Buffer) =>
+            inspectTrackOutroQuick(
               pcm,
               48000,
               trackId,
               windowStartMs,
               trackLength
             )
+          const startAnalysis = () => {
+            if (finished || analysisStarted) return
+            analysisStarted = true
+            if (streamSafetyTimer) clearTimeout(streamSafetyTimer)
+            detachListeners()
+            stream.pause()
+            stoppedEarly = streamEnd === undefined && bytesRead >= expectedBytes
+            analyzeStart = performance.now()
+            if (bytesRead === 0) {
+              finish(null)
+              return
+            }
+            const pcm = Buffer.concat(chunks, bytesRead)
+            chunks.length = 0
+            const finishProfile = (profile: TrackPreAnalysisProfile) => {
+              const tailBytes = 48000 * 4 * 0.02
+              const paddingBytes = 48000 * 4 * 0.01
+              const precedingBytes = 48000 * 4 * 0.1
+              const tailStart = pcm.length - tailBytes - paddingBytes
+              if (
+                streamEnd === 'eof' &&
+                tailStart >= precedingBytes &&
+                profile.outroProfile
+              ) {
+                const tailRms = calculatePcmRms(pcm, tailStart, tailBytes)
+                const precedingRms = calculatePcmRms(
+                  pcm,
+                  tailStart - precedingBytes,
+                  precedingBytes
+                )
+                /* INFO: An audible tail that is still fading is weak evidence of a cut. */
+                profile.outroProfile.sourceEndRms =
+                  tailRms >= precedingRms * 0.5 ? tailRms : 0
+              }
+              TransitionProfileCache.set(trackId, profile)
+              finish(profile)
+            }
+            const finishWithFallback = () => {
+              try {
+                if (!finished) finishProfile(createFallbackProfile(pcm))
+              } catch {
+                finish(null)
+              }
+            }
+            analysisSafetyTimer = setTimeout(finishWithFallback, 5000)
+            analysisSafetyTimer.unref?.()
 
-            finish(updatedProfile)
+            void requestPcmAnalysis({
+              pcmBase64: pcm.toString('base64'),
+              sampleRate: 48000,
+              trackId,
+              windowStartMs,
+              trackLengthMs: trackLength
+            })
+              .then((remoteProfile) => {
+                // Preserve compatibility when the specialized source cluster is disabled.
+                if (!finished)
+                  finishProfile(remoteProfile ?? createFallbackProfile(pcm))
+              })
+              .catch(finishWithFallback)
+          }
+          const onData = (chunk: Buffer) => {
+            if (finished || analysisStarted) return
+            if (abortController.signal.aborted) {
+              finish(null)
+              return
+            }
+            const remainingBytes = Math.max(0, expectedBytes - bytesRead)
+            const bytesToTake = Math.min(chunk.length, remainingBytes)
+            const alignedBytes = bytesToTake - (bytesToTake % 4)
+            if (alignedBytes > 0) {
+              chunks.push(chunk.subarray(0, alignedBytes))
+              bytesRead += alignedBytes
+            }
+            if (bytesRead >= expectedBytes) startAnalysis()
+          }
+          const onEnd = () => {
+            streamEnd = 'eof'
+            startAnalysis()
           }
 
           const onError = () => {
-            finish(null)
+            streamEnd = 'error'
+            startAnalysis()
           }
+          const onAbort = () => finish(null)
 
           stream.on('data', onData)
           stream.once('end', onEnd)
           stream.once('error', onError)
-
-          const safetyTimer = setTimeout(() => finish(null), 7000)
-          safetyTimer.unref?.()
+          abortController.signal.addEventListener('abort', onAbort, {
+            once: true
+          })
+          streamSafetyTimer = setTimeout(startAnalysis, 7000)
+          streamSafetyTimer.unref?.()
         }
       )
 
@@ -531,7 +625,7 @@ export class AutoMixRegistry {
           completedAt: Math.round(performance.now()),
           elapsedMs: Math.round(totalMs),
           playbackContinued: true,
-          audioUnderrun: false,
+          playbackUnderrunObserved: null,
           eventLoopLagMaxMs: Math.round(this.maxEventLoopLagMs * 10) / 10,
           stoppedEarly,
           cancelled: false

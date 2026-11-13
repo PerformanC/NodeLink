@@ -192,3 +192,83 @@ export interface MonochromeLyricsResponse {
   version: string
   lyrics: TidalLyrics
 }
+
+/**
+ * Modern Monochrome v2.10 track structure.
+ */
+export interface MonochromeV2Track {
+  id?: string
+  trackId: string
+  title: string
+  duration: number
+  isrc?: string
+  explicit?: boolean
+  playable?: boolean
+  artistIds?: string[]
+  artistNames?: string[]
+  artists?: Array<{
+    artistId: string
+    name: string
+    username?: string
+    displayName?: string
+    avatar?: string
+  }>
+  releaseId?: string
+  recordingId?: string
+  artwork?: string
+  discNumber?: number
+  trackNumber?: number
+}
+
+/**
+ * Modern Monochrome v2.10 release / album structure.
+ */
+export interface MonochromeV2Release {
+  id?: string
+  releaseId: string
+  title: string
+  releaseType?: string
+  releaseDate?: string
+  label?: string
+  artwork?: string
+  trackCount?: number
+  artists?: Array<{
+    artistId: string
+    name: string
+    username?: string
+    displayName?: string
+    avatar?: string
+  }>
+  artistIds?: string[]
+  artistNames?: string[]
+  tracks?: MonochromeV2Track[]
+}
+
+/**
+ * Modern Monochrome v2.10 artist structure.
+ */
+export interface MonochromeV2Artist {
+  id?: string
+  artistId: string
+  name: string
+  username?: string
+  displayName?: string
+  sortName?: string
+  avatar?: string
+  bio?: string
+  topTracks?: MonochromeV2Track[]
+  releases?: MonochromeV2Release[]
+  albums?: MonochromeV2Release[]
+  singles?: MonochromeV2Release[]
+  compilations?: MonochromeV2Release[]
+}
+
+/**
+ * Modern Monochrome v2.10 search response.
+ */
+export interface MonochromeV2SearchResponse {
+  tracks?: MonochromeV2Track[]
+  releases?: MonochromeV2Release[]
+  artists?: MonochromeV2Artist[]
+  topResults?: unknown[]
+}

@@ -7,6 +7,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
@@ -34,6 +35,28 @@ interface NewgroundsAudioPage {
  * @public
  */
 export default class NewgroundsSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating Newgrounds source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'newgrounds.track.resolve',
+      name: 'Newgrounds Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.newgrounds.com/audio/listen/467339'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'At the Speed of Light' },
+          sourceName: { op: 'equals', value: 'newgrounds' }
+        }
+      }
+    }
+  ]
+
   public readonly nodelink: WorkerNodeLink
   public readonly patterns = [NEWGROUNDS_AUDIO_PATTERN]
   public readonly priority = 50

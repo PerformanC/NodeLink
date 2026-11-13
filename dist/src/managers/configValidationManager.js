@@ -34,7 +34,29 @@ export default class ConfigValidationManager {
                     },
                     password: { type: 'string', min: 1, optional: true },
                     useBunServer: { type: 'boolean', default: true, optional: true },
-                    cors: { type: 'boolean', default: false, optional: true }
+                    cors: { type: 'boolean', default: false, optional: true },
+                    maxBodySize: { type: 'number', integer: true, optional: true },
+                    bodyTimeout: { type: 'number', integer: true, optional: true },
+                    headersTimeout: { type: 'number', integer: true, optional: true },
+                    keepAliveTimeout: { type: 'number', integer: true, optional: true },
+                    autoUpdate: {
+                        type: 'object',
+                        optional: true,
+                        props: {
+                            enabled: { type: 'boolean', default: false, optional: true },
+                            channel: {
+                                type: 'string',
+                                enum: ['dev', 'stable'],
+                                default: 'dev',
+                                optional: true
+                            },
+                            checkOnBoot: { type: 'boolean', default: true, optional: true },
+                            checkInterval: { type: 'number', optional: true },
+                            autoRestart: { type: 'boolean', default: true, optional: true },
+                            forceRestart: { type: 'boolean', default: false, optional: true },
+                            drainTimeout: { type: 'number', default: 2000, optional: true }
+                        }
+                    }
                 }
             },
             cluster: {
@@ -62,11 +84,31 @@ export default class ConfigValidationManager {
                 type: 'object',
                 props: {
                     level: { type: 'string', default: 'info' },
+                    redaction: {
+                        type: 'object',
+                        optional: true,
+                        props: {
+                            enabled: { type: 'boolean', default: true },
+                            mode: { type: 'string', default: 'mask' },
+                            ips: { type: 'boolean', default: true },
+                            tokens: { type: 'boolean', default: true },
+                            passwords: { type: 'boolean', default: true },
+                            userPaths: { type: 'boolean', default: true },
+                            networkInfo: { type: 'boolean', default: true },
+                            cookies: { type: 'boolean', default: true },
+                            emails: { type: 'boolean', default: true },
+                            discordIds: { type: 'boolean', default: false },
+                            accountInfo: { type: 'boolean', default: true }
+                        }
+                    },
                     file: {
                         type: 'object',
                         props: {
                             enabled: { type: 'boolean', default: false },
-                            path: { type: 'string', default: 'logs' }
+                            path: { type: 'string', default: 'logs' },
+                            rotation: { type: 'string', default: 'daily' },
+                            ttlDays: { type: 'number', default: 7 },
+                            redactSensitive: { type: 'boolean', default: true }
                         }
                     }
                 }
@@ -78,20 +120,32 @@ export default class ConfigValidationManager {
                     timeout: { type: 'number', integer: true, min: 1000 }
                 }
             },
-            rateLimit: {
+            admission: {
                 type: 'object',
+                optional: true,
                 props: {
                     enabled: { type: 'boolean', default: true },
-                    global: { type: 'object' },
-                    perIp: { type: 'object' }
+                    guild: { type: 'object', optional: true },
+                    session: { type: 'object', optional: true },
+                    ip: { type: 'object', optional: true }
+                }
+            },
+            rateLimit: {
+                type: 'object',
+                optional: true,
+                props: {
+                    enabled: { type: 'boolean', default: true },
+                    global: { type: 'object', optional: true },
+                    perIp: { type: 'object', optional: true }
                 }
             },
             dosProtection: {
                 type: 'object',
+                optional: true,
                 props: {
                     enabled: { type: 'boolean', default: true },
-                    thresholds: { type: 'object' },
-                    mitigation: { type: 'object' }
+                    thresholds: { type: 'object', optional: true },
+                    mitigation: { type: 'object', optional: true }
                 }
             },
             trustProxy: { type: 'boolean', default: false },
@@ -200,12 +254,27 @@ export default class ConfigValidationManager {
                         type: 'object',
                         optional: true,
                         props: {
+                            processingMode: {
+                                type: 'string',
+                                enum: ['legacy', 'protected'],
+                                default: 'legacy',
+                                optional: true
+                            },
                             quality: {
                                 type: 'string',
                                 enum: ['high', 'medium', 'low', 'lowest']
                             },
                             encryption: { type: 'string', optional: true },
                             resamplingQuality: { type: 'string', optional: true },
+                            opusComplexity: {
+                                type: 'number',
+                                integer: true,
+                                min: 0,
+                                max: 10,
+                                optional: true,
+                                /* INFO: Normalize optional null values before they reach native codec controls. */
+                                default: () => undefined
+                            },
                             loudnessNormalizer: { type: 'boolean', optional: true },
                             fading: { type: 'object', optional: true },
                             crossfade: {
@@ -227,7 +296,7 @@ export default class ConfigValidationManager {
                                     },
                                     mode: {
                                         type: 'string',
-                                        enum: ['preload', 'stream'],
+                                        enum: ['preload', 'stream', 'smart'],
                                         optional: true
                                     },
                                     minBufferMs: {
@@ -257,6 +326,7 @@ export default class ConfigValidationManager {
                 props: {
                     enableTrackStreamEndpoint: { type: 'boolean', default: false },
                     enableLoadStreamEndpoint: { type: 'boolean', default: false },
+                    enableHlsEndpoint: { type: 'boolean', default: false },
                     metrics: { type: 'object', optional: true }
                 }
             },
@@ -265,6 +335,10 @@ export default class ConfigValidationManager {
                 props: {
                     enableHoloTracks: { type: 'boolean', default: false }
                 }
+            },
+            sourceHealth: {
+                type: 'object',
+                optional: true
             },
             sources: {
                 type: 'object',
@@ -323,6 +397,9 @@ export default class ConfigValidationManager {
                     instagram: { type: 'object', optional: true },
                     kwai: { type: 'object', optional: true },
                     twitch: { type: 'object', optional: true },
+                    chzzk: { type: 'object', optional: true },
+                    zingmp3: { type: 'object', optional: true },
+                    qqmusic: { type: 'object', optional: true },
                     nicovideo: { type: 'object', optional: true },
                     reddit: { type: 'object', optional: true },
                     tumblr: { type: 'object', optional: true },

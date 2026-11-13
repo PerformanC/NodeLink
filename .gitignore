@@ -16,6 +16,7 @@
 !package.json
 !README.md
 !config.default.ts 
+!manifest.json
 !biome.json
 !.husky
 !.husky/**
@@ -27,3 +28,4 @@
 !tsconfig.json
 !dist
 !dist/**
+dist/config.js

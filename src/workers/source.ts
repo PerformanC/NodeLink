@@ -199,9 +199,35 @@ if (isMainThread) {
   const SCALE_UP_COOLDOWN_MS = specConfig.scaleCooldownMs ?? 1000
   const workerPool: MicroWorker[] = []
   const taskQueue = createHeadQueue<TaskData>()
+  const analysisQueue: TaskData[] = []
+  let analysisBusy = false
+  const analysisWorker = new Worker(
+    new URL(
+      `./sourceAnalysis.${import.meta.url.endsWith('.ts') ? 'ts' : 'js'}`,
+      import.meta.url
+    )
+  )
+  analysisWorker.on(
+    'message',
+    (msg: {
+      type: string
+      id: string
+      socketPath: string
+      result?: string
+      error?: string
+    }) => {
+      if (msg.type !== 'analysisResult') return
+      finishTask(msg.socketPath, msg.id, msg.result, msg.error)
+      analysisBusy = false
+      const next = analysisQueue.shift()
+      if (next) {
+        analysisBusy = true
+        analysisWorker.postMessage(next)
+      }
+    }
+  )
   let lastScaleUpAt = 0
   let nextThreadId = initialThreadCount + 1
-  const inheritedExecArgv = process.execArgv || []
 
   nodelink.logger(
     'info',
@@ -210,13 +236,13 @@ if (isMainThread) {
   )
 
   const createMicroWorker = (threadNumber: number): void => {
+    /* INFO: Default inheritance supports V8 flags that explicit execArgv rejects. */
     const worker = new Worker(__filename, {
       workerData: {
         config,
         silentLogs: specConfig.silentLogs ?? false,
         threadId: threadNumber
-      } satisfies WorkerData,
-      ...(inheritedExecArgv.length > 0 ? { execArgv: inheritedExecArgv } : {})
+      } satisfies WorkerData
     }) as MicroWorker
 
     worker.ready = false
@@ -230,6 +256,12 @@ if (isMainThread) {
           'SourceWorker',
           `Micro-worker ${threadNumber} is ready.`
         )
+        if (msg.healthProbeSources) {
+          process.send?.({
+            type: 'sourceHealthReady',
+            payload: { sources: msg.healthProbeSources }
+          })
+        }
         processNextTask()
       } else if (msg.type === 'result') {
         const { socketPath, id, result, error } = msg
@@ -249,6 +281,8 @@ if (isMainThread) {
         sendStreamError(msg.socketPath, msg.id, msg.error)
         worker.load = Math.max(0, worker.load - 1)
         processNextTask()
+      } else if (msg.type === 'sourceHealthMetric') {
+        process.send?.(msg)
       }
     })
 
@@ -568,6 +602,39 @@ if (isMainThread) {
 
     if (msg.type !== 'sourceTask') return
     if (msg.payload) {
+      if (msg.payload.task === 'analyzePcm') {
+        const analysisPayload = msg.payload.payload as { pcmBase64?: unknown }
+        if (
+          typeof analysisPayload?.pcmBase64 !== 'string' ||
+          analysisPayload.pcmBase64.length > 7 * 1024 * 1024
+        ) {
+          finishTask(
+            msg.payload.socketPath,
+            msg.payload.id,
+            undefined,
+            'Invalid or oversized PCM analysis window'
+          )
+          return
+        }
+        if (analysisQueue.length >= 2) {
+          finishTask(
+            msg.payload.socketPath,
+            msg.payload.id,
+            undefined,
+            'PCM analysis queue is full'
+          )
+          return
+        }
+        analysisQueue.push(msg.payload)
+        if (!analysisBusy) {
+          const task = analysisQueue.shift()
+          if (task) {
+            analysisBusy = true
+            analysisWorker.postMessage(task)
+          }
+        }
+        return
+      }
       enqueueHeadQueue(taskQueue, msg.payload)
       maybeScaleUpMicroWorkers()
       processNextTask()
@@ -1175,7 +1242,10 @@ if (isMainThread) {
     return { success: false, error: `Unsupported profiler action: ${action}` }
   }
 
-  ;(parentPort as MessagePort).postMessage({ type: 'ready' })
+  ;(parentPort as MessagePort).postMessage({
+    type: 'ready',
+    healthProbeSources: nodelink.sources?.getHealthProbeSources() ?? []
+  })
 
   /**
    * Sends stream data chunk to parent thread
@@ -1380,11 +1450,8 @@ if (isMainThread) {
           {},
           {
             streamInfo: urlResult,
-            loudnessNormalizer: (
-              nodelink.options as unknown as {
-                audio?: { loudnessNormalizer?: boolean }
-              }
-            ).audio?.loudnessNormalizer
+            loudnessNormalizer:
+              nodelink.options.playback?.audio?.loudnessNormalizer ?? false
           },
           (payload?.volume ?? 100) / 100,
           null,
@@ -1423,7 +1490,8 @@ if (isMainThread) {
           fetched.type || (urlResult.format as string) || 'unknown',
           nodelink as unknown as NodeLink,
           (payload?.volume ?? 100) / 100,
-          payload?.filters || {}
+          payload?.filters || {},
+          nodelink.options.playback?.audio?.loudnessNormalizer ?? false
         ) as unknown as PCMStream
       }
 
@@ -1498,7 +1566,9 @@ if (isMainThread) {
               info: (payload as { decodedTrackInfo: TrackInfo })
                 .decodedTrackInfo
             },
-            (payload as { language?: string }).language
+            (payload as { language?: string }).language,
+            undefined,
+            (payload as { source?: string }).source
           )
           break
         }
@@ -1522,6 +1592,12 @@ if (isMainThread) {
           result = await handleProfilerCommand(
             (payload as Record<string, unknown>) || {}
           )
+          break
+        case 'sourceHealthProbe':
+          await nodelink.sources?.runHealthProbe(
+            (payload as { sourceName: string }).sourceName
+          )
+          result = true
           break
       }
       ;(parentPort as MessagePort).postMessage({

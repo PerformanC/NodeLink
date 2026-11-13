@@ -39,6 +39,7 @@ interface LyricsSourceWorkerManager {
     payload: {
       decodedTrackInfo: EncodedTrackPayload['info']
       language?: string
+      source?: string
     }
   ) => boolean
 }
@@ -73,6 +74,7 @@ interface LyricsWorkerManager {
     payload: {
       decodedTrackInfo: EncodedTrackPayload['info']
       language?: string
+      source?: string
     }
   ) => Promise<LyricsResponseValue>
 }
@@ -90,7 +92,9 @@ interface LyricsManagerRuntime {
    */
   loadLyrics: (
     track: Pick<EncodedTrackPayload, 'info'>,
-    language?: string
+    language?: string,
+    skipTrackSource?: boolean,
+    requestedSource?: string
   ) => Promise<LyricsResponseValue>
 }
 
@@ -134,6 +138,17 @@ function getEncodedTrackFromQuery(parsedUrl: URL): string | null {
   }
 
   return encodedTrack.replace(/ /g, '+')
+}
+
+/**
+ * Reads the optional `source` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Selected lyrics source name, or `undefined` when absent.
+ */
+function getSourceFromQuery(parsedUrl: URL): string | undefined {
+  const source = parsedUrl.searchParams.get('source')?.trim()
+  return source ? source : undefined
 }
 
 /**
@@ -204,6 +219,8 @@ async function handler(
   const encodedTrack = getEncodedTrackFromQuery(parsedUrl)
   const language = getLanguageFromQuery(parsedUrl)
 
+  const source = getSourceFromQuery(parsedUrl)
+
   if (!encodedTrack) {
     logger('warn', 'Lyrics', MISSING_ENCODED_TRACK_MESSAGE)
     sendErrorResponse(
@@ -223,7 +240,7 @@ async function handler(
     logger(
       'debug',
       'Lyrics',
-      `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}`
+      `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}${source ? ` (Source: ${source})` : ''}`
     )
 
     if (runtime.sourceWorkerManager) {
@@ -233,7 +250,8 @@ async function handler(
         'loadLyrics',
         {
           decodedTrackInfo: decodedTrack.info,
-          language
+          language,
+          source
         }
       )
       if (delegated) {
@@ -246,10 +264,16 @@ async function handler(
       const worker = runtime.workerManager.getBestWorker()
       lyricsData = await runtime.workerManager.execute(worker, 'loadLyrics', {
         decodedTrackInfo: decodedTrack.info,
-        language
+        language,
+        source
       })
     } else {
-      lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language)
+      lyricsData = await runtime.lyrics.loadLyrics(
+        decodedTrack,
+        language,
+        undefined,
+        source
+      )
     }
 
     sendResponse(req, res, lyricsData, 200)

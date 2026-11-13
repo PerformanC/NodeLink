@@ -20,6 +20,7 @@ const PCM_SAMPLE_BYTES = 2
 
 const OPUS_CTL = {
   BITRATE: 4002,
+  COMPLEXITY: 4010,
   FEC: 4012,
   PLP: 4014,
   DTX: 4016
@@ -112,12 +113,14 @@ export class Encoder extends Transform {
     rate = 48000,
     channels = 2,
     frameSize = 960,
-    application = 'audio'
+    application = 'audio',
+    complexity
   }: {
     rate?: number
     channels?: number
     frameSize?: number
     application?: OpusApplication | number | string
+    complexity?: number
   } = {}) {
     super({ readableObjectMode: true })
 
@@ -129,6 +132,10 @@ export class Encoder extends Transform {
     this.leftover = null
     this.leftoverStorage = null
     this.encodedScratch = Buffer.allocUnsafe(OPUS_MAX_PACKET_SIZE)
+    /* INFO: An omitted complexity preserves the selected codec library's default. */
+    if (complexity !== undefined) {
+      _applyCtl(this.enc, this.lib.name, OPUS_CTL.COMPLEXITY, complexity)
+    }
   }
 
   override _transform(
@@ -229,7 +236,7 @@ export class Encoder extends Transform {
   }
 
   setBitrate(v: number): void {
-    const val = v < 500 ? 500 : v > 512000 ? 512000 : v
+    const val = v < 500 ? 500 : Math.min(v, 512000)
     if (this.enc) _applyCtl(this.enc, this.lib.name, OPUS_CTL.BITRATE, val)
   }
 

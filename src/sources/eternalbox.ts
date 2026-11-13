@@ -17,6 +17,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
 
 /**
@@ -101,6 +102,47 @@ interface QuantumInternal extends EternalboxQuantum {
  */
 export default class EternalboxSource implements SourceInstance {
   /**
+   * Declarative test suite for validating Eternalbox source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'eternalbox.track.resolve',
+      name: 'Eternalbox Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://eternalbox.floriegl.tech/jukebox_go.html?id=0DiWol3AO6WpXZgp0goxAV'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'One More Time' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'eternalbox' }
+        }
+      }
+    },
+    {
+      id: 'eternalbox.search.ebox',
+      name: 'Eternalbox Search query (ebox:)',
+      input: {
+        type: 'search',
+        searchType: 'ebox',
+        value: 'Daft Punk One More Time'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'One More Time' },
+          sourceName: { op: 'equals', value: 'eternalbox' }
+        }
+      }
+    }
+  ]
+
+  /**
    * The NodeLink worker context.
    * @internal
    */
@@ -165,10 +207,10 @@ export default class EternalboxSource implements SourceInstance {
     this.nodelink = nodelink
     this.config = (nodelink.options.sources?.eternalbox || {
       enabled: false,
-      baseUrl: 'https://eternalboxmirror.xyz'
+      baseUrl: 'https://eternalbox.floriegl.tech'
     }) as EternalboxSourceConfig
 
-    this.baseUrl = this.config.baseUrl || 'https://eternalboxmirror.xyz'
+    this.baseUrl = this.config.baseUrl || 'https://eternalbox.floriegl.tech'
     this.cacheMaxBytes = this.config.cacheMaxBytes ?? 20 * 1024 * 1024
 
     const mirrors = [
@@ -182,19 +224,19 @@ export default class EternalboxSource implements SourceInstance {
 
     this.patterns = [
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/jukebox_go\\.html\\?id=([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/jukebox_go\\.html\\?id=([A-Za-z0-9]+)(?:[#&].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/analysis\\/analyse\\/([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/analysis\\/analyse\\/([A-Za-z0-9]+)(?:[/?#].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)(?:[/?#].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)\\/location`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)\\/location(?:[/?#].*)?$`,
         'i'
       )
     ]
@@ -231,7 +273,14 @@ export default class EternalboxSource implements SourceInstance {
 
     try {
       const res = await http1makeRequest(url, {
-        headers: this._buildApiHeaders()
+        headers: this._buildApiHeaders(),
+        shouldFollowRedirect: (nextUrl) => {
+          try {
+            return this._isAllowedHost(new URL(nextUrl).hostname)
+          } catch {
+            return false
+          }
+        }
       })
       if (res.statusCode !== 200) return { loadType: 'empty', data: {} }
 
@@ -259,6 +308,10 @@ export default class EternalboxSource implements SourceInstance {
    * @public
    */
   public async resolve(url: string): Promise<SourceResult> {
+    if (!this.patterns.some((pattern) => pattern.test(url))) {
+      return { loadType: 'empty', data: {} }
+    }
+
     const id = this._extractId(url)
     if (!id) return { loadType: 'empty', data: {} }
 
@@ -437,6 +490,13 @@ export default class EternalboxSource implements SourceInstance {
    * @internal
    */
   private _extractItems(body: unknown): Record<string, unknown>[] {
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body)
+      } catch {
+        return []
+      }
+    }
     if (Array.isArray(body)) return body as Record<string, unknown>[]
     const b = body as Record<string, unknown> | null
     if (!b) return []
@@ -475,9 +535,23 @@ export default class EternalboxSource implements SourceInstance {
   ): Promise<EternalboxPayload | null> {
     const url = `${baseUrl}/api/analysis/analyse/${id}`
     const res = await http1makeRequest(url, {
-      headers: this._buildApiHeaders()
+      headers: this._buildApiHeaders(),
+      shouldFollowRedirect: (nextUrl) => {
+        try {
+          return this._isAllowedHost(new URL(nextUrl).hostname)
+        } catch {
+          return false
+        }
+      }
     })
-    if (res.statusCode !== 200) return null
+    if (res.statusCode !== 200 || !res.body) return null
+    if (typeof res.body === 'string') {
+      try {
+        return JSON.parse(res.body) as EternalboxPayload
+      } catch {
+        return null
+      }
+    }
     return res.body as EternalboxPayload
   }
 
@@ -608,6 +682,35 @@ export default class EternalboxSource implements SourceInstance {
   }
 
   /**
+   * Validates whether a candidate hostname belongs to allowed Eternalbox mirrors.
+   * @internal
+   */
+  private _isAllowedHost(candidate: string): boolean {
+    const host = candidate.toLowerCase()
+    const allowed = new Set([
+      'eternalboxmirror.xyz',
+      'www.eternalboxmirror.xyz',
+      'eternalbox.floriegl.tech',
+      'www.eternalbox.floriegl.tech',
+      'eternal.floriegl.tech',
+      'www.eternal.floriegl.tech',
+      'forever.reheated.org',
+      'www.forever.reheated.org',
+      'jukebox.justdavi.dev',
+      'www.jukebox.justdavi.dev',
+      'eternalbox.dev',
+      'www.eternalbox.dev'
+    ])
+    try {
+      const configuredHost = new URL(this.baseUrl).hostname.toLowerCase()
+      if (configuredHost) allowed.add(configuredHost)
+    } catch {
+      // ignore
+    }
+    return allowed.has(host)
+  }
+
+  /**
    * Extracts the origin base URL from an input URL.
    * @internal
    */
@@ -615,7 +718,12 @@ export default class EternalboxSource implements SourceInstance {
     try {
       if (typeof input !== 'string') return this.baseUrl
       const url = new URL(input)
-      if (url.protocol.startsWith('http')) return url.origin
+      if (
+        (url.protocol === 'https:' || url.protocol === 'http:') &&
+        this._isAllowedHost(url.hostname)
+      ) {
+        return url.origin
+      }
     } catch {
       // ignore
     }
@@ -682,10 +790,23 @@ export default class EternalboxSource implements SourceInstance {
     const url = `${baseUrl}/api/audio/jukebox/${id}/location`
     try {
       const res = await http1makeRequest(url, {
-        headers: this._buildApiHeaders()
+        headers: this._buildApiHeaders(),
+        shouldFollowRedirect: (nextUrl) => {
+          try {
+            return this._isAllowedHost(new URL(nextUrl).hostname)
+          } catch {
+            return false
+          }
+        }
       })
-      if (res.statusCode !== 200) return null
-      return (res.body as { url?: string })?.url || null
+      if (res.statusCode !== 200 || !res.body) return null
+      let body = res.body
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body)
+        } catch {}
+      }
+      return (body as { url?: string })?.url || null
     } catch {
       return null
     }

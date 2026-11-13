@@ -3,6 +3,7 @@ import type {
   LyricsResult,
   TrackInfo
 } from '../typings/lyrics/musixmatch.types.ts'
+import type { HttpProxyConfig } from '../typings/utils.types.ts'
 import { logger, makeRequest } from '../utils.ts'
 
 const CLEAN_PATTERNS = [
@@ -32,6 +33,7 @@ interface JsonRecord {
  * Minimal LRCLIB search item used by this provider.
  */
 interface LRCLibSearchItem {
+  id?: number
   /**
    * Track title returned by LRCLIB.
    */
@@ -76,7 +78,15 @@ interface ParsedTrackQuery {
 /**
  * Minimal runtime shape accepted by the LRCLIB provider.
  */
-type LRCLibNodeLink = object
+type LRCLibNodeLink = {
+  options?: { lyrics?: Record<string, unknown> }
+  proxyManager?: {
+    getBestProxy: (
+      sourceName: string
+    ) => { target?: HttpProxyConfig } | undefined
+    report?: (url: string, success: boolean, statusCode: number) => void
+  }
+}
 
 /**
  * Removes common video, lyrics, and marketing fragments from titles/authors.
@@ -215,6 +225,10 @@ function parseSearchResults(
     }
 
     results.push({
+      id:
+        typeof getRecordValue(record, 'id') === 'number'
+          ? (getRecordValue(record, 'id') as number)
+          : undefined,
       trackName,
       artistName,
       instrumental: getBoolean(getRecordValue(record, 'instrumental')) ?? false,
@@ -244,6 +258,7 @@ export default class LRCLIBLyrics {
    * Runtime container passed by the lyrics manager.
    */
   public readonly nodelink: LRCLibNodeLink
+  private proxyIndex = 0
 
   /**
    * Creates a new LRCLIB lyrics provider instance.
@@ -263,6 +278,36 @@ export default class LRCLIBLyrics {
    */
   public async setup(): Promise<boolean> {
     return true
+  }
+
+  private getProxy(): HttpProxyConfig | undefined {
+    const sourceConfig = this.nodelink.options?.lyrics?.lrclib
+    const custom =
+      typeof sourceConfig === 'object' && sourceConfig !== null
+        ? (
+            sourceConfig as {
+              proxy?: HttpProxyConfig | string | Array<HttpProxyConfig | string>
+            }
+          ).proxy
+        : undefined
+    if (Array.isArray(custom)) {
+      if (custom.length === 0) return undefined
+      const selected = custom[this.proxyIndex % custom.length]
+      this.proxyIndex = (this.proxyIndex + 1) % custom.length
+      return typeof selected === 'string' ? { url: selected } : selected
+    }
+    if (typeof custom === 'string') return { url: custom }
+    if (custom) return custom
+    return this.nodelink.proxyManager?.getBestProxy('lrclib')?.target
+  }
+
+  private reportProxy(
+    proxy: HttpProxyConfig | undefined,
+    success: boolean,
+    statusCode: number
+  ): void {
+    if (proxy?.url)
+      this.nodelink.proxyManager?.report?.(proxy.url, success, statusCode)
   }
 
   /**
@@ -462,21 +507,83 @@ export default class LRCLIBLyrics {
     logger('debug', 'Lyrics', `Searching LRCLIB for: ${query}`)
 
     try {
-      const response = await makeRequest(
+      const proxy = this.getProxy()
+      const headers = {
+        accept: 'application/json, text/plain, */*',
+        'accept-language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+        'user-agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin'
+      }
+      const request = async (url: string, referer = 'https://lrclib.net/') =>
+        makeRequest(url, {
+          method: 'GET',
+          headers: { ...headers, Referer: referer },
+          proxy,
+          network: proxy ? { proxy } : undefined
+        })
+      let response: Awaited<ReturnType<typeof makeRequest>>
+      const id = trackInfo.uri?.match(
+        /lrclib\.net\/(?:tracks\/|api\/get\/)(\d+)/i
+      )?.[1]
+      if (id) {
+        response = await request(
+          `https://lrclib.net/api/get/${id}`,
+          `https://lrclib.net/tracks/${id}`
+        )
+      } else {
+        const params = new URLSearchParams({
+          track_name: title,
+          artist_name: artist
+        })
+        if (trackInfo.albumName) params.set('album_name', trackInfo.albumName)
+        if (trackInfo.length)
+          params.set('duration', String(Math.round(trackInfo.length / 1000)))
+        response = await request(`https://lrclib.net/api/get?${params}`)
+      }
+
+      if (response?.statusCode === 200 && !response.error) {
+        this.reportProxy(proxy, true, response.statusCode)
+        const directBody =
+          typeof response.body === 'string'
+            ? (JSON.parse(response.body) as JsonValue)
+            : (response.body as JsonValue)
+        const direct = parseSearchResults([directBody])[0]
+        if (direct) {
+          const directResult = this.buildLyricsResult(direct)
+          if (directResult.loadType === 'lyrics') return directResult
+        }
+      }
+      const searchResponse = await makeRequest(
         `https://lrclib.net/api/search?q=${encodeURIComponent(query)}`,
-        { method: 'GET' }
+        {
+          method: 'GET',
+          headers,
+          proxy,
+          network: proxy ? { proxy } : undefined
+        }
       )
 
-      if (response.error) {
-        throw new Error(response.error)
+      if (searchResponse.error) {
+        throw new Error(searchResponse.error)
       }
 
-      if (response.statusCode !== 200) {
-        throw new Error(`Unexpected LRCLIB status code: ${response.statusCode}`)
+      if (searchResponse.statusCode !== 200) {
+        throw new Error(
+          `Unexpected LRCLIB status code: ${searchResponse.statusCode}`
+        )
       }
 
+      this.reportProxy(proxy, true, searchResponse.statusCode)
       const results = parseSearchResults(
-        response.body as string | JsonValue | JsonValue[] | null | undefined
+        searchResponse.body as
+          | string
+          | JsonValue
+          | JsonValue[]
+          | null
+          | undefined
       )
 
       if (results.length === 0) {

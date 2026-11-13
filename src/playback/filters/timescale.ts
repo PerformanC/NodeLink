@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 import { resample } from './timescale/resampler.ts'
@@ -11,6 +12,16 @@ const FRAME_SIZE = CHANNELS * BYTES_PER_SAMPLE
 const FLOAT_DENOMINATOR = 32768
 const FLOAT_TO_INT_SCALE = 32767
 const EMPTY_BUFFER = Buffer.alloc(0)
+
+/*
+  INFO: Bound positive factors to 0.25–4 so stretching and resampling
+    cannot turn one chunk into unbounded synchronous work. Nonpositive
+    values still mean silence; nonfinite values use the neutral factor.
+*/
+const normalizeFactor = (value = 1): number => {
+  if (!Number.isFinite(value)) return 1
+  return value <= 0 ? value : Math.max(0.25, Math.min(4, value))
+}
 
 /**
  * Concatenates multiple Float32Arrays into one.
@@ -63,6 +74,7 @@ const floatToInt16Buffer = (input: Float32Array): Buffer => {
  * @public
  */
 export default class Timescale extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 1
   private speed = 1.0
   private pitch = 1.0
@@ -98,9 +110,9 @@ export default class Timescale extends AnimatableFilter {
   }
 
   protected override onConfigChanged(config: Record<string, number>): void {
-    const speed = config.speed ?? 1.0
-    const pitch = config.pitch ?? 1.0
-    const rate = config.rate ?? 1.0
+    const speed = normalizeFactor(config.speed)
+    const pitch = normalizeFactor(config.pitch)
+    const rate = normalizeFactor(config.rate)
 
     const bypass = speed === 1.0 && pitch === 1.0 && rate === 1.0
     const silence = speed <= 0 || pitch <= 0 || rate <= 0
@@ -218,6 +230,60 @@ export default class Timescale extends AnimatableFilter {
     const processed = this._processFloat(floatInput)
 
     return processed.length === 0 ? EMPTY_BUFFER : floatToInt16Buffer(processed)
+  }
+
+  /** Float32 timescale path sharing the existing Float32 stretch/resample DSP. */
+  public processFloat32(chunk: Buffer): Buffer {
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this._bypass) return chunk
+    if (this._silence || chunk.length === 0) return EMPTY_BUFFER
+    const input =
+      this._pending.length > 0 ? Buffer.concat([this._pending, chunk]) : chunk
+    const bytesPerFrame = CHANNELS * 4
+    const frames = Math.floor(input.length / bytesPerFrame)
+    if (frames === 0) {
+      this._pending = Buffer.from(input)
+      return EMPTY_BUFFER
+    }
+    const size = frames * bytesPerFrame
+    const processBuffer = input.subarray(0, size)
+    this._pending =
+      size === input.length ? EMPTY_BUFFER : Buffer.from(input.subarray(size))
+    const floatInput = new Float32Array(frames * CHANNELS)
+    for (let i = 0; i < floatInput.length; i++)
+      floatInput[i] = processBuffer.readFloatLE(i * 4)
+    const processed = this._processFloat(floatInput)
+    return this._float32ArrayToBuffer(processed)
+  }
+
+  public flushFloat32(): Buffer {
+    if (this._bypass || this._silence) return EMPTY_BUFFER
+    const outputs: Float32Array[] = []
+    if (this._pending.length >= CHANNELS * 4) {
+      const count = Math.floor(this._pending.length / 4)
+      const samples = new Float32Array(count)
+      for (let i = 0; i < count; i++)
+        samples[i] = this._pending.readFloatLE(i * 4)
+      this._pending = EMPTY_BUFFER
+      const processed = this._processFloat(samples)
+      if (processed.length) outputs.push(processed)
+    }
+    if (this._usesStretch) {
+      let tail = this._timeStretch.flush()
+      if (this._effectiveRate > 1 && tail.length)
+        tail = resample(tail, CHANNELS, this._effectiveRate)
+      if (tail.length) outputs.push(tail)
+    }
+    const combined = concatFloat32(outputs)
+    this._reset()
+    return this._float32ArrayToBuffer(combined)
+  }
+
+  private _float32ArrayToBuffer(samples: Float32Array): Buffer {
+    const output = Buffer.allocUnsafe(samples.length * 4)
+    for (let i = 0; i < samples.length; i++)
+      output.writeFloatLE(samples[i] ?? 0, i * 4)
+    return output
   }
 
   /**

@@ -67,13 +67,6 @@ export interface InstagramApiConfig {
   fbLsd: string | null
 
   /**
-   * GraphQL document ID for the post page query.
-   *
-   * @defaultValue `'10015901848480474'`
-   */
-  docId_post: string
-
-  /**
    * Jazoest checksum parameter sent with GraphQL requests.
    *
    * @defaultValue `'2957'`
@@ -95,8 +88,19 @@ export interface InstagramCachedConfig {
   igAppId: string
   /** Cached Facebook LSD token. */
   fbLsd: string
-  /** Cached GraphQL document ID for post queries. */
-  docId_post: string
+}
+
+/**
+ * Post/reel media fields returned by the logged-out Polaris query.
+ * @internal
+ */
+export interface InstagramPostMedia {
+  video_versions?: Array<{ url?: string }>
+  image_versions2?: { candidates?: Array<{ url?: string }> }
+  user?: { username?: string }
+  caption?: { text?: string }
+  video_dash_manifest?: string
+  carousel_media?: InstagramPostMedia[]
 }
 
 /**

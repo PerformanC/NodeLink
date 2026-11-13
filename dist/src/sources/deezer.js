@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import BlowfishCBC from '../decrypters/blowfish-cbc.js';
-import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
  */
@@ -23,6 +23,88 @@ const TRACK_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
  * Deezer source with typed REST/gateway payloads and stricter stream cleanup.
  */
 export default class DeezerSource {
+    /**
+     * Declarative test suite for validating Deezer source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'deezer.track.resolve',
+            name: 'Deezer Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.deezer.com/track/138547415'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Creep' },
+                    author: { op: 'matches', value: 'Radiohead' },
+                    isrc: { op: 'matches', value: 'GBAYE9200070' },
+                    sourceName: { op: 'equals', value: 'deezer' }
+                }
+            }
+        },
+        {
+            id: 'deezer.album.resolve',
+            name: 'Deezer Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.deezer.com/album/302127'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 10 },
+                metadata: {
+                    author: { op: 'matches', value: 'Daft Punk' }
+                }
+            }
+        },
+        {
+            id: 'deezer.playlist.resolve',
+            name: 'Deezer Playlist URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.deezer.com/playlist/908622995'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 20 }
+            }
+        },
+        {
+            id: 'deezer.search.dzsearch',
+            name: 'Deezer Search query (dzsearch:)',
+            input: {
+                type: 'search',
+                value: 'Radiohead Creep',
+                searchType: 'dzsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Creep' }
+                }
+            }
+        },
+        {
+            id: 'deezer.search.dzisrc',
+            name: 'Deezer ISRC search (dzisrc:)',
+            input: {
+                type: 'search',
+                value: 'GBAYE9200070',
+                searchType: 'dzisrc'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    isrc: { op: 'matches', value: 'GBAYE9200070' }
+                }
+            }
+        }
+    ];
     /**
      * Runtime worker context used by the source implementation.
      */
@@ -282,9 +364,28 @@ export default class DeezerSource {
                     tracksResponse.data.length === 0) {
                     return this.createException(tracksError ?? 'Could not fetch playlist tracks.', 'common');
                 }
-                const artworkUrl = entity.cover_xl ?? entity.picture_xl ?? null;
+                // Album track listings don't embed an `album` object, so their tracks
+                // fall back to the album's own cover. Playlist tracks do carry one, so
+                // they must keep their own album cover instead of the playlist picture.
+                const trackArtworkFallback = type === 'album'
+                    ? (entity.cover_xl ??
+                        entity.cover_big ??
+                        entity.cover_medium ??
+                        null)
+                    : null;
+                const author = type === 'album'
+                    ? entity.artist?.name?.trim() || ''
+                    : entity.creator?.name?.trim() || entity.user?.name?.trim() || '';
+                const thumbnail = entity.cover_xl ||
+                    entity.cover_big ||
+                    entity.cover_medium ||
+                    entity.picture_xl ||
+                    entity.picture_big ||
+                    entity.picture_medium ||
+                    entity.picture ||
+                    '';
                 const tracks = tracksResponse.data
-                    .map((item) => this.buildTrack(item, artworkUrl))
+                    .map((item) => this.buildTrack(item, trackArtworkFallback))
                     .filter((track) => track !== null);
                 if (tracks.length === 0)
                     return { loadType: 'empty', data: {} };
@@ -295,7 +396,14 @@ export default class DeezerSource {
                             name: entity.title ?? 'Unknown Deezer Collection',
                             selectedTrack: 0
                         },
-                        pluginInfo: {},
+                        pluginInfo: {
+                            type,
+                            identifier: String(id),
+                            url: entity.link ?? `https://www.deezer.com/${type}/${id}`,
+                            artworkUrl: thumbnail,
+                            author,
+                            totalTracks: capTotalTracks(entity.nb_tracks ?? tracks.length, this.config.playback?.maxPlaylistLength)
+                        },
                         tracks
                     }
                 };
@@ -443,6 +551,10 @@ export default class DeezerSource {
      * downstream stream closes or errors, which avoids leaking listeners across
      * interrupted playback attempts.
      *
+     * Backpressure is forwarded to the upstream response: when the consumer
+     * cannot keep up, the HTTP stream is paused instead of buffering the whole
+     * track in memory, which keeps concurrent-player memory usage bounded.
+     *
      * @param decodedTrack Decoded Deezer track metadata being played.
      * @param url Direct encrypted stream URL returned by `getTrackUrl(...)`.
      * @param _format Unused direct-stream format hint.
@@ -506,12 +618,37 @@ export default class DeezerSource {
                 sourceStream.removeListener('data', handleData);
                 sourceStream.removeListener('end', handleEnd);
                 sourceStream.removeListener('error', handleSourceError);
+                outputStream.removeListener('drain', handleOutputDrain);
                 outputStream.removeListener('close', handleOutputClose);
                 outputStream.removeListener('error', handleOutputError);
             };
             const destroySource = (error) => {
                 if (!sourceStream.destroyed) {
                     sourceStream.destroy(error);
+                }
+            };
+            /**
+             * Forwards bytes to the consumer and propagates backpressure upstream.
+             *
+             * Deezer's CDN is normally much faster than realtime playback, so without
+             * pausing the HTTP response the whole track would be buffered in memory
+             * for every active player.
+             *
+             * @param data Decrypted or passthrough stream bytes.
+             */
+            const writeOutput = (data) => {
+                if (outputStream.destroyed || outputStream.writableEnded)
+                    return;
+                if (!outputStream.write(data) && !sourceStream.destroyed) {
+                    sourceStream.pause();
+                }
+            };
+            /**
+             * Resumes the upstream response once the consumer drained the buffer.
+             */
+            const handleOutputDrain = () => {
+                if (!sourceStream.destroyed) {
+                    sourceStream.resume();
                 }
             };
             const handleData = (chunk) => {
@@ -526,10 +663,10 @@ export default class DeezerSource {
                         const encryptedBlock = data.subarray(offset, offset + bufferSize);
                         if (chunkIndex % 3 === 0) {
                             blowfish.setIv(IV);
-                            outputStream.push(Buffer.from(blowfish.decode(encryptedBlock)));
+                            writeOutput(blowfish.decode(encryptedBlock));
                         }
                         else {
-                            outputStream.push(encryptedBlock);
+                            writeOutput(encryptedBlock);
                         }
                         chunkIndex++;
                         offset += bufferSize;
@@ -549,11 +686,13 @@ export default class DeezerSource {
             };
             const handleEnd = () => {
                 cleanup();
-                if (remainder.length > 0 && !outputStream.destroyed) {
-                    outputStream.push(remainder);
+                if (remainder.length > 0 &&
+                    !outputStream.destroyed &&
+                    !outputStream.writableEnded) {
+                    outputStream.write(remainder);
                     remainder = Buffer.alloc(0);
                 }
-                if (!outputStream.destroyed) {
+                if (!outputStream.destroyed && !outputStream.writableEnded) {
                     outputStream.emit('finishBuffering');
                     outputStream.end();
                 }
@@ -576,6 +715,7 @@ export default class DeezerSource {
             sourceStream.on('data', handleData);
             sourceStream.once('end', handleEnd);
             sourceStream.once('error', handleSourceError);
+            outputStream.on('drain', handleOutputDrain);
             outputStream.once('close', handleOutputClose);
             outputStream.once('error', handleOutputError);
             return { stream: outputStream };

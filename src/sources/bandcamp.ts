@@ -15,25 +15,131 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestResult,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
-import { encodeTrack, logger, makeRequest } from '../utils.ts'
+import { capTotalTracks, encodeTrack, logger, makeRequest } from '../utils.ts'
 
 const BANDCAMP_BASE_URL = 'https://bandcamp.com'
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
 const BANDCAMP_TRACK_PATTERN =
   /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/
-const _STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\\&\s]+/
+const BANDCAMP_PLAYLIST_PATTERN =
+  /^https?:\/\/(?:www\.)?bandcamp\.com\/([^/?#]+)\/playlist\/([^/?#]+)/
+const BANDCAMP_PLAYER_API_PATH = '/api/player/2/player_data_web'
+const PLAYLIST_ELEMENT_REGEX = /<[a-z][^>]*\sid="PlaylistPage"[^>]*>/i
+const DATA_BLOB_REGEX = /\sdata-blob="([^"]*)"/
+const CHALLENGE_PAGE_MARKER = '<title>Client Challenge</title>'
+
+/**
+ * Headers for Bandcamp page and API requests.
+ *
+ * The key is lowercase on purpose. `makeRequest` builds its HTTP/2 headers
+ * around a lowercase `user-agent` default, and a differently cased key
+ * collides with it: the HTTP/2 request throws and silently falls back to
+ * HTTP/1.1, which Bandcamp answers with its bot-challenge page.
+ */
+const REQUEST_HEADERS = {
+  'user-agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+}
+const STREAM_URL_REGEX = /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\s]+/
 const TRALBUM_REGEX = /data-tralbum="([^"]*(?:"[^"]*)*?)"/
 const JSON_LD_REGEX =
   /<script\s+type="application\/ld\+json"\s*>([\s\S]*?)<\/script>/
 
 /**
+ * Track entry of a Bandcamp playlist payload.
+ */
+interface BandcampPlaylistTrack {
+  id: number | string
+  title?: string | null
+  artistName?: string | null
+  /** Duration in seconds. */
+  duration?: number
+  url?: string
+  /** Track-specific cover. Tracks without one inherit their album's. */
+  artId?: number | string | null
+  album?: { artId?: number | string | null } | null
+  isStreamingDisabled?: boolean
+}
+
+/**
+ * One page of a Bandcamp playlist tracklist.
+ */
+interface BandcampPlaylistTracklist {
+  itemType?: string
+  itemId?: number | string
+  itemUrl?: string
+  title?: string | null
+  imageId?: number | string | null
+  /** `true` when `imageId` is a release's art ID rather than a playlist image. */
+  isArt?: boolean
+  attribution?: { name?: string | null } | null
+  tracks: BandcampPlaylistTrack[]
+  tracksSummary?: { totalCount?: number } | null
+  /** Opaque cursor for the next page, `null` on the last one. */
+  nextCursor?: number | string | null
+}
+
+/**
  * Bandcamp source implementation.
  */
 export default class BandcampSource {
+  /**
+   * Declarative test suite for validating Bandcamp source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'bandcamp.track.resolve',
+      name: 'Bandcamp Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://carpenterbrut.bandcamp.com/track/maniac-feat-yann-ligner'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'MANIAC' },
+          author: { op: 'matches', value: 'Carpenter Brut' },
+          sourceName: { op: 'equals', value: 'bandcamp' }
+        }
+      }
+    },
+    {
+      id: 'bandcamp.album.resolve',
+      name: 'Bandcamp Album URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://carpenterbrut.bandcamp.com/album/trilogy'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 10 },
+        metadata: {
+          author: { op: 'matches', value: 'Carpenter Brut' }
+        }
+      }
+    },
+    {
+      id: 'bandcamp.search.bcsearch',
+      name: 'Bandcamp Search query (bcsearch:)',
+      input: {
+        type: 'search',
+        value: 'carpenter brut maniac',
+        searchType: 'bcsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 }
+      }
+    }
+  ]
+
   /**
    * Shared worker runtime provided by the source manager.
    */
@@ -47,7 +153,10 @@ export default class BandcampSource {
   /**
    * URL patterns supported by this source.
    */
-  public readonly patterns: RegExp[] = [BANDCAMP_TRACK_PATTERN]
+  public readonly patterns: RegExp[] = [
+    BANDCAMP_TRACK_PATTERN,
+    BANDCAMP_PLAYLIST_PATTERN
+  ]
 
   /**
    * Search prefixes routed to this source.
@@ -104,6 +213,7 @@ export default class BandcampSource {
       const request = await makeRequest(BANDCAMP_SEARCH_API_URL, {
         method: 'POST',
         disableBodyCompression: true,
+        headers: REQUEST_HEADERS,
         body: {
           search_text: query,
           search_filter: 't',
@@ -182,7 +292,7 @@ export default class BandcampSource {
   }
 
   /**
-   * Resolves a Bandcamp track or album URL into a track or playlist payload.
+   * Resolves a Bandcamp track, album or playlist URL into a track or playlist payload.
    *
    * Uses `data-tralbum` as the primary metadata source and enriches with
    * JSON-LD structured data (ISRC, duration, artwork) when available.
@@ -192,6 +302,10 @@ export default class BandcampSource {
    */
   public async resolve(url: string): Promise<SourceResult> {
     try {
+      if (BANDCAMP_PLAYLIST_PATTERN.test(url)) {
+        return await this.resolvePlaylist(url)
+      }
+
       const pageData = await this.fetchPageData(url)
       if (!pageData) {
         logger('warn', 'Sources', `Failed to fetch BandCamp page for: ${url}`)
@@ -289,6 +403,104 @@ export default class BandcampSource {
   }
 
   /**
+   * Resolves a Bandcamp playlist page (`bandcamp.com/<fan>/playlist/<slug>`).
+   *
+   * The first page of tracks is embedded in the page's `data-blob`; further
+   * pages are loaded from the player API with the cursor each page returns,
+   * up to `playback.maxPlaylistLength`. Each entry keeps its own track URL, so
+   * playback re-resolves a fresh stream URL through `getTrackUrl`.
+   *
+   * @param url Canonical Bandcamp playlist URL.
+   * @returns A playlist, an empty result, or a structured exception.
+   */
+  private async resolvePlaylist(url: string): Promise<SourceResult> {
+    const pageData = await this.fetchPageData(url)
+    if (!pageData) {
+      logger('warn', 'Sources', `Failed to fetch BandCamp page for: ${url}`)
+      return { loadType: 'empty', data: {} }
+    }
+
+    const firstPage = this.parsePlaylistBlob(pageData.rawPage)
+    if (!firstPage) {
+      logger(
+        'warn',
+        'Sources',
+        `No playlist data found on BandCamp for: ${url}`
+      )
+      return { loadType: 'empty', data: {} }
+    }
+
+    const max = this.getMaxPlaylistLength()
+    const items: BandcampPlaylistTrack[] = []
+    const addPlayable = (page: BandcampPlaylistTrack[]): void => {
+      for (const item of page) {
+        if (item.url && !item.isStreamingDisabled) items.push(item)
+      }
+    }
+
+    addPlayable(firstPage.tracks)
+
+    // Further pages are addressed by item type and ID, so both are required.
+    let cursor =
+      firstPage.itemType != null && firstPage.itemId != null
+        ? firstPage.nextCursor
+        : null
+
+    while (cursor != null && items.length < max) {
+      const nextPage = await this.fetchPlaylistPage(firstPage, cursor)
+      if (!nextPage?.tracks?.length) break
+
+      addPlayable(nextPage.tracks)
+
+      if (nextPage.nextCursor === cursor) break
+      cursor = nextPage.nextCursor
+    }
+
+    const tracks: TrackData[] = items.slice(0, max).map((item) =>
+      this.buildTrack({
+        identifier: String(item.id),
+        isSeekable: true,
+        author: this.normalizeText(item.artistName),
+        length: this.toDurationMilliseconds(item.duration),
+        isStream: false,
+        title: this.normalizeText(item.title),
+        uri: item.url as string,
+        artworkUrl: this.createArtworkUrl(item.artId ?? item.album?.artId)
+      })
+    )
+
+    if (tracks.length === 0) {
+      return { loadType: 'empty', data: {} }
+    }
+
+    const playlist: PlaylistData = {
+      info: {
+        name: this.normalizeText(firstPage.title) ?? 'BandCamp Playlist',
+        selectedTrack: 0
+      },
+      pluginInfo: {
+        type: 'playlist',
+        ...(firstPage.itemId != null
+          ? { identifier: String(firstPage.itemId) }
+          : {}),
+        url: firstPage.itemUrl ?? url,
+        artworkUrl: this.createPlaylistArtworkUrl(
+          firstPage.imageId,
+          firstPage.isArt
+        ),
+        author: this.normalizeText(firstPage.attribution?.name),
+        totalTracks: capTotalTracks(
+          firstPage.tracksSummary?.totalCount ?? tracks.length,
+          max
+        )
+      },
+      tracks
+    }
+
+    return { loadType: 'playlist', data: playlist }
+  }
+
+  /**
    * Extracts the direct Bandcamp MP3 stream URL from a track page.
    *
    * When possible, the stream URL is extracted directly from the
@@ -305,9 +517,24 @@ export default class BandcampSource {
     | (TrackUrlResult & { url: string; protocol: 'https'; format: 'mp3' })
     | SourceResult
   > {
+    if (
+      !track.uri ||
+      (!BANDCAMP_TRACK_PATTERN.test(track.uri) &&
+        !BANDCAMP_PLAYLIST_PATTERN.test(track.uri))
+    ) {
+      return {
+        loadType: 'error',
+        exception: {
+          message: 'Invalid Bandcamp track URI.',
+          severity: 'common'
+        }
+      }
+    }
+
     try {
       const { body, error, statusCode } = await makeRequest(track.uri, {
-        method: 'GET'
+        method: 'GET',
+        headers: REQUEST_HEADERS
       })
 
       if (error || statusCode !== 200) {
@@ -385,11 +612,29 @@ export default class BandcampSource {
     )
 
     try {
+      const parsedUrl = new URL(url)
+      const isAllowedHost =
+        parsedUrl.hostname.endsWith('.bcbits.com') ||
+        parsedUrl.hostname === 'bcbits.com' ||
+        parsedUrl.hostname.endsWith('.bandcamp.com') ||
+        parsedUrl.hostname === 'bandcamp.com'
+
+      if (!isAllowedHost) {
+        throw new Error('Invalid Bandcamp stream URL destination.')
+      }
+
+      const validReferer =
+        decodedTrack.uri &&
+        (BANDCAMP_TRACK_PATTERN.test(decodedTrack.uri) ||
+          BANDCAMP_PLAYLIST_PATTERN.test(decodedTrack.uri))
+          ? decodedTrack.uri
+          : BANDCAMP_BASE_URL
+
       const response = await makeRequest(url, {
         method: 'GET',
         streamOnly: true,
         headers: {
-          Referer: decodedTrack.uri
+          Referer: validReferer
         }
       })
 
@@ -450,6 +695,7 @@ export default class BandcampSource {
    *
    * @param url Bandcamp track or album URL.
    * @returns Parsed page metadata or `null` when extraction fails.
+   * @throws When Bandcamp serves its bot-challenge page instead of the content.
    */
   public async fetchPageData(url: string): Promise<{
     tralbum: BandcampTralbumData | null
@@ -457,7 +703,8 @@ export default class BandcampSource {
     rawPage: string
   } | null> {
     const { body, error, statusCode } = await makeRequest(url, {
-      method: 'GET'
+      method: 'GET',
+      headers: REQUEST_HEADERS
     })
 
     if (error || statusCode !== 200) {
@@ -471,6 +718,11 @@ export default class BandcampSource {
 
     const page = this.getResponseText({ body })
     if (page === null) return null
+
+    // Bandcamp's edge can answer with a JS challenge page and HTTP 200.
+    if (page.includes(CHALLENGE_PAGE_MARKER)) {
+      throw new Error(`BandCamp served a bot challenge page for: ${url}`)
+    }
 
     const tralbum = this.parseTralbumFromPage(page)
     const jsonLd = this.parseJsonLdFromPage(page)
@@ -561,6 +813,75 @@ export default class BandcampSource {
   }
 
   /**
+   * Extracts the tracklist from the `data-blob` of the `#PlaylistPage` element.
+   *
+   * @param page Raw playlist page HTML.
+   * @returns The first page of the playlist, or `null` when it is missing or invalid.
+   */
+  private parsePlaylistBlob(page: string): BandcampPlaylistTracklist | null {
+    const element = page.match(PLAYLIST_ELEMENT_REGEX)?.[0]
+    const raw = element?.match(DATA_BLOB_REGEX)?.[1]
+    if (!raw) return null
+
+    try {
+      const blob = JSON.parse(this.decodeHtmlEntities(raw)) as {
+        appData?: { tracklist?: BandcampPlaylistTracklist }
+      }
+      const tracklist = blob.appData?.tracklist
+
+      return tracklist && Array.isArray(tracklist.tracks) ? tracklist : null
+    } catch (error) {
+      logger(
+        'warn',
+        'Sources',
+        `Failed to parse BandCamp playlist payload: ${error instanceof Error ? error.message : 'invalid JSON'}`
+      )
+      return null
+    }
+  }
+
+  /**
+   * Loads a further page of playlist tracks from the player API.
+   *
+   * @param playlist First page of the playlist, for the item type and ID.
+   * @param cursor Cursor returned by the previous page.
+   * @returns The requested page, or `null` when the request failed.
+   */
+  private async fetchPlaylistPage(
+    playlist: BandcampPlaylistTracklist,
+    cursor: number | string
+  ): Promise<BandcampPlaylistTracklist | null> {
+    const request = await makeRequest(
+      `${this.baseUrl}${BANDCAMP_PLAYER_API_PATH}`,
+      {
+        method: 'POST',
+        disableBodyCompression: true,
+        headers: REQUEST_HEADERS,
+        body: {
+          item_type: playlist.itemType,
+          item_id: playlist.itemId,
+          next_cursor: cursor
+        }
+      }
+    )
+
+    if (request.error || request.statusCode !== 200) {
+      logger(
+        'warn',
+        'Sources',
+        `BandCamp playlist page request failed: ${request.error ?? request.statusCode}`
+      )
+      return null
+    }
+
+    const response = this.getJsonBody<
+      BandcampPlaylistTracklist & { tracklist?: BandcampPlaylistTracklist }
+    >(request.body)
+
+    return response?.tracklist ?? response
+  }
+
+  /**
    * Extracts the MP3 stream URL from a Bandcamp page body.
    *
    * Tries the structured `data-tralbum` `trackinfo[].file["mp3-128"]` field
@@ -588,12 +909,9 @@ export default class BandcampSource {
       }
     }
 
-    // Fallback: regex scan of the full page.
-    const decodedPage = this.decodeHtmlEntities(page)
-    // Fix: The regex must allow `&` to capture the token parameters.
-    const streamUrlMatch = decodedPage.match(
-      /https?:\/\/t4\.bcbits\.com\/stream\/[^"'\s]+/
-    )
+    // Fallback: regex scan of the full page. The pattern must allow `&` to
+    // capture the token parameters of the decoded URL.
+    const streamUrlMatch = this.decodeHtmlEntities(page).match(STREAM_URL_REGEX)
     return streamUrlMatch ? streamUrlMatch[0] : null
   }
 
@@ -736,6 +1054,31 @@ export default class BandcampSource {
   }
 
   /**
+   * Builds the cover URL of a playlist.
+   *
+   * A playlist with its own cover has an `imageId` addressed without the `a`
+   * prefix and served as 500px-wide 4:3 WebP. A playlist using release art
+   * (`isArt`) has an album `art_id` there instead, which only exists as
+   * `a<id>_10.jpg`.
+   *
+   * @param imageId Playlist image ID from the page data.
+   * @param isArt Whether `imageId` is a release's art ID.
+   * @returns The cover URL, or `null` when the playlist has no image.
+   */
+  private createPlaylistArtworkUrl(
+    imageId?: string | number | null,
+    isArt?: boolean
+  ): string | null {
+    if (imageId === undefined || imageId === null || imageId === '') {
+      return null
+    }
+
+    if (isArt) return this.createArtworkUrl(imageId)
+
+    return `https://f4.bcbits.com/img/${String(imageId)}_4x3t_500.webp`
+  }
+
+  /**
    * Builds an absolute Bandcamp track URL from a relative album entry link.
    *
    * @param titleLink Relative or absolute track path exposed by Bandcamp.
@@ -782,6 +1125,19 @@ export default class BandcampSource {
     return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
       ? limit
       : 10
+  }
+
+  /**
+   * Reads the configured playlist track limit.
+   *
+   * @returns A positive integer limit, defaulting to 100.
+   */
+  private getMaxPlaylistLength(): number {
+    const limit = this.nodelink.options.playback?.maxPlaylistLength
+
+    return typeof limit === 'number' && Number.isInteger(limit) && limit > 0
+      ? limit
+      : 100
   }
 
   /**

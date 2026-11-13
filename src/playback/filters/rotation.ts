@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 import LFO from './dsp/lfo.ts'
@@ -13,6 +14,7 @@ const CHANNELS = 2
  */
 export default class Rotation extends AnimatableFilter {
   public priority = 10
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   private lfo: LFO
   private rotationHz = 0
   private alpha = 0
@@ -88,6 +90,26 @@ export default class Rotation extends AnimatableFilter {
       chunk.writeInt16LE(clamp16Bit(newRight), i + 2)
     }
 
+    return chunk
+  }
+
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 8 !== 0)
+      throw new RangeError(
+        'Rotation Float32 input must contain complete stereo frames'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    const alpha = this.alpha
+    for (let i = 0; i < chunk.length; i += 8) {
+      const lfoValue = this.lfo.getValue()
+      const leftFactor = Math.sqrt((1 - lfoValue) / 2)
+      const rightFactor = Math.sqrt((1 + lfoValue) / 2)
+      const left = chunk.readFloatLE(i)
+      const right = chunk.readFloatLE(i + 4)
+      chunk.writeFloatLE(left * (1 - alpha + alpha * leftFactor), i)
+      chunk.writeFloatLE(right * (1 - alpha + alpha * rightFactor), i + 4)
+    }
     return chunk
   }
 

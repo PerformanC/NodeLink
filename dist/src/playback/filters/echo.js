@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { Float64DelayLine } from './dsp/float64Delay.js';
 const CHANNELS = 2;
@@ -23,6 +24,7 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
  * @public
  */
 export default class Echo extends AnimatableFilter {
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     priority = 10;
     delayLineL;
     delayLineR;
@@ -88,8 +90,8 @@ export default class Echo extends AnimatableFilter {
             const delR = this.delayLineR.read(delaySamples);
             const fbL = inL + delL * fb;
             const fbR = inR + delR * fb;
-            this.delayLineL.write(fbL > 65534 ? 65534 : fbL < -65534 ? -65534 : fbL);
-            this.delayLineR.write(fbR > 65534 ? 65534 : fbR < -65534 ? -65534 : fbR);
+            this.delayLineL.write(fbL > 65534 ? 65534 : Math.max(fbL, -65534));
+            this.delayLineR.write(fbR > 65534 ? 65534 : Math.max(fbR, -65534));
             const echoL = inL * dry + delL * wet;
             const echoR = inR * dry + delR * wet;
             let outL = inL + alpha * (echoL - inL);
@@ -106,6 +108,29 @@ export default class Echo extends AnimatableFilter {
             }
             chunk.writeInt16LE(outL < -32768 ? -32768 : outL > 32767 ? 32767 : (outL + 0.5) | 0, i);
             chunk.writeInt16LE(outR < -32768 ? -32768 : outR > 32767 ? 32767 : (outR + 0.5) | 0, i + 2);
+        }
+        return chunk;
+    }
+    /** Headroom-preserving echo path; feedback state remains Float64. */
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Echo Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        const delaySamples = (this.delay * SAMPLE_RATE) / 1000;
+        const dry = 1 - this.mix;
+        for (let i = 0; i < chunk.length; i += 8) {
+            const inL = chunk.readFloatLE(i);
+            const inR = chunk.readFloatLE(i + 4);
+            const delL = this.delayLineL.read(delaySamples);
+            const delR = this.delayLineR.read(delaySamples);
+            this.delayLineL.write(inL + delL * this.feedback);
+            this.delayLineR.write(inR + delR * this.feedback);
+            const echoL = inL * dry + delL * this.mix;
+            const echoR = inR * dry + delR * this.mix;
+            chunk.writeFloatLE(inL + this.alpha * (echoL - inL), i);
+            chunk.writeFloatLE(inR + this.alpha * (echoR - inR), i + 4);
         }
         return chunk;
     }

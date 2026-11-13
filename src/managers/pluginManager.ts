@@ -139,7 +139,7 @@ export type PluginManagerContext = {
     plugins?: PluginDefinition[]
     pluginConfig?: PluginConfigMap
   }
-} & Record<string, unknown>
+}
 
 /**
  * Loads and executes configured plugins from local paths and npm packages.
