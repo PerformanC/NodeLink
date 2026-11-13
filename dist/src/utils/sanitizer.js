@@ -198,7 +198,8 @@ export class LogSanitizer {
                 return isTrace ? this.getTraceToken('ipv6', ipv6) : '[REDACTED_IPV6]';
             });
         }
-        if (this.options.emails) {
+        /* INFO: Large URL dumps usually contain no @. Skip the email scan entirely. */
+        if (this.options.emails && output.includes('@')) {
             output = output.replace(EMAIL_REGEX, (_match, firstChar, domain) => {
                 return isTrace
                     ? this.getTraceToken('email', _match)

@@ -295,7 +295,8 @@ export class LogSanitizer {
       })
     }
 
-    if (this.options.emails) {
+    /* INFO: Large URL dumps usually contain no @. Skip the email scan entirely. */
+    if (this.options.emails && output.includes('@')) {
       output = output.replace(
         EMAIL_REGEX,
         (_match, firstChar: string, domain: string) => {

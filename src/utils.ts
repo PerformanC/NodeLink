@@ -377,9 +377,10 @@ function logger(level: string, ...args: unknown[]): void {
   console.log(consoleOutput)
 
   if (logStream) {
-    const shouldRedactFile =
-      loggingConfig.file?.redactSensitive !== false || isRedactionActive
-    const fileMsg = shouldRedactFile ? logSanitizer.sanitize(rawMsg) : rawMsg
+    const fileMsg =
+      !isRedactionActive && loggingConfig.file?.redactSensitive !== false
+        ? logSanitizer.sanitize(rawMsg)
+        : consoleMsg
     const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${fileMsg}\n`
     logStream.write(fileOutput)
   }
