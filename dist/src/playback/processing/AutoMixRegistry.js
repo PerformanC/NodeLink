@@ -25,7 +25,7 @@
 import { performance } from 'node:perf_hooks';
 import { logger } from '../../utils.js';
 import { requestPcmAnalysis } from './analysisDelegation.js';
-import { inspectTrackOutroQuick, TransitionProfileCache } from './MusicalAnalyzer.js';
+import { calculatePcmRms, inspectTrackOutroQuick, TransitionProfileCache } from './MusicalAnalyzer.js';
 const PRIORITY_ORDER = {
     IMMINENT_TRANSITION: 1,
     CURRENT_OUTRO: 2,
@@ -295,7 +295,7 @@ export class AutoMixRegistry {
             const resultPromise = new Promise((resolve) => {
                 let finished = false;
                 let analysisStarted = false;
-                let streamEnded = false;
+                let streamEnd;
                 let streamSafetyTimer = null;
                 let analysisSafetyTimer = null;
                 const detachListeners = () => {
@@ -328,7 +328,7 @@ export class AutoMixRegistry {
                         clearTimeout(streamSafetyTimer);
                     detachListeners();
                     stream.pause();
-                    stoppedEarly = !streamEnded && bytesRead >= expectedBytes;
+                    stoppedEarly = streamEnd === undefined && bytesRead >= expectedBytes;
                     analyzeStart = performance.now();
                     if (bytesRead === 0) {
                         finish(null);
@@ -336,9 +336,27 @@ export class AutoMixRegistry {
                     }
                     const pcm = Buffer.concat(chunks, bytesRead);
                     chunks.length = 0;
+                    const finishProfile = (profile) => {
+                        const tailBytes = 48000 * 4 * 0.02;
+                        const paddingBytes = 48000 * 4 * 0.01;
+                        const precedingBytes = 48000 * 4 * 0.1;
+                        const tailStart = pcm.length - tailBytes - paddingBytes;
+                        if (streamEnd === 'eof' &&
+                            tailStart >= precedingBytes &&
+                            profile.outroProfile) {
+                            const tailRms = calculatePcmRms(pcm, tailStart, tailBytes);
+                            const precedingRms = calculatePcmRms(pcm, tailStart - precedingBytes, precedingBytes);
+                            /* INFO: An audible tail that is still fading is weak evidence of a cut. */
+                            profile.outroProfile.sourceEndRms =
+                                tailRms >= precedingRms * 0.5 ? tailRms : 0;
+                        }
+                        TransitionProfileCache.set(trackId, profile);
+                        finish(profile);
+                    };
                     const finishWithFallback = () => {
                         try {
-                            finish(createFallbackProfile(pcm));
+                            if (!finished)
+                                finishProfile(createFallbackProfile(pcm));
                         }
                         catch {
                             finish(null);
@@ -354,10 +372,9 @@ export class AutoMixRegistry {
                         trackLengthMs: trackLength
                     })
                         .then((remoteProfile) => {
-                        if (remoteProfile)
-                            TransitionProfileCache.set(trackId, remoteProfile);
                         // Preserve compatibility when the specialized source cluster is disabled.
-                        finish(remoteProfile ?? createFallbackProfile(pcm));
+                        if (!finished)
+                            finishProfile(remoteProfile ?? createFallbackProfile(pcm));
                     })
                         .catch(finishWithFallback);
                 };
@@ -379,11 +396,11 @@ export class AutoMixRegistry {
                         startAnalysis();
                 };
                 const onEnd = () => {
-                    streamEnded = true;
+                    streamEnd = 'eof';
                     startAnalysis();
                 };
                 const onError = () => {
-                    streamEnded = true;
+                    streamEnd = 'error';
                     startAnalysis();
                 };
                 const onAbort = () => finish(null);

@@ -747,6 +747,18 @@ export function detectIntroBoundary(pcm, sampleRate) {
     };
 }
 /**
+ * Detects an audible cut into an immediate entrance before overlap selection.
+ * @internal
+ * @param sourceEndRms - RMS at the decoded end of the outgoing source.
+ * @param incomingHeadRms - RMS over the first 40 ms of the queued source.
+ * @returns Whether an overlap would cover an audible source boundary.
+ */
+export function shouldPreserveSourceBoundary(sourceEndRms, incomingHeadRms) {
+    return (sourceEndRms !== undefined &&
+        sourceEndRms >= 0.008 &&
+        incomingHeadRms >= 0.008);
+}
+/**
  * Quick intro inspection — thin wrapper over {@link detectIntroBoundary}.
  */
 export function inspectTrackIntroQuick(pcm, sampleRate) {

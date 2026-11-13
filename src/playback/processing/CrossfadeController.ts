@@ -26,12 +26,14 @@ import { type Readable, Transform, type TransformCallback } from 'node:stream'
 import type { FadeCurve } from '../../typings/playback/processing.types.ts'
 import { logger } from '../../utils.ts'
 import {
+  calculatePcmRms,
   detectIntroBoundary,
   evaluateMusicalRelationship,
   getHarmonicDistance,
   MusicalAnalyzer,
   type MusicalProfile,
   matchTempo,
+  shouldPreserveSourceBoundary,
   type TrackPreAnalysisProfile,
   type TransitionPlan
 } from './MusicalAnalyzer.ts'
@@ -74,6 +76,7 @@ interface BufferedPcmStream {
     error: () => void
   }
   onComplete: (consumedMs: number) => void
+  getOutgoingTailRms?: () => number | undefined
   analyzer: MusicalAnalyzer
   playbackAnalyzer: MusicalAnalyzer
 }
@@ -139,6 +142,7 @@ interface CrossfadeRuntime {
 interface ArmedCrossfade {
   plan: TransitionPlan
   incomingIntroProfile: ReturnType<typeof detectIntroBoundary> | null
+  preserveBoundary: boolean
   transitionId: string
   strategy: TransitionStrategy
   bassSwap: boolean
@@ -210,6 +214,8 @@ export interface CrossfadePrepareOptions {
   minBufferMs?: number
   /** Maximum decoded PCM retained for the next track. */
   bufferMs?: number
+  /** Supplies the verified source-end measurement once background analysis finishes. */
+  getOutgoingTailRms?: () => number | undefined
 }
 
 /**
@@ -296,7 +302,8 @@ export class CrossfadeController extends Transform {
     this.next = this._createBufferedStream(
       stream,
       this._alignBytes(bufferMs * this.bytesPerMs),
-      onComplete
+      onComplete,
+      options.getOutgoingTailRms
     )
     stream.resume()
     return true
@@ -414,6 +421,7 @@ export class CrossfadeController extends Transform {
     this.armed = {
       plan,
       incomingIntroProfile: introBoundary,
+      preserveBoundary: false,
       transitionId,
       strategy,
       bassSwap: plan.effects.bassSwap,
@@ -695,7 +703,8 @@ export class CrossfadeController extends Transform {
   private _createBufferedStream(
     stream: Readable,
     maxBytes: number,
-    onComplete: (consumedMs: number) => void
+    onComplete: (consumedMs: number) => void,
+    getOutgoingTailRms?: () => number | undefined
   ): BufferedPcmStream {
     const target: BufferedPcmStream = {
       stream,
@@ -714,6 +723,7 @@ export class CrossfadeController extends Transform {
         error: () => {}
       },
       onComplete,
+      getOutgoingTailRms,
       analyzer: new MusicalAnalyzer(),
       playbackAnalyzer: new MusicalAnalyzer()
     }
@@ -1353,7 +1363,7 @@ export class CrossfadeController extends Transform {
 
   private _advanceArmed(frames: number): void {
     const armed = this.armed
-    if (!armed) return
+    if (!armed || armed.preserveBoundary) return
     armed.waitedFrames += frames
     // PCM arrives in small frames; don't rerun plan classification for every
     // frame. A 200 ms cadence still lets the plan adapt during lookahead while
@@ -1723,6 +1733,36 @@ export class CrossfadeController extends Transform {
     if (!armed || !next) return false
 
     const transitionId = armed.transitionId
+    const sourceEndRms = next.getOutgoingTailRms?.()
+    if (sourceEndRms !== undefined) {
+      const head = this._peekTarget(next, 40 * this.bytesPerMs)
+      const analysisHead =
+        head && this.float32 ? this._toAnalyzerPcm(head) : head
+      const incomingHeadRms = analysisHead
+        ? calculatePcmRms(analysisHead, 0, analysisHead.length)
+        : 0
+      armed.preserveBoundary = shouldPreserveSourceBoundary(
+        sourceEndRms,
+        incomingHeadRms
+      )
+      logger(
+        'debug',
+        'Crossfade',
+        `[AutoMix][${transitionId}][SourceBoundary]`,
+        {
+          sourceEndRms,
+          incomingHeadRms,
+          preserveBoundary: armed.preserveBoundary
+        }
+      )
+      if (armed.preserveBoundary) return false
+    } else if (next.getOutgoingTailRms) {
+      logger(
+        'debug',
+        'Crossfade',
+        `[AutoMix][${transitionId}][SourceBoundary] Outgoing EOF measurement unavailable`
+      )
+    }
     const mainProfile = this.mainAnalyzer.getProfile()
     const nextProfile = next.analyzer.getProfile()
     const targetMissedFallback =

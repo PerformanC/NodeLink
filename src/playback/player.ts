@@ -2049,35 +2049,6 @@ export class Player {
       this._scheduleCrossfadePreparation(startTime || 0)
     }
 
-    const crossfadeConfig = this._getCrossfadeConfig()
-    const trackDurationMs =
-      this.track.endTime && this.track.endTime > 0
-        ? this.track.endTime
-        : this.track.info.length || 0
-    if (
-      crossfadeConfig &&
-      !this.track.info.isStream &&
-      trackDurationMs > 30000
-    ) {
-      const currentTrack = this.track
-      const currentUrlData = urlData
-      AutoMixRegistry.getInstance()
-        .requestOutroAnalysis({
-          track: currentTrack,
-          urlData: currentUrlData,
-          priority: 'CURRENT_OUTRO',
-          triggerSource: `player:${this.guildId}:trackStart`,
-          fetchResource: (info, uData, windowStartMs, returnPcm) =>
-            this._fetchResource(info, uData, windowStartMs, returnPcm)
-        })
-        .catch((err) => {
-          logger(
-            'debug',
-            'Player',
-            `[AutoMix] Background outro analysis failed for ${currentTrack.info.identifier}: ${(err as Error).message}`
-          )
-        })
-    }
     if (
       this.track.info.sourceName === 'youtube' ||
       this.track.info.sourceName === 'ytmusic'
@@ -3115,6 +3086,12 @@ export class Player {
       `[Action: clearNextTrack] Method invoked for guild ${this.guildId}`
     )
     if (this.destroying) return false
+
+    if (this.nextResourceIsCrossfade) {
+      this._crossfadeToken += 1
+      this._clearCrossfadeTimer()
+      this._getAudioStream()?.clearCrossfade?.()
+    }
 
     if (this.nextResource) {
       this.nextResource.destroy()
@@ -4780,6 +4757,37 @@ export class Player {
       return
     }
 
+    const currentStreamInfo = this.streamInfo
+    let outgoingTailRms: number | undefined
+    if (
+      currentStreamInfo &&
+      !(currentTrack.endTime && currentTrack.endTime < currentTrack.info.length)
+    ) {
+      void AutoMixRegistry.getInstance()
+        .requestOutroAnalysis({
+          track: currentTrack,
+          urlData: currentStreamInfo,
+          windowStartMs: Math.max(0, currentTrack.info.length - 25000),
+          /* INFO: Leave room for imprecise seeks and rounded source lengths to reach EOF. */
+          windowDurationMs: Math.min(25000, currentTrack.info.length) + 5000,
+          priority: 'CURRENT_OUTRO',
+          triggerSource: `player:${this.guildId}:nextTrack`,
+          fetchResource: (info, uData, windowStartMs, returnPcm) =>
+            this._fetchResource(info, uData, windowStartMs, returnPcm)
+        })
+        .then((profile) => {
+          outgoingTailRms = profile?.outroProfile?.sourceEndRms
+        })
+        .catch((error: unknown) => {
+          logger(
+            'error',
+            'AutoMix',
+            `Outro analysis failed for ${currentTrack.info.identifier}`,
+            error
+          )
+        })
+    }
+
     const trackInfo = {
       ...payload.info,
       audioTrackId: payload.audioTrackId
@@ -4812,6 +4820,7 @@ export class Player {
       fetched.stream.stream as unknown as import('node:stream').Readable,
       {
         durationMs: config.duration,
+        getOutgoingTailRms: () => outgoingTailRms,
         minBufferMs: config.minBufferMs,
         bufferMs: Math.min(
           30000,

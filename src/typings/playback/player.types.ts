@@ -179,6 +179,7 @@ export interface CrossfadePrepareOptions {
   durationMs: number
   minBufferMs?: number
   bufferMs?: number
+  getOutgoingTailRms?: () => number | undefined
 }
 
 export interface ExtendedAudioStream extends AudioResource {

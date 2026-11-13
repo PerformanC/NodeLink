@@ -829,6 +829,8 @@ export interface OutroProfile {
   /** Detected final beat; 0 when no beat-specific outro analysis is available. */
   finalBeatMs: number
   averageEnergy: number
+  /** Energy of a sustained cut immediately before EOF, excluding codec padding. */
+  sourceEndRms?: number
   energyProfile: 'sustained' | 'decay' | 'cliff' | 'fade'
 }
 
@@ -987,6 +989,24 @@ export function detectIntroBoundary(
       persistenceMs: consecutiveVocalFrames * 25
     }
   }
+}
+
+/**
+ * Detects an audible cut into an immediate entrance before overlap selection.
+ * @internal
+ * @param sourceEndRms - RMS at the decoded end of the outgoing source.
+ * @param incomingHeadRms - RMS over the first 40 ms of the queued source.
+ * @returns Whether an overlap would cover an audible source boundary.
+ */
+export function shouldPreserveSourceBoundary(
+  sourceEndRms: number | undefined,
+  incomingHeadRms: number
+): boolean {
+  return (
+    sourceEndRms !== undefined &&
+    sourceEndRms >= 0.008 &&
+    incomingHeadRms >= 0.008
+  )
 }
 
 /**

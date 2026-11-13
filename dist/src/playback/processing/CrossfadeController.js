@@ -23,7 +23,7 @@
  */
 import { Transform } from 'node:stream';
 import { logger } from '../../utils.js';
-import { detectIntroBoundary, evaluateMusicalRelationship, getHarmonicDistance, MusicalAnalyzer, matchTempo } from './MusicalAnalyzer.js';
+import { calculatePcmRms, detectIntroBoundary, evaluateMusicalRelationship, getHarmonicDistance, MusicalAnalyzer, matchTempo, shouldPreserveSourceBoundary } from './MusicalAnalyzer.js';
 const CHANNELS = 2;
 const SAMPLE_RATE = 48000;
 const FRAME_DURATION_MS = 20;
@@ -119,7 +119,7 @@ export class CrossfadeController extends Transform {
         this.defaultDurationMs = durationMs;
         this.minBufferBytes = this._alignBytes(minBufferMs * this.bytesPerMs);
         this.analysisReadyBytes = this._alignBytes(Math.min(bufferMs, MUSICAL_ANALYSIS_MS) * this.bytesPerMs);
-        this.next = this._createBufferedStream(stream, this._alignBytes(bufferMs * this.bytesPerMs), onComplete);
+        this.next = this._createBufferedStream(stream, this._alignBytes(bufferMs * this.bytesPerMs), onComplete, options.getOutgoingTailRms);
         stream.resume();
         return true;
     }
@@ -187,6 +187,7 @@ export class CrossfadeController extends Transform {
         this.armed = {
             plan,
             incomingIntroProfile: introBoundary,
+            preserveBoundary: false,
             transitionId,
             strategy,
             bassSwap: plan.effects.bassSwap,
@@ -422,7 +423,7 @@ export class CrossfadeController extends Transform {
         this.mainPending = null;
         callback(error);
     }
-    _createBufferedStream(stream, maxBytes, onComplete) {
+    _createBufferedStream(stream, maxBytes, onComplete, getOutgoingTailRms) {
         const target = {
             stream,
             chunks: [],
@@ -440,6 +441,7 @@ export class CrossfadeController extends Transform {
                 error: () => { }
             },
             onComplete,
+            getOutgoingTailRms,
             analyzer: new MusicalAnalyzer(),
             playbackAnalyzer: new MusicalAnalyzer()
         };
@@ -955,7 +957,7 @@ export class CrossfadeController extends Transform {
     }
     _advanceArmed(frames) {
         const armed = this.armed;
-        if (!armed)
+        if (!armed || armed.preserveBoundary)
             return;
         armed.waitedFrames += frames;
         // PCM arrives in small frames; don't rerun plan classification for every
@@ -1238,6 +1240,25 @@ export class CrossfadeController extends Transform {
         if (!armed || !next)
             return false;
         const transitionId = armed.transitionId;
+        const sourceEndRms = next.getOutgoingTailRms?.();
+        if (sourceEndRms !== undefined) {
+            const head = this._peekTarget(next, 40 * this.bytesPerMs);
+            const analysisHead = head && this.float32 ? this._toAnalyzerPcm(head) : head;
+            const incomingHeadRms = analysisHead
+                ? calculatePcmRms(analysisHead, 0, analysisHead.length)
+                : 0;
+            armed.preserveBoundary = shouldPreserveSourceBoundary(sourceEndRms, incomingHeadRms);
+            logger('debug', 'Crossfade', `[AutoMix][${transitionId}][SourceBoundary]`, {
+                sourceEndRms,
+                incomingHeadRms,
+                preserveBoundary: armed.preserveBoundary
+            });
+            if (armed.preserveBoundary)
+                return false;
+        }
+        else if (next.getOutgoingTailRms) {
+            logger('debug', 'Crossfade', `[AutoMix][${transitionId}][SourceBoundary] Outgoing EOF measurement unavailable`);
+        }
         const mainProfile = this.mainAnalyzer.getProfile();
         const nextProfile = next.analyzer.getProfile();
         const targetMissedFallback = selectionReason === 'planned-target-missed-fallback';

@@ -35,6 +35,7 @@ import type { TrackUrlResult } from '../../typings/sources/source.types.ts'
 import { logger } from '../../utils.ts'
 import { requestPcmAnalysis } from './analysisDelegation.ts'
 import {
+  calculatePcmRms,
   inspectTrackOutroQuick,
   type TrackPreAnalysisProfile,
   TransitionProfileCache
@@ -460,7 +461,7 @@ export class AutoMixRegistry {
         (resolve) => {
           let finished = false
           let analysisStarted = false
-          let streamEnded = false
+          let streamEnd: 'eof' | 'error' | undefined
           let streamSafetyTimer: NodeJS.Timeout | null = null
           let analysisSafetyTimer: NodeJS.Timeout | null = null
           const detachListeners = () => {
@@ -495,7 +496,7 @@ export class AutoMixRegistry {
             if (streamSafetyTimer) clearTimeout(streamSafetyTimer)
             detachListeners()
             stream.pause()
-            stoppedEarly = !streamEnded && bytesRead >= expectedBytes
+            stoppedEarly = streamEnd === undefined && bytesRead >= expectedBytes
             analyzeStart = performance.now()
             if (bytesRead === 0) {
               finish(null)
@@ -503,9 +504,32 @@ export class AutoMixRegistry {
             }
             const pcm = Buffer.concat(chunks, bytesRead)
             chunks.length = 0
+            const finishProfile = (profile: TrackPreAnalysisProfile) => {
+              const tailBytes = 48000 * 4 * 0.02
+              const paddingBytes = 48000 * 4 * 0.01
+              const precedingBytes = 48000 * 4 * 0.1
+              const tailStart = pcm.length - tailBytes - paddingBytes
+              if (
+                streamEnd === 'eof' &&
+                tailStart >= precedingBytes &&
+                profile.outroProfile
+              ) {
+                const tailRms = calculatePcmRms(pcm, tailStart, tailBytes)
+                const precedingRms = calculatePcmRms(
+                  pcm,
+                  tailStart - precedingBytes,
+                  precedingBytes
+                )
+                /* INFO: An audible tail that is still fading is weak evidence of a cut. */
+                profile.outroProfile.sourceEndRms =
+                  tailRms >= precedingRms * 0.5 ? tailRms : 0
+              }
+              TransitionProfileCache.set(trackId, profile)
+              finish(profile)
+            }
             const finishWithFallback = () => {
               try {
-                finish(createFallbackProfile(pcm))
+                if (!finished) finishProfile(createFallbackProfile(pcm))
               } catch {
                 finish(null)
               }
@@ -521,10 +545,9 @@ export class AutoMixRegistry {
               trackLengthMs: trackLength
             })
               .then((remoteProfile) => {
-                if (remoteProfile)
-                  TransitionProfileCache.set(trackId, remoteProfile)
                 // Preserve compatibility when the specialized source cluster is disabled.
-                finish(remoteProfile ?? createFallbackProfile(pcm))
+                if (!finished)
+                  finishProfile(remoteProfile ?? createFallbackProfile(pcm))
               })
               .catch(finishWithFallback)
           }
@@ -544,12 +567,12 @@ export class AutoMixRegistry {
             if (bytesRead >= expectedBytes) startAnalysis()
           }
           const onEnd = () => {
-            streamEnded = true
+            streamEnd = 'eof'
             startAnalysis()
           }
 
           const onError = () => {
-            streamEnded = true
+            streamEnd = 'error'
             startAnalysis()
           }
           const onAbort = () => finish(null)
