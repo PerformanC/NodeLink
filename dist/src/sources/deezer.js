@@ -551,6 +551,10 @@ export default class DeezerSource {
      * downstream stream closes or errors, which avoids leaking listeners across
      * interrupted playback attempts.
      *
+     * Backpressure is forwarded to the upstream response: when the consumer
+     * cannot keep up, the HTTP stream is paused instead of buffering the whole
+     * track in memory, which keeps concurrent-player memory usage bounded.
+     *
      * @param decodedTrack Decoded Deezer track metadata being played.
      * @param url Direct encrypted stream URL returned by `getTrackUrl(...)`.
      * @param _format Unused direct-stream format hint.
@@ -614,12 +618,37 @@ export default class DeezerSource {
                 sourceStream.removeListener('data', handleData);
                 sourceStream.removeListener('end', handleEnd);
                 sourceStream.removeListener('error', handleSourceError);
+                outputStream.removeListener('drain', handleOutputDrain);
                 outputStream.removeListener('close', handleOutputClose);
                 outputStream.removeListener('error', handleOutputError);
             };
             const destroySource = (error) => {
                 if (!sourceStream.destroyed) {
                     sourceStream.destroy(error);
+                }
+            };
+            /**
+             * Forwards bytes to the consumer and propagates backpressure upstream.
+             *
+             * Deezer's CDN is normally much faster than realtime playback, so without
+             * pausing the HTTP response the whole track would be buffered in memory
+             * for every active player.
+             *
+             * @param data Decrypted or passthrough stream bytes.
+             */
+            const writeOutput = (data) => {
+                if (outputStream.destroyed || outputStream.writableEnded)
+                    return;
+                if (!outputStream.write(data) && !sourceStream.destroyed) {
+                    sourceStream.pause();
+                }
+            };
+            /**
+             * Resumes the upstream response once the consumer drained the buffer.
+             */
+            const handleOutputDrain = () => {
+                if (!sourceStream.destroyed) {
+                    sourceStream.resume();
                 }
             };
             const handleData = (chunk) => {
@@ -634,10 +663,10 @@ export default class DeezerSource {
                         const encryptedBlock = data.subarray(offset, offset + bufferSize);
                         if (chunkIndex % 3 === 0) {
                             blowfish.setIv(IV);
-                            outputStream.push(Buffer.from(blowfish.decode(encryptedBlock)));
+                            writeOutput(blowfish.decode(encryptedBlock));
                         }
                         else {
-                            outputStream.push(encryptedBlock);
+                            writeOutput(encryptedBlock);
                         }
                         chunkIndex++;
                         offset += bufferSize;
@@ -657,11 +686,13 @@ export default class DeezerSource {
             };
             const handleEnd = () => {
                 cleanup();
-                if (remainder.length > 0 && !outputStream.destroyed) {
-                    outputStream.push(remainder);
+                if (remainder.length > 0 &&
+                    !outputStream.destroyed &&
+                    !outputStream.writableEnded) {
+                    outputStream.write(remainder);
                     remainder = Buffer.alloc(0);
                 }
-                if (!outputStream.destroyed) {
+                if (!outputStream.destroyed && !outputStream.writableEnded) {
                     outputStream.emit('finishBuffering');
                     outputStream.end();
                 }
@@ -684,6 +715,7 @@ export default class DeezerSource {
             sourceStream.on('data', handleData);
             sourceStream.once('end', handleEnd);
             sourceStream.once('error', handleSourceError);
+            outputStream.on('drain', handleOutputDrain);
             outputStream.once('close', handleOutputClose);
             outputStream.once('error', handleOutputError);
             return { stream: outputStream };
