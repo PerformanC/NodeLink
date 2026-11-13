@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer'
 import crypto from 'node:crypto'
-import { pipeline, type Readable, Transform } from 'node:stream'
+import { PassThrough, type Readable } from 'node:stream'
 import BlowfishCBC from '../decrypters/blowfish-cbc.ts'
 import type {
   SourceResult,
@@ -1303,7 +1303,11 @@ export default class DeezerSource {
   }
 
   /**
-   * Opens and decrypts Deezer direct streams with downstream backpressure.
+   * Opens and decrypts Deezer direct streams with explicit listener cleanup.
+   *
+   * The rewritten implementation also tears down upstream listeners when the
+   * downstream stream closes or errors, which avoids leaking listeners across
+   * interrupted playback attempts.
    *
    * @param decodedTrack Decoded Deezer track metadata being played.
    * @param url Direct encrypted stream URL returned by `getTrackUrl(...)`.
@@ -1326,10 +1330,12 @@ export default class DeezerSource {
         )
       }
 
+      const outputStream = new PassThrough()
       const trackKey = this.calculateKey(streamData.SNG_ID)
       const headers: HttpRequestHeaders & { Range?: string } = {}
       const bufferSize = 2048
       let chunkIndex = 0
+      let remainder = Buffer.alloc(0)
 
       if (
         typeof streamData.startTime === 'number' &&
@@ -1363,14 +1369,12 @@ export default class DeezerSource {
         streamOnly: true,
         headers
       })
-      const sourceStream = response.stream as Readable | undefined
 
       if (
         response.error ||
         (response.statusCode !== 200 && response.statusCode !== 206) ||
-        !sourceStream
+        !response.stream
       ) {
-        sourceStream?.destroy()
         const message =
           response.error ??
           `Request failed with status ${response.statusCode ?? 'unknown'}`
@@ -1381,59 +1385,100 @@ export default class DeezerSource {
         chunkIndex = 0
       }
 
+      const sourceStream = response.stream as Readable
       const blowfish = new BlowfishCBC(trackKey)
-      let remainder = Buffer.alloc(0)
-      const outputStream = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          const data = remainder.length
-            ? Buffer.concat([remainder, chunk])
-            : chunk
-          const completeLength = data.length - (data.length % bufferSize)
-          remainder = Buffer.from(data.subarray(completeLength))
-          if (completeLength === 0) return callback()
+      let cleanedUp = false
 
-          /* INFO: Emit one chunk per HTTP read so backpressure can pause the source. */
-          const output = Buffer.allocUnsafe(completeLength)
-          try {
-            for (
-              let offset = 0;
-              offset < completeLength;
-              offset += bufferSize
-            ) {
-              const block = data.subarray(offset, offset + bufferSize)
-              if (chunkIndex % 3 === 0) {
-                blowfish.setIv(IV)
-                blowfish.decode(block).copy(output, offset)
-              } else {
-                block.copy(output, offset)
-              }
-              chunkIndex++
-            }
-          } catch (error) {
-            return callback(
-              error instanceof Error ? error : new Error(String(error))
-            )
-          }
-          callback(null, output)
-        },
-        flush(callback) {
-          if (remainder.length) this.push(remainder)
-          remainder = Buffer.alloc(0)
-          this.emit('finishBuffering')
-          callback()
+      const cleanup = (): void => {
+        if (cleanedUp) return
+        cleanedUp = true
+        sourceStream.removeListener('data', handleData)
+        sourceStream.removeListener('end', handleEnd)
+        sourceStream.removeListener('error', handleSourceError)
+        outputStream.removeListener('close', handleOutputClose)
+        outputStream.removeListener('error', handleOutputError)
+      }
+
+      const destroySource = (error?: Error): void => {
+        if (!sourceStream.destroyed) {
+          sourceStream.destroy(error)
         }
-      })
+      }
 
-      /* INFO: Cancel the HTTP response cleanly before pipeline propagates premature close. */
-      outputStream.once('close', () => sourceStream.destroy())
-      pipeline(sourceStream, outputStream, (error) => {
-        if (!error || !outputStream.errored) return
+      const handleData = (chunk: Buffer): void => {
+        try {
+          let data = chunk
+          if (remainder.length > 0) {
+            data = Buffer.concat([remainder, chunk])
+            remainder = Buffer.alloc(0)
+          }
+
+          let offset = 0
+          while (offset + bufferSize <= data.length) {
+            const encryptedBlock = data.subarray(offset, offset + bufferSize)
+            if (chunkIndex % 3 === 0) {
+              blowfish.setIv(IV)
+              outputStream.push(Buffer.from(blowfish.decode(encryptedBlock)))
+            } else {
+              outputStream.push(encryptedBlock)
+            }
+            chunkIndex++
+            offset += bufferSize
+          }
+
+          if (offset < data.length) {
+            remainder = Buffer.from(data.subarray(offset))
+          }
+        } catch (error) {
+          const streamError =
+            error instanceof Error ? error : new Error(String(error))
+          cleanup()
+          if (!outputStream.destroyed) {
+            outputStream.destroy(streamError)
+          }
+          destroySource(streamError)
+        }
+      }
+
+      const handleEnd = (): void => {
+        cleanup()
+        if (remainder.length > 0 && !outputStream.destroyed) {
+          outputStream.push(remainder)
+          remainder = Buffer.alloc(0)
+        }
+        if (!outputStream.destroyed) {
+          outputStream.emit('finishBuffering')
+          outputStream.end()
+        }
+      }
+
+      const handleSourceError = (error: Error): void => {
+        cleanup()
         logger(
           'error',
           'Sources',
           `Error in Deezer source stream for track ${decodedTrack.title}: ${error.message}`
         )
-      })
+        if (!outputStream.destroyed) {
+          outputStream.destroy(error)
+        }
+      }
+
+      const handleOutputClose = (): void => {
+        cleanup()
+        destroySource()
+      }
+
+      const handleOutputError = (): void => {
+        cleanup()
+        destroySource()
+      }
+
+      sourceStream.on('data', handleData)
+      sourceStream.once('end', handleEnd)
+      sourceStream.once('error', handleSourceError)
+      outputStream.once('close', handleOutputClose)
+      outputStream.once('error', handleOutputError)
 
       return { stream: outputStream }
     } catch (error) {
