@@ -1671,8 +1671,15 @@ async function makeRequest(urlString, options, nodelink) {
     return new Promise((resolve, reject) => {
         let session;
         let sessionClosed = false;
+        let responseHeadersReceived = false;
+        let fallbackStarted = false;
         let currentUrl;
         const fallbackToHttp1 = () => {
+            // After response headers the caller owns this stream. Its source-specific
+            // recovery path, if any, must handle a later body interruption.
+            if (responseHeadersReceived || fallbackStarted)
+                return;
+            fallbackStarted = true;
             if (!sessionClosed && session) {
                 sessionClosed = true;
                 session.close();
@@ -1698,7 +1705,18 @@ async function makeRequest(urlString, options, nodelink) {
                     session.close();
                 }
             };
-            session.on('error', fallbackToHttp1);
+            let req;
+            session.on('error', (error) => {
+                if (!responseHeadersReceived) {
+                    fallbackToHttp1();
+                }
+                else if (req && !req.destroyed) {
+                    // The response stream has already been handed to the caller. Surface
+                    // a later session failure there so source-specific Range recovery can
+                    // resume from the bytes it actually consumed.
+                    req.destroy(error);
+                }
+            });
             session.on('goaway', closeSessionGracefully);
             const h2Headers = {
                 ':method': method,
@@ -1720,27 +1738,49 @@ async function makeRequest(urlString, options, nodelink) {
                 if (!disableBodyCompression)
                     h2Headers['content-encoding'] = 'gzip';
             }
-            const req = session.request(h2Headers);
+            req = session.request(h2Headers);
             let reqClosed = false;
-            if (timeout) {
-                req.setTimeout(timeout, () => {
+            const handleRequestTimeout = () => {
+                if (!responseHeadersReceived) {
                     if (!reqClosed) {
                         reqClosed = true;
                         req.close(http2.constants.NGHTTP2_CANCEL);
                     }
                     closeSessionGracefully();
                     fallbackToHttp1();
-                    reject(new Error(`HTTP/2 request timeout for ${urlString}`));
+                    return;
+                }
+                if (req.isPaused()) {
+                    req.setTimeout(0);
+                    return;
+                }
+                req.destroy(new Error(`HTTP/2 response stream timeout for ${urlString}`));
+            };
+            if (timeout) {
+                req.on('timeout', handleRequestTimeout);
+                req.on('pause', () => {
+                    if (responseHeadersReceived)
+                        req.setTimeout(0);
                 });
+                req.on('resume', () => {
+                    if (responseHeadersReceived)
+                        req.setTimeout(timeout);
+                });
+                req.setTimeout(timeout);
             }
             req.on('error', (err) => {
+                if (responseHeadersReceived)
+                    return;
                 if (!reqClosed)
                     reqClosed = true;
-                closeSessionGracefully();
                 fallbackToHttp1();
-                reject(new Error(`HTTP/2 request error for ${urlString}: ${err.message}`));
+                if (!fallbackStarted) {
+                    reject(new Error(`HTTP/2 request error for ${urlString}: ${err.message}`));
+                }
             });
             req.on('response', async (headers) => {
+                responseHeadersReceived = true;
+                req.setTimeout(0);
                 const statusHeader = headers[':status'];
                 const rawStatus = typeof statusHeader === 'number' ? statusHeader : Number(statusHeader);
                 const statusCode = Number.isNaN(rawStatus) ? undefined : rawStatus;
