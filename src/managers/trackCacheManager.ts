@@ -79,17 +79,7 @@ export default class TrackCacheManager extends BaseCacheManager<unknown> {
     ttlMs: number = DEFAULT_TTL_MS
   ): void {
     const key = `${source}:${identifier}`
-    const now = Date.now()
-
-    this.cache.set(key, {
-      value,
-      createdAt: now,
-      updatedAt: now,
-      expiresAt: ttlMs > 0 ? now + ttlMs : null
-    })
-
-    this._enforceMaxEntries()
-    this.save()
+    this._setEntry(key, value, ttlMs)
   }
 
   /**
@@ -99,9 +89,7 @@ export default class TrackCacheManager extends BaseCacheManager<unknown> {
    */
   delete(source: string, identifier: string): boolean {
     const key = `${source}:${identifier}`
-    const deleted = this.cache.delete(key)
-    if (deleted) this.save()
-    return deleted
+    return this._deleteEntry(key)
   }
 
   private static _resolveCacheOptions(options: NodelinkConfig): {

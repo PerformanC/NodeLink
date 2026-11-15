@@ -58,15 +58,7 @@ export default class TrackCacheManager extends BaseCacheManager {
      */
     set(source, identifier, value, ttlMs = DEFAULT_TTL_MS) {
         const key = `${source}:${identifier}`;
-        const now = Date.now();
-        this.cache.set(key, {
-            value,
-            createdAt: now,
-            updatedAt: now,
-            expiresAt: ttlMs > 0 ? now + ttlMs : null
-        });
-        this._enforceMaxEntries();
-        this.save();
+        this._setEntry(key, value, ttlMs);
     }
     /**
      * Deletes a cached value by source/identifier.
@@ -75,10 +67,7 @@ export default class TrackCacheManager extends BaseCacheManager {
      */
     delete(source, identifier) {
         const key = `${source}:${identifier}`;
-        const deleted = this.cache.delete(key);
-        if (deleted)
-            this.save();
-        return deleted;
+        return this._deleteEntry(key);
     }
     static _resolveCacheOptions(options) {
         const playback = options.playback;
