@@ -2550,7 +2550,10 @@ export function getBestMatch(list, original, options = {}) {
             .replace(/feat\.?/g, '')
             .replace(/ft\.?/g, '')
             .replace(/\s*\([^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi, '')
-            .replace(/\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^\]]*\]/gi, '')
+            .replace(/\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi, '')
+            // Preserves letters and numbers across all Unicode scripts (\p{L}\p{N}), ensuring
+            // non-Latin titles (Japanese, Chinese, Cyrillic, etc.) are not erased during normalization.
+            // Ref: https://github.com/PerformanC/NodeLink/commit/7ee75784
             .replace(/[^\p{L}\p{N}\s]/gu, '')
             .trim();
     };
@@ -2577,9 +2580,16 @@ export function getBestMatch(list, original, options = {}) {
     const allowedDiff = targetDuration * durationTolerance;
     const normOriginalTitle = normalize(original.title);
     const normOriginalAuthor = normalize(original.author);
-    const originalWords = new Set(normOriginalTitle
+    let cleanTitleForWords = normOriginalTitle;
+    if (normOriginalAuthor && cleanTitleForWords.includes(normOriginalAuthor)) {
+        const stripped = cleanTitleForWords.replace(normOriginalAuthor, '').trim();
+        if (stripped.length >= 2)
+            cleanTitleForWords = stripped;
+    }
+    const originalWords = new Set(cleanTitleForWords
         .split(/\s+/)
         .filter((w) => w.length > 0));
+    // Split multiple artists (e.g. "ぴーなた, 重音テト") to match individual artist aliases/channels.
     const originalArtists = original.author
         ? original.author
             .split(/[,/&]/)
@@ -2600,9 +2610,20 @@ export function getBestMatch(list, original, options = {}) {
             if (itemWordsSet.has(word)) {
                 overlap++;
             }
-            else if (word.length >= 2 &&
+            else if (
+            // For CJK languages that lack space delimiters, check substring containment.
+            word.length >= 2 &&
                 (normItemTitle.includes(word) || word.includes(normItemTitle))) {
                 overlap += 0.8;
+            }
+            else {
+                for (const iw of itemWords) {
+                    if ((iw.length >= 4 && word.startsWith(iw)) ||
+                        (word.length >= 4 && iw.startsWith(word))) {
+                        overlap += 0.8;
+                        break;
+                    }
+                }
             }
         }
         score += (overlap / Math.max(originalWords.size, 1)) * 300;
@@ -2635,6 +2656,8 @@ export function getBestMatch(list, original, options = {}) {
             }
         }
         if (!authorMatched) {
+            // In Japanese/Vocaloid and indie media, featured or primary artist names
+            // are frequently included in video titles (e.g. "【重音テト】アンタに言ってんの！【MV】").
             for (const artist of originalArtists) {
                 if (artist.length >= 2 &&
                     (normItemTitle.includes(artist) || itemTitle.includes(artist))) {
@@ -2651,15 +2674,31 @@ export function getBestMatch(list, original, options = {}) {
             const shorter = normOriginalAuthor.length > normItemAuthor.length
                 ? normItemAuthor
                 : normOriginalAuthor;
-            if (shorter.length > 2 && longer.includes(shorter))
+            if (shorter.length > 2 && longer.includes(shorter)) {
                 score += 100;
+                authorMatched = true;
+            }
         }
+        if (!authorMatched && normOriginalAuthor && normItemAuthor) {
+            const authorWords = normOriginalAuthor
+                .split(/\s+/)
+                .filter((w) => w.length >= 4);
+            for (const w of authorWords) {
+                if (normItemAuthor.includes(w) || normItemTitle.includes(w)) {
+                    score += 100;
+                    authorMatched = true;
+                    break;
+                }
+            }
+        }
+        const isEpisode = original.uri?.includes('/episode/') ||
+            original.uri?.includes('/chapter/');
         if (targetDuration > 0) {
             const diff = Math.abs(item.info.length - targetDuration);
             if (diff <= allowedDiff) {
                 score += (1 - diff / allowedDiff) * 100;
             }
-            else {
+            else if (!isEpisode) {
                 score -= 100;
             }
         }
