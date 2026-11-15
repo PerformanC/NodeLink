@@ -51,7 +51,6 @@ type SourceTaskType =
   | 'loadLiveChat'
   | 'cancelLiveChat'
   | 'sourceHealthProbe'
-  | 'analyzePcm'
   | 'profilerCommand'
 
 /**
@@ -546,27 +545,6 @@ class SourceWorkerManager {
       { sourceName },
       { timeoutMs: 7000 }
     )
-  }
-
-  /** Offloads bounded PCM feature extraction to a source analysis micro-worker. */
-  async analyzePcm(payload: {
-    pcmBase64: string
-    sampleRate?: number
-    trackId?: string
-    windowStartMs?: number
-    trackLengthMs?: number
-  }): Promise<unknown> {
-    const worker = this.workers
-      .filter((candidate) => candidate?.isConnected?.())
-      .sort(
-        (a, b) =>
-          (this.workerLoads.get(a.id) || 0) - (this.workerLoads.get(b.id) || 0)
-      )[0]
-    if (!worker)
-      throw new Error('No source worker is available for PCM analysis')
-    return this._executeOnWorker(worker, 'analyzePcm', payload, {
-      timeoutMs: 10000
-    })
   }
 
   private _decrementLoad(workerId: number): void {
