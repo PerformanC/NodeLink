@@ -5,6 +5,7 @@ import type {
   VoicePlayerState
 } from '@performanc/voice'
 import type { AudioProcessingMode } from '../../playback/processing/audioContract.ts'
+import type { TrackPreAnalysisProfile } from '../../playback/processing/MusicalAnalyzer.ts'
 import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 import type { TrackData } from '../index.types.ts'
 import type {
@@ -177,9 +178,13 @@ export interface CrossfadeConfig {
 /** PCM buffering options passed to the crossfade controller. */
 export interface CrossfadePrepareOptions {
   durationMs: number
+  outgoingTrackId?: string
+  incomingTrackId?: string
   minBufferMs?: number
   bufferMs?: number
   getOutgoingTailRms?: () => number | undefined
+  getOutgoingProfile?: () => TrackPreAnalysisProfile | null | undefined
+  getIncomingProfile?: () => TrackPreAnalysisProfile | null | undefined
 }
 
 export interface ExtendedAudioStream extends AudioResource {

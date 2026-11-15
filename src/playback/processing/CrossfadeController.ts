@@ -25,11 +25,13 @@
 import { type Readable, Transform, type TransformCallback } from 'node:stream'
 import type { FadeCurve } from '../../typings/playback/processing.types.ts'
 import { logger } from '../../utils.ts'
+import { AutoMixCacheManager } from './AutoMixCacheManager.ts'
 import {
   calculatePcmRms,
   detectIntroBoundary,
   evaluateMusicalRelationship,
   getHarmonicDistance,
+  type IntroBoundary,
   MusicalAnalyzer,
   type MusicalProfile,
   matchTempo,
@@ -76,7 +78,12 @@ interface BufferedPcmStream {
     error: () => void
   }
   onComplete: (consumedMs: number) => void
+  outgoingTrackId?: string
+  incomingTrackId?: string
   getOutgoingTailRms?: () => number | undefined
+  getOutgoingProfile?: () => TrackPreAnalysisProfile | null | undefined
+  getIncomingProfile?: () => TrackPreAnalysisProfile | null | undefined
+  introBoundary?: IntroBoundary | null
   analyzer: MusicalAnalyzer
   playbackAnalyzer: MusicalAnalyzer
 }
@@ -214,8 +221,16 @@ export interface CrossfadePrepareOptions {
   minBufferMs?: number
   /** Maximum decoded PCM retained for the next track. */
   bufferMs?: number
+  /** Identifier of the currently playing track. */
+  outgoingTrackId?: string
+  /** Identifier of the queued incoming track. */
+  incomingTrackId?: string
   /** Supplies the verified source-end measurement once background analysis finishes. */
   getOutgoingTailRms?: () => number | undefined
+  /** Supplies the pre-analyzed profile for the outgoing track (including outroProfile). */
+  getOutgoingProfile?: () => TrackPreAnalysisProfile | null | undefined
+  /** Supplies the pre-analyzed profile for the incoming track if available. */
+  getIncomingProfile?: () => TrackPreAnalysisProfile | null | undefined
 }
 
 /**
@@ -303,7 +318,11 @@ export class CrossfadeController extends Transform {
       stream,
       this._alignBytes(bufferMs * this.bytesPerMs),
       onComplete,
-      options.getOutgoingTailRms
+      options.getOutgoingTailRms,
+      options.getOutgoingProfile,
+      options.getIncomingProfile,
+      options.outgoingTrackId,
+      options.incomingTrackId
     )
     stream.resume()
     return true
@@ -341,18 +360,51 @@ export class CrossfadeController extends Transform {
       Math.round(durationMs ?? this.defaultDurationMs)
     )
     const mainProfile = this.mainAnalyzer.getProfile()
-    const nextProfile = this.next.analyzer.getProfile()
+    const nextRawProfile = this.next.analyzer.getProfile()
+    const incomingPreAnalysis =
+      this.next.getIncomingProfile?.() ??
+      (this.next.incomingTrackId
+        ? AutoMixCacheManager.getInstance().getProfile(
+            this.next.incomingTrackId
+          )
+        : null)
 
-    const peek = this._peekTarget(
-      this.next,
-      Math.min(this.next.length, Math.round(this.bytesPerMs * 10000))
-    )
-    const introBoundary = peek
-      ? detectIntroBoundary(
-          this.float32 ? this._toAnalyzerPcm(peek) : peek,
-          SAMPLE_RATE
-        )
-      : null
+    const nextProfile = incomingPreAnalysis
+      ? {
+          ...nextRawProfile,
+          bpm: incomingPreAnalysis.bpm ?? nextRawProfile.bpm,
+          confidence: Math.max(
+            nextRawProfile.confidence,
+            incomingPreAnalysis.bpmConfidence
+          ),
+          key: incomingPreAnalysis.key ?? nextRawProfile.key,
+          keyConfidence: Math.max(
+            nextRawProfile.keyConfidence,
+            incomingPreAnalysis.keyConfidence
+          ),
+          energy: incomingPreAnalysis.energy ?? nextRawProfile.energy,
+          loudnessLufs:
+            incomingPreAnalysis.loudnessLufs ?? nextRawProfile.loudnessLufs,
+          vocalActivity:
+            incomingPreAnalysis.vocalActivity ?? nextRawProfile.vocalActivity
+        }
+      : nextRawProfile
+
+    let introBoundary =
+      incomingPreAnalysis?.introProfile ?? this.next.introBoundary ?? null
+    if (!introBoundary && this.next.length > 0) {
+      const peek = this._peekTarget(
+        this.next,
+        Math.min(this.next.length, Math.round(this.bytesPerMs * 4000))
+      )
+      introBoundary = peek
+        ? detectIntroBoundary(
+            this.float32 ? this._toAnalyzerPcm(peek) : peek,
+            SAMPLE_RATE
+          )
+        : null
+      this.next.introBoundary = introBoundary
+    }
 
     const incomingWithIntro: MusicalProfile | TrackPreAnalysisProfile = {
       ...nextProfile,
@@ -366,8 +418,12 @@ export class CrossfadeController extends Transform {
     // availableMs is the remaining source duration supplied by Player.
     // The analyzer duration is elapsed playback time, not the full track length.
     const sourceEndPositionMs = mainProfile.durationMs + availableDurationMs
+    const outgoingPreAnalysis = this.next?.getOutgoingProfile?.() ?? null
     const planningMainProfile = {
       ...mainProfile,
+      ...(outgoingPreAnalysis?.outroProfile
+        ? { outroProfile: outgoingPreAnalysis.outroProfile }
+        : {}),
       durationMs: sourceEndPositionMs
     }
     const plan = evaluateMusicalRelationship(
@@ -472,86 +528,54 @@ export class CrossfadeController extends Transform {
       pendingPlanSamples: 0
     }
 
+    AutoMixCacheManager.getInstance().setTransition(
+      transitionId,
+      this.next.outgoingTrackId ?? '',
+      this.next.incomingTrackId ?? '',
+      'ativo',
+      {
+        archetype: plan.archetype,
+        durationMs: plan.crossfadeDurationMs,
+        curve: plan.effects.curve,
+        outgoingTargetMs: plan.placement?.selected.outgoingTargetMs
+      }
+    )
+
     if (plan.placement) {
+      const selected = plan.placement.selected
       logger(
         'info',
         'AutoMix',
-        `[AutoMix][${transitionId}][PlacementAnalysis]`,
-        {
-          transitionId,
-          outgoing: plan.placement.outgoing,
-          incoming: plan.placement.incoming,
-          candidatePlacements: plan.placement.candidates,
-          selected: plan.placement.selected
-        }
+        `[AutoMix][${transitionId}][Placement] Selected ${selected.name} (${selected.archetype}) at ${selected.outgoingTargetMs}ms (score: ${selected.totalScore.toFixed(3)})`
       )
     }
 
-    logger('info', 'AutoMix', `[AutoMix][${transitionId}][DecisionEvidence]`, {
-      transitionId,
-      outgoing: {
-        bpm: mainProfile.bpm ? Math.round(mainProfile.bpm * 10) / 10 : null,
-        bpmConfidence: Math.round(mainProfile.confidence * 100) / 100,
-        key: mainProfile.key ?? 'unknown',
-        keyConfidence: Math.round(mainProfile.keyConfidence * 100) / 100,
-        loudnessLufs: mainProfile.loudnessLufs,
-        energy: Math.round(mainProfile.energy * 1000) / 1000,
-        vocalActivity: mainProfile.vocalActivity
-      },
-      incoming: {
-        bpm: nextProfile.bpm ? Math.round(nextProfile.bpm * 10) / 10 : null,
-        bpmConfidence: Math.round(nextProfile.confidence * 100) / 100,
-        key: nextProfile.key ?? 'unknown',
-        keyConfidence: Math.round(nextProfile.keyConfidence * 100) / 100,
-        loudnessLufs: nextProfile.loudnessLufs,
-        energy: Math.round(nextProfile.energy * 1000) / 1000,
-        vocalActivity: nextProfile.vocalActivity,
-        introBoundaryMs: plan.introBoundaryMs
-      },
-      evidence: {
-        harmonicRelation: harmonic.relation,
-        harmonicScore: harmonic.score,
-        harmonicCertaintyType:
-          harmonic.score >= 0.85 && mainProfile.keyConfidence < 0.2
-            ? 'structural-hypothesis (low-confidence-measurement)'
-            : 'confirmed-measurement',
-        tempoRatio: tempo?.ratio ?? 'unknown',
-        tempoDifference: tempo
-          ? `${(tempo.difference * 100).toFixed(1)}%`
-          : 'unknown',
-        tempoMeasurementConfidence:
-          Math.round(
-            Math.min(mainProfile.confidence, nextProfile.confidence) * 100
-          ) / 100,
-        triad: {
-          musicalCompatibility: plan.musicalCompatibilityScore,
-          decisionReliability: plan.decisionReliability,
-          decisionStability: plan.decisionStability
-        },
-        independentSignals: plan.independentSignals,
-        strongSignals: plan.strongSignals
-      }
-    })
+    const bpmOut = mainProfile.bpm
+      ? `${(Math.round(mainProfile.bpm * 10) / 10).toFixed(1)} BPM`
+      : 'unknown'
+    const bpmIn = nextProfile.bpm
+      ? `${(Math.round(nextProfile.bpm * 10) / 10).toFixed(1)} BPM`
+      : 'unknown'
+    const keyOut = mainProfile.key ?? 'unknown'
+    const keyIn = nextProfile.key ?? 'unknown'
+    const triad = `compat=${plan.musicalCompatibilityScore.toFixed(2)}, rel=${plan.decisionReliability.toFixed(2)}, stab=${plan.decisionStability.toFixed(2)}`
+    logger(
+      'info',
+      'AutoMix',
+      `[AutoMix][${transitionId}][DecisionEvidence] Out: ${bpmOut} (${keyOut}) | In: ${bpmIn} (${keyIn}) | Harmonic: ${harmonic.relation} (${harmonic.score.toFixed(2)}) | Triad: ${triad}`
+    )
 
-    logger('info', 'AutoMix', `[AutoMix][${transitionId}][Decision]`, {
-      transitionId,
-      decision: {
-        archetype: plan.archetype,
-        confidenceLevel: plan.confidenceLevel,
-        reason: plan.decisionReason
-      }
-    })
+    logger(
+      'info',
+      'AutoMix',
+      `[AutoMix][${transitionId}][Decision] Archetype: ${plan.archetype} (${plan.confidenceLevel}) - ${plan.decisionReason}`
+    )
 
-    logger('info', 'AutoMix', `[AutoMix][${transitionId}][PLAN_CREATED]`, {
-      transitionId,
-      archetype: plan.archetype,
-      crossfadeDurationMs: plan.crossfadeDurationMs,
-      entryPointMs: plan.entryPointMs,
-      introBoundaryMs: plan.introBoundaryMs,
-      introHoldMs: plan.introHoldMs,
-      effects: plan.effects,
-      fingerprint: plan.fingerprint
-    })
+    logger(
+      'info',
+      'AutoMix',
+      `[AutoMix][${transitionId}][PlanCreated] Archetype: ${plan.archetype}, Duration: ${plan.crossfadeDurationMs}ms, Curve: ${plan.effects.curve}, MidDuck: ${plan.effects.midDuckDb}dB`
+    )
 
     logger('debug', 'Crossfade', `[AutoMix][${transitionId}][TimingPlan]`, {
       transitionId,
@@ -597,6 +621,11 @@ export class CrossfadeController extends Transform {
 
   /** Detaches and discards the prepared next track. */
   public clearNext(): void {
+    if (this.armed) {
+      AutoMixCacheManager.getInstance().deleteTransition(
+        this.armed.transitionId
+      )
+    }
     this.transition = null
     this.armed = null
     if (this.next) this._disposeTarget(this.next)
@@ -704,7 +733,11 @@ export class CrossfadeController extends Transform {
     stream: Readable,
     maxBytes: number,
     onComplete: (consumedMs: number) => void,
-    getOutgoingTailRms?: () => number | undefined
+    getOutgoingTailRms?: () => number | undefined,
+    getOutgoingProfile?: () => TrackPreAnalysisProfile | null | undefined,
+    getIncomingProfile?: () => TrackPreAnalysisProfile | null | undefined,
+    outgoingTrackId?: string,
+    incomingTrackId?: string
   ): BufferedPcmStream {
     const target: BufferedPcmStream = {
       stream,
@@ -723,7 +756,11 @@ export class CrossfadeController extends Transform {
         error: () => {}
       },
       onComplete,
+      outgoingTrackId,
+      incomingTrackId,
       getOutgoingTailRms,
+      getOutgoingProfile,
+      getIncomingProfile,
       analyzer: new MusicalAnalyzer(),
       playbackAnalyzer: new MusicalAnalyzer()
     }
@@ -764,7 +801,17 @@ export class CrossfadeController extends Transform {
       const aligned = data.subarray(0, alignedLength)
       target.chunks.push(aligned)
       target.length += alignedLength
-      this._pushAnalyzer(target.analyzer, aligned)
+
+      const hasPreAnalysis = Boolean(
+        target.getIncomingProfile?.() ||
+          (target.incomingTrackId &&
+            AutoMixCacheManager.getInstance().hasProfile(
+              target.incomingTrackId
+            ))
+      )
+      if (!hasPreAnalysis && target.length <= this.analysisReadyBytes) {
+        this._pushAnalyzer(target.analyzer, aligned)
+      }
     }
 
     if (target.length >= target.maxBytes && !target.paused) {
@@ -1285,32 +1332,25 @@ export class CrossfadeController extends Transform {
     const consumedMs = (runtime.incomingFrames / SAMPLE_RATE) * 1000
     runtime.onComplete(consumedMs)
 
-    logger('info', 'AutoMix', `[AutoMix][${transitionId}][PROMOTED]`, {
-      transitionId,
-      consumedMs: Math.round(consumedMs),
-      incomingPushedFrames: runtime.incomingFrames,
-      lifecycle: 'completed'
-    })
+    AutoMixCacheManager.getInstance().completeTransition(transitionId)
 
-    logger('info', 'AutoMix', `[AutoMix][${transitionId}][TransitionSummary]`, {
-      transitionId,
-      finalArchetype:
-        plan?.archetype ?? (runtime.bassSwap ? 'bass-swap' : runtime.strategy),
-      musicalCompatibilityScore: plan?.musicalCompatibilityScore ?? null,
-      decisionReliability: plan?.decisionReliability ?? null,
-      confidenceLevel: plan?.confidenceLevel ?? null,
-      crossfadeDurationMs: Math.round(
-        (runtime.durationFrames / SAMPLE_RATE) * 1000
-      ),
-      introHoldMs: plan?.introHoldMs ?? 0,
-      consumedMs: Math.round(consumedMs),
-      reclassificationCount: this.reclassificationCount,
-      audioUnderrun: false,
-      incomingBufferStarvation: runtime.incomingStarvedFrames > 0,
-      incomingBufferStarvationMs: Math.round(
-        (runtime.incomingStarvedFrames / SAMPLE_RATE) * 1000
-      )
-    })
+    logger(
+      'info',
+      'AutoMix',
+      `[AutoMix][${transitionId}][Promoted] Consumed: ${Math.round(consumedMs)}ms, Incoming Frames: ${runtime.incomingFrames}`
+    )
+
+    const finalArchetype =
+      plan?.archetype ?? (runtime.bassSwap ? 'bass-swap' : runtime.strategy)
+    const crossfadeDurationMs = Math.round(
+      (runtime.durationFrames / SAMPLE_RATE) * 1000
+    )
+
+    logger(
+      'info',
+      'AutoMix',
+      `[AutoMix][${transitionId}][TransitionSummary] Archetype: ${finalArchetype}, Duration: ${crossfadeDurationMs}ms, Consumed: ${Math.round(consumedMs)}ms, Reclassifications: ${this.reclassificationCount}, Starvation: ${runtime.incomingStarvedFrames > 0}`
+    )
   }
 
   private _promoteArmedGapless(reason: string): boolean {
@@ -1321,7 +1361,6 @@ export class CrossfadeController extends Transform {
     const transitionId = armed.transitionId
     const mainProfile = this.mainAnalyzer.getProfile()
     const nextProfile = promoted.analyzer.getProfile()
-    const tempo = matchTempo(mainProfile.bpm, nextProfile.bpm)
     const handoffReason = reason
 
     if (this.bridge) this._disposeTarget(this.bridge)
@@ -1338,24 +1377,12 @@ export class CrossfadeController extends Transform {
     this._resumeTarget(promoted)
     this._startBridgeLifecycle()
 
+    AutoMixCacheManager.getInstance().completeTransition(transitionId)
+
     logger(
       'info',
       'AutoMix',
-      `[AutoMix][${transitionId}][Gapless] ${mainProfile.bpm?.toFixed(1) ?? '?'} BPM -> ${nextProfile.bpm?.toFixed(1) ?? '?'} BPM`,
-      {
-        transitionId,
-        tempoDifference: tempo
-          ? Math.round(tempo.difference * 1000) / 10
-          : null,
-        reason: handoffReason,
-        archetype: armed.plan.archetype,
-        selectedStrategy: armed.strategy,
-        selectedEffect: armed.bassSwap ? 'bass-swap' : armed.strategy,
-        earlyBeatMatch: armed.earlyBeatMatch,
-        mainConfidence: Math.round(mainProfile.confidence * 1000) / 1000,
-        nextConfidence: Math.round(nextProfile.confidence * 1000) / 1000,
-        selectionWaitedMs: Math.round((armed.waitedFrames / SAMPLE_RATE) * 1000)
-      }
+      `[AutoMix][${transitionId}][Gapless] ${mainProfile.bpm?.toFixed(1) ?? '?'} BPM -> ${nextProfile.bpm?.toFixed(1) ?? '?'} BPM (${handoffReason}) Archetype: ${armed.plan.archetype}`
     )
     promoted.onComplete(0)
     return true
@@ -1594,23 +1621,6 @@ export class CrossfadeController extends Transform {
       !reliabilityAcceptable ||
       (!sameArchetype && !materiallyBetter)
     ) {
-      logger(
-        'debug',
-        'AutoMix',
-        `[AutoMix][${armed.transitionId}][PlanCandidate]`,
-        {
-          transitionId: armed.transitionId,
-          candidateFingerprint,
-          stableSamples,
-          requiredStableSamples: 2,
-          candidateArchetype: newPlan.archetype,
-          currentArchetype: armed.plan.archetype,
-          candidateReliability: newPlan.decisionReliability,
-          reliabilityFloor,
-          scoreGain: Math.round(scoreGain * 1000) / 1000,
-          accepted: false
-        }
-      )
       return
     }
 

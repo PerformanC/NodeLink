@@ -8,6 +8,7 @@ import { logger } from '../utils.js';
 import { AutoMixRegistry } from './processing/AutoMixRegistry.js';
 import { resolveAudioProcessingMode } from './processing/audioContract.js';
 import { DuckingController } from './processing/DuckingController.js';
+import { TransitionProfileCache } from './processing/MusicalAnalyzer.js';
 let createAudioResource = null;
 let createSeekeableAudioResource = null;
 const trackFinishMemoryTraceEnabled = process.env.NODELINK_TRACK_FINISH_MEMORY_TRACE?.toLowerCase() === 'true';
@@ -914,7 +915,7 @@ export class Player {
     /**
      * Fetches an audio resource for playback.
      */
-    async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false) {
+    async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false, isBackgroundAnalysis = false) {
         if (this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
         }
@@ -923,17 +924,22 @@ export class Player {
         if (!audioResourceFactory) {
             return { exception: { message: 'Stream processor not initialized' } };
         }
+        const isAuxiliaryResource = returnPCM || isBackgroundAnalysis;
         const additionalData = {
             ...urlData.additionalData,
             ...(startTime !== undefined ? { startTime, position: startTime } : {}),
             guildId: this.guildId,
-            positionCallback: (positionMs) => {
-                if (!Number.isFinite(positionMs) || positionMs < 0)
-                    return;
-                this.position = positionMs;
-            },
-            // specific to sabr protocol for now
-            playbackPaused: () => this.isPaused
+            ...(isAuxiliaryResource
+                ? {}
+                : {
+                    positionCallback: (positionMs) => {
+                        if (!Number.isFinite(positionMs) || positionMs < 0)
+                            return;
+                        this.position = positionMs;
+                    },
+                    // specific to sabr protocol for now
+                    playbackPaused: () => this.isPaused
+                })
         };
         const resolvedUrlData = {
             ...urlData,
@@ -955,13 +961,15 @@ export class Player {
         const fetchedStream = fetched.stream;
         const totalBytesRaw = resolvedUrlData.additionalData?.contentLength ?? null;
         const totalBytesNum = Number(totalBytesRaw);
-        this.profilerStreamStats = {
-            downloadedBytes: 0,
-            totalBytes: Number.isFinite(totalBytesNum) && totalBytesNum > 0
-                ? totalBytesNum
-                : null,
-            lastChunkAt: null
-        };
+        if (!isAuxiliaryResource) {
+            this.profilerStreamStats = {
+                downloadedBytes: 0,
+                totalBytes: Number.isFinite(totalBytesNum) && totalBytesNum > 0
+                    ? totalBytesNum
+                    : null,
+                lastChunkAt: null
+            };
+        }
         let streamForResource = fetchedStream;
         if (fetchedStream.on) {
             const eventStream = fetchedStream;
@@ -1048,13 +1056,6 @@ export class Player {
             this.destroying)
             return false;
         const position = this._realPosition();
-        if (this.sponsorBlock.enabled && this.track) {
-            // Periodic log to verify position and sb state
-            if (Math.abs(position - this._lastPosition) > 1000 ||
-                this._lastPosition === 0) {
-                logger('debug', 'Player', `[SponsorBlock][${this.guildId}] Current position: ${Math.round(position)}ms, Segments: ${this.sponsorBlock.segments.length}, LastSkipped: ${this.sponsorBlock.lastSkippedUuid}`);
-            }
-        }
         const threshold = this.nodelink.options.playback.trackStuckThresholdMs ?? 0;
         if (threshold > 0 &&
             !this.isUpdatingTrack &&
@@ -1613,18 +1614,26 @@ export class Player {
                 if (this.nextResourceIsCrossfade) {
                     this._crossfadePreparationSafetyMs = SEEK_CROSSFADE_SAFETY_MS;
                     this._rescheduleCrossfade(this.position);
-                    const remainingMs = (this.track?.endTime || this.track?.info.length || 0) -
-                        this.position;
+                    const totalTrackMs = this.track?.endTime && this.track.endTime > 0
+                        ? this.track.endTime
+                        : this.track?.info.length || 0;
+                    const remainingMs = Math.max(0, totalTrackMs - this.position);
                     if (remainingMs <= 40000 && this.track && this.streamInfo) {
                         const currentTrack = this.track;
                         const currentStreamInfo = this.streamInfo;
+                        const targetWindowMs = Math.min(25000, Math.max(5000, remainingMs));
+                        const windowStartMs = Math.max(0, totalTrackMs - targetWindowMs);
+                        const windowDurationMs = Math.min(totalTrackMs - windowStartMs, targetWindowMs + 2000);
                         AutoMixRegistry.getInstance()
                             .requestOutroAnalysis({
                             track: currentTrack,
                             urlData: currentStreamInfo,
+                            windowStartMs,
+                            windowDurationMs,
+                            remainingMs,
                             priority: 'IMMINENT_TRANSITION',
                             triggerSource: `player:${this.guildId}:seekImminent`,
-                            fetchResource: (info, uData, windowStartMs, returnPcm) => this._fetchResource(info, uData, windowStartMs, returnPcm)
+                            fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
                         })
                             .catch(() => { });
                     }
@@ -2082,6 +2091,9 @@ export class Player {
         logger('debug', 'Player', `[Action: clearNextTrack] Method invoked for guild ${this.guildId}`);
         if (this.destroying)
             return false;
+        if (this.nextTrack?.info.identifier) {
+            AutoMixRegistry.getInstance().cancelTrackAnalysis(this.nextTrack.info.identifier);
+        }
         if (this.nextResourceIsCrossfade) {
             this._crossfadeToken += 1;
             this._clearCrossfadeTimer();
@@ -3325,19 +3337,30 @@ export class Player {
             this.isPaused) {
             return false;
         }
-        const total = this.track.endTime && this.track.endTime > 0
+        let total = this.track.endTime && this.track.endTime > 0
             ? this.track.endTime
             : this.track.info.length;
         if (!Number.isFinite(total) || total <= 0)
             return false;
-        const delay = 0;
+        const cachedProfile = TransitionProfileCache.get(this.track.info.identifier);
+        if (cachedProfile?.outroProfile?.naturalOutroPointMs &&
+            cachedProfile.outroProfile.naturalOutroPointMs > 0 &&
+            cachedProfile.outroProfile.naturalOutroPointMs < total &&
+            !(this.track.endTime && this.track.endTime > 0)) {
+            total = cachedProfile.outroProfile.naturalOutroPointMs;
+        }
+        const currentPosition = _startPosition ?? this._realPosition();
+        const remainingMs = Math.max(0, total - currentPosition);
+        const crossfadeDurationMs = config.duration || 6000;
+        const prepLeadMs = Math.min(35000, Math.max(15000, crossfadeDurationMs * 3 + 10000));
+        const delay = Math.max(0, remainingMs - prepLeadMs);
         const token = this._crossfadeToken;
         const payload = this.nextTrack;
-        logger('debug', 'Crossfade', `Preparing next track for guild ${this.guildId} (early warm-up)`);
+        logger('debug', 'Crossfade', `Scheduling next track preparation for guild ${this.guildId} in ${Math.round(delay)}ms (${Math.round(remainingMs)}ms remaining, lead: ${prepLeadMs}ms)`);
         this._crossfadePrepareTimer = setTimeout(() => {
             this._crossfadePrepareTimer = null;
             this._prepareCrossfadeResource(token, payload).catch((error) => {
-                logger('error', 'Crossfade', `Early crossfade preload failed for guild ${this.guildId}: ${error.message}`);
+                logger('error', 'Crossfade', `Crossfade preload failed for guild ${this.guildId}: ${error.message}`);
             });
         }, delay);
         this._crossfadePrepareTimer.unref?.();
@@ -3359,19 +3382,35 @@ export class Player {
         let outgoingTailRms;
         if (currentStreamInfo &&
             !(currentTrack.endTime && currentTrack.endTime < currentTrack.info.length)) {
+            const totalTrackMs = currentTrack.endTime && currentTrack.endTime > 0
+                ? currentTrack.endTime
+                : currentTrack.info.length;
+            const currentPosMs = this._realPosition();
+            const remainingMs = Math.max(0, totalTrackMs - currentPosMs);
+            const crossfadeDurationMs = config.duration || 6000;
+            const minAnalysisWindowMs = Math.max(5000, crossfadeDurationMs + 2000);
+            const targetWindowMs = Math.min(25000, Math.max(minAnalysisWindowMs, remainingMs));
+            const windowStartMs = Math.max(0, totalTrackMs - targetWindowMs);
+            const windowDurationMs = Math.min(totalTrackMs - windowStartMs, targetWindowMs + 2000);
+            const priority = remainingMs <= crossfadeDurationMs * 2.5
+                ? 'IMMINENT_TRANSITION'
+                : 'CURRENT_OUTRO';
             void AutoMixRegistry.getInstance()
                 .requestOutroAnalysis({
                 track: currentTrack,
                 urlData: currentStreamInfo,
-                windowStartMs: Math.max(0, currentTrack.info.length - 25000),
-                /* INFO: Leave room for imprecise seeks and rounded source lengths to reach EOF. */
-                windowDurationMs: Math.min(25000, currentTrack.info.length) + 5000,
-                priority: 'CURRENT_OUTRO',
+                windowStartMs,
+                windowDurationMs,
+                remainingMs,
+                priority,
                 triggerSource: `player:${this.guildId}:nextTrack`,
-                fetchResource: (info, uData, windowStartMs, returnPcm) => this._fetchResource(info, uData, windowStartMs, returnPcm)
+                fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
             })
                 .then((profile) => {
                 outgoingTailRms = profile?.outroProfile?.sourceEndRms;
+                if (profile?.outroProfile?.naturalOutroPointMs && this.nextResource) {
+                    this._scheduleCrossfade();
+                }
             })
                 .catch((error) => {
                 logger('error', 'AutoMix', `Outro analysis failed for ${currentTrack.info.identifier}`, error);
@@ -3397,7 +3436,12 @@ export class Player {
         }
         const prepared = audioStream.prepareCrossfade(fetched.stream.stream, {
             durationMs: config.duration,
-            getOutgoingTailRms: () => outgoingTailRms,
+            outgoingTrackId: currentTrack.info.identifier,
+            incomingTrackId: payload.info.identifier,
+            getOutgoingTailRms: () => TransitionProfileCache.get(currentTrack.info.identifier)?.outroProfile
+                ?.sourceEndRms ?? outgoingTailRms,
+            getOutgoingProfile: () => TransitionProfileCache.get(currentTrack.info.identifier) ?? null,
+            getIncomingProfile: () => TransitionProfileCache.get(payload.info.identifier) ?? null,
             minBufferMs: config.minBufferMs,
             bufferMs: Math.min(30000, Math.max(config.bufferMs, Math.min(16000, config.duration * 2 + 4000), this._crossfadePreparationSafetyMs + config.minBufferMs))
         }, (consumedMs) => this._completeCrossfade(token, consumedMs));
@@ -3426,11 +3470,18 @@ export class Player {
             this.track.info.isStream) {
             return false;
         }
-        const total = this.track.endTime && this.track.endTime > 0
+        let total = this.track.endTime && this.track.endTime > 0
             ? this.track.endTime
             : this.track.info.length;
         if (!Number.isFinite(total) || total <= 0)
             return false;
+        const cachedProfile = TransitionProfileCache.get(this.track.info.identifier);
+        if (cachedProfile?.outroProfile?.naturalOutroPointMs &&
+            cachedProfile.outroProfile.naturalOutroPointMs > 0 &&
+            cachedProfile.outroProfile.naturalOutroPointMs < total &&
+            !(this.track.endTime && this.track.endTime > 0)) {
+            total = cachedProfile.outroProfile.naturalOutroPointMs;
+        }
         const position = startPosition ?? this._realPosition();
         const duration = Math.min(config.duration, Math.max(1, total - position));
         const selectionWindow = getCrossfadeSelectionWindowMs(duration);
@@ -3524,6 +3575,9 @@ export class Player {
         this._fading('trackEndSchedule', { startPosition: consumedMs });
     }
     _destroyCrossfadeResources(preserveQueuedTrack = false) {
+        if (this.nextTrack?.info.identifier) {
+            AutoMixRegistry.getInstance().cancelTrackAnalysis(this.nextTrack.info.identifier);
+        }
         const keepQueuedTrack = preserveQueuedTrack &&
             this.nextResourceIsCrossfade &&
             this.nextTrack !== null;
