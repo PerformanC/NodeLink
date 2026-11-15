@@ -32,16 +32,6 @@ import {
 const IV = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7])
 
 /**
- * Reusable zero-length buffer to prevent micro-allocations in stream loops.
- */
-const EMPTY_BUFFER = Buffer.alloc(0)
-
-/**
- * Maximum consecutive stream retry attempts without progress before failing.
- */
-const MAX_STREAM_RETRIES = 3
-
-/**
  * Accepts plain ISRCs and `isrc:`-prefixed queries with optional hyphens.
  */
 const ISRC_REGEX = /^(?:isrc:)?([A-Z]{2}-?[A-Z0-9]{3}-?\d{2}-?\d{5})$/i
@@ -1344,7 +1334,7 @@ export default class DeezerSource {
         )
       }
 
-      const outputStream = new PassThrough({ highWaterMark: 1024 * 1024 })
+      const outputStream = new PassThrough()
       const trackKey = this.calculateKey(streamData.SNG_ID)
       // Byte offsets and Blowfish block boundaries must be measured against the
       // raw CDN body, so never allow HTTP content decoding on these requests.
@@ -1354,7 +1344,7 @@ export default class DeezerSource {
       const bufferSize = 2048
       let chunkIndex = 0
       let rangeStart = 0
-      let remainder = EMPTY_BUFFER
+      let remainder = Buffer.alloc(0)
 
       if (
         typeof streamData.startTime === 'number' &&
@@ -1384,7 +1374,7 @@ export default class DeezerSource {
         }
       }
 
-      const response = await http1makeRequest(url, {
+      const response = await makeRequest(url, {
         method: 'GET',
         streamOnly: true,
         headers
@@ -1434,6 +1424,7 @@ export default class DeezerSource {
       let bytesReceived = 0
       let cancelled = false
       let retriesWithoutProgress = 0
+      const retryDelays = [250, 500, 1000]
 
       const cancel = (): void => {
         cancelled = true
@@ -1471,7 +1462,7 @@ export default class DeezerSource {
           try {
             if (!sourceStream) {
               const offset = rangeStart + bytesReceived
-              const resumed = await http1makeRequest(url, {
+              const resumed = await makeRequest(url, {
                 method: 'GET',
                 streamOnly: true,
                 headers: {
@@ -1525,7 +1516,7 @@ export default class DeezerSource {
               let data = chunk
               if (remainder.length > 0) {
                 data = Buffer.concat([remainder, chunk])
-                remainder = EMPTY_BUFFER
+                remainder = Buffer.alloc(0)
               }
 
               let offset = 0
@@ -1544,10 +1535,9 @@ export default class DeezerSource {
                 chunkIndex++
                 offset += bufferSize
               }
-              remainder =
-                offset < data.length
-                  ? Buffer.from(data.subarray(offset))
-                  : EMPTY_BUFFER
+              if (offset < data.length) {
+                remainder = Buffer.from(data.subarray(offset))
+              }
             }
 
             if (
@@ -1567,14 +1557,9 @@ export default class DeezerSource {
             if (cancelled) return
             const streamError =
               error instanceof Error ? error : new Error(String(error))
-            if (retriesWithoutProgress < MAX_STREAM_RETRIES) {
-              retriesWithoutProgress++
-              logger(
-                'debug',
-                'Sources',
-                `Deezer stream connection interrupted for track ${decodedTrack.title} at byte ${rangeStart + bytesReceived}: ${streamError.message}. Retrying immediately (attempt ${retriesWithoutProgress}/${MAX_STREAM_RETRIES})...`
-              )
-              await new Promise((resolve) => setImmediate(resolve))
+            if (retriesWithoutProgress < retryDelays.length) {
+              const delay = retryDelays[retriesWithoutProgress++]
+              await new Promise((resolve) => setTimeout(resolve, delay))
               continue
             }
             logger(
@@ -1587,11 +1572,9 @@ export default class DeezerSource {
           }
         }
 
-        outputStream.removeListener('close', cancel)
-        outputStream.removeListener('error', cancel)
         if (cancelled || outputStream.destroyed) return
         if (remainder.length > 0) await write(remainder)
-        remainder = EMPTY_BUFFER
+        remainder = Buffer.alloc(0)
         if (!outputStream.destroyed && !outputStream.writableEnded) {
           outputStream.emit('finishBuffering')
           outputStream.end()
