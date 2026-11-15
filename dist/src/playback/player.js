@@ -3055,6 +3055,7 @@ export class Player {
                     timers.trackEnd = null;
                 }
             }, delay);
+            timers.trackEnd.unref?.();
             return true;
         }
         if (this.fading?.enabled !== true)
@@ -3207,6 +3208,7 @@ export class Player {
                         this.connection?.pause?.('requested');
                         timers.pause = null;
                     }, 750);
+                    drainTimeout.unref?.();
                     const pauseTimer = timers.pause;
                     if (pauseTimer &&
                         typeof pauseTimer === 'object' &&
@@ -3214,7 +3216,8 @@ export class Player {
                         pauseTimer.timeout = drainTimeout;
                     }
                 }
-            }, 10);
+            }, 40);
+            checkInterval.unref?.();
             timers.pause = { interval: checkInterval };
             return true;
         }
@@ -3276,13 +3279,15 @@ export class Player {
                         this.connection?.stop(EndReasons.STOPPED);
                         timers.stop = null;
                     }, 750);
+                    drainTimeout.unref?.();
                     if (timers.stop &&
                         typeof timers.stop === 'object' &&
                         'interval' in timers.stop) {
                         timers.stop.timeout = drainTimeout;
                     }
                 }
-            }, 10);
+            }, 40);
+            checkInterval.unref?.();
             timers.stop = { interval: checkInterval };
             return true;
         }
