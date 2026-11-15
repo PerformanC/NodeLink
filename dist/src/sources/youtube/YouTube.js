@@ -866,9 +866,9 @@ export default class YouTubeSource {
         this.searchTerms = ['ytsearch', 'ytmsearch'];
         this.recommendationTerm = ['ytrec'];
         this.patterns = [
-            /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|live\/[\w-]+|results\?(?:[^#]*&)?(?:search_query|q)=[^&#]+|browse\/[\w-]+)|youtu\.be\/[\w-]+)/,
+            /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=[\w-]+(?:&list=[\w-]+)?|playlist\?(?:[^#]*&)?list=[\w-]+|live\/[\w-]+|results\?(?:[^#]*&)?(?:search_query|q)=[^&#]+|browse\/[\w-]+)|youtu\.be\/[\w-]+)/,
             /^https?:\/\/(?:www\.|m\.)?youtube\.com\/shorts\/[\w-]+/,
-            /^https?:\/\/music\.youtube\.com\/(?:watch\?v=[\w-]+(?:&list=[\w-]+)?|playlist\?list=[\w-]+|search\?(?:[^#]*&)?(?:q|search_query)=[^&#]+|browse\/[\w-]+)/
+            /^https?:\/\/music\.youtube\.com\/(?:watch\?(?:[^#]*&)?v=[\w-]+(?:&list=[\w-]+)?|playlist\?(?:[^#]*&)?list=[\w-]+|search\?(?:[^#]*&)?(?:q|search_query)=[^&#]+|browse\/[\w-]+)/
         ];
         this.priority = 100;
         this.clients = {};
@@ -1454,58 +1454,10 @@ export default class YouTubeSource {
                         logger('debug', 'YouTube', `Successfully resolved YouTube Music URL with ${clientName} client.`);
                         return result;
                     }
-                    if (result?.loadType === 'error' &&
-                        result.exception?.cause === 'UpstreamPlayability') {
-                        const listIdMatch = url.match(/[?&]list=([\w-]+)/);
-                        const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
-                        const listId = listIdMatch ? listIdMatch[1] : null;
-                        const videoId = videoIdMatch ? videoIdMatch[1] : null;
-                        const fallbackId = listId || videoId;
-                        if (fallbackId) {
-                            logger('warn', 'YouTube', `${clientName} client returned Playability Error for ${fallbackId}. Attempting fallback to standard YouTube client.`);
-                            let fallbackUrl;
-                            if (listId) {
-                                fallbackUrl = `https://www.youtube.com/playlist?list=${listId}`;
-                                if (videoId) {
-                                    fallbackUrl += `&v=${videoId}`;
-                                }
-                                const indexMatch = url.match(/[?&]index=(\d+)/);
-                                if (indexMatch) {
-                                    fallbackUrl += `&index=${indexMatch[1]}`;
-                                }
-                            }
-                            else {
-                                fallbackUrl = `https://www.youtube.com/watch?v=${videoId}`;
-                            }
-                            const fallbackResult = await this.resolve(fallbackUrl, 'youtube');
-                            if (fallbackResult &&
-                                (fallbackResult.loadType === 'track' ||
-                                    fallbackResult.loadType === 'playlist' ||
-                                    fallbackResult.loadType === 'empty')) {
-                                if (fallbackResult.loadType === 'track' &&
-                                    fallbackResult.data?.info) {
-                                    ;
-                                    fallbackResult.data.info.sourceName = 'ytmusic';
-                                    fallbackResult.data.info.uri = url;
-                                }
-                                else if (fallbackResult.loadType === 'playlist' &&
-                                    fallbackResult.data?.tracks) {
-                                    for (const track of fallbackResult.data.tracks) {
-                                        if (track.info) {
-                                            track.info.sourceName = 'ytmusic';
-                                            const trackVideoId = track.info.identifier;
-                                            track.info.uri = `https://music.youtube.com/watch?v=${trackVideoId}`;
-                                        }
-                                    }
-                                }
-                                return fallbackResult;
-                            }
-                        }
-                    }
                     const errorMessage = result?.exception?.message ||
                         `${clientName} client returned empty or failed.`;
                     clientErrors.push({ client: clientName, message: errorMessage });
-                    logger('debug', 'YouTube', `${clientName} client returned empty or failed for Music URL.`);
+                    logger('debug', 'YouTube', `${clientName} client returned empty or failed for Music URL: ${errorMessage}`);
                 }
                 catch (e) {
                     clientErrors.push({
@@ -1515,7 +1467,52 @@ export default class YouTubeSource {
                     logger('warn', 'YouTube', `${clientName} client threw an exception during Music URL resolve: ${e.message}`);
                 }
             }
-            const msg = 'All music clients failed for direct Music URL.';
+            // If music clients failed or were blocked, fallback to standard YouTube client
+            const listIdMatch = url.match(/[?&]list=([\w-]+)/);
+            const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
+            const listId = listIdMatch ? listIdMatch[1] : null;
+            const videoId = videoIdMatch ? videoIdMatch[1] : null;
+            const fallbackId = listId || videoId;
+            if (fallbackId) {
+                logger('warn', 'YouTube', `Music clients failed for ${fallbackId}. Attempting fallback to standard YouTube client.`);
+                let fallbackUrl;
+                if (listId) {
+                    fallbackUrl = `https://www.youtube.com/playlist?list=${listId}`;
+                    if (videoId) {
+                        fallbackUrl += `&v=${videoId}`;
+                    }
+                    const indexMatch = url.match(/[?&]index=(\d+)/);
+                    if (indexMatch) {
+                        fallbackUrl += `&index=${indexMatch[1]}`;
+                    }
+                }
+                else {
+                    fallbackUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                }
+                const fallbackResult = await this.resolve(fallbackUrl, 'youtube');
+                if (fallbackResult &&
+                    (fallbackResult.loadType === 'track' ||
+                        fallbackResult.loadType === 'playlist')) {
+                    if (fallbackResult.loadType === 'track' &&
+                        fallbackResult.data?.info) {
+                        ;
+                        fallbackResult.data.info.sourceName = 'ytmusic';
+                        fallbackResult.data.info.uri = url;
+                    }
+                    else if (fallbackResult.loadType === 'playlist' &&
+                        fallbackResult.data?.tracks) {
+                        for (const track of fallbackResult.data.tracks) {
+                            if (track.info) {
+                                track.info.sourceName = 'ytmusic';
+                                const trackVideoId = track.info.identifier;
+                                track.info.uri = `https://music.youtube.com/watch?v=${trackVideoId}`;
+                            }
+                        }
+                    }
+                    return fallbackResult;
+                }
+            }
+            const msg = 'All music clients and fallback failed for direct Music URL.';
             logger('error', 'YouTube', msg);
             return {
                 loadType: 'error',

@@ -24,11 +24,11 @@ const FALLBACK_AUTHOR = 'Unknown Artist';
  */
 const URL_PATTERNS = {
     /** Standard YouTube watch URL (www.youtube.com/watch?v=xxx) */
-    video: /^https?:\/\/(?:music\.)?(?:www\.)?youtube\.com\/watch\?v=[\w-]+/,
+    video: /^https?:\/\/(?:music\.)?(?:www\.)?youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
     /** YouTube Music watch URL (music.youtube.com/watch?v=xxx) */
-    musicVideo: /^https?:\/\/music\.youtube\.com\/watch\?v=[\w-]+/,
+    musicVideo: /^https?:\/\/music\.youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
     /** YouTube playlist URL (www.youtube.com/playlist?list=xxx) */
-    playlist: /^https?:\/\/(?:music\.)?(?:www\.)?youtube\.com\/playlist\?list=[\w-]+/,
+    playlist: /^https?:\/\/(?:music\.)?(?:www\.)?youtube\.com\/playlist\?(?:[^#]*&)?list=[\w-]+/,
     /** Short YouTube link (youtu.be/xxx) */
     shortUrl: /^https?:\/\/youtu\.be\/[\w-]+/,
     /** YouTube Shorts URL (www.youtube.com/shorts/xxx) */
