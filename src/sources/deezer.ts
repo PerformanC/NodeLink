@@ -1334,7 +1334,7 @@ export default class DeezerSource {
         )
       }
 
-      const outputStream = new PassThrough()
+      const outputStream = new PassThrough({ highWaterMark: 1024 * 1024 })
       const trackKey = this.calculateKey(streamData.SNG_ID)
       // Byte offsets and Blowfish block boundaries must be measured against the
       // raw CDN body, so never allow HTTP content decoding on these requests.
@@ -1374,7 +1374,7 @@ export default class DeezerSource {
         }
       }
 
-      const response = await makeRequest(url, {
+      const response = await http1makeRequest(url, {
         method: 'GET',
         streamOnly: true,
         headers
@@ -1421,7 +1421,6 @@ export default class DeezerSource {
       let sourceStream: Readable | undefined = response.stream as Readable
       let sourceExpectedBytes = this.getContentLength(response.headers)
       const blowfish = new BlowfishCBC(trackKey)
-      let bytesReceived = 0
       let cancelled = false
       let retriesWithoutProgress = 0
       const retryDelays = [250, 500, 1000]
@@ -1434,35 +1433,18 @@ export default class DeezerSource {
       outputStream.once('close', cancel)
       outputStream.once('error', cancel)
 
-      const waitForDrain = (upstream: Readable): Promise<void> =>
-        new Promise((resolve) => {
-          const done = (): void => {
-            outputStream.removeListener('drain', done)
-            outputStream.removeListener('close', done)
-            upstream.removeListener('close', done)
-            upstream.removeListener('error', done)
-            resolve()
-          }
-          outputStream.once('drain', done)
-          outputStream.once('close', done)
-          upstream.once('close', done)
-          upstream.once('error', done)
-        })
-
-      const write = async (data: Buffer): Promise<void> => {
+      const write = (data: Buffer): void => {
         if (cancelled || outputStream.destroyed || outputStream.writableEnded)
           return
-        if (!outputStream.write(data) && sourceStream) {
-          await waitForDrain(sourceStream)
-        }
+        outputStream.write(data)
       }
 
       const consume = async (): Promise<void> => {
         while (!cancelled) {
           try {
             if (!sourceStream) {
-              const offset = rangeStart + bytesReceived
-              const resumed = await makeRequest(url, {
+              const offset = chunkIndex * bufferSize
+              const resumed = await http1makeRequest(url, {
                 method: 'GET',
                 streamOnly: true,
                 headers: {
@@ -1473,6 +1455,10 @@ export default class DeezerSource {
               if (cancelled) {
                 ;(resumed.stream as Readable | undefined)?.destroy()
                 return
+              }
+
+              if (resumed.statusCode === 416) {
+                break
               }
 
               const headers = resumed.headers as
@@ -1507,9 +1493,8 @@ export default class DeezerSource {
             const current = sourceStream
             let responseBytes = 0
             for await (const value of current) {
-              if (cancelled) return
+              if (cancelled || outputStream.destroyed) return
               const chunk = value as Buffer
-              bytesReceived += chunk.length
               responseBytes += chunk.length
               retriesWithoutProgress = 0
 
@@ -1530,8 +1515,8 @@ export default class DeezerSource {
                   blowfish.setIv(IV)
                   packet = blowfish.decode(encryptedBlock)
                 }
-                await write(packet)
-                if (cancelled) return
+                write(packet)
+                if (cancelled || outputStream.destroyed) return
                 chunkIndex++
                 offset += bufferSize
               }
@@ -1554,11 +1539,17 @@ export default class DeezerSource {
           } catch (error) {
             sourceStream?.destroy()
             sourceStream = undefined
-            if (cancelled) return
+            remainder = Buffer.alloc(0)
+            if (cancelled || outputStream.destroyed) return
             const streamError =
               error instanceof Error ? error : new Error(String(error))
             if (retriesWithoutProgress < retryDelays.length) {
               const delay = retryDelays[retriesWithoutProgress++]
+              logger(
+                'debug',
+                'Sources',
+                `Deezer stream connection interrupted for track ${decodedTrack.title} at byte ${chunkIndex * bufferSize}: ${streamError.message}. Retrying at aligned boundary in ${delay}ms (attempt ${retriesWithoutProgress}/${retryDelays.length})...`
+              )
               await new Promise((resolve) => setTimeout(resolve, delay))
               continue
             }
@@ -1572,8 +1563,10 @@ export default class DeezerSource {
           }
         }
 
+        outputStream.removeListener('close', cancel)
+        outputStream.removeListener('error', cancel)
         if (cancelled || outputStream.destroyed) return
-        if (remainder.length > 0) await write(remainder)
+        if (remainder.length > 0) write(remainder)
         remainder = Buffer.alloc(0)
         if (!outputStream.destroyed && !outputStream.writableEnded) {
           outputStream.emit('finishBuffering')
