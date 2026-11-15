@@ -595,7 +595,18 @@ export class StreamReserveBuffer extends Readable {
     if (options?.isProtocolError) this.protocolErrors++
     if (options?.isUnexpectedDisconnect) this.unexpectedDisconnects++
     this._releaseAllQueuedBytes()
-    if (!this.destroyed) this.destroy(error)
+    if (!this.destroyed) {
+      if (this.listenerCount('error') > 0) {
+        this.destroy(error)
+      } else {
+        logger(
+          'warn',
+          'StreamTransport',
+          `Stream ${this.streamId} (player=${this.playerId}) closed with no error listener attached: ${error.message}`
+        )
+        this.destroy()
+      }
+    }
   }
 
   public getMetricsSnapshot(): StreamTransportMetricsSnapshot {
@@ -1120,15 +1131,15 @@ export class StreamTransportServer {
     if (this.server?.listening) return
     this.isClosed = false
 
+    this._cleanupSocketFilesSync()
+
     if (!IS_WINDOWS && this.runtimeDir) {
       fs.mkdirSync(this.runtimeDir, { recursive: true, mode: 0o700 })
       try {
         fs.chmodSync(this.runtimeDir, 0o700)
       } catch {}
-      cleanupStaleUnixSockets(this.runtimeDir)
     }
 
-    this._cleanupSocketFilesSync()
     this._registerExitHook()
 
     this.server = net.createServer({ allowHalfOpen: false }, (socket) => {
@@ -1591,11 +1602,13 @@ export class StreamTransportClient {
     )
     this.securityTokenBytes.fill(0)
 
-    const socket = await this._connect()
-    this.socket = socket
-    this._setupControlReader(socket)
+    let socket: net.Socket | null = null
 
     try {
+      socket = await this._connect()
+      this.socket = socket
+      this._setupControlReader(socket)
+
       await this._writeFrame(socket, handshakeFrame)
 
       for await (const rawChunk of this.sourceStream) {
@@ -1652,7 +1665,7 @@ export class StreamTransportClient {
     } catch (err) {
       const errorMsg = (err as Error).message || 'Upstream source error'
       this.remoteErrorMessage = errorMsg
-      if (!this.cancelled && !socket.destroyed && socket.writable) {
+      if (!this.cancelled && socket && !socket.destroyed && socket.writable) {
         try {
           socket.write(
             encodeErrorRecord(StreamErrorCode.UPSTREAM_ERROR, errorMsg)
@@ -1661,7 +1674,7 @@ export class StreamTransportClient {
         } catch {}
       }
       if (!this.sourceStream.destroyed) this.sourceStream.destroy()
-      if (!socket.destroyed) socket.destroy()
+      if (socket && !socket.destroyed) socket.destroy()
       throw err
     } finally {
       if (!this.sourceStream.destroyed) this.sourceStream.destroy()

@@ -1570,7 +1570,11 @@ export default class DeezerSource implements SourceVariantHandler {
         } catch (err) {
           tokenCopy.fill(0)
           session.cancel()
-          throw err
+          logger(
+            'warn',
+            'Sources',
+            `Source Worker transport failed for Deezer '${decodedTrack.title}' [streamId=${session.streamIdHex}], falling back to local stream: ${this.getErrorMessage(err)}`
+          )
         }
       }
 

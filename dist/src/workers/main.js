@@ -1270,6 +1270,7 @@ function startTimers(hibernating = false) {
     playerUpdateTimer = setInterval(() => {
         if (!process.connected)
             return;
+        const handoffSnapshots = [];
         for (const player of players.values()) {
             if (player?.track && !player.isPaused && player.connection) {
                 if (player.connStatus === 'connected' &&
@@ -1291,6 +1292,15 @@ function startTimers(hibernating = false) {
                     logger('error', 'Worker', `Error during player update for guild ${player.guildId}: ${getErrorMessage(updateError)}`, updateError);
                 }
             }
+            if (player && (player.track || player.voice)) {
+                try {
+                    handoffSnapshots.push(player.exportHandoffState());
+                }
+                catch { }
+            }
+        }
+        if (handoffSnapshots.length > 0 && process.connected) {
+            sendProcessMessage({ type: 'playerHandoffUpdate', snapshots: handoffSnapshots }, () => { });
         }
     }, updateInterval);
     playerUpdateTimer.unref?.();
@@ -1619,13 +1629,17 @@ async function processQueue(queueKey) {
                 break;
             }
             case 'destroyPlayer': {
-                const { sessionId, guildId } = (payload ?? {});
+                const { sessionId, guildId, silent } = (payload ?? {});
                 const playerKey = `${sessionId}:${guildId}`;
                 const player = players.get(playerKey);
                 if (player) {
                     player.destroy(false);
                     players.delete(playerKey);
-                    if (process.connected) {
+                    if (process.connected && !silent) {
+                        sendProcessMessage({
+                            type: 'playerHandoffDelete',
+                            playerKey
+                        }, () => { });
                         sendProcessMessage({
                             type: 'playerDestroyed',
                             payload: {
@@ -1696,6 +1710,21 @@ async function processQueue(queueKey) {
                 }
                 player._isRestoring = false;
                 result = { restored: true };
+                break;
+            }
+            case 'getPlayerHandoffState': {
+                const { sessionId, guildId } = (payload ?? {});
+                const playerKey = `${sessionId}:${guildId}`;
+                const player = players.get(playerKey);
+                if (player) {
+                    result = {
+                        found: true,
+                        snapshot: player.exportHandoffState()
+                    };
+                }
+                else {
+                    result = { found: false };
+                }
                 break;
             }
             case 'playerCommand': {

@@ -14,8 +14,12 @@ import type {
   WorkerStatsPayload
 } from '../typings/api/stats.types.ts'
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
-import type { WorkerCommandPayload } from '../typings/workers/worker.types.ts'
+import type {
+  PlayerHandoffSnapshot,
+  WorkerCommandPayload
+} from '../typings/workers/worker.types.ts'
 import { logger } from '../utils.ts'
+import { WorkerFailoverCoordinator } from './workerFailover.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -25,7 +29,8 @@ const PLAYER_STATE_COMMANDS = new Set([
   'playerCommand',
   'createPlayer',
   'destroyPlayer',
-  'restorePlayer'
+  'restorePlayer',
+  'getPlayerHandoffState'
 ])
 
 /**
@@ -366,6 +371,7 @@ export default class WorkerManager {
   private eventSockets: Map<number, EventSocket>
   private socketRotateInProgress: boolean
   private lastSocketRotateAt: number
+  private failoverCoordinator: WorkerFailoverCoordinator
 
   constructor(config: NodelinkConfig) {
     this.config = config
@@ -421,6 +427,67 @@ export default class WorkerManager {
     this.eventSockets = new Map()
     this.socketRotateInProgress = false
     this.lastSocketRotateAt = 0
+    this.failoverCoordinator = new WorkerFailoverCoordinator({
+      getLiveWorkerIds: () =>
+        this.workers
+          .filter((w) => w.isConnected() && w.ready)
+          .map((w) => w.id),
+      getBestTargetWorkerId: (excludeWorkerId?: number) => {
+        let best: PlaybackWorker | null = null
+        let minLoad = Number.POSITIVE_INFINITY
+        for (const w of this.workers) {
+          if (w.id === excludeWorkerId || !w.isConnected()) continue
+          const load = this.workerLoad.get(w.id) || 0
+          if (load < minLoad) {
+            minLoad = load
+            best = w
+          }
+        }
+        return best ? best.id : null
+      },
+      isWorkerHealthyForHandback: (workerId: number) => {
+        const w = this.workersById.get(workerId)
+        return Boolean(w && w.isConnected() && w.ready && !this.isDestroying)
+      },
+      assignGuild: (playerKey: string, workerId: number) => {
+        const w = this.workersById.get(workerId)
+        if (w) this.assignGuildToWorker(playerKey, w)
+      },
+      unassignGuild: (playerKey: string) => {
+        this.unassignGuild(playerKey)
+      },
+      executeOnWorker: <T = unknown>(
+        workerId: number,
+        type: string,
+        payload: WorkerCommandPayload
+      ) => {
+        const w = this.workersById.get(workerId)
+        if (!w || !w.isConnected()) {
+          return Promise.reject(new Error(`Worker ${workerId} unavailable`))
+        }
+        return this.execute(w, type, payload) as Promise<T>
+      },
+      onUnrecoverablePlayers: (deadWorkerId: number, playerKeys: string[]) => {
+        const nodelink = getGlobalNodelink()
+        if (!nodelink || playerKeys.length === 0) return
+        for (const playerKey of playerKeys) {
+          const [sessionId] = playerKey.split(':')
+          if (!sessionId) continue
+          const session = nodelink.sessions.get(sessionId)
+          if (session?.players.players.delete(playerKey)) {
+            logger(
+              'debug',
+              'Cluster',
+              `Removed stale player placeholder for ${playerKey} from session ${session.id}`
+            )
+          }
+        }
+        nodelink.handleIPCMessage({
+          type: 'workerFailed',
+          payload: { workerId: deadWorkerId, affectedGuilds: playerKeys }
+        })
+      }
+    })
 
     logger(
       'info',
@@ -1434,26 +1501,7 @@ export default class WorkerManager {
     }
 
     if (affectedGuilds.length > 0) {
-      const nodelink = getGlobalNodelink()
-      if (nodelink) {
-        for (const playerKey of affectedGuilds) {
-          const [sessionId] = playerKey.split(':')
-          if (!sessionId) continue
-          const session = nodelink.sessions.get(sessionId)
-          if (session?.players.players.delete(playerKey)) {
-            logger(
-              'debug',
-              'Cluster',
-              `Removed stale player placeholder for ${playerKey} from session ${session.id}`
-            )
-          }
-        }
-
-        nodelink.handleIPCMessage({
-          type: 'workerFailed',
-          payload: { workerId: worker.id, affectedGuilds }
-        })
-      }
+      this.failoverCoordinator.scheduleFailover(worker.id, affectedGuilds)
     }
 
     try {
@@ -1510,6 +1558,22 @@ export default class WorkerManager {
       }
     } else if (message.type === 'pong') {
       this.workerHealth.set(worker.id, Date.now())
+    } else if (
+      message.type === 'playerHandoffUpdate' &&
+      Array.isArray((message as { snapshots?: unknown }).snapshots)
+    ) {
+      const snapshots = (message as { snapshots: PlayerHandoffSnapshot[] })
+        .snapshots
+      for (const snap of snapshots) {
+        this.failoverCoordinator.updateState(worker.id, snap)
+      }
+    } else if (
+      message.type === 'playerHandoffDelete' &&
+      typeof (message as { playerKey?: unknown }).playerKey === 'string'
+    ) {
+      this.failoverCoordinator.removeState(
+        (message as { playerKey: string }).playerKey
+      )
     } else if (message.type === 'ready') {
       worker.ready = true
       this.workerHealth.set(worker.id, Date.now())
@@ -1519,6 +1583,7 @@ export default class WorkerManager {
         'Cluster',
         `Worker ${worker.id} (PID ${worker.process.pid}) ready`
       )
+      this.failoverCoordinator.scheduleGradualHandback(worker.id)
 
       if (
         this.liveYoutubeConfig.refreshToken ||
@@ -1832,6 +1897,7 @@ export default class WorkerManager {
 
   destroy(): void {
     this.isDestroying = true
+    this.failoverCoordinator.destroy()
     this._stopScalingCheck()
     this._stopHealthCheck()
 

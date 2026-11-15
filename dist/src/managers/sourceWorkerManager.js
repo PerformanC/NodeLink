@@ -96,6 +96,8 @@ class SourceWorkerManager {
     clientSockets;
     workerSockets;
     pendingSocketFrames;
+    workerActiveTransports;
+    streamTransportOwners;
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.workers = [];
@@ -118,6 +120,8 @@ class SourceWorkerManager {
         this.clientSockets = new Set();
         this.workerSockets = new Map();
         this.pendingSocketFrames = new Map();
+        this.workerActiveTransports = new Map();
+        this.streamTransportOwners = new Map();
     }
     _registerWorkerSocket(pid, socket) {
         const worker = this.workers.find((w) => w.process?.pid === pid);
@@ -137,6 +141,8 @@ class SourceWorkerManager {
         if (queued && queued.length > 0) {
             this.pendingSocketFrames.delete(worker.id);
             for (const frame of queued) {
+                if (!this.requests.has(frame.id))
+                    continue;
                 this._sendTaskFrame(socket, frame.id, frame.type, frame.payload);
             }
         }
@@ -702,6 +708,16 @@ class SourceWorkerManager {
                 const activeRequest = this.requests.get(id);
                 if (!activeRequest)
                     return;
+                const queued = this.pendingSocketFrames.get(worker.id);
+                if (queued) {
+                    const filtered = queued.filter((frame) => frame.id !== id);
+                    if (filtered.length > 0) {
+                        this.pendingSocketFrames.set(worker.id, filtered);
+                    }
+                    else {
+                        this.pendingSocketFrames.delete(worker.id);
+                    }
+                }
                 this._cleanupRequest(id, activeRequest);
                 reject(new Error(`Source worker task '${task}' timed out`));
             }, timeoutMs);
@@ -718,20 +734,72 @@ class SourceWorkerManager {
     execute(task, payload, options = {}) {
         let bestWorker = null;
         let minLoad = Number.POSITIVE_INFINITY;
-        for (const worker of this.workers) {
-            if (!worker?.isConnected?.())
-                continue;
-            const load = this.workerLoads.get(worker.id) || 0;
-            if (load < minLoad) {
-                minLoad = load;
-                bestWorker = worker;
+        const streamIdHex = payload &&
+            typeof payload === 'object' &&
+            'streamIdHex' in payload &&
+            typeof payload.streamIdHex === 'string'
+            ? payload.streamIdHex
+            : null;
+        if (task === 'cancelStreamTransport' && streamIdHex) {
+            const ownerId = this.streamTransportOwners.get(streamIdHex);
+            if (ownerId !== undefined) {
+                this.streamTransportOwners.delete(streamIdHex);
+                const active = this.workerActiveTransports.get(ownerId) || 0;
+                if (active > 1) {
+                    this.workerActiveTransports.set(ownerId, active - 1);
+                }
+                else {
+                    this.workerActiveTransports.delete(ownerId);
+                }
+                const ownerWorker = this.workers.find((w) => w.id === ownerId && w?.isConnected?.());
+                if (ownerWorker)
+                    bestWorker = ownerWorker;
+            }
+        }
+        if (!bestWorker) {
+            for (const worker of this.workers) {
+                if (!worker?.isConnected?.())
+                    continue;
+                const load = (this.workerLoads.get(worker.id) || 0) +
+                    (this.workerActiveTransports.get(worker.id) || 0);
+                if (load < minLoad) {
+                    minLoad = load;
+                    bestWorker = worker;
+                }
             }
         }
         if (!bestWorker) {
             return Promise.reject(new Error('No available source workers'));
         }
+        let transportKey = null;
+        if (task === 'startStreamTransport' &&
+            payload &&
+            typeof payload === 'object' &&
+            'streamIdBytes' in payload &&
+            payload.streamIdBytes instanceof
+                Uint8Array) {
+            transportKey = Buffer.from(payload.streamIdBytes).toString('hex');
+            this.streamTransportOwners.set(transportKey, bestWorker.id);
+            this.workerActiveTransports.set(bestWorker.id, (this.workerActiveTransports.get(bestWorker.id) || 0) + 1);
+        }
         logger('debug', 'SourceCluster', `Dispatching task '${task}' to source worker ${bestWorker.id} (pid: ${bestWorker.process?.pid || 'unknown'}, current load: ${minLoad})`);
-        return this._executeOnWorker(bestWorker, task, payload, options);
+        const promise = this._executeOnWorker(bestWorker, task, payload, options);
+        if (transportKey) {
+            const ownerWorkerId = bestWorker.id;
+            return promise.catch((err) => {
+                if (this.streamTransportOwners.delete(transportKey)) {
+                    const active = this.workerActiveTransports.get(ownerWorkerId) || 0;
+                    if (active > 1) {
+                        this.workerActiveTransports.set(ownerWorkerId, active - 1);
+                    }
+                    else {
+                        this.workerActiveTransports.delete(ownerWorkerId);
+                    }
+                }
+                throw err;
+            });
+        }
+        return promise;
     }
     async executeAll(task, payload, options = {}) {
         const targets = this.workers.filter((worker) => worker?.isConnected?.());

@@ -4298,6 +4298,39 @@ export class Player {
   }
 
   /**
+   * Exports exact live playback, stream, and voice state for worker failover or gradual handoff.
+   */
+  public exportHandoffState(): {
+    guildId: string
+    sessionId: string
+    userId: string
+    track: PlayerTrack | null
+    position: number
+    capturedAt: number
+    isPaused: boolean
+    volume: number
+    filters: FiltersState
+    voice: PlayerVoiceState
+    contentLength: number | null
+    downloadedBytes: number
+  } {
+    return {
+      guildId: this.guildId,
+      sessionId: this.session.id,
+      userId: this.session.userId,
+      track: this.track ? structuredClone(this.track) : null,
+      position: this._realPosition(),
+      capturedAt: Date.now(),
+      isPaused: this.isPaused,
+      volume: this.volumePercent,
+      filters: structuredClone(this.filters),
+      voice: structuredClone(this.voice),
+      contentLength: this.profilerStreamStats.totalBytes,
+      downloadedBytes: this.profilerStreamStats.downloadedBytes
+    }
+  }
+
+  /**
    * Handles fading, tape, and scratch actions for start/stop/seek/pause events.
    */
   private _fading(
