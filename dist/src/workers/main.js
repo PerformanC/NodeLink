@@ -1221,6 +1221,7 @@ function startTimers(hibernating = false) {
             }
         }
     }, updateInterval);
+    playerUpdateTimer.unref?.();
     statsUpdateTimer = setInterval(() => {
         if (!process.connected)
             return;
@@ -1266,6 +1267,7 @@ function startTimers(hibernating = false) {
                             clearInterval(aggressiveGC);
                         }
                     }, 1000);
+                    aggressiveGC.unref?.();
                 }
             }
         }
@@ -1336,6 +1338,7 @@ function startTimers(hibernating = false) {
             }
         }
     }, statsInterval);
+    statsUpdateTimer.unref?.();
 }
 async function initialize() {
     await nodelink.credentialManager.load();

@@ -253,6 +253,7 @@ function startHeartbeat(server: NodelinkServer): void {
       }
     }
   }, 45000)
+  timer.unref?.()
 
   heartbeatTimers.set(server, timer)
 }

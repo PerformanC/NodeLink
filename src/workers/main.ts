@@ -1687,6 +1687,7 @@ function startTimers(hibernating = false): void {
       }
     }
   }, updateInterval)
+  playerUpdateTimer.unref?.()
 
   statsUpdateTimer = setInterval(() => {
     if (!process.connected) return
@@ -1745,6 +1746,7 @@ function startTimers(hibernating = false): void {
               clearInterval(aggressiveGC)
             }
           }, 1000)
+          aggressiveGC.unref?.()
         }
       }
     } else {
@@ -1831,6 +1833,7 @@ function startTimers(hibernating = false): void {
       }
     }
   }, statsInterval)
+  statsUpdateTimer.unref?.()
 }
 
 async function initialize() {

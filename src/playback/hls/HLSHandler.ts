@@ -226,6 +226,7 @@ export default class HLSHandler extends PassThrough {
         `Playlist error (retrying): ${error.message}`
       )
       this.playlistTimer = setTimeout(() => this._playlistLoop(), 3000)
+      this.playlistTimer.unref?.()
     }
   }
 
@@ -638,6 +639,7 @@ export default class HLSHandler extends PassThrough {
 
     const delay = Math.max(0.5, targetDuration / 2) * 1000
     this.playlistTimer = setTimeout(() => this._playlistLoop(), delay)
+    this.playlistTimer.unref?.()
   }
 }
 

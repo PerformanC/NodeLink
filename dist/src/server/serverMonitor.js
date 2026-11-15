@@ -170,6 +170,7 @@ function startHeartbeat(server) {
             }
         }
     }, 45000);
+    timer.unref?.();
     heartbeatTimers.set(server, timer);
 }
 function stopHeartbeat(server) {

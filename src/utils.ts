@@ -269,13 +269,16 @@ function initFileLogger(): void {
 
   if (rotation === 'hourly') {
     logRotationInterval = setInterval(rotateLogFile, 60 * 60 * 1000)
+    logRotationInterval.unref?.()
   } else if (rotation === 'daily') {
     logRotationInterval = setInterval(rotateLogFile, 24 * 60 * 60 * 1000)
+    logRotationInterval.unref?.()
   }
 
   cleanOldLogs()
 
   logCleanupInterval = setInterval(cleanOldLogs, 60 * 60 * 1000)
+  logCleanupInterval.unref?.()
 }
 
 /**
