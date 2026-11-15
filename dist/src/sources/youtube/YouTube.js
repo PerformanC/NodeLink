@@ -1,5 +1,6 @@
 import { PassThrough, Readable } from 'node:stream';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
+import { openMp4HttpAudio } from '../../playback/processing/streamProcessor.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
 import CipherManager from './CipherManager.js';
 import { checkURLType, YOUTUBE_CONSTANTS, YOUTUBE_WEBM_ITAGS } from './common.js';
@@ -2137,6 +2138,37 @@ export default class YouTubeSource {
             }
             if (!url)
                 throw new Error('No direct URL');
+            if (additionalData?.itag === 18) {
+                const proxy = (additionalData.proxy || this.getProxy());
+                const seekMs = additionalData.startTime ?? 0;
+                const audio = await openMp4HttpAudio(url, proxy, seekMs / 1000, async () => {
+                    if (cancelSignal.aborted)
+                        throw new Error('YouTube MP4 playback cancelled');
+                    const replacement = await this.getTrackUrl(decodedTrack, 18, true);
+                    if (replacement.exception ||
+                        !replacement.url ||
+                        replacement.itag !== 18) {
+                        throw new Error('No matching itag 18 URL for MP4 recovery');
+                    }
+                    return {
+                        url: replacement.url,
+                        proxy: (replacement.additionalData?.proxy || this.getProxy())
+                    };
+                });
+                if (audio) {
+                    if (cancelSignal.aborted) {
+                        audio.stream.destroy();
+                        throw new Error('YouTube MP4 playback cancelled');
+                    }
+                    audio.stream.once('close', () => {
+                        cancelSignal.aborted = true;
+                        this.activeStreams.delete(streamKey);
+                    });
+                    return audio;
+                }
+                if (seekMs > 0)
+                    throw new Error('MP4 seek requires an HTTP Range source');
+            }
             let contentLength = additionalData?.contentLength ?? null;
             if (!contentLength) {
                 const testResponse = await http1makeRequest(url, {

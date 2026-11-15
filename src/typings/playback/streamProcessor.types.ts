@@ -74,7 +74,7 @@ export interface DownmixCoefficients {
 /**
  * Minimal representation of an MP4 box (atom).
  */
-export interface MP4Box {
+export interface Mp4Atom {
   /** The four-character box type (e.g., 'mdat', 'moof'). */
   type: string
   /** Total size of the box including header. */
@@ -178,8 +178,6 @@ export interface AACDecodeResult {
 export interface PendingChunk {
   /** The raw data buffer. */
   chunk: Buffer
-  /** Character encoding of the buffer if applicable. */
-  encoding: BufferEncoding
   /** Stream callback to signal processing completion. */
   callback: (error?: Error | null) => void
 }
@@ -254,16 +252,6 @@ export interface SymphoniaDecoderLike {
 }
 
 /**
- * Interface for libsamplerate-based resamplers.
- */
-export interface ResamplerLike {
-  /** Processes a set of float samples. */
-  full(samples: Float32Array): Float32Array
-  /** Releases native resources. */
-  destroy(): void
-}
-
-/**
  * Contract for a FAAD2-based AAC decoder implementation.
  */
 export interface FAAD2DecoderLike {
@@ -277,67 +265,6 @@ export interface FAAD2DecoderLike {
   free?(): void
   /** Releases resources (Common across implementations). */
   destroy?(): void
-}
-
-/**
- * Interface for the MP4Box.js file object used for demuxing.
- */
-export interface MP4BoxFile {
-  /** Callback triggered when file metadata is ready. */
-  onReady: ((info: MP4BoxInfo) => void) | null
-  /** Callback triggered when new samples are extracted. */
-  onSamples:
-    | ((id: number, user: unknown, samples: MP4BoxSample[]) => void)
-    | null
-  /** Callback triggered on parsing errors. */
-  onError: ((error: string) => void) | null
-  /** Appends raw data to the MP4Box parser. */
-  appendBuffer(buffer: ArrayBufferLike & { fileStart?: number }): void
-  /** Configures sample extraction for a specific track. */
-  setExtractionOptions(
-    trackId: number,
-    user: unknown,
-    options: { nbSamples: number }
-  ): void
-  /** Starts the extraction process. */
-  start(): void
-  /** Stops the extraction process. */
-  stop(): void
-  /** Flushes any remaining data. */
-  flush(): void
-}
-
-/**
- * Metadata provided by MP4Box upon successful parsing of file headers.
- */
-export interface MP4BoxInfo {
-  /** List of tracks (audio, video, etc.) found in the file. */
-  tracks: MP4BoxTrack[]
-}
-
-/**
- * Metadata for a specific track within an MP4 container.
- */
-export interface MP4BoxTrack {
-  /** Unique identifier for the track. */
-  id: number
-  /** Codec string (e.g., 'mp4a.40.2'). */
-  codec?: string
-  /** Audio-specific parameters if the track is an audio track. */
-  audio: {
-    /** Sampling frequency in Hz. */
-    sample_rate: number
-    /** Number of audio channels. */
-    channel_count: number
-  }
-}
-
-/**
- * A single audio sample extracted from an MP4 container.
- */
-export interface MP4BoxSample {
-  /** Raw sample data. */
-  data: ArrayBuffer
 }
 
 /**
@@ -428,7 +355,6 @@ export interface SymphoniaDecoderStreamOptions extends TransformOptions {
 export interface AACDecoderStreamOptions extends TransformOptions {
   /** Desired resampling quality. */
   resamplingQuality?: ResamplingQuality
-  state?: { isPcm: boolean }
 }
 
 /**

@@ -1,5 +1,9 @@
 import { PassThrough, type Readable } from 'node:stream'
-import * as MP4Box from 'mp4box'
+import symphonia from '@toddynnn/symphonia-decoder'
+import {
+  createAdtsHeader,
+  getMp4AacConfig
+} from '../playback/processing/streamProcessor.ts'
 import type { EternalboxSourceConfig } from '../typings/config/config.types.ts'
 import type {
   EternalboxAnalysis,
@@ -19,41 +23,6 @@ import type {
 } from '../typings/sources/source.types.ts'
 import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
-
-/**
- * Common sampling rates for AAC audio.
- * @internal
- */
-const SAMPLE_RATES = Object.freeze([
-  96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025,
-  8000, 7350
-])
-
-/**
- * Creates an ADTS header for a single AAC frame.
- * @internal
- */
-const _createAdtsHeader = (
-  sampleLength: number,
-  profile: number,
-  samplingIndex: number,
-  channelCount: number
-): Buffer => {
-  const frameLength = sampleLength + 7
-  const profileIndex = profile - 1
-
-  return Buffer.from([
-    0xff,
-    0xf1,
-    ((profileIndex & 0x03) << 6) |
-      ((samplingIndex & 0x0f) << 2) |
-      ((channelCount & 0x04) >> 2),
-    ((channelCount & 0x03) << 6) | ((frameLength & 0x1800) >> 11),
-    (frameLength & 0x7f8) >> 3,
-    ((frameLength & 0x7) << 5) | 0x1f,
-    0xfc
-  ])
-}
 
 /**
  * Internal interface for graph edges between beats.
@@ -1006,109 +975,30 @@ export default class EternalboxSource implements SourceInstance {
     frameEnds: number[]
     totalBytes: number
   } {
-    const mp4boxFile = MP4Box.createFile(false)
+    const track = symphonia.demuxMp4Aac(buffer)
+    const { profile, samplingIndex, channelCount } = getMp4AacConfig(
+      track.config,
+      track.sampleRate,
+      track.channels
+    )
     const frames: Buffer[] = []
     const frameStarts: number[] = []
     const frameEnds: number[] = []
-    let audioConfig: {
-      profile: number
-      samplingIndex: number
-      channelCount: number
-    } | null = null
-    let timescale: number | null = null
     let totalBytes = 0
-
-    mp4boxFile.onReady = (info: MP4Box.Movie) => {
-      const audioTrack = info.tracks.find((t) => t.codec?.startsWith('mp4a'))
-      if (!audioTrack?.timescale || !audioTrack.audio) return
-      timescale = audioTrack.timescale
-      audioConfig = this._getAudioConfig(audioTrack)
-      mp4boxFile.setExtractionOptions(audioTrack.id, null, { nbSamples: 50 })
-      mp4boxFile.start()
+    for (const packet of track.packets) {
+      const header = createAdtsHeader(
+        packet.data.length,
+        profile,
+        samplingIndex,
+        channelCount
+      )
+      const frame = Buffer.concat([header, packet.data])
+      frames.push(frame)
+      frameStarts.push(packet.start)
+      frameEnds.push(packet.end)
+      totalBytes += frame.length
     }
-
-    mp4boxFile.onSamples = (
-      id: number,
-      _user: unknown,
-      samples: MP4Box.Sample[]
-    ) => {
-      if (!audioConfig || !timescale || !samples?.length) return
-      for (const sample of samples) {
-        if (!sample?.data) continue
-        const sampleData = Buffer.from(sample.data)
-        const adts = _createAdtsHeader(
-          sampleData.byteLength,
-          audioConfig.profile,
-          audioConfig.samplingIndex,
-          audioConfig.channelCount
-        )
-        const frame = Buffer.concat([adts, sampleData])
-        frames.push(frame)
-        totalBytes += frame.length
-        frameStarts.push(sample.dts / timescale)
-        frameEnds.push((sample.dts + sample.duration) / timescale)
-      }
-
-      const lastSample = samples[samples.length - 1]
-      const lastNumber = (lastSample as unknown as { number?: number })?.number
-      if (typeof lastNumber === 'number') {
-        const file = mp4boxFile as unknown as {
-          releaseUsedSamples: (trackId: number, sampleNumber: number) => void
-        }
-        file.releaseUsedSamples(id, lastNumber + 1)
-      }
-    }
-
-    const arrayBuffer = buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength
-    ) as ArrayBuffer & { fileStart: number }
-    arrayBuffer.fileStart = 0
-    mp4boxFile.appendBuffer(arrayBuffer)
-    try {
-      mp4boxFile.flush()
-    } catch {}
-
-    try {
-      mp4boxFile.stop()
-    } catch {}
-    mp4boxFile.onReady = undefined
-    mp4boxFile.onSamples = undefined
-    mp4boxFile.onError = undefined
-
     return { frames, frameStarts, frameEnds, totalBytes }
-  }
-
-  /**
-   * Extracts AAC configuration from a track metadata node.
-   * @internal
-   */
-  private _getAudioConfig(track: MP4Box.Track): {
-    profile: number
-    samplingIndex: number
-    channelCount: number
-  } {
-    if (!track.audio) throw new Error('Missing audio metadata in track.')
-    const samplingIndex = SAMPLE_RATES.indexOf(track.audio.sample_rate)
-    if (samplingIndex === -1)
-      throw new Error('Unsupported sample rate for ADTS.')
-
-    let profile = 2
-    if (track.codec) {
-      const parts = track.codec.split('.')
-      if (parts.length >= 3) {
-        const valStr = parts[2]
-        if (valStr) {
-          const val = Number.parseInt(valStr, 10)
-          if (Number.isFinite(val) && val > 0) profile = val
-        }
-      }
-    }
-    return {
-      samplingIndex,
-      channelCount: track.audio.channel_count,
-      profile
-    }
   }
 
   /**

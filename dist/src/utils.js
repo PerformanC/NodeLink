@@ -1967,9 +1967,7 @@ async function checkDependencyUpdates(credentialManager) {
         '@toddynnn/symphonia-decoder',
         '@toddynnn/voice-opus',
         '@ecliptia/faad2-wasm',
-        '@alexanderolsen/libsamplerate-js',
-        '@ecliptia/seekable-stream',
-        'mp4box'
+        '@ecliptia/seekable-stream'
     ];
     const localVersions = [];
     for (const dep of coreDeps) {

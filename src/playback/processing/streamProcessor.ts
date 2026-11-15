@@ -10,7 +10,7 @@ import {
 import FAAD2NodeDecoder from '@ecliptia/faad2-wasm/faad2_node_decoder.js'
 import { SeekError, seekableStream } from '@ecliptia/seekable-stream'
 import type { VoiceAudioStream } from '@performanc/voice'
-import { SymphoniaDecoder } from '@toddynnn/symphonia-decoder'
+import symphonia, { SymphoniaDecoder } from '@toddynnn/symphonia-decoder'
 import { normalizeFormat, SupportedFormats } from '../../constants.ts'
 import type {
   AudioMixer,
@@ -35,14 +35,9 @@ import type {
   FlvDemuxerLike,
   FMP4StreamOptions,
   FMP4StreamState,
-  MP4BoxFile,
-  MP4BoxInfo,
-  MP4BoxSample,
-  MP4BoxTrack,
-  MP4Box as MP4BoxType,
+  Mp4Atom,
   MpegtsConfig,
   PendingChunk,
-  ResamplerLike,
   ResamplingQuality,
   RingBufferLike,
   SeekableStreamMeta,
@@ -74,34 +69,6 @@ import {
   ProtectedLimiterOutput,
   ProtectedPcmInput
 } from './ProtectedAudioTransforms.ts'
-
-type LibSampleRateModule = typeof import('@alexanderolsen/libsamplerate-js')
-let libSampleRatePromise: Promise<LibSampleRateModule> | null = null
-
-type MP4BoxModule = typeof import('mp4box')
-type MP4Descriptor = {
-  tag?: number
-  data?: Uint8Array
-  descs?: MP4Descriptor[]
-}
-let mp4BoxPromise: Promise<MP4BoxModule> | null = null
-
-const getMP4Box = async (): Promise<MP4BoxModule> => {
-  if (!mp4BoxPromise) {
-    mp4BoxPromise = import('mp4box')
-  }
-  return mp4BoxPromise
-}
-
-const getLibSampleRate = async (): Promise<LibSampleRateModule> => {
-  if (!libSampleRatePromise) {
-    libSampleRatePromise = import('@alexanderolsen/libsamplerate-js').then(
-      (module) => (module.default || module) as unknown as LibSampleRateModule
-    )
-  }
-
-  return libSampleRatePromise
-}
 
 const AUDIO_CONFIG: AudioConfig = Object.freeze({
   sampleRate: 48000,
@@ -141,69 +108,7 @@ const MPEGTS_CONFIG: MpegtsConfig = Object.freeze({
   mp3StreamType2: 0x04
 })
 
-const _DOWNMIX_COEFFICIENTS: Readonly<{
-  center: number
-  surround: number
-  lfe: number
-}> = Object.freeze({
-  center: Math.SQRT1_2,
-  surround: Math.SQRT1_2,
-  lfe: 0.5
-})
-
-const SAMPLE_RATES: readonly number[] = Object.freeze([
-  96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025,
-  8000, 7350
-])
-
-const _parseAacSampleRate = (data: Uint8Array): number | null => {
-  let bitOffset = 0
-  const readBits = (count: number): number | null => {
-    if (bitOffset + count > data.byteLength * 8) return null
-
-    let value = 0
-    for (let i = 0; i < count; i++) {
-      const byte = data[bitOffset >> 3]
-      if (byte === undefined) return null
-      value = (value << 1) | ((byte >> (7 - (bitOffset & 7))) & 1)
-      bitOffset++
-    }
-    return value
-  }
-
-  const objectType = readBits(5)
-  if (objectType === null) return null
-  if (objectType === 31 && readBits(6) === null) return null
-
-  const samplingIndex = readBits(4)
-  if (samplingIndex === null) return null
-
-  if (samplingIndex === 15) {
-    const explicitSampleRate = readBits(24)
-    return explicitSampleRate && explicitSampleRate > 0
-      ? explicitSampleRate
-      : null
-  }
-
-  return SAMPLE_RATES[samplingIndex] ?? null
-}
-
 const EMPTY_BUFFER: Buffer = Buffer.alloc(0)
-
-const _getResamplerConverterType = (
-  quality: ResamplingQuality,
-  libSampleRate: LibSampleRateModule
-): LibSampleRateModule['ConverterType'][keyof LibSampleRateModule['ConverterType']] => {
-  const types = libSampleRate.ConverterType
-  const qualityMap: Record<string, (typeof types)[keyof typeof types]> = {
-    best: types.SRC_SINC_BEST_QUALITY,
-    medium: types.SRC_SINC_MEDIUM_QUALITY,
-    fastest: types.SRC_SINC_FASTEST,
-    'zero order holder': types.SRC_ZERO_ORDER_HOLD,
-    linear: types.SRC_LINEAR
-  }
-  return qualityMap[quality] || types.SRC_SINC_FASTEST
-}
 
 const _clampSample = (value: number): number => {
   if (value > 1) return 1
@@ -221,67 +126,6 @@ const _floatToInt16Buffer = (floatArray: Float32Array): Buffer => {
   }
 
   return Buffer.from(output.buffer, output.byteOffset, output.byteLength)
-}
-
-const _createAdtsHeader = (
-  sampleLength: number,
-  profile: number,
-  samplingIndex: number,
-  channelCount: number
-): Buffer => {
-  const frameLength = sampleLength + 7
-  const profileIndex = profile - 1
-
-  return Buffer.from([
-    0xff,
-    0xf1,
-    ((profileIndex & 0x03) << 6) |
-      ((samplingIndex & 0x0f) << 2) |
-      ((channelCount & 0x04) >> 2),
-    ((channelCount & 0x03) << 6) | ((frameLength & 0x1800) >> 11),
-    (frameLength & 0x7f8) >> 3,
-    ((frameLength & 0x7) << 5) | 0x1f,
-    0xfc
-  ])
-}
-
-const _parseBoxes = (buffer: Buffer, offset: number = 0): MP4BoxType[] => {
-  const boxes: MP4BoxType[] = []
-  const bufferLength = buffer.length
-
-  while (offset + 8 <= bufferLength) {
-    const size = buffer.readUInt32BE(offset)
-    const type = buffer.toString('ascii', offset + 4, offset + 8)
-
-    if (size === 0 || size > bufferLength - offset) break
-    if (type === '\0\0\0\0') break
-
-    boxes.push({
-      type,
-      size,
-      data: buffer.subarray(offset + 8, offset + size),
-      offset
-    })
-
-    offset += size
-  }
-
-  return boxes
-}
-
-const _findNestedBox = (
-  boxes: MP4BoxType[],
-  ...path: string[]
-): MP4BoxType[] | null => {
-  let current = boxes
-
-  for (const boxType of path) {
-    const box = current.find((b) => b.type === boxType)
-    if (!box) return null
-    current = _parseBoxes(box.data)
-  }
-
-  return current
 }
 
 const _createErrorResponse = (
@@ -333,18 +177,6 @@ const _tightBuffer = (buf: Buffer): Buffer =>
   buf.byteOffset === 0 && buf.byteLength === buf.buffer.byteLength
     ? buf
     : Buffer.from(buf)
-const _toTightArrayBuffer = (buf: Buffer): ArrayBuffer => {
-  const backing = buf.buffer
-  if (
-    backing instanceof ArrayBuffer &&
-    buf.byteOffset === 0 &&
-    buf.byteLength === backing.byteLength
-  ) {
-    return backing
-  }
-  return Uint8Array.from(buf).buffer
-}
-
 const _extFromUrl = (url: string): string => {
   try {
     const p = new URL(url).pathname
@@ -353,15 +185,6 @@ const _extFromUrl = (url: string): string => {
   } catch {
     return ''
   }
-}
-
-const _toArrayBufferWithFileStart = (
-  buf: Buffer,
-  fileStart: number
-): ArrayBuffer & { fileStart?: number } => {
-  const ab = _toTightArrayBuffer(buf) as ArrayBuffer & { fileStart?: number }
-  ab.fileStart = fileStart
-  return ab
 }
 
 const _isHttpProxyConfig = (value: unknown): value is HttpProxyConfig => {
@@ -395,181 +218,419 @@ const _extractSeekProxy = (
     : undefined
 }
 
-async function _fetchRange(
-  url: string,
-  start: number,
-  endInclusive: number,
-  proxy?: HttpProxyConfig
-): Promise<Buffer> {
-  if (proxy) {
-    const response = await http1makeRequest(url, {
-      method: 'GET',
-      headers: {
-        Range: `bytes=${start}-${endInclusive}`
-      } as HttpRequestHeaders,
-      responseType: 'buffer',
-      proxy
-    })
+const SAMPLE_RATES: readonly number[] = Object.freeze([
+  96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025,
+  8000, 7350
+])
 
-    if (response.statusCode !== 200 && response.statusCode !== 206) {
-      throw new Error(`HTTP ${response.statusCode ?? 0} while fetching range`)
+/**
+ * Reads the core sample rate from AAC AudioSpecificConfig.
+ * @internal
+ * @param data - Codec configuration from the container.
+ * @returns The core sample rate in Hz, or null when absent.
+ */
+const parseAacSampleRate = (data: Uint8Array): number | null => {
+  let bitOffset = 0
+  const readBits = (count: number): number | null => {
+    if (bitOffset + count > data.byteLength * 8) return null
+
+    let value = 0
+    for (let i = 0; i < count; i++) {
+      const byte = data[bitOffset >> 3]
+      if (byte === undefined) return null
+      value = (value << 1) | ((byte >> (7 - (bitOffset & 7))) & 1)
+      bitOffset++
     }
-
-    if (Buffer.isBuffer(response.body)) {
-      return response.body
-    }
-
-    if (response.body instanceof Uint8Array) {
-      return Buffer.from(response.body)
-    }
-
-    throw new Error('Invalid binary response body while fetching range')
+    return value
   }
 
-  const res = await fetch(url, {
-    headers: { Range: `bytes=${start}-${endInclusive}` }
-  })
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} while fetching range`)
+  const objectType = readBits(5)
+  if (objectType === null) return null
+  if (objectType === 31 && readBits(6) === null) return null
+
+  const samplingIndex = readBits(4)
+  if (samplingIndex === null) return null
+
+  if (samplingIndex === 15) {
+    const explicitSampleRate = readBits(24)
+    return explicitSampleRate && explicitSampleRate > 0
+      ? explicitSampleRate
+      : null
   }
-  const ab = await res.arrayBuffer()
-  return Buffer.from(ab)
+
+  return SAMPLE_RATES[samplingIndex] ?? null
 }
 
-async function _openRangeStream(
-  url: string,
-  start: number,
-  proxy?: HttpProxyConfig
-): Promise<Readable> {
-  if (proxy) {
-    const response = await http1makeRequest(url, {
-      method: 'GET',
-      headers: {
-        Range: `bytes=${start}-`
-      } as HttpRequestHeaders,
-      streamOnly: true,
-      proxy
-    })
+export const createAdtsHeader = (
+  sampleLength: number,
+  profile: number,
+  samplingIndex: number,
+  channelCount: number
+): Buffer => {
+  const frameLength = sampleLength + 7
+  const profileIndex = profile - 1
 
+  return Buffer.from([
+    0xff,
+    0xf1,
+    ((profileIndex & 0x03) << 6) |
+      ((samplingIndex & 0x0f) << 2) |
+      ((channelCount & 0x04) >> 2),
+    ((channelCount & 0x03) << 6) | ((frameLength & 0x1800) >> 11),
+    (frameLength & 0x7f8) >> 3,
+    ((frameLength & 0x7) << 5) | 0x1f,
+    0xfc
+  ])
+}
+
+/**
+ * Reads the parameters needed to wrap native MP4 AAC packets in ADTS.
+ * @internal
+ * @param config - AudioSpecificConfig from MP4.
+ * @param sampleRate - Track sample rate when the config omits it.
+ * @param channels - Audio channel count.
+ * @returns The ADTS configuration for the track.
+ */
+export function getMp4AacConfig(
+  config: Buffer,
+  sampleRate: number | null,
+  channels: number | null
+): AACConfig {
+  const objectType = (config[0] ?? 0) >> 3
+  const coreRate = parseAacSampleRate(config) ?? sampleRate
+  const samplingIndex = coreRate === null ? -1 : SAMPLE_RATES.indexOf(coreRate)
+  if (samplingIndex === -1 || !channels || objectType === 0)
+    throw new Error('Unsupported MP4 AAC configuration')
+
+  /* INFO: FAAD2 detects SBR and PS in the AAC payload. */
+  return {
+    profile: objectType === 5 || objectType === 29 ? 2 : objectType,
+    samplingIndex,
+    channelCount: channels
+  }
+}
+
+type Mp4Reader = Awaited<ReturnType<typeof symphonia.openMp4Audio>>
+type Mp4Audio = { stream: Readable; type: 'audio/aac' | 'pcm' }
+
+/**
+ * Opens MP4 audio over HTTP Range without buffering the complete container.
+ * @internal
+ * @param url - URL of the MP4 object.
+ * @param proxy - Proxy used to resolve the playback URL.
+ * @param seekSeconds - Initial playback position in seconds.
+ * @param refresh - Resolves another URL for the same MP4 after a transient HTTP error.
+ * @returns AAC in ADTS or ALAC/Opus in PCM, or null when the server ignores Range.
+ */
+export async function openMp4HttpAudio(
+  url: string,
+  proxy?: HttpProxyConfig,
+  seekSeconds = 0,
+  refresh?: () => Promise<{ url: string; proxy?: HttpProxyConfig }>
+): Promise<Mp4Audio | null> {
+  const controller = new AbortController()
+  let totalBytes = 0
+  let activeResponse: Readable | undefined
+  let cachedRange: { offset: number; bytes: Buffer } | undefined
+  const readRange = async (start: number, end: number): Promise<Buffer> => {
+    if (controller.signal.aborted) throw new Error('MP4 source closed')
+    const headers = {
+      Range: `bytes=${start}-${end}`,
+      'Accept-Encoding': 'identity'
+    }
+    const request = () =>
+      proxy
+        ? http1makeRequest(url, {
+            method: 'GET',
+            headers,
+            streamOnly: true,
+            proxy,
+            timeout: 20000
+          })
+        : fetch(url, {
+            headers,
+            signal: AbortSignal.any([
+              controller.signal,
+              AbortSignal.timeout(20000)
+            ])
+          }).then((result) => ({
+            statusCode: result.status,
+            headers: {
+              'content-range': result.headers.get('content-range') ?? undefined
+            },
+            stream: result.body
+              ? Readable.fromWeb(result.body as never)
+              : undefined
+          }))
+    let response = await request()
     if (
-      (response.statusCode !== 200 && response.statusCode !== 206) ||
-      !response.stream
+      refresh &&
+      !controller.signal.aborted &&
+      (response.statusCode === 403 ||
+        response.statusCode === 404 ||
+        (response.statusCode ?? 0) >= 500)
     ) {
+      ;(response.stream as Readable | undefined)?.destroy()
+      const replacement = await refresh()
+      if (controller.signal.aborted) throw new Error('MP4 source closed')
+      url = replacement.url
+      proxy = replacement.proxy
+      response = await request()
+    }
+    const body = response.stream as Readable | undefined
+    if (controller.signal.aborted) {
+      body?.destroy()
+      throw new Error('MP4 source closed')
+    }
+    if (totalBytes === 0 && response.statusCode === 200) {
+      /* INFO: The source ignored the initial Range. Leave it to the sequential path. */
+      body?.destroy()
+      return Buffer.alloc(0)
+    }
+    const contentRange = String(response.headers?.['content-range'] ?? '')
+    const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(contentRange)
+    if (
+      response.statusCode !== 206 ||
+      !body ||
+      !match ||
+      Number(match[1]) !== start ||
+      Number(match[2]) !== end ||
+      !Number.isSafeInteger(Number(match[3])) ||
+      Number(match[3]) <= end ||
+      (totalBytes && totalBytes !== Number(match[3]))
+    ) {
+      body?.destroy()
       throw new Error(
-        `HTTP ${response.statusCode ?? 0} while opening range stream`
+        `Invalid MP4 HTTP Range response (${response.statusCode ?? 0})`
       )
     }
-
-    return response.stream as Readable
+    totalBytes = Number(match[3])
+    const bytes = Buffer.allocUnsafe(end - start + 1)
+    let written = 0
+    activeResponse = body
+    try {
+      for await (const chunk of body as AsyncIterable<Buffer>) {
+        if (chunk.length > bytes.length - written)
+          throw new Error('Oversized MP4 range')
+        written += chunk.copy(bytes, written)
+      }
+      if (written !== bytes.length) throw new Error('Incomplete MP4 range')
+      return bytes
+    } finally {
+      activeResponse = undefined
+      body.destroy()
+    }
   }
 
-  const res = await fetch(url, {
-    headers: { Range: `bytes=${start}-` }
+  await readRange(0, 0)
+  if (!totalBytes) return null
+  const reader = await symphonia.openMp4Audio(
+    totalBytes,
+    async (error, [start, length]) => {
+      if (error) throw error
+      if (
+        cachedRange &&
+        start >= cachedRange.offset &&
+        start + length <= cachedRange.offset + cachedRange.bytes.length
+      ) {
+        const offset = start - cachedRange.offset
+        return cachedRange.bytes.subarray(offset, offset + length)
+      }
+      const end = Math.min(totalBytes, start + Math.max(length, 128 * 1024)) - 1
+      const bytes = await readRange(start, end)
+      cachedRange = { offset: start, bytes }
+      return bytes.subarray(0, length)
+    },
+    seekSeconds
+  )
+  return createMp4Audio(reader, () => {
+    controller.abort()
+    activeResponse?.destroy()
+    cachedRange = undefined
   })
-  if (!res.ok || !res.body) {
-    throw new Error(`HTTP ${res.status} while opening range stream`)
+}
+
+/**
+ * Opens a forward-only MP4 stream. Complete each native read before returning
+ * so that a split sample never advances the demuxer past unread audio.
+ * @internal
+ * @param input - The original MP4 byte stream.
+ * @returns Audio and the type consumed by the playback pipeline.
+ */
+async function openMp4StreamAudio(input: Readable): Promise<Mp4Audio> {
+  const source = input.iterator()
+  const prefix: Buffer[] = []
+  let pending: Buffer = Buffer.alloc(0)
+  async function read(length: number): Promise<Buffer> {
+    const output = Buffer.allocUnsafe(length)
+    let written = 0
+    while (written < length) {
+      if (!pending.length) {
+        const { value, done } = await source.next()
+        if (done) break
+        pending = Buffer.isBuffer(value) ? value : Buffer.from(value)
+      }
+      const count = pending.copy(output, written, 0, length - written)
+      written += count
+      pending = pending.subarray(count)
+    }
+    return output.subarray(0, written)
   }
-  return Readable.fromWeb(res.body as never)
-}
-
-type MP4BoxSeekResult = number | { offset?: number; time?: number }
-
-const _seekOffset = (res: MP4BoxSeekResult): number => {
-  if (typeof res === 'number') return res
-  const off = res && typeof res === 'object' ? res.offset : undefined
-  return off ?? NaN
-}
-
-async function _buildMp4SeekOptions(
-  url: string,
-  seekTimeMs: number,
-  proxy?: HttpProxyConfig
-): Promise<MP4ToAACStreamOptions> {
-  const mp4Box = await getMP4Box()
-  const mp4 = mp4Box.createFile(false) as unknown as MP4BoxFile
-
-  const prefetch: MP4PrefetchChunk[] = []
-  let readyInfo: MP4BoxInfo | null = null
-  let nextStart = 0
 
   try {
-    await new Promise<void>(async (resolve, reject) => {
-      mp4.onError = (e: string) => reject(new Error(`MP4Box init error: ${e}`))
-      mp4.onReady = (info: MP4BoxInfo) => {
-        readyInfo = info
-        resolve()
+    let remainingPrefixBytes = 4 * 1024 * 1024
+    /* INFO: Reject media before moov before the demuxer reads through mdat. */
+    while (true) {
+      const header = await read(8)
+      prefix.push(header)
+      if (header.length < 8) break
+      const type = header.toString('ascii', 4, 8)
+      if (type === 'moov') break
+      if (type === 'mdat' || type === 'moof')
+        throw new Error(
+          'MP4 with media before moov requires an HTTP Range source'
+        )
+      let size = header.readUInt32BE(0)
+      let headerBytes = header.length
+      if (size === 1) {
+        const extended = await read(8)
+        if (extended.length !== 8) throw new Error('Incomplete MP4 atom')
+        prefix.push(extended)
+        size = Number(extended.readBigUInt64BE(0))
+        headerBytes += extended.length
       }
+      if (size > remainingPrefixBytes)
+        throw new Error('MP4 metadata exceeds the sequential probe limit')
+      if (size < headerBytes) throw new Error('Invalid MP4 atom size')
+      const body = await read(size - headerBytes)
+      prefix.push(body)
+      remainingPrefixBytes -= size
+      if (body.length !== size - headerBytes) break
+    }
 
-      const CHUNK = 512 * 1024
-      const MAX_FETCHES = 40
-
-      try {
-        for (let i = 0; i < MAX_FETCHES && !readyInfo; i++) {
-          const buf = await _fetchRange(
-            url,
-            nextStart,
-            nextStart + CHUNK - 1,
-            proxy
-          )
-          const ab = _toArrayBufferWithFileStart(buf, nextStart)
-
-          prefetch.push({ fileStart: nextStart, data: ab })
-          const appended = mp4.appendBuffer(ab)
-
-          if (typeof appended === 'number') {
-            nextStart = appended
-          } else {
-            nextStart += ab.byteLength
-          }
-
-          if (!Number.isFinite(nextStart) || nextStart < 0) break
-        }
-        if (!readyInfo) {
-          reject(
-            new Error('Could not parse MP4 metadata (moov not found quickly).')
-          )
-        }
-      } catch (e) {
-        reject(e)
+    let replay: Buffer = Buffer.concat(prefix)
+    prefix.length = 0
+    const reader = await symphonia.openMp4Audio(
+      null,
+      async (error, [, length]) => {
+        if (error) throw error
+        const buffered = replay.subarray(0, length)
+        replay = replay.subarray(buffered.length)
+        if (buffered.length === length) return buffered
+        const rest = await read(length - buffered.length)
+        return buffered.length ? Buffer.concat([buffered, rest]) : rest
       }
-    })
-
-    const info = readyInfo as MP4BoxInfo | null
-    const audioTrack = info?.tracks.find(
-      (t: MP4BoxTrack) => t.codec?.startsWith('mp4a') || t.codec === 'Opus'
     )
-    if (!audioTrack) {
-      throw new Error('No supported track found in MP4/M4A')
-    }
+    return await createMp4Audio(reader, () => {
+      pending = Buffer.alloc(0)
+      input.destroy()
+    })
+  } catch (error) {
+    input.destroy()
+    throw error
+  }
+}
 
-    mp4.setExtractionOptions(audioTrack.id, null, { nbSamples: 1 })
-
-    const seekTimeSec = seekTimeMs / 1000
-    const mp4boxFile = mp4 as unknown as {
-      seek: (time: number, async: boolean) => MP4BoxSeekResult
-    }
-    const seekRes = mp4boxFile.seek(seekTimeSec, true) as MP4BoxSeekResult
-    const startOffset = _seekOffset(seekRes)
-
-    if (!Number.isFinite(startOffset) || startOffset < 0) {
-      throw new Error(
-        `MP4Box seek returned invalid offset: ${JSON.stringify(seekRes)}`
+async function createMp4Audio(
+  reader: Mp4Reader,
+  cancel: () => void
+): Promise<Mp4Audio> {
+  const codec = reader.codec
+  let opus: OpusDecoder | undefined
+  let config: AACConfig | undefined
+  try {
+    if (codec === 'aac') {
+      config = getMp4AacConfig(
+        reader.config,
+        reader.sampleRate,
+        reader.channels
       )
+    } else if (codec === 'opus') {
+      opus = new OpusDecoder()
     }
+  } catch (error) {
+    cancel()
+    await reader.close().catch(logCloseError)
+    throw error
+  }
 
-    return {
-      prefetch,
-      baseFileStart: startOffset,
-      seekTimeSec
-    }
-  } finally {
+  const stream = Readable.from(
+    (async function* () {
+      if (codec === 'alac') {
+        for (
+          let pcm = await reader.readPcm();
+          pcm;
+          pcm = await reader.readPcm()
+        )
+          yield pcm
+        return
+      }
+      while (true) {
+        const packets = await reader.readPackets(32)
+        if (!packets.length) break
+        for (const { data } of packets) {
+          if (config) {
+            yield createAdtsHeader(
+              data.length,
+              config.profile,
+              config.samplingIndex,
+              config.channelCount
+            )
+          }
+          yield data
+        }
+      }
+    })(),
+    { objectMode: false, highWaterMark: AUDIO_CONFIG.highWaterMark }
+  )
+  const destroy = stream.destroy.bind(stream)
+  stream.destroy = (error?: Error) => {
+    if (!stream.destroyed) cancel()
+    return destroy(error)
+  }
+  stream.once('close', () => {
+    void reader.close().catch(logCloseError)
+  })
+  const audio = opus ? pipeline(stream, opus, () => {}) : stream
+  audio.once('end', () => audio.emit('finishBuffering'))
+  return { stream: audio, type: config ? 'audio/aac' : 'pcm' }
+}
+
+function logCloseError(error: unknown): void {
+  logger('error', 'MP4', error instanceof Error ? error.message : String(error))
+}
+
+function decodeMp4Stream(resamplingQuality: string) {
+  return async function* (
+    source: AsyncIterable<Buffer>,
+    options?: { signal?: AbortSignal }
+  ) {
+    const input = Readable.from(source, { objectMode: false })
+    const cancel = () => input.destroy()
+    const signal = options?.signal
+    signal?.addEventListener('abort', cancel, { once: true })
     try {
-      mp4.stop()
-      mp4.flush()
-    } catch {}
-    mp4.onReady = null
-    mp4.onSamples = null
-    mp4.onError = null
+      signal?.throwIfAborted()
+      const audio = await openMp4StreamAudio(input)
+      const decoded =
+        audio.type === 'pcm'
+          ? audio.stream
+          : pipeline(
+              audio.stream,
+              new AACDecoderStream({
+                resamplingQuality: resamplingQuality as ResamplingQuality
+              }),
+              () => {}
+            )
+      try {
+        for await (const chunk of decoded) yield chunk
+      } finally {
+        decoded.destroy()
+      }
+    } finally {
+      signal?.removeEventListener('abort', cancel)
+      input.destroy()
+    }
   }
 }
 
@@ -1519,60 +1580,78 @@ class MPEGTSDemuxer extends Transform {
  * WARNING: Do not edit this section; changes here will break the decoding pipeline.
  **********************************************************************/
 class AACDecoderStream extends Transform {
-  private decoder: FAAD2DecoderLike
-  private resampler: ResamplerLike | null
+  private decoder: FAAD2DecoderLike | null
+  private pcmConverter: {
+    rate: number
+    native: InstanceType<typeof symphonia.PcmResampler>
+  } | null
   private isDecoderReady: boolean
+  private configuring: Promise<unknown> | null = null
   private isConfigured: boolean
-  private pendingChunks: PendingChunk[]
+  private pendingChunk: PendingChunk | null = null
   private ringBuffer: RingBufferLike
   private resamplingQuality: string
-  private resamplerCreationPromise: Promise<ResamplerLike> | null
-  private static readonly MAX_PENDING_CHUNKS = 200
-
-  private state: { isPcm: boolean } | null
 
   constructor(options: AACDecoderStreamOptions) {
     super({
       ...options,
       highWaterMark: AUDIO_CONFIG.highWaterMark
     })
-    this.state = options.state ?? null
     this.decoder = new FAAD2NodeDecoder() as unknown as FAAD2DecoderLike
-    this.resampler = null
+    this.pcmConverter = null
     this.isDecoderReady = false
     this.isConfigured = false
-    this.pendingChunks = []
     this.ringBuffer = new RingBuffer(
       AAC_BUFFER_SIZE
     ) as unknown as RingBufferLike
     this.resamplingQuality = options.resamplingQuality || 'fastest'
-    this.resamplerCreationPromise = null
 
-    this.decoder.ready
+    const decoder = this.decoder
+    decoder.ready
       .then(() => {
+        if (this.decoder !== decoder) {
+          this._releaseDecoder(decoder)
+          return
+        }
         this.isDecoderReady = true
-        this._processPendingChunks()
+        const pending = this.pendingChunk
+        this.pendingChunk = null
+        if (pending) return this._decodeChunk(pending.chunk, pending.callback)
       })
-      .catch((err: Error) => emitResourceError(this, err))
+      .catch((error: Error) => {
+        if (this.decoder === decoder) this.destroy(error)
+        else this._releaseDecoder(decoder)
+      })
   }
 
-  cleanup(): void {
+  private _releaseDecoder(decoder: FAAD2DecoderLike): void {
+    try {
+      decoder.free?.()
+    } catch {}
+    try {
+      decoder.destroy?.()
+    } catch {}
+  }
+
+  private cleanup(): void {
     this.ringBuffer.dispose()
-    this.pendingChunks.length = 0
-    if (this.decoder) {
-      try {
-        this.decoder.free?.()
-        this.decoder.destroy?.()
-      } catch {}
-      this.decoder = null as unknown as FAAD2DecoderLike
+    const decoder = this.decoder
+    this.decoder = null
+    if (decoder && this.isDecoderReady) {
+      if (this.configuring) {
+        void this.configuring.then(
+          () => this._releaseDecoder(decoder),
+          () => this._releaseDecoder(decoder)
+        )
+      } else {
+        this._releaseDecoder(decoder)
+      }
     }
-    if (this.resampler) {
-      try {
-        this.resampler.destroy?.()
-      } catch {}
-      this.resampler = null
-    }
-    this.resamplerCreationPromise = null
+    const pending = this.pendingChunk
+    this.pendingChunk = null
+    pending?.callback()
+    this.pcmConverter?.native.close()
+    this.pcmConverter = null
   }
 
   override _destroy(
@@ -1581,99 +1660,6 @@ class AACDecoderStream extends Transform {
   ): void {
     this.cleanup()
     super._destroy(err, cb)
-  }
-
-  _downmixToStereo(
-    interleavedPCM: Float32Array,
-    channels: number,
-    samplesPerChannel: number
-  ): Float32Array {
-    if (channels === 2) return interleavedPCM
-
-    const stereo = new Float32Array(samplesPerChannel * 2)
-
-    if (channels === 1) {
-      for (let i = 0; i < samplesPerChannel; i++) {
-        const val = interleavedPCM[i] || 0
-        stereo[i * 2] = val
-        stereo[i * 2 + 1] = val
-      }
-      return stereo
-    }
-
-    const CENTER_MIX = Math.SQRT1_2
-    const SURROUND_MIX = Math.SQRT1_2
-    const LFE_MIX = 0.5
-
-    for (let i = 0; i < samplesPerChannel; i++) {
-      let left = 0
-      let right = 0
-      const offset = i * channels
-
-      switch (channels) {
-        case 3: {
-          const C = interleavedPCM[offset] || 0
-          const L = interleavedPCM[offset + 1] || 0
-          const R = interleavedPCM[offset + 2] || 0
-          left = L + C * CENTER_MIX
-          right = R + C * CENTER_MIX
-          break
-        }
-        case 4: {
-          const C = interleavedPCM[offset] || 0
-          const L = interleavedPCM[offset + 1] || 0
-          const R = interleavedPCM[offset + 2] || 0
-          const Cs = interleavedPCM[offset + 3] || 0
-          left = L + C * CENTER_MIX + Cs * SURROUND_MIX * 0.5
-          right = R + C * CENTER_MIX + Cs * SURROUND_MIX * 0.5
-          break
-        }
-        case 5: {
-          const C = interleavedPCM[offset] || 0
-          const L = interleavedPCM[offset + 1] || 0
-          const R = interleavedPCM[offset + 2] || 0
-          const Ls = interleavedPCM[offset + 3] || 0
-          const Rs = interleavedPCM[offset + 4] || 0
-          left = L + C * CENTER_MIX + Ls * SURROUND_MIX
-          right = R + C * CENTER_MIX + Rs * SURROUND_MIX
-          break
-        }
-        case 6: {
-          const C = interleavedPCM[offset] || 0
-          const L = interleavedPCM[offset + 1] || 0
-          const R = interleavedPCM[offset + 2] || 0
-          const Ls = interleavedPCM[offset + 3] || 0
-          const Rs = interleavedPCM[offset + 4] || 0
-          const LFE = interleavedPCM[offset + 5] || 0
-          left = L + C * CENTER_MIX + Ls * SURROUND_MIX + LFE * LFE_MIX
-          right = R + C * CENTER_MIX + Rs * SURROUND_MIX + LFE * LFE_MIX
-          break
-        }
-        default:
-          left = interleavedPCM[offset] || 0
-          right = interleavedPCM[offset + 1] || left
-          break
-      }
-
-      if (left > 1.0) left = 1.0
-      else if (left < -1.0) left = -1.0
-      if (right > 1.0) right = 1.0
-      else if (right < -1.0) right = -1.0
-
-      stereo[i * 2] = left
-      stereo[i * 2 + 1] = right
-    }
-
-    return stereo
-  }
-
-  async _processPendingChunks(): Promise<void> {
-    if (!this.isDecoderReady || this.pendingChunks.length === 0) return
-
-    while (this.pendingChunks.length > 0) {
-      const item = this.pendingChunks.shift() as PendingChunk
-      await this._decodeChunk(item.chunk, item.encoding, item.callback)
-    }
   }
 
   _findADTSFrame(): ADTSFrameInfo | null {
@@ -1719,31 +1705,24 @@ class AACDecoderStream extends Transform {
 
   override _transform(
     chunk: Buffer,
-    encoding: BufferEncoding,
+    _encoding: BufferEncoding,
     callback: TransformCallback
   ): void {
-    if (this.state?.isPcm) {
-      this.push(chunk)
-      callback()
+    if (!this.isDecoderReady) {
+      /* INFO: Transform waits for this callback before handing over another chunk. */
+      this.pendingChunk = { chunk, callback }
       return
     }
 
-    if (!this.isDecoderReady || this.pendingChunks.length > 0) {
-      if (this.pendingChunks.length >= AACDecoderStream.MAX_PENDING_CHUNKS) {
-        this.pendingChunks.shift()
-      }
-      this.pendingChunks.push({ chunk, encoding, callback })
-      return
-    }
-
-    this._decodeChunk(chunk, encoding, callback)
+    void this._decodeChunk(chunk, callback)
   }
 
   async _decodeChunk(
     chunk: Buffer,
-    _encoding: BufferEncoding,
     callback: TransformCallback
   ): Promise<void> {
+    const decoder = this.decoder
+    if (!decoder) return callback()
     try {
       this.ringBuffer.write(chunk)
 
@@ -1754,541 +1733,66 @@ class AACDecoderStream extends Transform {
         const adtsFrame = frameInfo.frame
 
         if (!this.isConfigured) {
-          await this.decoder.configure(adtsFrame)
+          try {
+            this.configuring = decoder.configure(adtsFrame)
+            await this.configuring
+          } finally {
+            this.configuring = null
+          }
+          if (this.decoder !== decoder) return callback()
           this.isConfigured = true
         }
 
-        try {
-          const result = this.decoder.decode(adtsFrame)
-          if (result?.pcm?.length) {
-            let { pcm, sampleRate, channels, samplesPerChannel } = result
-
-            if (channels > 2 || channels === 1) {
-              pcm = this._downmixToStereo(pcm, channels, samplesPerChannel)
-              channels = 2
-            }
-
-            if (sampleRate !== AUDIO_CONFIG.sampleRate) {
-              if (this.resampler) {
-                const resampled = this.resampler.full(pcm)
-                const pcmInt16 = new Int16Array(resampled.length)
-                for (let i = 0; i < resampled.length; i++) {
-                  pcmInt16[i] =
-                    Math.max(-1, Math.min(1, resampled[i] || 0)) * 32767
-                }
-                this.push(Buffer.from(pcmInt16.buffer))
-              } else {
-                if (!this.resamplerCreationPromise) {
-                  this.resamplerCreationPromise = getLibSampleRate()
-                    .then((libSampleRate) =>
-                      libSampleRate.create(2, sampleRate, 48000, {
-                        converterType: _getResamplerConverterType(
-                          this.resamplingQuality as ResamplingQuality,
-                          libSampleRate
-                        )
-                      })
-                    )
-                    .then((resampler: ResamplerLike) => {
-                      if (this.destroyed || this.closed) {
-                        try {
-                          resampler.destroy?.()
-                        } catch {}
-                        return null as unknown as ResamplerLike
-                      }
-                      this.resampler = resampler
-                      this.resamplerCreationPromise = null
-                      return resampler
-                    })
-                    .catch((err) => {
-                      this.resamplerCreationPromise = null
-                      throw err
-                    })
-                }
-
-                const resampler = await this.resamplerCreationPromise
-                if (!resampler || this.destroyed || this.closed) return
-                const resampled = resampler.full(pcm)
-                const pcmInt16 = new Int16Array(resampled.length)
-                for (let i = 0; i < resampled.length; i++) {
-                  pcmInt16[i] =
-                    Math.max(-1, Math.min(1, resampled[i] || 0)) * 32767
-                }
-                this.push(Buffer.from(pcmInt16.buffer))
-              }
-            } else {
-              const pcmInt16 = new Int16Array(pcm.length)
-              for (let i = 0; i < pcm.length; i++) {
-                pcmInt16[i] = Math.max(-1, Math.min(1, pcm[i] || 0)) * 32767
-              }
-              this.push(Buffer.from(pcmInt16.buffer))
-            }
-          }
-        } catch (_decodeErr) {}
-
+        this._decodeFrame(decoder, adtsFrame)
         this.ringBuffer.skip(frameInfo.end)
       }
 
       callback()
     } catch (err) {
-      callback(err as Error)
+      callback(this.destroyed ? undefined : (err as Error))
     }
   }
 
-  override _flush(callback: TransformCallback): void {
-    if (this.state?.isPcm) {
-      callback()
-      return
-    }
-
-    if (this.ringBuffer.length > 0 && this.isConfigured) {
-      try {
-        const frameInfo = this._findADTSFrame()
-        if (frameInfo) {
-          const result = this.decoder.decode(frameInfo.frame)
-          if (result?.pcm) {
-            const pcmInt16 = new Int16Array(result.pcm.length)
-            for (let i = 0; i < result.pcm.length; i++) {
-              pcmInt16[i] =
-                Math.max(-1, Math.min(1, result.pcm[i] || 0)) * 32767
-            }
-            this.push(Buffer.from(pcmInt16.buffer))
-          }
-        }
-      } catch (_err) {}
-    }
-
-    this.cleanup()
-    callback()
-  }
-}
-type MP4PrefetchChunk = { fileStart: number; data: ArrayBuffer }
-
-function patchMoovOffsets(moovBuffer: Buffer, shift: number): void {
-  let idx = 0
-  while (true) {
-    idx = moovBuffer.indexOf('stco', idx)
-    if (idx === -1) break
-    const boxStart = idx - 4
-    if (boxStart >= 0) {
-      const boxSize = moovBuffer.readUInt32BE(boxStart)
-      const entryCount = moovBuffer.readUInt32BE(idx + 8)
-      if (boxSize === 16 + entryCount * 4) {
-        for (let i = 0; i < entryCount; i++) {
-          const offsetPos = idx + 12 + i * 4
-          const originalOffset = moovBuffer.readUInt32BE(offsetPos)
-          moovBuffer.writeUInt32BE(originalOffset + shift, offsetPos)
-        }
-      }
-    }
-    idx += 4
-  }
-
-  idx = 0
-  while (true) {
-    idx = moovBuffer.indexOf('co64', idx)
-    if (idx === -1) break
-    const boxStart = idx - 4
-    if (boxStart >= 0) {
-      const boxSize = moovBuffer.readUInt32BE(boxStart)
-      const entryCount = moovBuffer.readUInt32BE(idx + 8)
-      if (boxSize === 16 + entryCount * 8) {
-        for (let i = 0; i < entryCount; i++) {
-          const offsetPos = idx + 12 + i * 8
-          const high = moovBuffer.readUInt32BE(offsetPos)
-          const low = moovBuffer.readUInt32BE(offsetPos + 4)
-          const originalOffset = high * 0x100000000 + low
-          const newOffset = originalOffset + shift
-          const newHigh = Math.floor(newOffset / 0x100000000)
-          const newLow = newOffset % 0x100000000
-          moovBuffer.writeUInt32BE(newHigh, offsetPos)
-          moovBuffer.writeUInt32BE(newLow, offsetPos + 4)
-        }
-      }
-    }
-    idx += 4
-  }
-}
-
-/* INFO: for context of why i did this: https://github.com/pdeljanov/Symphonia/issues/289, still seems to be broken. */
-function reorderMp4Boxes(originalBuffer: Buffer): Buffer {
-  const topBoxes = _parseBoxes(originalBuffer)
-  const ftyp = topBoxes.find((b) => b.type === 'ftyp')
-  const moov = topBoxes.find((b) => b.type === 'moov')
-  const mdat = topBoxes.find((b) => b.type === 'mdat')
-
-  if (!ftyp || !moov || !mdat) {
-    return originalBuffer
-  }
-
-  if (moov.offset < mdat.offset) {
-    return originalBuffer
-  }
-
-  const ftypBuffer = originalBuffer.subarray(
-    ftyp.offset,
-    ftyp.offset + ftyp.size
-  )
-  const moovBuffer = Buffer.from(
-    originalBuffer.subarray(moov.offset, moov.offset + moov.size)
-  )
-
-  patchMoovOffsets(moovBuffer, moov.size)
-
-  const beforeMoov = originalBuffer.subarray(
-    ftyp.offset + ftyp.size,
-    moov.offset
-  )
-  const afterMoov = originalBuffer.subarray(moov.offset + moov.size)
-
-  return Buffer.concat([ftypBuffer, moovBuffer, beforeMoov, afterMoov])
-}
-
-type MP4ToAACStreamOptions = TransformOptions & {
-  prefetch?: MP4PrefetchChunk[]
-  baseFileStart?: number
-  seekTimeSec?: number
-}
-
-class MP4ToAACStream extends Transform {
-  private mp4boxFile: MP4BoxFile | null
-  private audioConfig: AACConfig | null
-  private offset: number
-  private _aborted: boolean
-  private _prefetchDone: boolean
-  private _opts: MP4ToAACStreamOptions
-  private _initPromise: Promise<void> | null
-  private state: { isPcm: boolean } | null
-  private pcmDecoder: SymphoniaDecoderStream | OpusDecoder | null
-  private headerChunks: Buffer[]
-
-  constructor(
-    options: MP4ToAACStreamOptions & { state?: { isPcm: boolean } } = {}
-  ) {
-    super({ ...options, highWaterMark: AUDIO_CONFIG.highWaterMark })
-
-    this._opts = options
-    this.mp4boxFile = null
-    this.audioConfig = null
-    this.offset = options.baseFileStart ?? 0
-    this._aborted = false
-    this._prefetchDone = false
-    this._initPromise = null
-    this.state = options.state ?? null
-    this.pcmDecoder = null
-    this.headerChunks = []
-  }
-
-  private async _initMp4Box(): Promise<void> {
-    if (this.mp4boxFile) return
-    if (this._initPromise) {
-      await this._initPromise
-      return
-    }
-
-    this._initPromise = (async () => {
-      const mp4Box = await getMP4Box()
-      this.mp4boxFile = mp4Box.createFile(true) as unknown as MP4BoxFile
-      this._setupMP4BoxHandlers()
-    })()
-
-    await this._initPromise
-  }
-
-  abort(): void {
-    this._aborted = true
-    this._cleanupMp4Box()
-    if (this.pcmDecoder instanceof SymphoniaDecoderStream) {
-      this.pcmDecoder.abort?.()
-    }
-  }
-
-  private _appendPrefetchIfNeeded(): void {
-    if (this._prefetchDone || !this.mp4boxFile) return
-    this._prefetchDone = true
-
-    const prefetch = this._opts.prefetch ?? []
-    this._opts.prefetch = undefined
-    for (const chunk of prefetch) {
-      const ab = chunk.data as ArrayBuffer & { fileStart?: number }
-      ab.fileStart = chunk.fileStart
-      this.mp4boxFile.appendBuffer(ab)
-    }
-  }
-
-  _setupMP4BoxHandlers(): void {
-    if (!this.mp4boxFile) return
-
-    this.mp4boxFile.onError = (e: string): void => {
-      throw new Error(`MP4Box error: ${e}`)
-    }
-
-    this.mp4boxFile.onReady = (info: MP4BoxInfo): void => {
-      if (this._aborted || !this.mp4boxFile) return
-
-      const audioTrack = info.tracks.find(
-        (t: MP4BoxTrack) =>
-          t.codec?.startsWith('mp4a') ||
-          t.codec?.startsWith('alac') ||
-          t.codec === 'Opus'
-      )
-      if (!audioTrack) {
-        throw new Error('No supported track found in MP4')
-      }
-
-      const isAlac = audioTrack.codec?.startsWith('alac')
-      if (isAlac || audioTrack.codec === 'Opus') {
-        /* INFO: These decoders emit PCM, so the AAC stage must pass it through. */
-        if (this.state) this.state.isPcm = true
-        this.pcmDecoder = isAlac
-          ? new SymphoniaDecoderStream({ codecRegistryHint: 'm4a' })
-          : new OpusDecoder({
-              rate: AUDIO_CONFIG.sampleRate,
-              channels: AUDIO_CONFIG.channels
-            })
-        this.pcmDecoder.on('data', (pcm: Buffer) => {
-          this.push(pcm)
-        })
-        this.pcmDecoder.on('error', (err: Error) => {
-          this.destroy(err)
-        })
-        if (isAlac) {
-          this._cleanupMp4Box()
-          const fullBuffer = Buffer.concat(this.headerChunks)
-          this.headerChunks = []
-          this.pcmDecoder.write(reorderMp4Boxes(fullBuffer))
-          return
-        }
-      } else {
-        this.audioConfig = this._getAudioConfig(audioTrack)
-      }
-      this.headerChunks = []
-
-      this.mp4boxFile.setExtractionOptions(audioTrack.id, null, {
-        nbSamples: 50
-      })
-
-      if (typeof this._opts.seekTimeSec === 'number') {
-        const mp4boxFile = this.mp4boxFile as unknown as {
-          seek: (time: number, async: boolean) => MP4BoxSeekResult
-        }
-        const seekRes = mp4boxFile.seek(
-          this._opts.seekTimeSec,
-          true
-        ) as MP4BoxSeekResult
-        const expectedOffset = _seekOffset(seekRes)
-
-        if (
-          typeof this._opts.baseFileStart === 'number' &&
-          this._opts.baseFileStart !== expectedOffset
-        ) {
-          logger(
-            'warn',
-            'MP4ToAACStream',
-            `MP4 seek mismatch: stream starts at ${this._opts.baseFileStart} but MP4Box requested ${expectedOffset}`
-          )
-        }
-
-        if (typeof this._opts.baseFileStart !== 'number') {
-          this.offset = expectedOffset
-        }
-      }
-
-      this.mp4boxFile.start()
-    }
-
-    this.mp4boxFile.onSamples = (
-      id: number,
-      _user: unknown,
-      samples: MP4BoxSample[]
-    ): void => {
-      if (this._aborted || !this.mp4boxFile) return
-      if (!samples?.length) return
-
-      for (const sample of samples) {
-        if (this.pcmDecoder) {
-          /* INFO: MP4 Opus samples are packets, so they need no ADTS header. */
-          this.pcmDecoder.write(Buffer.from(sample.data))
-        } else {
-          this._emitSampleWithADTS(sample)
-        }
-      }
-
-      const last: unknown = samples[samples.length - 1]
-      if (last && typeof last === 'object' && 'number' in last) {
-        const mp4boxFile = this.mp4boxFile as unknown as {
-          releaseUsedSamples: (trackId: number, sampleNumber: number) => void
-        }
-        mp4boxFile.releaseUsedSamples(
-          id,
-          (last as { number: number }).number + 1
-        )
-      }
-    }
-  }
-
-  _emitSampleWithADTS(sample: MP4BoxSample): void {
-    if (!this.audioConfig) return
-    const { profile, samplingIndex, channelCount } = this.audioConfig
-
-    const sampleData = Buffer.from(sample.data)
-
-    this.push(
-      _createAdtsHeader(
-        sampleData.byteLength,
-        profile,
-        samplingIndex,
-        channelCount
-      )
-    )
-    this.push(sampleData)
-  }
-
-  _getAudioConfig(track: MP4BoxTrack): AACConfig {
-    let profile = 2
-    const file = this.mp4boxFile as unknown as {
-      getTrackById?: (id: number) => {
-        mdia?: {
-          minf?: {
-            stbl?: {
-              stsd?: {
-                entries?: Array<{
-                  esds?: {
-                    esd?: { descs?: MP4Descriptor[] }
-                  }
-                }>
-              }
-            }
-          }
-        }
-      }
-    }
-    const entry = file?.getTrackById?.(track.id)?.mdia?.minf?.stbl?.stsd
-      ?.entries?.[0]
-    const decoderConfig = entry?.esds?.esd?.descs?.find(
-      (descriptor) => descriptor.tag === 4
-    )
-    const decoderSpecificInfo = decoderConfig?.descs?.find(
-      (descriptor) => descriptor.tag === 5
-    )?.data
-    const adtsSampleRate =
-      (decoderSpecificInfo && _parseAacSampleRate(decoderSpecificInfo)) ||
-      track.audio.sample_rate
-
-    if (track.codec) {
-      const codecParts = (String(track.codec) || '').split('.')
-
-      if (codecParts.length >= 3) {
-        const objectType = Number.parseInt(codecParts[2] || '0', 10)
-
-        if (objectType === 5 || objectType === 29) {
-          // ADTS carries the AAC-LC core profile. FAAD detects the SBR/PS
-          // extension from the payload and exposes the higher output rate.
-          profile = 2
-        } else {
-          profile = objectType
-        }
-      }
-    }
-
-    const samplingIndex = SAMPLE_RATES.indexOf(adtsSampleRate)
-
-    if (samplingIndex === -1) {
-      throw new Error('Unsupported sample rate for ADTS')
-    }
-
-    return {
-      profile,
-      samplingIndex,
-      channelCount: track.audio.channel_count,
-      sampleRate: adtsSampleRate
-    }
-  }
-
-  override async _transform(
-    chunk: Buffer,
-    _encoding: BufferEncoding,
-    callback: TransformCallback
-  ): Promise<void> {
-    if (this._aborted) {
-      callback()
-      return
-    }
-
-    if (this.pcmDecoder && !this.mp4boxFile) {
-      this.pcmDecoder.write(chunk)
-      callback()
-      return
-    }
-
-    if (!this.audioConfig && !this.pcmDecoder) this.headerChunks.push(chunk)
-
+  private _decodeFrame(decoder: FAAD2DecoderLike, frame: Buffer): void {
+    let result: ReturnType<FAAD2DecoderLike['decode']>
     try {
-      await this._initMp4Box()
-      if (!this.mp4boxFile) {
-        callback()
-        return
+      result = decoder.decode(frame)
+    } catch {
+      return
+    }
+    if (!result?.pcm?.length) return
+    const { pcm, sampleRate, channels } = result
+    if (this.pcmConverter?.rate !== sampleRate) {
+      this._finishPcm()
+      this.pcmConverter = {
+        rate: sampleRate,
+        native: new symphonia.PcmResampler(sampleRate, this.resamplingQuality)
       }
+    }
+    const output = this.pcmConverter.native.process(pcm, channels)
+    if (output.length) this.push(output)
+  }
 
-      this._appendPrefetchIfNeeded()
-
-      const arrayBuffer =
-        chunk instanceof ArrayBuffer
-          ? chunk
-          : (_toTightArrayBuffer(chunk) as ArrayBuffer & { fileStart?: number })
-
-      ;(arrayBuffer as ArrayBuffer & { fileStart?: number }).fileStart =
-        this.offset
-      this.offset += arrayBuffer.byteLength
-
-      this.mp4boxFile.appendBuffer(arrayBuffer)
-      callback()
-    } catch (err) {
-      callback(err as Error)
+  private _finishPcm(): void {
+    const converter = this.pcmConverter
+    if (!converter) return
+    this.pcmConverter = null
+    try {
+      const output = converter.native.finish()
+      if (output.length) this.push(output)
+    } finally {
+      converter.native.close()
     }
   }
 
   override _flush(callback: TransformCallback): void {
-    if (!this._aborted && this.mp4boxFile) {
-      try {
-        this.mp4boxFile.flush()
-      } catch {}
-    }
-
-    if (this.pcmDecoder) {
-      this._cleanupMp4Box()
-      this.pcmDecoder.end(callback)
+    try {
+      this._finishPcm()
+    } catch (error) {
+      callback(error as Error)
       return
     }
-
-    this._cleanupMp4Box()
     callback()
-  }
-
-  override _destroy(
-    err: Error | null,
-    callback: (error?: Error | null) => void
-  ): void {
-    this._aborted = true
-    this._cleanupMp4Box()
-    this.headerChunks = []
-    if (this.pcmDecoder) {
-      this.pcmDecoder.destroy()
-      this.pcmDecoder = null
-    }
-    super._destroy(err, callback)
-  }
-
-  _cleanupMp4Box(): void {
-    if (this.mp4boxFile) {
-      try {
-        this.mp4boxFile.stop()
-        this.mp4boxFile.flush()
-      } catch {}
-      this.mp4boxFile.onReady = null
-      this.mp4boxFile.onSamples = null
-      this.mp4boxFile.onError = null
-      this.mp4boxFile = null
-    }
   }
 }
 /**********************************************************************
@@ -2326,8 +1830,8 @@ class FMP4ToAACStream extends Transform {
     }
   }
 
-  _parseBoxes(buffer: Buffer, offset = 0): MP4BoxType[] {
-    const boxes: MP4BoxType[] = []
+  _parseBoxes(buffer: Buffer, offset = 0): Mp4Atom[] {
+    const boxes: Mp4Atom[] = []
     while (offset < buffer.length) {
       if (offset + 8 > buffer.length) break
 
@@ -2789,7 +2293,7 @@ class FLVToAACStream extends Transform {
       if (aacPacketType === 0) {
         this.audioConfig = this._parseAudioSpecificConfig(tag.subarray(2))
       } else if (aacPacketType === 1 && this.audioConfig) {
-        const adtsHeader = _createAdtsHeader(
+        const adtsHeader = createAdtsHeader(
           tag.length - 2,
           this.audioConfig.profile || 2,
           this.audioConfig.samplingIndex || 4,
@@ -2879,12 +2383,7 @@ class StreamAudioResource extends BaseAudioResource {
 
     const resamplingQuality =
       nodelink.options.playback.audio?.resamplingQuality || 'fastest'
-    /*
-      INFO: MP4 can contain AAC, ALAC or Opus. Select its codec after
-        demuxing, even when the MIME parameters already name a codec.
-      SOURCES:
-        - https://github.com/gpac/mp4box.js#onreadyinfo
-    */
+    /* INFO: Select AAC, ALAC or Opus from the MP4 track metadata. */
     const normalizedType = _isMp4Format(type.toLowerCase())
       ? SupportedFormats.AAC
       : normalizeFormat(type)
@@ -2985,9 +2484,7 @@ class StreamAudioResource extends BaseAudioResource {
     resamplingQuality: string
   ): Transform {
     const lowerType = type.toLowerCase()
-    const _aacStream = stream
     const streams: (Readable | Transform)[] = [stream]
-    const state = { isPcm: false }
 
     if (_isFmp4Format(lowerType)) {
       const bufferMode = lowerType.includes('fmp4-buffered')
@@ -3017,25 +2514,14 @@ class StreamAudioResource extends BaseAudioResource {
         return decoder
       }
     } else if (_isMp4Format(lowerType)) {
-      const seekOpts = (
-        stream as unknown as { __mp4SeekOptions?: MP4ToAACStreamOptions }
-      ).__mp4SeekOptions
-      const demuxer = new MP4ToAACStream(
-        seekOpts
-          ? {
-              prefetch: seekOpts.prefetch,
-              baseFileStart: seekOpts.baseFileStart,
-              seekTimeSec: seekOpts.seekTimeSec,
-              state
-            }
-          : { state }
-      )
-      streams.push(demuxer)
+      const output = new PassThrough()
+      pipeline(stream, decodeMp4Stream(resamplingQuality), output, () => {})
+      this.pipes?.push(output)
+      return output
     }
 
     const decoder = new AACDecoderStream({
-      resamplingQuality: resamplingQuality as ResamplingQuality,
-      state
+      resamplingQuality: resamplingQuality as ResamplingQuality
     })
     streams.push(decoder)
 
@@ -3382,7 +2868,7 @@ class StreamAudioResource extends BaseAudioResource {
       if (this.getCrossfadeState().isBridging) return
       if (!this._destroyed) {
         this._finishBufferingEmitted = true
-        this.stream?.emit('finishBuffering')
+        if (this.stream !== inputStream) this.stream?.emit('finishBuffering')
       }
     }
     this._forwardFinishBuffering = forwardFinishBuffering
@@ -3497,51 +2983,29 @@ export const createSeekeableAudioResource = async (
     )
 
     if (_isMp4Format(containerGuess)) {
-      const mp4Seek = await _buildMp4SeekOptions(url, seekTime, seekProxy)
-
-      const ranged = await _openRangeStream(
-        url,
-        mp4Seek.baseFileStart ?? 0,
-        seekProxy
-      )
-
-      const passthroughStream = new PassThrough({
-        highWaterMark: AUDIO_CONFIG.highWaterMark
-      })
-
-      ;(
-        passthroughStream as unknown as {
-          __mp4SeekOptions?: MP4ToAACStreamOptions
+      const audio = await openMp4HttpAudio(url, seekProxy, seekTime / 1000)
+      if (audio) {
+        try {
+          return new StreamAudioResource(
+            guildId,
+            audio.stream,
+            audio.type,
+            nodelink,
+            initialFilters,
+            volume,
+            audioMixer,
+            returnPCM,
+            player.loudnessNormalizer ?? enableAGC,
+            enableCrossfade,
+            processingMode
+          )
+        } catch (error) {
+          audio.stream.destroy()
+          throw error
         }
-      ).__mp4SeekOptions = mp4Seek
-
-      passthroughStream.once('finish', () => {
-        passthroughStream.emit('finishBuffering')
-      })
-
-      pipeline(
-        ranged,
-        passthroughStream,
-        (err: NodeJS.ErrnoException | null) => {
-          if (err) emitResourceError(passthroughStream, err)
-        }
-      )
-
-      const format = hinted || (ext ? ext : 'm4a')
-
-      return new StreamAudioResource(
-        guildId,
-        passthroughStream,
-        format,
-        nodelink,
-        initialFilters,
-        volume,
-        audioMixer,
-        returnPCM,
-        player.loudnessNormalizer ?? enableAGC,
-        enableCrossfade,
-        processingMode
-      )
+      }
+      if (seekTime > 0)
+        throw new Error('MP4 seek requires an HTTP Range source')
     }
 
     const { stream, meta } = (await seekableStream(
@@ -3613,7 +3077,6 @@ export const createPCMStream = (
   switch (normalizedType) {
     case SupportedFormats.AAC: {
       const lowerType = type.toLowerCase()
-      const state = { isPcm: false }
 
       if (_isFmp4Format(lowerType)) {
         const bufferMode = lowerType.includes('fmp4-buffered')
@@ -3629,13 +3092,16 @@ export const createPCMStream = (
           )
           break
         }
-      } else if (_isMp4Format(lowerType))
-        streams.push(new MP4ToAACStream({ state }))
+      } else if (_isMp4Format(lowerType)) {
+        const output = new PassThrough()
+        pipeline(stream, decodeMp4Stream(resamplingQuality), output, () => {})
+        streams[0] = output
+        break
+      }
 
       streams.push(
         new AACDecoderStream({
-          resamplingQuality: resamplingQuality as ResamplingQuality,
-          state
+          resamplingQuality: resamplingQuality as ResamplingQuality
         })
       )
       break

@@ -1,5 +1,6 @@
 import { PassThrough, Readable } from 'node:stream'
 import HLSHandler from '../../playback/hls/HLSHandler.ts'
+import { openMp4HttpAudio } from '../../playback/processing/streamProcessor.ts'
 import type { SabrStreamConfig } from '../../typings/sources/sabr.types.ts'
 import type {
   PlaylistData,
@@ -2857,6 +2858,49 @@ export default class YouTubeSource implements SourceVariantHandler {
       }
 
       if (!url) throw new Error('No direct URL')
+
+      if (additionalData?.itag === 18) {
+        const proxy = (additionalData.proxy || this.getProxy()) as
+          | HttpProxyConfig
+          | undefined
+        const seekMs = additionalData.startTime ?? 0
+        const audio = await openMp4HttpAudio(
+          url,
+          proxy,
+          seekMs / 1000,
+          async () => {
+            if (cancelSignal.aborted)
+              throw new Error('YouTube MP4 playback cancelled')
+            const replacement = await this.getTrackUrl(decodedTrack, 18, true)
+            if (
+              replacement.exception ||
+              !replacement.url ||
+              replacement.itag !== 18
+            ) {
+              throw new Error('No matching itag 18 URL for MP4 recovery')
+            }
+            return {
+              url: replacement.url,
+              proxy: (replacement.additionalData?.proxy || this.getProxy()) as
+                | HttpProxyConfig
+                | undefined
+            }
+          }
+        )
+        if (audio) {
+          if (cancelSignal.aborted) {
+            audio.stream.destroy()
+            throw new Error('YouTube MP4 playback cancelled')
+          }
+          audio.stream.once('close', () => {
+            cancelSignal.aborted = true
+            this.activeStreams.delete(streamKey)
+          })
+          return audio
+        }
+        if (seekMs > 0)
+          throw new Error('MP4 seek requires an HTTP Range source')
+      }
 
       let contentLength = additionalData?.contentLength ?? null
 

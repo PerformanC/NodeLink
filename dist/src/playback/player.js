@@ -201,30 +201,41 @@ export class Player {
             guildId: this.guildId,
             player: this.toJSON()
         });
-        this.waitEvent = (event, filter, timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000) => new Promise((resolve, reject) => {
+        this.waitEvent = (event, filter, timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000, stream) => new Promise((resolve, reject) => {
             logger('debug', 'Player', `waitEvent: Started waiting for '${event}' on guild ${this.guildId} (timeout: ${timeout}ms)`);
             const conn = this.connection;
             if (!conn) {
                 logger('warn', 'Player', `waitEvent: Aborted waiting for '${event}' on guild ${this.guildId} (no connection)`);
                 return reject(new Error('No connection available for waitEvent'));
             }
+            if (stream?.errored)
+                return reject(stream.errored);
+            const onStreamError = (error) => {
+                cleanup();
+                reject(error);
+            };
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                conn.off(event, handler);
+                stream?.off('error', onStreamError);
+            };
             const handler = (_, payload) => {
                 const typedPayload = payload;
                 if (!filter || filter(typedPayload)) {
-                    clearTimeout(timeoutId);
-                    conn.off(event, handler);
+                    cleanup();
                     logger('debug', 'Player', `waitEvent: Resolved '${event}' for guild ${this.guildId}`);
                     resolve(typedPayload);
                 }
             };
             const timeoutId = setTimeout(() => {
-                conn.off(event, handler);
+                cleanup();
                 logger('warn', 'Player', `waitEvent: Timeout waiting for '${event}' on guild ${this.guildId}`);
                 reject(new Error(`Event ${event} timed out after ${timeout}ms for guild ${this.guildId}`, event === 'playerStateChange'
                     ? { cause: 'VOICE_STATE_TIMEOUT' }
                     : undefined));
             }, timeout);
             conn.on(event, handler);
+            stream?.once('error', onStreamError);
         });
     }
     _getAudioOptions() {
@@ -1347,7 +1358,7 @@ export class Player {
                 fadeTo: (volume, durationMs, curve) => resource.fadeTo?.(volume, durationMs, curve)
             });
         }
-        await this.waitEvent('playerStateChange', (s) => s.status === 'playing');
+        await this.waitEvent('playerStateChange', (s) => s.status === 'playing', undefined, resource.stream ?? undefined);
         if (this.destroying || this.track !== playbackTrack)
             return false;
         this._lyricsBasePosition = position;

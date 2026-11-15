@@ -186,7 +186,8 @@ export class Player {
   public waitEvent: <T>(
     event: string,
     filter?: (payload: T) => boolean,
-    timeout?: number
+    timeout?: number,
+    stream?: Pick<VoiceAudioStream, 'once' | 'off'> & { errored?: Error | null }
   ) => Promise<T>
 
   private _lastPosition = 0
@@ -306,7 +307,8 @@ export class Player {
     this.waitEvent = (
       event,
       filter,
-      timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000
+      timeout = this.nodelink.options.playback.eventTimeoutMs ?? 15000,
+      stream
     ) =>
       new Promise((resolve, reject) => {
         logger(
@@ -324,11 +326,21 @@ export class Player {
           return reject(new Error('No connection available for waitEvent'))
         }
 
+        if (stream?.errored) return reject(stream.errored)
+        const onStreamError = (error: Error) => {
+          cleanup()
+          reject(error)
+        }
+        const cleanup = () => {
+          clearTimeout(timeoutId)
+          conn.off(event, handler)
+          stream?.off('error', onStreamError)
+        }
+
         const handler = (_: unknown, payload: unknown) => {
           const typedPayload = payload as unknown as Record<string, unknown>
           if (!filter || filter(typedPayload as never)) {
-            clearTimeout(timeoutId)
-            conn.off(event, handler)
+            cleanup()
             logger(
               'debug',
               'Player',
@@ -339,7 +351,7 @@ export class Player {
         }
 
         const timeoutId = setTimeout(() => {
-          conn.off(event, handler)
+          cleanup()
           logger(
             'warn',
             'Player',
@@ -356,6 +368,7 @@ export class Player {
         }, timeout)
 
         conn.on(event, handler)
+        stream?.once('error', onStreamError)
       })
   }
 
@@ -1979,7 +1992,9 @@ export class Player {
 
     await this.waitEvent(
       'playerStateChange',
-      (s: VoicePlayerState) => s.status === 'playing'
+      (s: VoicePlayerState) => s.status === 'playing',
+      undefined,
+      resource.stream ?? undefined
     )
     if (this.destroying || this.track !== playbackTrack) return false
 
