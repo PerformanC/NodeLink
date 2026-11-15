@@ -1344,7 +1344,7 @@ export default class DeezerSource {
         )
       }
 
-      const outputStream = new PassThrough()
+      const outputStream = new PassThrough({ highWaterMark: 1024 * 1024 })
       const trackKey = this.calculateKey(streamData.SNG_ID)
       // Byte offsets and Blowfish block boundaries must be measured against the
       // raw CDN body, so never allow HTTP content decoding on these requests.
@@ -1384,7 +1384,7 @@ export default class DeezerSource {
         }
       }
 
-      const response = await makeRequest(url, {
+      const response = await http1makeRequest(url, {
         method: 'GET',
         streamOnly: true,
         headers
@@ -1471,7 +1471,7 @@ export default class DeezerSource {
           try {
             if (!sourceStream) {
               const offset = rangeStart + bytesReceived
-              const resumed = await makeRequest(url, {
+              const resumed = await http1makeRequest(url, {
                 method: 'GET',
                 streamOnly: true,
                 headers: {

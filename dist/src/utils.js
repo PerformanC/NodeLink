@@ -1717,6 +1717,11 @@ async function makeRequest(urlString, options, nodelink) {
             };
             let req;
             session.on('error', (error) => {
+                try {
+                    if (currentUrl)
+                        http2FailedHosts.add(currentUrl.host);
+                }
+                catch { }
                 if (!responseHeadersReceived) {
                     fallbackToHttp1();
                 }

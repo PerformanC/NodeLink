@@ -2095,6 +2095,9 @@ async function makeRequest(
 
       let req: http2.ClientHttp2Stream | undefined
       session.on('error', (error) => {
+        try {
+          if (currentUrl) http2FailedHosts.add(currentUrl.host)
+        } catch {}
         if (!responseHeadersReceived) {
           fallbackToHttp1()
         } else if (req && !req.destroyed) {
