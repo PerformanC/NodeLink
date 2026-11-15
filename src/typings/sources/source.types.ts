@@ -574,6 +574,8 @@ export interface SourceInstance {
   patterns?: RegExp[]
   /** Priority for URL pattern matching (higher wins). */
   priority?: number
+  /** Whether the source supports protected volume mode (Float32). Default is true. */
+  isVolProtectedSupport?: boolean
   /** Live chat handler (YouTube). */
   handleLiveChat?: (socket: unknown, videoId: string) => Promise<unknown>
   /** Live chat accessor (YouTube). */

@@ -688,6 +688,7 @@ async function main() {
     if (failedTests > 0) {
         process.exit(1);
     }
+    process.exit(0);
 }
 main().catch((err) => {
     console.error('\nFatal test execution error:', err);

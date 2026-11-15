@@ -382,7 +382,16 @@ export class Player {
    * Resolves the mode that will be used when the next audio resource is built.
    * An explicit per-player override takes precedence over global configuration.
    */
-  public getAudioProcessingMode(): AudioProcessingMode {
+  public getAudioProcessingMode(
+    trackInfo?: TrackInfoExtended
+  ): AudioProcessingMode {
+    const effectiveTrackInfo = trackInfo ?? this.track?.info
+    const source = effectiveTrackInfo?.sourceName
+      ? this.nodelink.sources?.getSource?.(effectiveTrackInfo.sourceName)
+      : null
+    if (source?.isVolProtectedSupport === false) {
+      return 'legacy'
+    }
     return resolveAudioProcessingMode(
       this.nodelink.options.playback.audio?.processingMode,
       this._audioProcessingModeOverride
@@ -439,6 +448,10 @@ export class Player {
    */
   private async _ensureAudioMixer(): Promise<void> {
     if (this.audioMixer) return
+    const currentSource = this.track?.info.sourceName
+      ? this.nodelink.sources?.getSource?.(this.track.info.sourceName)
+      : null
+    if (currentSource?.isVolProtectedSupport === false) return
     if (!this._audioMixerInitPromise) {
       this._audioMixerInitPromise = this._initAudioMixer()
         .catch((err) => {
@@ -1517,6 +1530,15 @@ export class Player {
         }
       )._cleanupListeners = cleanupListeners
     }
+    const source = this.nodelink.sources?.getSource?.(info.sourceName)
+    const isVolProtectedSupport = source?.isVolProtectedSupport !== false
+    const effectiveProcessingMode = !isVolProtectedSupport
+      ? 'legacy'
+      : this.getAudioProcessingMode(info)
+    const effectiveFloat32Output = !isVolProtectedSupport
+      ? false
+      : float32PCMOutput
+
     const resource = audioResourceFactory(
       this.guildId,
       streamForResource,
@@ -1524,12 +1546,12 @@ export class Player {
       this.nodelink,
       this.filters,
       returnPCM ? 1 : this.volumePercent / 100,
-      returnPCM ? null : this.audioMixer,
+      returnPCM || !isVolProtectedSupport ? null : this.audioMixer,
       returnPCM,
       returnPCM ? false : this.loudnessNormalizer,
       !returnPCM && this._getCrossfadeConfig() !== null,
-      this.getAudioProcessingMode(),
-      float32PCMOutput,
+      effectiveProcessingMode,
+      effectiveFloat32Output,
       track.sourceName === 'http' ? resolvedUrlData.url : undefined
     )
     return { stream: resource }
@@ -1918,6 +1940,10 @@ export class Player {
         'Player',
         `Seeking with Seekeable to ${position}ms for guild ${this.guildId}`
       )
+      const source = this.nodelink.sources?.getSource?.(
+        playbackTrack.info.sourceName
+      )
+      const isVolProtectedSupport = source?.isVolProtectedSupport !== false
       const seekResult = await createSeekeableAudioResource(
         this.guildId,
         seekUrl,
@@ -1927,11 +1953,13 @@ export class Player {
         this.filters,
         this,
         this.volumePercent / 100,
-        this.audioMixer,
+        !isVolProtectedSupport ? null : this.audioMixer,
         false,
         this.loudnessNormalizer,
         this._getCrossfadeConfig() !== null,
-        this.getAudioProcessingMode()
+        !isVolProtectedSupport
+          ? 'legacy'
+          : this.getAudioProcessingMode(playbackTrack.info)
       )
       if (this.destroying || this.track !== playbackTrack) {
         if (!('exception' in seekResult)) seekResult.destroy()
@@ -2702,6 +2730,10 @@ export class Player {
       if (this.destroying || this.track !== seekTrack) return false
       if (!url) return false
 
+      const source = this.nodelink.sources?.getSource?.(
+        seekTrack.info.sourceName
+      )
+      const isVolProtectedSupport = source?.isVolProtectedSupport !== false
       const resourceResult = await seekResourceFactory(
         this.guildId,
         url,
@@ -2711,11 +2743,13 @@ export class Player {
         this.filters,
         this,
         this.volumePercent / 100,
-        this.audioMixer,
+        !isVolProtectedSupport ? null : this.audioMixer,
         false,
         this.loudnessNormalizer,
         this._getCrossfadeConfig() !== null,
-        this.getAudioProcessingMode()
+        !isVolProtectedSupport
+          ? 'legacy'
+          : this.getAudioProcessingMode(seekTrack.info)
       )
 
       if (this.destroying || this.track !== seekTrack) {
@@ -4286,6 +4320,13 @@ export class Player {
     )
     const timers = this._fadeTimers
     if (!timers) return false
+
+    const currentSource = this.track?.info.sourceName
+      ? this.nodelink.sources?.getSource?.(this.track.info.sourceName)
+      : null
+    if (currentSource?.isVolProtectedSupport === false && action !== 'reset') {
+      return false
+    }
 
     if (action === 'reset') {
       if (timers.trackEnd) clearTimeout(timers.trackEnd)

@@ -1,8 +1,9 @@
 import { Buffer } from 'node:buffer';
 import crypto from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { PassThrough } from 'node:stream';
 import BlowfishCBC from '../decrypters/blowfish-cbc.js';
-import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
  */
@@ -85,7 +86,21 @@ export default class DeezerSource {
                 collection: { minItems: 1 },
                 metadata: {
                     title: { op: 'matches', value: 'Creep' }
+                },
+                stream: {
+                    required: true,
+                    download: { mode: 'window', maxDurationMs: 5000, maxBytes: 131072 },
+                    minBytes: 8192,
+                    validFormats: [{ container: 'MP3', codec: 'MP3' }]
                 }
+            },
+            matrix: {
+                variants: [
+                    {
+                        id: 'stream',
+                        label: 'Deezer Audio Stream'
+                    }
+                ]
             }
         },
         {
@@ -132,6 +147,11 @@ export default class DeezerSource {
      * Match priority used by the source manager.
      */
     priority = 80;
+    /**
+     * Indicates whether this source supports the protected volume pipeline (Float32).
+     * Deezer disables this pipeline to enforce Int16 PCM and avoid extra conversion/limiter overhead.
+     */
+    isVolProtectedSupport = false;
     /**
      * Deezer session cookie used by authenticated gateway requests.
      */
@@ -320,7 +340,7 @@ export default class DeezerSource {
      */
     async resolve(url) {
         if (url.includes('link.deezer.com')) {
-            const response = await http1makeRequest(url, { method: 'GET' });
+            const response = await makeRequest(url, { method: 'GET' });
             const resolvedBody = this.getTextBody(response.body);
             const match = resolvedBody?.match(/\/(track|album|playlist|artist)\/(\d+)/);
             if (!match)
@@ -545,6 +565,61 @@ export default class DeezerSource {
         return { newTrack: bestMatch, ...streamInfo };
     }
     /**
+     * Executes a stream load for a specific test variant.
+     * @public
+     */
+    async executeVariant(variant, track, streamSpec) {
+        const urlData = await this.getTrackUrl(track);
+        if (!urlData ||
+            'exception' in urlData ||
+            !('url' in urlData) ||
+            !urlData.url) {
+            const errorMsg = urlData && 'exception' in urlData && urlData.exception?.message
+                ? urlData.exception.message
+                : 'Failed to resolve track streaming URL';
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: errorMsg
+            };
+        }
+        const container = 'MP3';
+        const codec = 'MP3';
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: 'newTrack' in urlData && urlData.newTrack
+                    ? urlData.newTrack.info
+                    : track,
+                container,
+                codec
+            };
+        }
+        const streamResult = await this.loadStream(track, urlData.url, 'protocol' in urlData ? urlData.protocol : undefined, 'additionalData' in urlData ? urlData.additionalData : undefined);
+        if (!('stream' in streamResult) || !streamResult.stream) {
+            const errorMsg = 'exception' in streamResult && streamResult.exception?.message
+                ? streamResult.exception.message
+                : 'Failed to load stream';
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: errorMsg
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track: 'newTrack' in urlData && urlData.newTrack
+                ? urlData.newTrack.info
+                : track,
+            stream: streamResult.stream,
+            httpStatus: 200,
+            container,
+            codec
+        };
+    }
+    /**
      * Opens and decrypts Deezer direct streams with explicit listener cleanup.
      *
      * The rewritten implementation also tears down upstream listeners when the
@@ -567,7 +642,7 @@ export default class DeezerSource {
             if (!streamData.SNG_ID) {
                 return this.createException('Deezer stream metadata is missing the song identifier.', 'fault');
             }
-            const outputStream = new PassThrough({ highWaterMark: 1024 * 1024 });
+            const outputStream = new PassThrough({ highWaterMark: 64 * 1024 });
             const trackKey = this.calculateKey(streamData.SNG_ID);
             // Byte offsets and Blowfish block boundaries must be measured against the
             // raw CDN body, so never allow HTTP content decoding on these requests.
@@ -577,7 +652,11 @@ export default class DeezerSource {
             const bufferSize = 2048;
             let chunkIndex = 0;
             let rangeStart = 0;
+            let bytesReceived = 0;
+            let totalBytesReceived = 0;
             let remainder = Buffer.alloc(0);
+            let discardLeadBytes = 0;
+            let targetByte = 0;
             if (typeof streamData.startTime === 'number' &&
                 streamData.startTime > 0 &&
                 streamData.FILESIZE !== undefined &&
@@ -589,9 +668,10 @@ export default class DeezerSource {
                     durationSeconds > 0 &&
                     fileSize > 0) {
                     const byteRate = fileSize / (durationSeconds * 1000);
-                    const rawOffset = streamData.startTime * byteRate;
-                    const initialChunkIndex = Math.floor(rawOffset / bufferSize);
+                    targetByte = Math.floor(streamData.startTime * byteRate);
+                    const initialChunkIndex = Math.floor(targetByte / bufferSize);
                     const byteOffset = initialChunkIndex * bufferSize;
+                    discardLeadBytes = targetByte - byteOffset;
                     if (byteOffset > 0) {
                         headers.Range = `bytes=${byteOffset}-`;
                         rangeStart = byteOffset;
@@ -599,7 +679,7 @@ export default class DeezerSource {
                     chunkIndex = initialChunkIndex;
                 }
             }
-            const response = await http1makeRequest(url, {
+            const response = await makeRequest(url, {
                 method: 'GET',
                 streamOnly: true,
                 headers
@@ -607,36 +687,49 @@ export default class DeezerSource {
             if (response.error ||
                 (response.statusCode !== 200 && response.statusCode !== 206) ||
                 !response.stream) {
+                ;
+                response.stream?.destroy();
                 const message = response.error ??
                     `Request failed with status ${response.statusCode ?? 'unknown'}`;
                 return this.createException(message, 'fault', 'Upstream');
             }
+            let sourceExpectedBytes = null;
+            let totalFileSize = null;
             if (response.statusCode === 200) {
                 chunkIndex = 0;
                 rangeStart = 0;
+                discardLeadBytes = targetByte;
+                sourceExpectedBytes = this.getContentLength(response.headers);
+                totalFileSize = sourceExpectedBytes;
             }
-            else if (rangeStart > 0) {
-                const responseHeaders = response.headers;
-                const rawContentRange = responseHeaders?.['content-range'] ??
-                    responseHeaders?.['Content-Range'];
-                const contentRange = Array.isArray(rawContentRange)
-                    ? rawContentRange[0]
-                    : rawContentRange;
-                const match = typeof contentRange === 'string'
-                    ? contentRange.match(/^bytes\s+(\d+)-/i)
-                    : null;
-                if (!match || Number(match[1]) !== rangeStart) {
+            else {
+                const parsedRange = this.parseContentRange(response.headers);
+                if (!parsedRange || parsedRange.start !== rangeStart) {
                     ;
                     response.stream.destroy();
                     return this.createException(`Initial Deezer Range response did not start at byte ${rangeStart}.`, 'fault', 'Upstream');
                 }
+                const cl = this.getContentLength(response.headers);
+                if (cl !== null && cl !== parsedRange.length) {
+                    ;
+                    response.stream.destroy();
+                    return this.createException(`Deezer Content-Range length (${parsedRange.length}) does not match Content-Length (${cl}).`, 'fault', 'Upstream');
+                }
+                sourceExpectedBytes = parsedRange.length;
+                if (parsedRange.total !== null) {
+                    totalFileSize = parsedRange.total;
+                }
             }
             let sourceStream = response.stream;
-            let sourceExpectedBytes = this.getContentLength(response.headers);
             const blowfish = new BlowfishCBC(trackKey);
             let cancelled = false;
-            let retriesWithoutProgress = 0;
+            let retriesWithoutStableProgress = 0;
+            let bytesAtLastStableProgress = 0;
+            const retryStableProgressBytes = 64 * 1024;
+            const retryStableDurationMs = 5000;
             const retryDelays = [250, 500, 1000];
+            const outputBatchSize = 16 * 1024;
+            const cooperativeYieldBytes = 32 * 1024;
             const cancel = () => {
                 cancelled = true;
                 sourceStream?.destroy();
@@ -644,23 +737,53 @@ export default class DeezerSource {
             };
             outputStream.once('close', cancel);
             outputStream.once('error', cancel);
+            const waitForDrain = () => new Promise((resolve) => {
+                if (cancelled ||
+                    outputStream.destroyed ||
+                    outputStream.writableEnded) {
+                    resolve();
+                    return;
+                }
+                let settled = false;
+                const done = () => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    outputStream.removeListener('drain', done);
+                    outputStream.removeListener('close', done);
+                    outputStream.removeListener('error', done);
+                    resolve();
+                };
+                outputStream.once('drain', done);
+                outputStream.once('close', done);
+                outputStream.once('error', done);
+                if (cancelled ||
+                    outputStream.destroyed ||
+                    outputStream.writableEnded) {
+                    done();
+                }
+            });
             const write = (data) => {
                 if (cancelled || outputStream.destroyed || outputStream.writableEnded)
                     return;
-                outputStream.write(data);
+                if (!outputStream.write(data))
+                    return waitForDrain();
             };
             const consume = async () => {
                 while (!cancelled) {
+                    const responseStartTime = performance.now();
+                    let responseBytes = 0;
                     try {
                         if (!sourceStream) {
-                            const offset = chunkIndex * bufferSize;
-                            const resumed = await http1makeRequest(url, {
+                            const offset = rangeStart + bytesReceived;
+                            const resumed = await makeRequest(url, {
                                 method: 'GET',
                                 streamOnly: true,
                                 headers: {
                                     Range: `bytes=${offset}-`,
                                     'accept-encoding': 'identity'
-                                }
+                                },
+                                maxRetries: 0
                             });
                             if (cancelled) {
                                 ;
@@ -668,78 +791,142 @@ export default class DeezerSource {
                                 return;
                             }
                             if (resumed.statusCode === 416) {
-                                break;
+                                const total = this.parseUnsatisfiedRangeTotal(resumed.headers);
+                                resumed.stream?.destroy();
+                                if (total !== null && offset === total) {
+                                    break;
+                                }
+                                throw new Error(`Deezer Range 416 out-of-bounds at byte ${offset} (total: ${total ?? 'unknown'})`);
                             }
-                            const headers = resumed.headers;
-                            const rawContentRange = headers?.['content-range'] ?? headers?.['Content-Range'];
-                            const contentRange = Array.isArray(rawContentRange)
-                                ? rawContentRange[0]
-                                : rawContentRange;
-                            const match = typeof contentRange === 'string'
-                                ? contentRange.match(/^bytes\s+(\d+)-/i)
-                                : null;
+                            const parsedRange = this.parseContentRange(resumed.headers);
                             if (resumed.error ||
                                 resumed.statusCode !== 206 ||
                                 !resumed.stream ||
-                                !match ||
-                                Number(match[1]) !== offset) {
+                                !parsedRange ||
+                                parsedRange.start !== offset) {
                                 ;
                                 resumed.stream?.destroy();
                                 throw new Error(resumed.error ??
                                     `Invalid Deezer Range response at byte ${offset} (HTTP ${resumed.statusCode ?? 'unknown'})`);
                             }
+                            const cl = this.getContentLength(resumed.headers);
+                            if (cl !== null && cl !== parsedRange.length) {
+                                ;
+                                resumed.stream.destroy();
+                                throw new Error(`Deezer resumed Content-Range length (${parsedRange.length}) does not match Content-Length (${cl})`);
+                            }
                             sourceStream = resumed.stream;
-                            sourceExpectedBytes = this.getContentLength(resumed.headers);
+                            sourceExpectedBytes = parsedRange.length;
+                            if (parsedRange.total !== null) {
+                                totalFileSize = parsedRange.total;
+                            }
+                            rangeStart = offset;
+                            bytesReceived = 0;
                         }
                         const current = sourceStream;
-                        let responseBytes = 0;
+                        let bytesSinceYield = 0;
                         for await (const value of current) {
                             if (cancelled || outputStream.destroyed)
                                 return;
                             const chunk = value;
                             responseBytes += chunk.length;
-                            retriesWithoutProgress = 0;
+                            bytesReceived += chunk.length;
+                            totalBytesReceived += chunk.length;
                             let data = chunk;
                             if (remainder.length > 0) {
                                 data = Buffer.concat([remainder, chunk]);
                                 remainder = Buffer.alloc(0);
                             }
-                            let offset = 0;
-                            while (offset + bufferSize <= data.length) {
-                                const encryptedBlock = data.subarray(offset, offset + bufferSize);
-                                let packet = encryptedBlock;
-                                if (chunkIndex % 3 === 0) {
-                                    blowfish.setIv(IV);
-                                    packet = blowfish.decode(encryptedBlock);
+                            const completeLength = data.length - (data.length % bufferSize);
+                            let processed = 0;
+                            while (processed < completeLength) {
+                                const batchLength = Math.min(outputBatchSize, completeLength - processed);
+                                const batch = Buffer.allocUnsafe(batchLength);
+                                let batchOffset = 0;
+                                while (batchOffset < batchLength) {
+                                    const encryptedBlock = data.subarray(processed, processed + bufferSize);
+                                    if (encryptedBlock.length !== bufferSize) {
+                                        throw new Error(`Invalid Deezer encrypted block length: ${encryptedBlock.length}/${bufferSize}`);
+                                    }
+                                    if (chunkIndex % 3 === 0) {
+                                        blowfish.setIv(IV);
+                                        const decrypted = blowfish.decode(encryptedBlock);
+                                        if (decrypted.length !== bufferSize) {
+                                            throw new Error(`Invalid Blowfish output length: ${decrypted.length}/${bufferSize}`);
+                                        }
+                                        decrypted.copy(batch, batchOffset);
+                                    }
+                                    else {
+                                        encryptedBlock.copy(batch, batchOffset);
+                                    }
+                                    chunkIndex++;
+                                    processed += bufferSize;
+                                    batchOffset += bufferSize;
                                 }
-                                write(packet);
-                                if (cancelled || outputStream.destroyed)
-                                    return;
-                                chunkIndex++;
-                                offset += bufferSize;
+                                let toWrite = batch;
+                                if (discardLeadBytes > 0) {
+                                    if (toWrite.length <= discardLeadBytes) {
+                                        discardLeadBytes -= toWrite.length;
+                                        toWrite = null;
+                                    }
+                                    else {
+                                        toWrite = toWrite.subarray(discardLeadBytes);
+                                        discardLeadBytes = 0;
+                                    }
+                                }
+                                if (toWrite && toWrite.length > 0) {
+                                    const pendingDrain = write(toWrite);
+                                    if (pendingDrain)
+                                        await pendingDrain;
+                                    if (cancelled || outputStream.destroyed)
+                                        return;
+                                }
+                                bytesSinceYield += batch.length;
+                                if (bytesSinceYield >= cooperativeYieldBytes) {
+                                    bytesSinceYield = 0;
+                                    await new Promise((resolve) => setImmediate(resolve));
+                                    if (cancelled || outputStream.destroyed)
+                                        return;
+                                }
                             }
-                            if (offset < data.length) {
-                                remainder = Buffer.from(data.subarray(offset));
+                            if (processed < data.length) {
+                                remainder = Buffer.from(data.subarray(processed));
                             }
                         }
                         if (sourceExpectedBytes !== null &&
-                            responseBytes < sourceExpectedBytes) {
-                            throw new Error(`Deezer range ended early (${responseBytes}/${sourceExpectedBytes} bytes)`);
+                            responseBytes !== sourceExpectedBytes) {
+                            throw new Error(`Deezer range size mismatch (${responseBytes}/${sourceExpectedBytes} bytes)`);
                         }
                         sourceStream = undefined;
                         current.destroy();
+                        // Check if partial Range ended before the complete file length
+                        const currentTotalPosition = rangeStart + responseBytes;
+                        if (totalFileSize !== null &&
+                            currentTotalPosition < totalFileSize) {
+                            rangeStart = currentTotalPosition;
+                            bytesReceived = 0;
+                            continue;
+                        }
                         break;
                     }
                     catch (error) {
                         sourceStream?.destroy();
                         sourceStream = undefined;
-                        remainder = Buffer.alloc(0);
+                        // Note: remainder is preserved across failures to keep 2 KiB block alignment intact!
                         if (cancelled || outputStream.destroyed)
                             return;
                         const streamError = error instanceof Error ? error : new Error(String(error));
-                        if (retriesWithoutProgress < retryDelays.length) {
-                            const delay = retryDelays[retriesWithoutProgress++];
-                            logger('debug', 'Sources', `Deezer stream connection interrupted for track ${decodedTrack.title} at byte ${chunkIndex * bufferSize}: ${streamError.message}. Retrying at aligned boundary in ${delay}ms (attempt ${retriesWithoutProgress}/${retryDelays.length})...`);
+                        const responseDurationMs = performance.now() - responseStartTime;
+                        const cumulativeProgressBytes = totalBytesReceived - bytesAtLastStableProgress;
+                        if (cumulativeProgressBytes >= retryStableProgressBytes ||
+                            (responseBytes > 0 && responseDurationMs >= retryStableDurationMs)) {
+                            retriesWithoutStableProgress = 0;
+                            bytesAtLastStableProgress = totalBytesReceived;
+                        }
+                        if (retriesWithoutStableProgress < retryDelays.length) {
+                            const baseDelay = retryDelays[retriesWithoutStableProgress++] ?? 250;
+                            const delay = Math.round(baseDelay * (0.75 + Math.random() * 0.5));
+                            logger('debug', 'Sources', `Deezer stream connection interrupted for track ${decodedTrack.title} at byte ${rangeStart + bytesReceived}: ${streamError.message}. Retrying at aligned boundary in ${delay}ms (attempt ${retriesWithoutStableProgress}/${retryDelays.length})...`);
                             await new Promise((resolve) => setTimeout(resolve, delay));
                             continue;
                         }
@@ -752,8 +939,24 @@ export default class DeezerSource {
                 outputStream.removeListener('error', cancel);
                 if (cancelled || outputStream.destroyed)
                     return;
-                if (remainder.length > 0)
-                    write(remainder);
+                if (remainder.length > 0) {
+                    let toWrite = remainder;
+                    if (discardLeadBytes > 0) {
+                        if (toWrite.length <= discardLeadBytes) {
+                            discardLeadBytes -= toWrite.length;
+                            toWrite = null;
+                        }
+                        else {
+                            toWrite = toWrite.subarray(discardLeadBytes);
+                            discardLeadBytes = 0;
+                        }
+                    }
+                    if (toWrite && toWrite.length > 0) {
+                        const pendingDrain = write(toWrite);
+                        if (pendingDrain)
+                            await pendingDrain;
+                    }
+                }
                 remainder = Buffer.alloc(0);
                 if (!outputStream.destroyed && !outputStream.writableEnded) {
                     outputStream.emit('finishBuffering');
@@ -790,7 +993,7 @@ export default class DeezerSource {
         try {
             const arl = this.config.sources?.deezer?.arl;
             const initialCookie = typeof arl === 'string' && arl.length > 0 ? `arl=${arl}` : '';
-            const response = await http1makeRequest('https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=', {
+            const response = await makeRequest('https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=', {
                 method: 'GET',
                 headers: initialCookie ? { Cookie: initialCookie } : undefined
             });
@@ -1196,5 +1399,50 @@ export default class DeezerSource {
                     key.charCodeAt(index);
         }
         return trackKey;
+    }
+    /**
+     * Parses and validates a standard Content-Range header.
+     */
+    parseContentRange(headers) {
+        if (!headers)
+            return null;
+        const raw = headers['content-range'] ?? headers['Content-Range'];
+        const header = Array.isArray(raw) ? raw[0] : raw;
+        if (typeof header !== 'string')
+            return null;
+        const match = header.match(/^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i);
+        if (!match)
+            return null;
+        const start = Number(match[1]);
+        const end = Number(match[2]);
+        const total = match[3] === '*' ? null : Number(match[3]);
+        if (!Number.isSafeInteger(start) ||
+            !Number.isSafeInteger(end) ||
+            end < start)
+            return null;
+        if (total !== null && (!Number.isSafeInteger(total) || end >= total))
+            return null;
+        return {
+            start,
+            end,
+            total,
+            length: end - start + 1
+        };
+    }
+    /**
+     * Parses the total length from an unsatisfied Content-Range header (HTTP 416).
+     */
+    parseUnsatisfiedRangeTotal(headers) {
+        if (!headers)
+            return null;
+        const raw = headers['content-range'] ?? headers['Content-Range'];
+        const header = Array.isArray(raw) ? raw[0] : raw;
+        if (typeof header !== 'string')
+            return null;
+        const match = header.match(/^bytes\s+\*\/(\d+)$/i);
+        if (!match)
+            return null;
+        const total = Number(match[1]);
+        return Number.isSafeInteger(total) ? total : null;
     }
 }

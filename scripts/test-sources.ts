@@ -630,9 +630,7 @@ async function runTestCase(
           : colSpec.expectedSelectedTrack
       const { pass, details } = evaluateMatcher(matcher, actualSelected)
       if (!pass) {
-        console.log(
-          `  SelectedTrack ${formatStatus(false)}   ${details}`
-        )
+        console.log(`  SelectedTrack ${formatStatus(false)}   ${details}`)
         return {
           passed: false,
           error: `SelectedTrack: ${details}`
@@ -956,6 +954,7 @@ async function main(): Promise<void> {
   if (failedTests > 0) {
     process.exit(1)
   }
+  process.exit(0)
 }
 
 main().catch((err: unknown) => {

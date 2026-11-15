@@ -467,6 +467,67 @@ export default class BlowfishCBC {
         return [xL, xR];
     }
     /**
+     * Encrypts a chunk of data using Blowfish-CBC mode.
+     *
+     * The input may contain partial blocks. Any trailing bytes that do not form
+     * a full 8-byte block are stored and prepended to the next call.
+     *
+     * @param chunk - Plaintext bytes as a string, Uint8Array, or Buffer.
+     * @returns Encrypted bytes for all complete blocks in the chunk.
+     * @throws Error if the IV has not been set.
+     * @example
+     * ```ts
+     * const ciphertext = cipher.encode(plaintextChunk)
+     * ```
+     */
+    encode(chunk) {
+        if (!this._haveIv)
+            throw new Error('IV not set');
+        const inU8 = toU8(chunk);
+        let data;
+        if (this._tail.length) {
+            data = new Uint8Array(this._tail.length + inU8.length);
+            data.set(this._tail, 0);
+            data.set(inU8, this._tail.length);
+        }
+        else {
+            data = inU8;
+        }
+        const fullLen = data.length - (data.length % 8);
+        const remain = data.length - fullLen;
+        if (remain) {
+            this._tail = data.subarray(fullLen);
+        }
+        else {
+            this._tail = new Uint8Array(0);
+        }
+        if (fullLen === 0)
+            return Buffer.alloc(0);
+        const out = Buffer.allocUnsafe(fullLen);
+        let ivL = this._ivL;
+        let ivR = this._ivR;
+        for (let i = 0; i < fullLen; i += 8) {
+            let pL = pack32(data[i] ?? 0, data[i + 1] ?? 0, data[i + 2] ?? 0, data[i + 3] ?? 0);
+            let pR = pack32(data[i + 4] ?? 0, data[i + 5] ?? 0, data[i + 6] ?? 0, data[i + 7] ?? 0);
+            pL = xor(pL, ivL);
+            pR = xor(pR, ivR);
+            const [cL, cR] = this._encryptBlock(pL, pR);
+            ivL = cL;
+            ivR = cR;
+            out[i] = (cL >>> 24) & 255;
+            out[i + 1] = (cL >>> 16) & 255;
+            out[i + 2] = (cL >>> 8) & 255;
+            out[i + 3] = cL & 255;
+            out[i + 4] = (cR >>> 24) & 255;
+            out[i + 5] = (cR >>> 16) & 255;
+            out[i + 6] = (cR >>> 8) & 255;
+            out[i + 7] = cR & 255;
+        }
+        this._ivL = ivL;
+        this._ivR = ivR;
+        return out;
+    }
+    /**
      * Decrypts a chunk of CBC-encrypted data.
      *
      * The input may contain partial blocks. Any trailing bytes that do not form
