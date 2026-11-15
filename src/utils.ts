@@ -3143,7 +3143,7 @@ export function getBestMatch<T extends BestMatchCandidate>(
         /\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^\]]*\]/gi,
         ''
       )
-      .replace(/[^\w\s]/g, '')
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
       .trim()
   }
 
@@ -3172,12 +3172,19 @@ export function getBestMatch<T extends BestMatchCandidate>(
 
   const targetDuration = original.length
   const allowedDiff = targetDuration * durationTolerance
+  const normOriginalTitle = normalize(original.title)
   const normOriginalAuthor = normalize(original.author)
   const originalWords = new Set(
-    normalize(original.title)
-      .split(' ')
-      .filter((w) => w.length > 1)
+    normOriginalTitle
+      .split(/\s+/)
+      .filter((w) => w.length > 0)
   )
+  const originalArtists = original.author
+    ? original.author
+        .split(/[,/&]/)
+        .map((a) => normalize(a))
+        .filter((a) => a.length > 0)
+    : []
 
   const scored = list.map((item) => {
     const itemTitle = item.info.title.toLowerCase()
@@ -3188,12 +3195,19 @@ export function getBestMatch<T extends BestMatchCandidate>(
       itemTitle.includes('clean') || itemTitle.includes('radio edit')
     let score = 0
 
-    const itemWords = normItemTitle.split(' ').filter((w) => w.length > 1)
+    const itemWords = normItemTitle.split(/\s+/).filter((w) => w.length > 0)
     const itemWordsSet = new Set(itemWords)
 
     let overlap = 0
     for (const word of originalWords) {
-      if (itemWordsSet.has(word)) overlap++
+      if (itemWordsSet.has(word)) {
+        overlap++
+      } else if (
+        word.length >= 2 &&
+        (normItemTitle.includes(word) || word.includes(normItemTitle))
+      ) {
+        overlap += 0.8
+      }
     }
     score += (overlap / Math.max(originalWords.size, 1)) * 300
 
@@ -3208,12 +3222,40 @@ export function getBestMatch<T extends BestMatchCandidate>(
       if (isItemClean) score += 500
     }
 
+    let authorMatched = false
     if (
-      normItemAuthor.includes(normOriginalAuthor) ||
-      normOriginalAuthor.includes(normItemAuthor)
+      (normOriginalAuthor && normItemAuthor.includes(normOriginalAuthor)) ||
+      (normItemAuthor && normOriginalAuthor.includes(normItemAuthor))
     ) {
       score += 150
+      authorMatched = true
     } else {
+      for (const artist of originalArtists) {
+        if (
+          artist.length >= 2 &&
+          (normItemAuthor.includes(artist) || artist.includes(normItemAuthor))
+        ) {
+          score += 150
+          authorMatched = true
+          break
+        }
+      }
+    }
+
+    if (!authorMatched) {
+      for (const artist of originalArtists) {
+        if (
+          artist.length >= 2 &&
+          (normItemTitle.includes(artist) || itemTitle.includes(artist))
+        ) {
+          score += 100
+          authorMatched = true
+          break
+        }
+      }
+    }
+
+    if (!authorMatched && normOriginalAuthor && normItemAuthor) {
       const longer =
         normOriginalAuthor.length > normItemAuthor.length
           ? normOriginalAuthor
