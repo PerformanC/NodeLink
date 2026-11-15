@@ -1739,7 +1739,7 @@ async function _internalHttp1Request(
         }
         chunks.push(chunk)
       }
-      const onEnd = () => {
+      const onEnd = async () => {
         try {
           const responseBuffer = Buffer.concat(chunks)
           cleanupBody?.()
@@ -1764,6 +1764,9 @@ async function _internalHttp1Request(
             .startsWith('application/json')
           let responseBody: unknown = text
           if (isJson && text) {
+            if (text.length > 65536) {
+              await new Promise((resolve) => setImmediate(resolve))
+            }
             try {
               responseBody = JSON.parse(text)
             } catch {
@@ -2023,6 +2026,9 @@ async function makeRequest(
         throw new Error('body too large')
       const text = Buffer.from(buf).toString()
       const ct = res.headers.get('content-type') ?? ''
+      if (text.length > 65536) {
+        await new Promise((resolve) => setImmediate(resolve))
+      }
       const out =
         ct.includes('application/json') && text ? JSON.parse(text) : text
       return {
@@ -2275,6 +2281,9 @@ async function makeRequest(
             .startsWith('application/json')
           let responseBody: unknown = text
           if (isJson && text) {
+            if (text.length > 65536) {
+              await new Promise((resolve) => setImmediate(resolve))
+            }
             try {
               responseBody = JSON.parse(text)
             } catch {

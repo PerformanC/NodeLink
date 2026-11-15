@@ -1426,7 +1426,7 @@ async function _internalHttp1Request(urlString, options = {}) {
                 }
                 chunks.push(chunk);
             };
-            const onEnd = () => {
+            const onEnd = async () => {
                 try {
                     const responseBuffer = Buffer.concat(chunks);
                     cleanupBody?.();
@@ -1449,6 +1449,9 @@ async function _internalHttp1Request(urlString, options = {}) {
                         .startsWith('application/json');
                     let responseBody = text;
                     if (isJson && text) {
+                        if (text.length > 65536) {
+                            await new Promise((resolve) => setImmediate(resolve));
+                        }
                         try {
                             responseBody = JSON.parse(text);
                         }
@@ -1648,6 +1651,9 @@ async function makeRequest(urlString, options, nodelink) {
                 throw new Error('body too large');
             const text = Buffer.from(buf).toString();
             const ct = res.headers.get('content-type') ?? '';
+            if (text.length > 65536) {
+                await new Promise((resolve) => setImmediate(resolve));
+            }
             const out = ct.includes('application/json') && text ? JSON.parse(text) : text;
             return {
                 statusCode: res.status,
@@ -1869,6 +1875,9 @@ async function makeRequest(urlString, options, nodelink) {
                         .startsWith('application/json');
                     let responseBody = text;
                     if (isJson && text) {
+                        if (text.length > 65536) {
+                            await new Promise((resolve) => setImmediate(resolve));
+                        }
                         try {
                             responseBody = JSON.parse(text);
                         }

@@ -30,7 +30,12 @@ export function parse(content, baseUrl) {
     let currentMap = null;
     let mediaSequence = 0;
     let lastByteRange = null;
-    for (const line of lines) {
+    let segmentIndex = 0;
+    let pendingDiscontinuity = false;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line === undefined)
+            continue;
         if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
             const parts = line.split(':');
             if (parts[1])
@@ -42,14 +47,7 @@ export function parse(content, baseUrl) {
             if (parts[1])
                 result.targetDuration = parseFloat(parts[1]);
         }
-    }
-    let segmentIndex = 0;
-    let pendingDiscontinuity = false;
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line === undefined)
-            continue;
-        if (line.startsWith('#EXT-X-DISCONTINUITY') &&
+        else if (line.startsWith('#EXT-X-DISCONTINUITY') &&
             !line.startsWith('#EXT-X-DISCONTINUITY-SEQUENCE')) {
             pendingDiscontinuity = true;
         }
