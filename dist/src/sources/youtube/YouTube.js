@@ -2154,7 +2154,7 @@ export default class YouTubeSource {
                         url: replacement.url,
                         proxy: (replacement.additionalData?.proxy || this.getProxy())
                     };
-                });
+                }, this.nodelink.options.playback?.audio?.resamplingQuality || 'fastest');
                 if (audio) {
                     if (cancelSignal.aborted) {
                         audio.stream.destroy();

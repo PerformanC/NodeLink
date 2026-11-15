@@ -2885,7 +2885,8 @@ export default class YouTubeSource implements SourceVariantHandler {
                 | HttpProxyConfig
                 | undefined
             }
-          }
+          },
+          this.nodelink.options.playback?.audio?.resamplingQuality || 'fastest'
         )
         if (audio) {
           if (cancelSignal.aborted) {
