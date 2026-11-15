@@ -523,6 +523,7 @@ export default class SourcesManager {
         const swm = this.nodelink.sourceWorkerManager;
         if (swm?.execute && swm.hasAvailableWorkers) {
             try {
+                const start = performance.now();
                 const workerResult = await swm.execute('getTrackUrl', {
                     track,
                     itag,
@@ -530,6 +531,8 @@ export default class SourcesManager {
                     isUpscaling
                 });
                 if (workerResult) {
+                    const duration = (performance.now() - start).toFixed(1);
+                    logger('debug', 'Sources', `Resolved getTrackUrl for '${track.sourceName}' via SourceWorker in ${duration}ms (${track.title || track.identifier || 'unknown'})`);
                     return workerResult;
                 }
             }

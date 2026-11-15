@@ -1007,6 +1007,11 @@ export default class WorkerManager {
               const swm = nodelink?.sourceWorkerManager
               const workerId = commandSocket._workerId
               if (swm?.execute && workerId !== undefined) {
+                logger(
+                  'debug',
+                  'Cluster',
+                  `Forwarding task '${data.task}' from playback worker ${workerId} to source worker`
+                )
                 swm
                   .execute(data.task, data.payload)
                   .then((res) => {

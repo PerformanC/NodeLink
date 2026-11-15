@@ -32,6 +32,7 @@ import type {
   SourceWorkerConfig,
   TaskData,
   TrackInfo,
+  TrackUrlResult,
   WorkerData,
   WorkerMessageType,
   WorkerNodeLink
@@ -1672,11 +1673,24 @@ if (isMainThread) {
             isRecovering?: boolean
             isUpscaling?: boolean
           }
+          const start = performance.now()
+          utils.logger(
+            'debug',
+            'SourceWorker',
+            `[Thread ${workerData.threadId}] Resolving track URL for '${track.sourceName}' (${track.title || track.identifier || 'unknown'})`
+          )
           result = await nodelink.sources?.getTrackUrl(
             track,
             itag,
             isRecovering,
             isUpscaling
+          )
+          const duration = (performance.now() - start).toFixed(1)
+          const urlRes = result as TrackUrlResult | undefined
+          utils.logger(
+            'debug',
+            'SourceWorker',
+            `[Thread ${workerData.threadId}] Resolved track URL for '${track.sourceName}' in ${duration}ms (protocol: ${urlRes?.protocol || 'http'})`
           )
           break
         }

@@ -739,6 +739,7 @@ class SourceWorkerManager {
         if (!bestWorker) {
             return Promise.reject(new Error('No available source workers'));
         }
+        logger('debug', 'SourceCluster', `Dispatching task '${task}' to source worker ${bestWorker.id} (pid: ${bestWorker.process?.pid || 'unknown'}, current load: ${minLoad})`);
         return this._executeOnWorker(bestWorker, task, payload, options);
     }
     async executeAll(task, payload, options = {}) {

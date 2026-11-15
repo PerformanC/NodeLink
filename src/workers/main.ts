@@ -1284,6 +1284,12 @@ function executeMasterSourceTask<T = unknown>(
   const id = crypto.randomBytes(16).toString('hex')
   const payloadBuf = v8.serialize({ task, payload })
 
+  logger(
+    'debug',
+    'Worker',
+    `Delegating task '${task}' to master source worker via command socket`
+  )
+
   return new Promise<T>((resolve, reject) => {
     const timeout = setTimeout(() => {
       masterPendingRequests.delete(id)

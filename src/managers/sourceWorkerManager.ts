@@ -983,7 +983,18 @@ class SourceWorkerManager {
       return Promise.reject(new Error('No available source workers'))
     }
 
-    return this._executeOnWorker(bestWorker, task, payload, options) as Promise<T>
+    logger(
+      'debug',
+      'SourceCluster',
+      `Dispatching task '${task}' to source worker ${bestWorker.id} (pid: ${bestWorker.process?.pid || 'unknown'}, current load: ${minLoad})`
+    )
+
+    return this._executeOnWorker(
+      bestWorker,
+      task,
+      payload,
+      options
+    ) as Promise<T>
   }
 
   async executeAll(

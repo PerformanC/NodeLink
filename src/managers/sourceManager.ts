@@ -793,6 +793,7 @@ export default class SourcesManager implements SourceManagerLike {
 
     if (swm?.execute && swm.hasAvailableWorkers) {
       try {
+        const start = performance.now()
         const workerResult = await swm.execute<
           TrackUrlResult & {
             protocol?: string
@@ -807,6 +808,12 @@ export default class SourcesManager implements SourceManagerLike {
           isUpscaling
         })
         if (workerResult) {
+          const duration = (performance.now() - start).toFixed(1)
+          logger(
+            'debug',
+            'Sources',
+            `Resolved getTrackUrl for '${track.sourceName}' via SourceWorker in ${duration}ms (${track.title || track.identifier || 'unknown'})`
+          )
           return workerResult
         }
       } catch (err) {
