@@ -649,7 +649,13 @@ export class Player {
         guildId: this.guildId,
         voice: structuredClone(this.voice)
       })
-      if (this.track && !this.isPaused && this.connection?.audioStream) {
+      /* INFO: The connect callback can already have started the packet timer. */
+      if (
+        this.track &&
+        !this.isPaused &&
+        this.connection?.audioStream &&
+        this.connection.playerState?.status !== 'playing'
+      ) {
         this.connection.unpause?.('reconnected')
         logger(
           'debug',
