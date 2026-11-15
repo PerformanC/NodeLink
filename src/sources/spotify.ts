@@ -2375,10 +2375,20 @@ export default class SpotifySource implements SourceInstance {
       let attemptedCandidates = 0
 
       while (attemptedCandidates < maxCandidates) {
-        const best = getBestMatch(candidates, track, {
+        let best = getBestMatch(candidates, track, {
           allowExplicit: this.config.allowExplicit,
           minScore: 300
         })
+        if (!best && attemptedCandidates === 0 && query !== track.title) {
+          const titleRes = await sm.searchWithDefault(track.title)
+          if (titleRes.loadType === 'search' && titleRes.data.length) {
+            candidates.push(...titleRes.data)
+            best = getBestMatch(candidates, track, {
+              allowExplicit: this.config.allowExplicit,
+              minScore: 300
+            })
+          }
+        }
         if (!best) break
 
         const candidateIndex = candidates.indexOf(best)
@@ -2998,6 +3008,26 @@ export default class SpotifySource implements SourceInstance {
    * @public
    */
   public static readonly _TESTS: readonly SourceTestCase[] = [
+    {
+      id: 'spotify.track.cjk_unicode_match',
+      name: 'CJK Unicode & multi-artist track resolution (ぴーなた feat. 重音テト - アンタに言ってんの！)',
+      // References fix: Unicode letters/numbers (\p{L}\p{N}), multi-artist splitting,
+      // and CJK substring overlap in getBestMatch() to ensure alternative streams match.
+      // Commit: https://github.com/PerformanC/NodeLink/commit/7ee75784
+      input: {
+        type: 'resolve',
+        value: 'https://open.spotify.com/track/3KaZDoUNLRzLgVIfJKTxrH'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          identifier: { op: 'equals', value: '3KaZDoUNLRzLgVIfJKTxrH' },
+          title: { op: 'matches', value: 'アンタに言ってんの' },
+          author: { op: 'matches', value: 'ぴーなた' },
+          sourceName: { op: 'equals', value: 'spotify' }
+        }
+      }
+    },
     {
       id: 'spotify.track.standard',
       name: 'Standard HTTPS Track resolution (Billie Eilish - ocean eyes)',
