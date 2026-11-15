@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { PassThrough } from 'node:stream';
 import BlowfishCBC from '../decrypters/blowfish-cbc.js';
+import { StreamTransportServer } from '../playback/streamTransport.js';
 import { capTotalTracks, encodeTrack, getBestMatch, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
@@ -169,6 +170,15 @@ export default class DeezerSource {
      */
     setupPromise = null;
     /**
+     * Dedicated binary stream transport server used when delegating stream
+     * production and Blowfish decryption to the Source Worker.
+     */
+    transportServer = null;
+    /**
+     * In-flight promise serializing transport server startup.
+     */
+    transportServerPromise = null;
+    /**
      * Creates a new Deezer source wrapper.
      *
      * @param nodelink Worker runtime used by the source implementation.
@@ -176,6 +186,29 @@ export default class DeezerSource {
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.config = nodelink.options;
+    }
+    /**
+     * Returns the active `StreamTransportServer` for this process, starting it
+     * on first use.
+     */
+    async getTransportServer() {
+        if (this.transportServer?.isListening)
+            return this.transportServer;
+        if (this.transportServerPromise)
+            return this.transportServerPromise;
+        const init = (async () => {
+            const server = new StreamTransportServer();
+            await server.start();
+            this.transportServer = server;
+            return server;
+        })();
+        this.transportServerPromise = init;
+        try {
+            return await init;
+        }
+        finally {
+            this.transportServerPromise = null;
+        }
     }
     /**
      * Initializes Deezer gateway credentials and caches them for later use.
@@ -638,6 +671,64 @@ export default class DeezerSource {
      */
     async loadStream(decodedTrack, url, _format, additionalData) {
         try {
+            const rawExtra = additionalData &&
+                typeof additionalData === 'object' &&
+                !Array.isArray(additionalData)
+                ? additionalData
+                : {};
+            const swm = this.nodelink.sourceWorkerManager;
+            if (!rawExtra.__fromSourceWorkerTransport &&
+                rawExtra.__disableStreamTransport !== true &&
+                swm?.hasAvailableWorkers) {
+                const server = await this.getTransportServer();
+                const playerId = String(rawExtra.guildId ?? rawExtra.playerId ?? decodedTrack.identifier);
+                const session = server.createStreamSession({
+                    playerId,
+                    watermarks: rawExtra.watermarks
+                });
+                const tokenCopy = Buffer.from(session.securityTokenBytes);
+                session.securityTokenBytes.fill(0);
+                const transportKind = process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket';
+                const seekTag = typeof rawExtra.startTime === 'number' && rawExtra.startTime > 0
+                    ? `, startTime=${rawExtra.startTime}ms`
+                    : '';
+                logger('info', 'Sources', `Loading Deezer stream '${decodedTrack.title}' from Source Worker via ${transportKind} [streamId=${session.streamIdHex}, player=${playerId}${seekTag}]`);
+                session.stream.once('close', () => {
+                    void swm
+                        .execute('cancelStreamTransport', { streamIdHex: session.streamIdHex }, { timeoutMs: 3000 })
+                        .catch(() => { });
+                });
+                const serializableExtra = {};
+                for (const [key, value] of Object.entries(rawExtra)) {
+                    if (typeof value !== 'function')
+                        serializableExtra[key] = value;
+                }
+                serializableExtra.__fromSourceWorkerTransport = true;
+                try {
+                    const workerRes = await swm.execute('startStreamTransport', {
+                        track: decodedTrack,
+                        url,
+                        protocol: _format,
+                        additionalData: serializableExtra,
+                        transportSocketPath: session.socketPath,
+                        streamIdBytes: session.streamIdBytes,
+                        securityTokenBytes: tokenCopy,
+                        artificialDelayMs: typeof rawExtra.artificialDelayMs === 'number'
+                            ? rawExtra.artificialDelayMs
+                            : undefined
+                    }, { timeoutMs: 15000 });
+                    tokenCopy.fill(0);
+                    return {
+                        stream: session.stream,
+                        type: workerRes?.type || _format
+                    };
+                }
+                catch (err) {
+                    tokenCopy.fill(0);
+                    session.cancel();
+                    throw err;
+                }
+            }
             const streamData = this.getAdditionalData(additionalData);
             if (!streamData.SNG_ID) {
                 return this.createException('Deezer stream metadata is missing the song identifier.', 'fault');

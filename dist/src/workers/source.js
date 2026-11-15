@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import v8 from 'node:v8';
 import { isMainThread, parentPort, workerData as rawWorkerData, Worker } from 'node:worker_threads';
 import { migrateConfig } from '../modules/config/configMigration.js';
+import { StreamTransportClient } from '../playback/streamTransport.js';
 import * as utils from '../utils.js';
 import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from './headQueue.js';
 const __filename = fileURLToPath(import.meta.url);
@@ -634,6 +635,7 @@ else {
      * @internal
      */
     const activeChats = new Map();
+    const activeTransports = new Map();
     const profilerBaseDir = process.env.NODELINK_PROFILER_DIR || '.profiles';
     let activeCpuSession = null;
     let activeHeapSampling = null;
@@ -1237,8 +1239,63 @@ else {
                     }
                     break;
                 }
+                case 'startStreamTransport': {
+                    const { track, url, protocol, additionalData, transportSocketPath, streamIdBytes, securityTokenBytes, maxRecordPayloadBytes, artificialDelayMs } = payload;
+                    const idBuf = Buffer.from(streamIdBytes);
+                    const tokenBuf = Buffer.from(securityTokenBytes);
+                    securityTokenBytes.fill(0);
+                    const fetched = await nodelink.sources?.getTrackStream(track, url, protocol, {
+                        ...(additionalData || {}),
+                        __fromSourceWorkerTransport: true
+                    });
+                    if (!fetched ||
+                        ('exception' in fetched && fetched.exception) ||
+                        !('stream' in fetched) ||
+                        !fetched.stream) {
+                        tokenBuf.fill(0);
+                        const errMsg = fetched && 'exception' in fetched && fetched.exception
+                            ? fetched.exception.message
+                            : 'Failed to open source stream in Source Worker';
+                        throw new Error(errMsg);
+                    }
+                    const streamIdHex = idBuf.toString('hex');
+                    const transportKind = process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket';
+                    utils.logger('info', 'SourceWorker', `[Thread ${workerData.threadId}] Producing '${track.title}' via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`);
+                    const client = new StreamTransportClient({
+                        socketPath: transportSocketPath,
+                        streamIdBytes: idBuf,
+                        securityTokenBytes: tokenBuf,
+                        sourceStream: fetched.stream,
+                        maxRecordPayloadBytes,
+                        artificialDelayMs
+                    });
+                    activeTransports.set(streamIdHex, client);
+                    void client
+                        .run()
+                        .catch(() => { })
+                        .finally(() => {
+                        activeTransports.delete(streamIdHex);
+                    });
+                    result = {
+                        started: true,
+                        type: fetched.type || 'audio/mpeg'
+                    };
+                    break;
+                }
+                case 'cancelStreamTransport': {
+                    const { streamIdHex } = payload;
+                    const active = activeTransports.get(streamIdHex);
+                    if (active) {
+                        active.cancel();
+                        activeTransports.delete(streamIdHex);
+                    }
+                    result = { cancelled: true };
+                    break;
+                }
             }
-            if (task === 'getTrackUrl') {
+            if (task === 'getTrackUrl' ||
+                task === 'startStreamTransport' ||
+                task === 'cancelStreamTransport') {
                 const bin = v8.serialize(result);
                 const ab = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength);
                 parentPort.postMessage({

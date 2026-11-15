@@ -18,6 +18,7 @@ import {
 import type PluginManager from '../managers/pluginManager.ts'
 import type { PluginManagerContext } from '../managers/pluginManager.ts'
 import { migrateConfig } from '../modules/config/configMigration.ts'
+import { StreamTransportClient } from '../playback/streamTransport.ts'
 
 import type {
   JsonValue,
@@ -856,6 +857,7 @@ if (isMainThread) {
    * @internal
    */
   const activeChats = new Map<string, boolean>()
+  const activeTransports = new Map<string, StreamTransportClient>()
   const profilerBaseDir = process.env.NODELINK_PROFILER_DIR || '.profiles'
   let activeCpuSession: {
     session: inspector.Session
@@ -1713,8 +1715,103 @@ if (isMainThread) {
           }
           break
         }
+        case 'startStreamTransport': {
+          const {
+            track,
+            url,
+            protocol,
+            additionalData,
+            transportSocketPath,
+            streamIdBytes,
+            securityTokenBytes,
+            maxRecordPayloadBytes,
+            artificialDelayMs
+          } = payload as {
+            track: TrackInfo
+            url: string
+            protocol?: string
+            additionalData?: Record<string, unknown>
+            transportSocketPath: string
+            streamIdBytes: Uint8Array
+            securityTokenBytes: Uint8Array
+            maxRecordPayloadBytes?: number
+            artificialDelayMs?: number
+          }
+
+          const idBuf = Buffer.from(streamIdBytes)
+          const tokenBuf = Buffer.from(securityTokenBytes)
+          securityTokenBytes.fill(0)
+
+          const fetched = await nodelink.sources?.getTrackStream(
+            track,
+            url,
+            protocol,
+            {
+              ...(additionalData || {}),
+              __fromSourceWorkerTransport: true
+            }
+          )
+
+          if (
+            !fetched ||
+            ('exception' in fetched && fetched.exception) ||
+            !('stream' in fetched) ||
+            !fetched.stream
+          ) {
+            tokenBuf.fill(0)
+            const errMsg =
+              fetched && 'exception' in fetched && fetched.exception
+                ? fetched.exception.message
+                : 'Failed to open source stream in Source Worker'
+            throw new Error(errMsg)
+          }
+
+          const streamIdHex = idBuf.toString('hex')
+          const transportKind =
+            process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket'
+          utils.logger(
+            'info',
+            'SourceWorker',
+            `[Thread ${workerData.threadId}] Producing '${track.title}' via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`
+          )
+          const client = new StreamTransportClient({
+            socketPath: transportSocketPath,
+            streamIdBytes: idBuf,
+            securityTokenBytes: tokenBuf,
+            sourceStream: fetched.stream,
+            maxRecordPayloadBytes,
+            artificialDelayMs
+          })
+          activeTransports.set(streamIdHex, client)
+          void client
+            .run()
+            .catch(() => {})
+            .finally(() => {
+              activeTransports.delete(streamIdHex)
+            })
+
+          result = {
+            started: true,
+            type: fetched.type || 'audio/mpeg'
+          }
+          break
+        }
+        case 'cancelStreamTransport': {
+          const { streamIdHex } = payload as { streamIdHex: string }
+          const active = activeTransports.get(streamIdHex)
+          if (active) {
+            active.cancel()
+            activeTransports.delete(streamIdHex)
+          }
+          result = { cancelled: true }
+          break
+        }
       }
-      if (task === 'getTrackUrl') {
+      if (
+        task === 'getTrackUrl' ||
+        task === 'startStreamTransport' ||
+        task === 'cancelStreamTransport'
+      ) {
         const bin = v8.serialize(result)
         const ab = bin.buffer.slice(
           bin.byteOffset,

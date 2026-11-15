@@ -95,6 +95,7 @@ class SourceWorkerManager {
     _onClusterExit;
     clientSockets;
     workerSockets;
+    pendingSocketFrames;
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.workers = [];
@@ -116,6 +117,7 @@ class SourceWorkerManager {
         this._onClusterExit = null;
         this.clientSockets = new Set();
         this.workerSockets = new Map();
+        this.pendingSocketFrames = new Map();
     }
     _registerWorkerSocket(pid, socket) {
         const worker = this.workers.find((w) => w.process?.pid === pid);
@@ -131,6 +133,27 @@ class SourceWorkerManager {
         ;
         socket._workerId = worker.id;
         this.workerSockets.set(worker.id, socket);
+        const queued = this.pendingSocketFrames.get(worker.id);
+        if (queued && queued.length > 0) {
+            this.pendingSocketFrames.delete(worker.id);
+            for (const frame of queued) {
+                this._sendTaskFrame(socket, frame.id, frame.type, frame.payload);
+            }
+        }
+    }
+    _dispatchTaskToWorkerSocket(workerId, id, task, payload) {
+        const serialized = v8.serialize({ task, payload });
+        const socket = this.workerSockets.get(workerId);
+        if (socket && !socket.destroyed && socket.writable) {
+            this._sendTaskFrame(socket, id, 6, serialized);
+            return;
+        }
+        let queue = this.pendingSocketFrames.get(workerId);
+        if (!queue) {
+            queue = [];
+            this.pendingSocketFrames.set(workerId, queue);
+        }
+        queue.push({ id, type: 6, payload: serialized });
     }
     _removeWorkerSocket(socket) {
         const workerId = socket._workerId;
@@ -369,7 +392,7 @@ class SourceWorkerManager {
                 logger('error', 'SourceCluster', `Server error: ${err.message}`);
                 reject(err);
             });
-            server.listen(this.socketPath, () => {
+            server.listen({ path: this.socketPath, exclusive: true }, () => {
                 logger('info', 'SourceCluster', `Source server listening at ${this.socketPath}`);
                 resolve();
             });
@@ -386,6 +409,7 @@ class SourceWorkerManager {
             if (worker.workerType !== 'source')
                 return;
             this.workerSockets.delete(worker.id);
+            this.pendingSocketFrames.delete(worker.id);
             if (this.isDestroying)
                 return;
             logger('warn', 'SourceCluster', `Source worker manager ${worker.process.pid} exited. Respawning...`);
@@ -523,6 +547,7 @@ class SourceWorkerManager {
         }
         this.requests.clear();
         this.workerLoads.clear();
+        this.pendingSocketFrames.clear();
         for (const socket of this.clientSockets) {
             try {
                 socket.destroy();
@@ -554,16 +579,9 @@ class SourceWorkerManager {
         if (request.timeout)
             clearTimeout(request.timeout);
         if (request.task === 'loadLiveChat') {
-            const worker = this.workers.find((w) => w.id === request.workerId);
-            if (worker) {
-                worker.send({
-                    type: 'sourceTask',
-                    payload: {
-                        task: 'cancelLiveChat',
-                        payload: { id }
-                    }
-                });
-            }
+            this._dispatchTaskToWorkerSocket(request.workerId, id, 'cancelLiveChat', {
+                id
+            });
         }
         this._decrementLoad(request.workerId);
         this.requests.delete(id);
@@ -612,22 +630,7 @@ class SourceWorkerManager {
         res.on?.('close', () => {
             this._cleanupRequest(id, request);
         });
-        const socket = this.workerSockets.get(bestWorker.id);
-        if (socket && !socket.destroyed) {
-            const serialized = v8.serialize({ task, payload });
-            this._sendTaskFrame(socket, id, 6, serialized);
-        }
-        else {
-            bestWorker.send({
-                type: 'sourceTask',
-                payload: {
-                    id,
-                    task,
-                    payload,
-                    socketPath: this.socketPath
-                }
-            });
-        }
+        this._dispatchTaskToWorkerSocket(bestWorker.id, id, task, payload);
         return true;
     }
     _createInternalResponse(resolve, reject, parseJson) {
@@ -706,22 +709,7 @@ class SourceWorkerManager {
             const currentLoad = this.workerLoads.get(worker.id) || 0;
             this.workerLoads.set(worker.id, currentLoad + 1);
             this._tryScaleUp(false);
-            const socket = this.workerSockets.get(worker.id);
-            if (socket && !socket.destroyed) {
-                const serialized = v8.serialize({ task, payload });
-                this._sendTaskFrame(socket, id, 6, serialized);
-            }
-            else {
-                worker.send({
-                    type: 'sourceTask',
-                    payload: {
-                        id,
-                        task,
-                        payload,
-                        socketPath: this.socketPath
-                    }
-                });
-            }
+            this._dispatchTaskToWorkerSocket(worker.id, id, task, payload);
         });
     }
     get hasAvailableWorkers() {

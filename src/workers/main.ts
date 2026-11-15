@@ -1283,8 +1283,12 @@ const masterPendingRequests = new Map<
 function executeMasterSourceTask<T = unknown>(
   task: string,
   payload: unknown,
-  timeoutMs = 60000
+  timeoutOrOptions: number | { timeoutMs?: number } = 60000
 ): Promise<T> {
+  const timeoutMs =
+    typeof timeoutOrOptions === 'number'
+      ? timeoutOrOptions
+      : (timeoutOrOptions?.timeoutMs ?? 60000)
   if (!commandSocket || commandSocket.destroyed || !commandSocket.writable) {
     return Promise.reject(new Error('Command socket not connected to master'))
   }

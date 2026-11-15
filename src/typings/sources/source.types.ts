@@ -251,6 +251,8 @@ export type TaskType =
   | 'analyzePcm'
   | 'profilerCommand'
   | 'getTrackUrl'
+  | 'startStreamTransport'
+  | 'cancelStreamTransport'
 
 /**
  * Base task payload structure

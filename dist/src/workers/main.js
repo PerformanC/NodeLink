@@ -873,7 +873,10 @@ const connectEventSocket = () => {
     });
 };
 const masterPendingRequests = new Map();
-function executeMasterSourceTask(task, payload, timeoutMs = 60000) {
+function executeMasterSourceTask(task, payload, timeoutOrOptions = 60000) {
+    const timeoutMs = typeof timeoutOrOptions === 'number'
+        ? timeoutOrOptions
+        : (timeoutOrOptions?.timeoutMs ?? 60000);
     if (!commandSocket || commandSocket.destroyed || !commandSocket.writable) {
         return Promise.reject(new Error('Command socket not connected to master'));
     }
