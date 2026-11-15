@@ -637,34 +637,28 @@ export function calculatePcmLoudness(pcm, startByte, lengthBytes) {
     const lufs = -0.691 + 10 * Math.log10(Math.max(1e-9, rms * rms));
     return Math.max(-70, Math.min(0, Math.round(lufs * 10) / 10));
 }
-const profileCacheMap = new Map();
-const MAX_CACHE_SIZE = 100;
+import { AutoMixCacheManager } from './AutoMixCacheManager.js';
 /**
- * Size-limited, in-memory cache of pre-analysis profiles.
+ * Size-limited, ultra-low-latency in-memory cache of pre-analysis profiles.
  *
- * Keyed by track identifier so multiple players sharing the same queue
- * never duplicate analysis work. Stores metadata only, no PCM.
+ * Operates purely in-memory using object references and LRU eviction, avoiding
+ * any synchronous disk I/O, database locks, or audio stream starvation. Stores metadata only, no PCM.
  */
 export const TransitionProfileCache = {
     get(trackId) {
-        return profileCacheMap.get(trackId) ?? null;
+        return AutoMixCacheManager.getInstance().getProfile(trackId);
     },
     set(trackId, profile) {
-        if (profileCacheMap.size >= MAX_CACHE_SIZE) {
-            const firstKey = profileCacheMap.keys().next().value;
-            if (firstKey !== undefined)
-                profileCacheMap.delete(firstKey);
-        }
-        profileCacheMap.set(trackId, profile);
+        AutoMixCacheManager.getInstance().setProfile(trackId, profile);
     },
     has(trackId) {
-        return profileCacheMap.has(trackId);
+        return AutoMixCacheManager.getInstance().hasProfile(trackId);
     },
     clear() {
-        profileCacheMap.clear();
+        AutoMixCacheManager.getInstance().clear();
     },
     get size() {
-        return profileCacheMap.size;
+        return AutoMixCacheManager.getInstance().profileCount;
     }
 };
 /**

@@ -31,12 +31,16 @@ import type {
   TrackFormat,
   TrackInfoExtended
 } from '../../typings/playback/player.types.ts'
+import {
+  framesToMediaMs,
+  mediaMsToFrames
+} from '../../typings/playback/progressiveAnalysis.types.ts'
 import type { TrackUrlResult } from '../../typings/sources/source.types.ts'
 import { logger } from '../../utils.ts'
-import { requestPcmAnalysis } from './analysisDelegation.ts'
+import { AutoMixCacheManager } from './AutoMixCacheManager.ts'
+import { IncrementalAnalysisEngine } from './IncrementalAnalysisEngine.ts'
 import {
-  calculatePcmRms,
-  inspectTrackOutroQuick,
+  MusicalAnalyzer,
   type TrackPreAnalysisProfile,
   TransitionProfileCache
 } from './MusicalAnalyzer.ts'
@@ -67,6 +71,7 @@ export interface AnalysisRequestOptions {
   urlData: TrackUrlResult & { protocol?: string; format?: TrackFormat }
   windowStartMs?: number
   windowDurationMs?: number
+  remainingMs?: number
   priority: AnalysisJobPriority
   triggerSource: string
   fetchResource: (
@@ -77,6 +82,7 @@ export interface AnalysisRequestOptions {
     isBackgroundAnalysis?: boolean
   ) => Promise<{ stream: AudioResource } | { exception: { message: string } }>
   onComplete?: (profile: TrackPreAnalysisProfile) => void
+  signal?: AbortSignal
 }
 
 interface QueuedJob {
@@ -177,6 +183,28 @@ export class AutoMixRegistry {
     return (
       overlapRatio >= 0.7 && profile.analysisConfidence >= minimumConfidence
     )
+  }
+
+  /**
+   * Cancels any pending or in-flight analysis jobs for a given track identifier.
+   *
+   * @param trackIdentifier - The identifier of the track to cancel.
+   */
+  public cancelTrackAnalysis(trackIdentifier: string): void {
+    for (const job of this.inFlightJobs.values()) {
+      if (job.trackIdentifier === trackIdentifier) {
+        job.abortController.abort()
+      }
+    }
+
+    for (const [key, job] of this.queuedJobs) {
+      if (job.trackIdentifier === trackIdentifier) {
+        this.queuedJobs.delete(key)
+        const idx = this.queue.indexOf(job)
+        if (idx >= 0) this.queue.splice(idx, 1)
+        job.resolve(null)
+      }
+    }
   }
 
   /**
@@ -421,12 +449,27 @@ export class AutoMixRegistry {
     const windowDurationMs = options.windowDurationMs ?? 25000
     const trackLength = track.info.length || 0
 
+    if (options.signal) {
+      if (options.signal.aborted) {
+        abortController.abort()
+      } else {
+        options.signal.addEventListener(
+          'abort',
+          () => abortController.abort(),
+          { once: true }
+        )
+      }
+    }
+
+    if (abortController.signal.aborted) {
+      return null
+    }
+
     let streamResource: AudioResource | null = null
     let bytesRead = 0
     let decodeStart = 0
     let analyzeStart = 0
     let stoppedEarly = false
-    const chunks: Buffer[] = []
 
     try {
       const trackInfo: TrackInfoExtended = {
@@ -439,7 +482,7 @@ export class AutoMixRegistry {
         options.urlData,
         windowStartMs,
         true,
-        true
+        false
       )
 
       if ('exception' in fetched || !fetched.stream.stream) {
@@ -457,14 +500,65 @@ export class AutoMixRegistry {
         Math.floor(((windowDurationMs / 1000) * 48000 * 4) / 4) * 4
       )
 
+      const engine = new IncrementalAnalysisEngine({
+        trackId,
+        durationMs: trackLength,
+        hopDurationMs: 20
+      })
+      const musicalAnalyzer = new MusicalAnalyzer(48000)
+      const baseFrame = mediaMsToFrames(windowStartMs, 48000)
+      let currentFrame = baseFrame
+
+      let jobMaxEventLoopLagMs = 0
+      const jobLagMonitor = setInterval(() => {
+        const currentLag = this.getEventLoopLagMs()
+        if (currentLag > jobMaxEventLoopLagMs) {
+          jobMaxEventLoopLagMs = currentLag
+        }
+      }, 50)
+      jobLagMonitor.unref?.()
+
+      AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando')
+
       const resultPromise = new Promise<TrackPreAnalysisProfile | null>(
         (resolve) => {
           let finished = false
           let analysisStarted = false
           let streamEnd: 'eof' | 'error' | undefined
           let streamSafetyTimer: NodeJS.Timeout | null = null
-          let analysisSafetyTimer: NodeJS.Timeout | null = null
+          let resumeTimer: NodeJS.Timeout | null = null
+
+          // Dynamic mathematical pacing:
+          // Calculates the slice delay (ms) as a continuous function of the real playback time budget.
+          // timeBudget = remaining playback time minus crossfade preparation lead (5000ms).
+          const SLICE_DURATION_MS = 200
+          const YIELD_SLICE_BYTES = SLICE_DURATION_MS * 48 * 4 // 38,400 bytes
+          const SAFETY_SPEEDUP_FACTOR = 6 // Target finishing well ahead of the deadline
+          const MAX_PACE_DELAY_MS = 25
+
+          const remainingMs =
+            options.remainingMs ??
+            (job.priority === 'IMMINENT_TRANSITION' ? 0 : 60000)
+          const timeBudgetMs = Math.max(0, remainingMs - 5000)
+          const paceDelayMs = Math.min(
+            MAX_PACE_DELAY_MS,
+            Math.max(
+              0,
+              Math.round(
+                (SLICE_DURATION_MS * timeBudgetMs) /
+                  (windowDurationMs * SAFETY_SPEEDUP_FACTOR)
+              )
+            )
+          )
+
+          let bytesSinceYield = 0
+
           const detachListeners = () => {
+            if (resumeTimer) {
+              clearTimeout(resumeTimer)
+              resumeTimer = null
+            }
+            clearInterval(jobLagMonitor)
             stream.removeListener('data', onData)
             stream.removeListener('end', onEnd)
             stream.removeListener('error', onError)
@@ -475,106 +569,226 @@ export class AutoMixRegistry {
             if (finished) return
             finished = true
             if (streamSafetyTimer) clearTimeout(streamSafetyTimer)
-            if (analysisSafetyTimer) clearTimeout(analysisSafetyTimer)
             detachListeners()
             try {
               streamResource?.destroy()
             } catch {}
+            if (profile) {
+              AutoMixCacheManager.getInstance().setProfile(trackId, profile)
+            } else {
+              AutoMixCacheManager.getInstance().setAnalysisStatus(
+                trackId,
+                'falha'
+              )
+            }
             resolve(profile)
           }
-          const createFallbackProfile = (pcm: Buffer) =>
-            inspectTrackOutroQuick(
-              pcm,
-              48000,
-              trackId,
-              windowStartMs,
-              trackLength
-            )
-          const startAnalysis = () => {
+
+          const completeAnalysis = () => {
             if (finished || analysisStarted) return
             analysisStarted = true
             if (streamSafetyTimer) clearTimeout(streamSafetyTimer)
             detachListeners()
-            stream.pause()
+            try {
+              stream.pause()
+              streamResource?.destroy()
+            } catch {}
+
             stoppedEarly = streamEnd === undefined && bytesRead >= expectedBytes
             analyzeStart = performance.now()
+
             if (bytesRead === 0) {
               finish(null)
               return
             }
-            const pcm = Buffer.concat(chunks, bytesRead)
-            chunks.length = 0
-            const finishProfile = (profile: TrackPreAnalysisProfile) => {
-              const tailBytes = 48000 * 4 * 0.02
-              const paddingBytes = 48000 * 4 * 0.01
-              const precedingBytes = 48000 * 4 * 0.1
-              const tailStart = pcm.length - tailBytes - paddingBytes
-              if (
-                streamEnd === 'eof' &&
-                tailStart >= precedingBytes &&
-                profile.outroProfile
-              ) {
-                const tailRms = calculatePcmRms(pcm, tailStart, tailBytes)
-                const precedingRms = calculatePcmRms(
-                  pcm,
-                  tailStart - precedingBytes,
-                  precedingBytes
-                )
-                /* INFO: An audible tail that is still fading is weak evidence of a cut. */
-                profile.outroProfile.sourceEndRms =
-                  tailRms >= precedingRms * 0.5 ? tailRms : 0
-              }
-              TransitionProfileCache.set(trackId, profile)
-              finish(profile)
-            }
-            const finishWithFallback = () => {
-              try {
-                if (!finished) finishProfile(createFallbackProfile(pcm))
-              } catch {
-                finish(null)
-              }
-            }
-            analysisSafetyTimer = setTimeout(finishWithFallback, 5000)
-            analysisSafetyTimer.unref?.()
 
-            void requestPcmAnalysis({
-              pcmBase64: pcm.toString('base64'),
-              sampleRate: 48000,
+            const featureMap = engine.finalize()
+            const musicalProfile = musicalAnalyzer.getProfile()
+
+            const actualWindowEndMs =
+              windowStartMs + framesToMediaMs(Math.floor(bytesRead / 4), 48000)
+
+            const points = featureMap.points
+            let avgEnergy = musicalProfile.energy
+            let energyProfileType: 'sustained' | 'decay' | 'cliff' | 'fade' =
+              'sustained'
+
+            if (points.length > 0) {
+              let totalRms = 0
+              for (const p of points) totalRms += p.rms
+              avgEnergy = totalRms / points.length
+
+              const lastThirdStart = Math.floor(points.length * 0.67)
+              let lastThirdSum = 0
+              let lastThirdCount = 0
+              for (let i = lastThirdStart; i < points.length; i++) {
+                const p = points[i]
+                if (p) {
+                  lastThirdSum += p.rms
+                  lastThirdCount++
+                }
+              }
+              const lastThirdAvg =
+                lastThirdCount > 0 ? lastThirdSum / lastThirdCount : avgEnergy
+
+              if (lastThirdAvg < avgEnergy * 0.1) energyProfileType = 'cliff'
+              else if (lastThirdAvg < avgEnergy * 0.4)
+                energyProfileType = 'fade'
+              else if (lastThirdAvg < avgEnergy * 0.7)
+                energyProfileType = 'decay'
+              else energyProfileType = 'sustained'
+            }
+
+            let vocalEndMs = 0
+            let lastPhraseEndMs = 0
+            let finalBeatMs = 0
+
+            if (points.length > 0) {
+              const naturalPoint =
+                featureMap.naturalOutroPointMs ?? actualWindowEndMs
+
+              for (let i = points.length - 1; i >= 0; i--) {
+                const p = points[i]
+                if (!p) continue
+                if (finalBeatMs === 0 && p.beat) {
+                  finalBeatMs = p.timestampMs
+                }
+                if (vocalEndMs === 0 && p.vocalActivity >= 0.35) {
+                  vocalEndMs = p.timestampMs
+                }
+                if (
+                  lastPhraseEndMs === 0 &&
+                  p.onset &&
+                  p.timestampMs <= naturalPoint
+                ) {
+                  lastPhraseEndMs = p.timestampMs
+                }
+              }
+
+              if (finalBeatMs === 0) finalBeatMs = Math.round(naturalPoint)
+              if (lastPhraseEndMs === 0)
+                lastPhraseEndMs = Math.round(naturalPoint)
+            }
+
+            const profileConfidence = Math.max(
+              musicalProfile.confidence,
+              featureMap.confidence
+            )
+
+            const profile: TrackPreAnalysisProfile = {
               trackId,
-              windowStartMs,
-              trackLengthMs: trackLength
-            })
-              .then((remoteProfile) => {
-                // Preserve compatibility when the specialized source cluster is disabled.
-                if (!finished)
-                  finishProfile(remoteProfile ?? createFallbackProfile(pcm))
-              })
-              .catch(finishWithFallback)
+              timestamp: Date.now(),
+              analysisVersion: 2,
+              confidence: profileConfidence,
+              bpm: musicalProfile.bpm,
+              bpmConfidence: musicalProfile.confidence,
+              key: musicalProfile.key,
+              keyConfidence: musicalProfile.keyConfidence,
+              energy: avgEnergy,
+              loudnessLufs: musicalProfile.loudnessLufs,
+              vocalActivity: musicalProfile.vocalActivity,
+              brightness: musicalProfile.brightness,
+              bands: { ...musicalProfile.bands },
+              outroProfile: {
+                analyzedWindowStartMs: Math.round(windowStartMs),
+                analyzedWindowEndMs: Math.round(actualWindowEndMs),
+                analysisConfidence: profileConfidence,
+                energyDecayStartMs: Math.round(
+                  featureMap.energyDecayStartMs ?? windowStartMs
+                ),
+                naturalOutroPointMs: Math.round(
+                  featureMap.naturalOutroPointMs ?? actualWindowEndMs
+                ),
+                vocalEndMs: Math.round(vocalEndMs),
+                lastPhraseEndMs: Math.round(lastPhraseEndMs),
+                finalBeatMs: Math.round(finalBeatMs),
+                averageEnergy: avgEnergy,
+                sourceEndRms: featureMap.sourceEndRms,
+                energyProfile: energyProfileType
+              },
+              introProfile: null,
+              durationMs: trackLength
+            }
+
+            TransitionProfileCache.set(trackId, profile)
+            finish(profile)
           }
+
           const onData = (chunk: Buffer) => {
             if (finished || analysisStarted) return
             if (abortController.signal.aborted) {
               finish(null)
               return
             }
+
             const remainingBytes = Math.max(0, expectedBytes - bytesRead)
             const bytesToTake = Math.min(chunk.length, remainingBytes)
             const alignedBytes = bytesToTake - (bytesToTake % 4)
+
             if (alignedBytes > 0) {
-              chunks.push(chunk.subarray(0, alignedBytes))
+              const alignedChunk =
+                alignedBytes === chunk.length
+                  ? chunk
+                  : chunk.subarray(0, alignedBytes)
+              const frameCount = alignedBytes / 4
+
+              // Progressively feed both engines with zero buffer accumulation
+              engine.pushPcm({
+                data: alignedChunk,
+                startFrame: currentFrame,
+                frameCount
+              })
+              musicalAnalyzer.pushPcm(alignedChunk)
+
+              currentFrame += frameCount
               bytesRead += alignedBytes
+              bytesSinceYield += alignedBytes
             }
-            if (bytesRead >= expectedBytes) startAnalysis()
+
+            if (bytesRead >= expectedBytes) {
+              completeAnalysis()
+              return
+            }
+
+            // Paced consumption without rush: apply backpressure by pausing stream between audio slices
+            if (bytesSinceYield >= YIELD_SLICE_BYTES) {
+              bytesSinceYield = 0
+              stream.pause()
+              if (paceDelayMs <= 0) {
+                setImmediate(() => {
+                  if (
+                    !finished &&
+                    !analysisStarted &&
+                    !abortController.signal.aborted
+                  ) {
+                    stream.resume()
+                  }
+                })
+              } else {
+                resumeTimer = setTimeout(() => {
+                  resumeTimer = null
+                  if (
+                    !finished &&
+                    !analysisStarted &&
+                    !abortController.signal.aborted
+                  ) {
+                    stream.resume()
+                  }
+                }, paceDelayMs)
+              }
+            }
           }
+
           const onEnd = () => {
             streamEnd = 'eof'
-            startAnalysis()
+            completeAnalysis()
           }
 
           const onError = () => {
             streamEnd = 'error'
-            startAnalysis()
+            completeAnalysis()
           }
+
           const onAbort = () => finish(null)
 
           stream.on('data', onData)
@@ -583,7 +797,10 @@ export class AutoMixRegistry {
           abortController.signal.addEventListener('abort', onAbort, {
             once: true
           })
-          streamSafetyTimer = setTimeout(startAnalysis, 7000)
+          streamSafetyTimer = setTimeout(
+            completeAnalysis,
+            paceDelayMs <= 0 ? 7000 : 25000
+          )
           streamSafetyTimer.unref?.()
         }
       )
@@ -626,7 +843,7 @@ export class AutoMixRegistry {
           elapsedMs: Math.round(totalMs),
           playbackContinued: true,
           playbackUnderrunObserved: null,
-          eventLoopLagMaxMs: Math.round(this.maxEventLoopLagMs * 10) / 10,
+          eventLoopLagMaxMs: Math.round(jobMaxEventLoopLagMs * 10) / 10,
           stoppedEarly,
           cancelled: false
         })
@@ -641,7 +858,6 @@ export class AutoMixRegistry {
       )
       return null
     } finally {
-      chunks.length = 0
       try {
         streamResource?.destroy()
       } catch {}

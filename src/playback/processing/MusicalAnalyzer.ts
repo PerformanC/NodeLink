@@ -24,6 +24,9 @@
  */
 
 import type { FadeCurve } from '../../typings/playback/processing.types.ts'
+import type { MusicalBandEnergy } from '../../typings/playback/progressiveAnalysis.types.ts'
+
+export type { MusicalBandEnergy } from '../../typings/playback/progressiveAnalysis.types.ts'
 
 const SAMPLE_RATE = 48000
 const CHANNELS = 2
@@ -81,13 +84,6 @@ export function inferGenreProfile(
     return 'pop'
   }
   return 'universal'
-}
-
-/** Smoothed stereo energy measured across broad frequency bands. */
-export interface MusicalBandEnergy {
-  low: number
-  mid: number
-  high: number
 }
 
 /** Musical timing, key, loudness and vocal energy estimated from a PCM stream. */
@@ -859,38 +855,33 @@ export interface TrackPreAnalysisProfile {
   durationMs: number
 }
 
-const profileCacheMap = new Map<string, TrackPreAnalysisProfile>()
-const MAX_CACHE_SIZE = 100
+import { AutoMixCacheManager } from './AutoMixCacheManager.ts'
 
 /**
- * Size-limited, in-memory cache of pre-analysis profiles.
+ * Size-limited, ultra-low-latency in-memory cache of pre-analysis profiles.
  *
- * Keyed by track identifier so multiple players sharing the same queue
- * never duplicate analysis work. Stores metadata only, no PCM.
+ * Operates purely in-memory using object references and LRU eviction, avoiding
+ * any synchronous disk I/O, database locks, or audio stream starvation. Stores metadata only, no PCM.
  */
 export const TransitionProfileCache = {
   get(trackId: string): TrackPreAnalysisProfile | null {
-    return profileCacheMap.get(trackId) ?? null
+    return AutoMixCacheManager.getInstance().getProfile(trackId)
   },
 
   set(trackId: string, profile: TrackPreAnalysisProfile): void {
-    if (profileCacheMap.size >= MAX_CACHE_SIZE) {
-      const firstKey = profileCacheMap.keys().next().value
-      if (firstKey !== undefined) profileCacheMap.delete(firstKey)
-    }
-    profileCacheMap.set(trackId, profile)
+    AutoMixCacheManager.getInstance().setProfile(trackId, profile)
   },
 
   has(trackId: string): boolean {
-    return profileCacheMap.has(trackId)
+    return AutoMixCacheManager.getInstance().hasProfile(trackId)
   },
 
   clear(): void {
-    profileCacheMap.clear()
+    AutoMixCacheManager.getInstance().clear()
   },
 
   get size(): number {
-    return profileCacheMap.size
+    return AutoMixCacheManager.getInstance().profileCount
   }
 }
 
