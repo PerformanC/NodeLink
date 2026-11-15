@@ -1054,7 +1054,7 @@ export class Player {
             streamForResource.on('end', cleanupListeners);
             streamForResource._cleanupListeners = cleanupListeners;
         }
-        const resource = audioResourceFactory(this.guildId, streamForResource, fetched.type || resolvedUrlData.format, this.nodelink, this.filters, returnPCM ? 1 : this.volumePercent / 100, returnPCM ? null : this.audioMixer, returnPCM, returnPCM ? false : this.loudnessNormalizer, !returnPCM && this._getCrossfadeConfig() !== null, this.getAudioProcessingMode(), float32PCMOutput);
+        const resource = audioResourceFactory(this.guildId, streamForResource, fetched.type || resolvedUrlData.format, this.nodelink, this.filters, returnPCM ? 1 : this.volumePercent / 100, returnPCM ? null : this.audioMixer, returnPCM, returnPCM ? false : this.loudnessNormalizer, !returnPCM && this._getCrossfadeConfig() !== null, this.getAudioProcessingMode(), float32PCMOutput, track.sourceName === 'http' ? resolvedUrlData.url : undefined);
         return { stream: resource };
     }
     /**

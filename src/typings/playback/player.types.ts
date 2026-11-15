@@ -581,7 +581,8 @@ export type CreateAudioResource = (
   processingMode?:
     | import('../../playback/processing/audioContract.ts').AudioProcessingMode
     | null,
-  float32PCMOutput?: boolean
+  float32PCMOutput?: boolean,
+  directHttpUrl?: string
 ) => AudioResource
 
 /**

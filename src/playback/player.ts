@@ -1529,7 +1529,8 @@ export class Player {
       returnPCM ? false : this.loudnessNormalizer,
       !returnPCM && this._getCrossfadeConfig() !== null,
       this.getAudioProcessingMode(),
-      float32PCMOutput
+      float32PCMOutput,
+      track.sourceName === 'http' ? resolvedUrlData.url : undefined
     )
     return { stream: resource }
   }

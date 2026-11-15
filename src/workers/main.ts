@@ -2042,7 +2042,10 @@ async function startLoadStream(
     nodelink as unknown as NodeLink,
     (payload?.volume ?? 100) / 100,
     payload?.filters || {},
-    nodelink.options.playback?.audio?.loudnessNormalizer ?? false
+    nodelink.options.playback?.audio?.loudnessNormalizer ?? false,
+    (urlResult.newTrack?.info || trackInfo).sourceName === 'http'
+      ? urlResult.url
+      : undefined
   ) as unknown as PCMStream
 
   const entry: ActiveStreamEntry = {

@@ -19,6 +19,7 @@ import { CrossfadeController } from './CrossfadeController.js';
 import { SilenceDetector } from './SilenceDetector.js';
 import { assertAudioCapabilities, resolveAudioProcessingMode } from './audioContract.js';
 import { ProtectedLimiterOutput, ProtectedPcmInput } from './ProtectedAudioTransforms.js';
+import { createAudioRangeReader } from './mp4Ranges.js';
 const AUDIO_CONFIG = Object.freeze({
     sampleRate: 48000,
     channels: 2,
@@ -220,16 +221,20 @@ export function getMp4AacConfig(config, sampleRate, channels) {
  * @param seekSeconds - Initial playback position in seconds.
  * @param refresh - Resolves another URL for the same MP4 after a transient HTTP error.
  * @param resamplingQuality - Quality used to resample decoded AAC.
+ * @param abortSignal - Cancellation signal for direct HTTP playback.
  * @returns 48 kHz stereo PCM, or null when the server ignores Range.
  */
-export async function openMp4HttpAudio(url, proxy, seekSeconds = 0, refresh, resamplingQuality = 'fastest') {
+export async function openMp4HttpAudio(url, proxy, seekSeconds = 0, refresh, resamplingQuality = 'fastest', abortSignal) {
     const controller = new AbortController();
+    const signal = abortSignal
+        ? AbortSignal.any([controller.signal, abortSignal])
+        : controller.signal;
     let totalBytes = 0;
     let activeResponse;
     let cachedRange;
+    let readAudio;
     const readRange = async (start, end) => {
-        if (controller.signal.aborted)
-            throw new Error('MP4 source closed');
+        signal.throwIfAborted();
         const headers = {
             Range: `bytes=${start}-${end}`,
             'Accept-Encoding': 'identity'
@@ -244,10 +249,7 @@ export async function openMp4HttpAudio(url, proxy, seekSeconds = 0, refresh, res
             })
             : fetch(url, {
                 headers,
-                signal: AbortSignal.any([
-                    controller.signal,
-                    AbortSignal.timeout(20000)
-                ])
+                signal: AbortSignal.any([signal, AbortSignal.timeout(20000)])
             }).then((result) => ({
                 statusCode: result.status,
                 headers: {
@@ -259,23 +261,22 @@ export async function openMp4HttpAudio(url, proxy, seekSeconds = 0, refresh, res
             }));
         let response = await request();
         if (refresh &&
-            !controller.signal.aborted &&
+            !signal.aborted &&
             (response.statusCode === 403 ||
                 response.statusCode === 404 ||
                 (response.statusCode ?? 0) >= 500)) {
             ;
             response.stream?.destroy();
             const replacement = await refresh();
-            if (controller.signal.aborted)
-                throw new Error('MP4 source closed');
+            signal.throwIfAborted();
             url = replacement.url;
             proxy = replacement.proxy;
             response = await request();
         }
         const body = response.stream;
-        if (controller.signal.aborted) {
+        if (signal.aborted) {
             body?.destroy();
-            throw new Error('MP4 source closed');
+            signal.throwIfAborted();
         }
         if (totalBytes === 0 && response.statusCode === 200) {
             /* INFO: The source ignored the initial Range. Leave it to the sequential path. */
@@ -320,6 +321,13 @@ export async function openMp4HttpAudio(url, proxy, seekSeconds = 0, refresh, res
     const reader = await symphonia.openMp4Audio(totalBytes, async (error, [start, length]) => {
         if (error)
             throw error;
+        if (abortSignal && length > 4 * 1024 * 1024)
+            throw new Error('MP4 read exceeds the 4 MiB HTTP Range limit');
+        if (readAudio) {
+            const audio = await readAudio(start, length);
+            if (audio)
+                return audio;
+        }
         if (cachedRange &&
             start >= cachedRange.offset &&
             start + length <= cachedRange.offset + cachedRange.bytes.length) {
@@ -331,21 +339,27 @@ export async function openMp4HttpAudio(url, proxy, seekSeconds = 0, refresh, res
         cachedRange = { offset: start, bytes };
         return bytes.subarray(0, length);
     }, seekSeconds);
+    const indexedReader = reader;
+    const ranges = abortSignal && !proxy ? indexedReader.audioRanges : undefined;
+    if (ranges?.length)
+        readAudio = createAudioRangeReader(url, ranges, totalBytes, signal);
     return createMp4Audio(reader, resamplingQuality, () => {
         controller.abort();
         activeResponse?.destroy();
         cachedRange = undefined;
+        readAudio = undefined;
     });
 }
 /**
- * Opens a forward-only MP4 stream. Complete each native read before returning
- * so that a split sample never advances the demuxer past unread audio.
+ * Opens an MP4 stream, using HTTP Range if media precedes its index.
  * @internal
  * @param input - The original MP4 byte stream.
  * @param resamplingQuality - Quality used to resample decoded AAC.
+ * @param signal - Cancellation signal for the decoder.
+ * @param directHttpUrl - Direct HTTP source available for random access.
  * @returns 48 kHz stereo PCM.
  */
-async function openMp4StreamAudio(input, resamplingQuality) {
+async function openMp4StreamAudio(input, resamplingQuality, signal, directHttpUrl) {
     const source = input.iterator();
     const prefix = [];
     let pending = Buffer.alloc(0);
@@ -367,7 +381,7 @@ async function openMp4StreamAudio(input, resamplingQuality) {
     }
     try {
         let remainingPrefixBytes = 4 * 1024 * 1024;
-        /* INFO: Reject media before moov before the demuxer reads through mdat. */
+        /* INFO: The tail index can point to bytes already read from the stream. */
         while (true) {
             const header = await read(8);
             prefix.push(header);
@@ -376,8 +390,15 @@ async function openMp4StreamAudio(input, resamplingQuality) {
             const type = header.toString('ascii', 4, 8);
             if (type === 'moov')
                 break;
-            if (type === 'mdat' || type === 'moof')
-                throw new Error('MP4 with media before moov requires an HTTP Range source');
+            if (type === 'mdat' || type === 'moof') {
+                input.destroy();
+                if (directHttpUrl) {
+                    const audio = await openMp4HttpAudio(directHttpUrl, undefined, 0, undefined, resamplingQuality, signal);
+                    if (audio)
+                        return audio;
+                }
+                throw new Error('MP4 with media before moov requires HTTP Range support');
+            }
             let size = header.readUInt32BE(0);
             let headerBytes = header.length;
             if (size === 1) {
@@ -466,28 +487,22 @@ async function createMp4Audio(reader, resamplingQuality, cancel) {
 function logCloseError(error) {
     logger('error', 'MP4', error instanceof Error ? error.message : String(error));
 }
-function decodeMp4Stream(resamplingQuality) {
-    return async function* (source, options) {
-        const input = Readable.from(source, { objectMode: false });
-        const cancel = () => input.destroy();
-        const signal = options?.signal;
-        signal?.addEventListener('abort', cancel, { once: true });
+function decodeMp4Stream(input, resamplingQuality, directHttpUrl) {
+    const controller = new AbortController();
+    const output = pipeline(async function* () {
+        const { stream } = await openMp4StreamAudio(input, resamplingQuality, controller.signal, directHttpUrl);
         try {
-            signal?.throwIfAborted();
-            const { stream } = await openMp4StreamAudio(input, resamplingQuality);
-            try {
-                for await (const chunk of stream)
-                    yield chunk;
-            }
-            finally {
-                stream.destroy();
-            }
+            yield* stream;
         }
         finally {
-            signal?.removeEventListener('abort', cancel);
-            input.destroy();
+            stream.destroy();
         }
-    };
+    }, new PassThrough(), () => { });
+    output.once('close', () => {
+        controller.abort();
+        input.destroy();
+    });
+    return output;
 }
 const _createSeekableProxyRequest = (proxy) => {
     if (!proxy)
@@ -1862,7 +1877,7 @@ class StreamAudioResource extends BaseAudioResource {
     nodelink;
     frameCounter = null;
     protectedLimiterOutput = null;
-    constructor(guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode, float32PCMOutput = false) {
+    constructor(guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode, float32PCMOutput = false, directHttpUrl) {
         super(guildId);
         this.nodelink = nodelink;
         const mode = resolveAudioProcessingMode(nodelink.options.playback.audio?.processingMode, processingMode);
@@ -1890,7 +1905,7 @@ class StreamAudioResource extends BaseAudioResource {
             ? SupportedFormats.AAC
             : normalizeFormat(type);
         this.pipes = [stream];
-        const pcmStream = this._createDecoderPipeline(stream, type, normalizedType, resamplingQuality);
+        const pcmStream = this._createDecoderPipeline(stream, type, normalizedType, resamplingQuality, directHttpUrl);
         if (returnPCM) {
             this._createPCMOutputPipeline(pcmStream, volume, enableAGC, float32PCMOutput && mode === 'protected');
         }
@@ -1904,12 +1919,12 @@ class StreamAudioResource extends BaseAudioResource {
             throw new Error('Invalid stream provided');
         }
     }
-    _createDecoderPipeline(stream, type, normalizedType, resamplingQuality) {
+    _createDecoderPipeline(stream, type, normalizedType, resamplingQuality, directHttpUrl) {
         if (type === 'pcm')
             return stream;
         switch (normalizedType) {
             case SupportedFormats.AAC:
-                return this._createAACPipeline(stream, type, resamplingQuality);
+                return this._createAACPipeline(stream, type, resamplingQuality, directHttpUrl);
             case SupportedFormats.FLV:
                 return this._createFLVPipeline(stream, type, resamplingQuality);
             case SupportedFormats.MPEG:
@@ -1937,7 +1952,7 @@ class StreamAudioResource extends BaseAudioResource {
         });
         return decoder;
     }
-    _createAACPipeline(stream, type, resamplingQuality) {
+    _createAACPipeline(stream, type, resamplingQuality, directHttpUrl) {
         const lowerType = type.toLowerCase();
         const streams = [stream];
         if (_isFmp4Format(lowerType)) {
@@ -1963,8 +1978,11 @@ class StreamAudioResource extends BaseAudioResource {
             }
         }
         else if (_isMp4Format(lowerType)) {
-            const output = new PassThrough();
-            pipeline(stream, decodeMp4Stream(resamplingQuality), output, () => { });
+            const output = decodeMp4Stream(stream, resamplingQuality, directHttpUrl);
+            output.once('end', () => {
+                if (!this._finishBufferingEmitted)
+                    this._forwardFinishBuffering?.();
+            });
             this.pipes?.push(output);
             return output;
         }
@@ -2257,7 +2275,7 @@ class StreamAudioResource extends BaseAudioResource {
             supportedFormats.map((f) => `  • ${f}`).join('\n'));
     }
 }
-export const createAudioResource = (guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode, float32PCMOutput = false) => new StreamAudioResource(guildId, stream, type, nodelink, initialFilters, volume, audioMixer, returnPCM, enableAGC, enableCrossfade, processingMode, float32PCMOutput);
+export const createAudioResource = (guildId, stream, type, nodelink, initialFilters = {}, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode, float32PCMOutput = false, directHttpUrl) => new StreamAudioResource(guildId, stream, type, nodelink, initialFilters, volume, audioMixer, returnPCM, enableAGC, enableCrossfade, processingMode, float32PCMOutput, directHttpUrl);
 export const createSeekeableAudioResource = async (guildId, url, seekTime, endTime, nodelink, initialFilters, player, volume = 1.0, audioMixer = null, returnPCM = false, enableAGC = true, enableCrossfade = false, processingMode) => {
     try {
         /* INFO: Source format objects describe a rendition, not a MIME type. */
@@ -2308,7 +2326,7 @@ export const createSeekeableAudioResource = async (guildId, url, seekTime, endTi
         return _createErrorResponse(err.message, cause);
     }
 };
-export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, filters = {}, enableAGC = false) => {
+export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, filters = {}, enableAGC = false, directHttpUrl) => {
     const resamplingQuality = nodelink.options.playback.audio?.resamplingQuality || 'fastest';
     /* INFO: Keep MP4 codec selection in the demuxer, as in playback. */
     const normalizedType = _isMp4Format(type.toLowerCase())
@@ -2334,9 +2352,7 @@ export const createPCMStream = (_guildId, stream, type, nodelink, volume = 1.0, 
                 }
             }
             else if (_isMp4Format(lowerType)) {
-                const output = new PassThrough();
-                pipeline(stream, decodeMp4Stream(resamplingQuality), output, () => { });
-                streams[0] = output;
+                streams[0] = decodeMp4Stream(stream, resamplingQuality, directHttpUrl);
                 break;
             }
             streams.push(new AACDecoderStream({
