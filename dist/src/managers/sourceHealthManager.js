@@ -558,10 +558,7 @@ export default class SourceHealthManager extends EventEmitter {
         record.previousStatus = record.status;
         record.previousReason = record.reason;
         record.previousAction = record.recommendedAction;
-        if (record.status === 'healthy' && previousStatus !== 'healthy') {
-            logger('info', 'SourceHealth', `Source "${record.sourceName}" recovered and is now healthy.`);
-        }
-        else if (record.status !== 'healthy' && record.status !== 'idle') {
+        if (record.status !== 'healthy' && record.status !== 'idle') {
             logger('warn', 'SourceHealth', `Source "${record.sourceName}" transitioned to [${record.status}] (reason: ${record.reason ?? 'none'}): ${record.message}`);
         }
         if (config.websocketNotifications) {
