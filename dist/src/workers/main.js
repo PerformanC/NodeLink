@@ -827,24 +827,30 @@ const handleSocketDisconnect = (socketType, socket) => {
     }
     else if (commandSocket === socket) {
         commandSocket = null;
+        const err = new Error('Master command socket disconnected');
+        for (const [, req] of masterPendingRequests) {
+            clearTimeout(req.timeout);
+            req.reject(err);
+        }
+        masterPendingRequests.clear();
     }
     notifySocketDisconnected(socketType);
     scheduleReconnect(socketType);
 };
 const sendEventHello = () => {
-    if (!eventSocket || eventSocket.destroyed)
+    if (!eventSocket || eventSocket.destroyed || !eventSocket.writable)
         return false;
     const payload = v8.serialize({ pid: process.pid });
-    const header = Buffer.alloc(6);
+    const header = Buffer.allocUnsafe(6);
     header.writeUInt8(0, 0);
     header.writeUInt8(0, 1);
     header.writeUInt32BE(payload.length, 2);
     try {
         eventSocket.cork();
-        const okHeader = eventSocket.write(header);
-        const okPayload = eventSocket.write(payload);
+        eventSocket.write(header);
+        eventSocket.write(payload);
         eventSocket.uncork();
-        return okHeader && okPayload;
+        return true;
     }
     catch {
         return false;
@@ -868,7 +874,7 @@ const connectEventSocket = () => {
 };
 const masterPendingRequests = new Map();
 function executeMasterSourceTask(task, payload, timeoutMs = 60000) {
-    if (!commandSocket || commandSocket.destroyed) {
+    if (!commandSocket || commandSocket.destroyed || !commandSocket.writable) {
         return Promise.reject(new Error('Command socket not connected to master'));
     }
     const id = crypto.randomBytes(16).toString('hex');
@@ -1086,20 +1092,22 @@ function sendStreamError(streamId, error) {
  * Send a binary command frame to the master process.
  */
 function sendCommandFrame(type, requestId, payloadBuf) {
-    if (!commandSocket || commandSocket.destroyed)
+    if (!commandSocket || commandSocket.destroyed || !commandSocket.writable) {
         return false;
+    }
     const idBuf = Buffer.from(requestId || '', 'utf8');
-    const header = Buffer.alloc(6);
+    const header = Buffer.allocUnsafe(6);
     header.writeUInt8(idBuf.length, 0);
     header.writeUInt8(type, 1);
     header.writeUInt32BE(payloadBuf.length, 2);
     try {
         commandSocket.cork();
-        const okHeader = commandSocket.write(header);
-        const okId = commandSocket.write(idBuf);
-        const okPayload = commandSocket.write(payloadBuf);
+        commandSocket.write(header);
+        if (idBuf.length > 0)
+            commandSocket.write(idBuf);
+        commandSocket.write(payloadBuf);
         commandSocket.uncork();
-        return okHeader && okId && okPayload;
+        return true;
     }
     catch {
         return false;
@@ -1220,7 +1228,9 @@ nodelink.trackCacheManager = new TrackCacheManager(nodelink);
 await nodelink.trackCacheManager.load();
 nodelink.sourceWorkerManager = {
     execute: executeMasterSourceTask,
-    hasAvailableWorkers: true
+    get hasAvailableWorkers() {
+        return Boolean(commandSocket && !commandSocket.destroyed && commandSocket.writable);
+    }
 };
 nodelink.sources = new SourceManager(nodelink);
 nodelink.routePlanner = new RoutePlannerManager(nodelink);

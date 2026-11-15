@@ -290,18 +290,19 @@ class SourceWorkerManager {
     type: number,
     payload: Buffer
   ): boolean {
+    if (!socket || socket.destroyed || !socket.writable) return false
     const idBuf = Buffer.from(id, 'utf8')
-    const header = Buffer.alloc(6)
+    const header = Buffer.allocUnsafe(6)
     header.writeUInt8(idBuf.length, 0)
     header.writeUInt8(type, 1)
     header.writeUInt32BE(payload.length, 2)
     try {
       socket.cork()
-      const ok1 = socket.write(header)
-      const ok2 = socket.write(idBuf)
-      const ok3 = socket.write(payload)
+      socket.write(header)
+      if (idBuf.length > 0) socket.write(idBuf)
+      socket.write(payload)
       socket.uncork()
-      return ok1 && ok2 && ok3
+      return true
     } catch {
       return false
     }

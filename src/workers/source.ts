@@ -448,12 +448,10 @@ if (isMainThread) {
   }
 
   const controlSocketPath = process.env.SOURCE_SOCKET_PATH
-  let _controlSocket: Socket | null = null
 
   const connectControlSocket = (): void => {
     if (!controlSocketPath) return
     const socket = net.createConnection(controlSocketPath, () => {
-      _controlSocket = socket
       sockets.set(controlSocketPath, socket)
       socketLastUsed.set(controlSocketPath, Date.now())
 
@@ -543,12 +541,10 @@ if (isMainThread) {
     })
 
     socket.on('error', () => {
-      _controlSocket = null
       sockets.delete(controlSocketPath)
     })
 
     socket.on('close', () => {
-      _controlSocket = null
       sockets.delete(controlSocketPath)
       setTimeout(connectControlSocket, 500)
     })
@@ -1686,12 +1682,35 @@ if (isMainThread) {
             isUpscaling
           )
           const duration = (performance.now() - start).toFixed(1)
-          const urlRes = result as TrackUrlResult | undefined
-          utils.logger(
-            'debug',
-            'SourceWorker',
-            `[Thread ${workerData.threadId}] Resolved track URL for '${track.sourceName}' in ${duration}ms (protocol: ${urlRes?.protocol || 'http'})`
-          )
+          const isError =
+            result &&
+            typeof result === 'object' &&
+            'loadType' in result &&
+            (result as { loadType: string }).loadType === 'error'
+          const urlRes = !isError
+            ? (result as TrackUrlResult | undefined)
+            : undefined
+
+          if (isError) {
+            const errResult = result as { exception?: { message?: string } }
+            utils.logger(
+              'warn',
+              'SourceWorker',
+              `[Thread ${workerData.threadId}] Failed to resolve track URL for '${track.sourceName}' in ${duration}ms: ${errResult.exception?.message || 'unknown error'}`
+            )
+          } else if (urlRes?.url) {
+            utils.logger(
+              'debug',
+              'SourceWorker',
+              `[Thread ${workerData.threadId}] Resolved track URL for '${track.sourceName}' in ${duration}ms (protocol: ${urlRes.protocol || 'http'})`
+            )
+          } else {
+            utils.logger(
+              'debug',
+              'SourceWorker',
+              `[Thread ${workerData.threadId}] No track URL returned for '${track.sourceName}' in ${duration}ms`
+            )
+          }
           break
         }
       }
