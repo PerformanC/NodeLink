@@ -1237,6 +1237,7 @@ function resolveRedirect(currentUrl, location, responseStatus, respHeaders, opti
         }
     };
 }
+const gzipAsync = util.promisify(zlib.gzip);
 /**
  * Internal HTTP/1 request handler with redirect and decompression support.
  *
@@ -1286,7 +1287,7 @@ async function _internalHttp1Request(urlString, options = {}) {
             }
             else {
                 reqHeaders['Content-Encoding'] = 'gzip';
-                payloadBuffer = zlib.gzipSync(rawPayload);
+                payloadBuffer = await gzipAsync(rawPayload);
             }
         }
     }

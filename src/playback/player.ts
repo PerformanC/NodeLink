@@ -4128,7 +4128,11 @@ export class Player {
       const drift = nowPosition - nextTimestamp
 
       if (drift < -15) {
-        this._syncLyrics(true)
+        const retryDelayMs = Math.max(15, Math.round(-drift / playbackSpeed))
+        this._lyricsMarkerTimer = setTimeout(() => {
+          this._syncLyrics(true)
+        }, retryDelayMs)
+        this._lyricsMarkerTimer.unref?.()
         return
       }
 
@@ -4144,6 +4148,7 @@ export class Player {
       })
       this._syncLyrics(true)
     }, delayMs)
+    this._lyricsMarkerTimer.unref?.()
   }
 
   /**
@@ -4158,7 +4163,7 @@ export class Player {
   }
 
   /**
-   * Recalculates the current lyric line index.
+   * Recalculates the current lyric line index using binary search O(log N).
    */
   private _recalculateLyricsIndex(
     positionOverride?: number,
@@ -4176,14 +4181,18 @@ export class Player {
       position = this._getLyricsPosition(playbackSpeed)
     }
 
+    let low = allowBackward ? 0 : Math.max(0, this.lyricsLineIndex)
+    let high = lines.length - 1
     let foundIndex = -1
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      if (!line) continue
-      if (line.timestamp <= position) {
-        foundIndex = i
+
+    while (low <= high) {
+      const mid = (low + high) >> 1
+      const line = lines[mid]
+      if (line && line.timestamp <= position) {
+        foundIndex = mid
+        low = mid + 1
       } else {
-        break
+        high = mid - 1
       }
     }
 

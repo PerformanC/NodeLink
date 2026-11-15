@@ -1497,6 +1497,8 @@ function resolveRedirect(
   }
 }
 
+const gzipAsync = util.promisify(zlib.gzip)
+
 /**
  * Internal HTTP/1 request handler with redirect and decompression support.
  *
@@ -1568,7 +1570,7 @@ async function _internalHttp1Request(
         payloadBuffer = Buffer.from(rawPayload)
       } else {
         reqHeaders['Content-Encoding'] = 'gzip'
-        payloadBuffer = zlib.gzipSync(rawPayload)
+        payloadBuffer = await gzipAsync(rawPayload)
       }
     }
   }

@@ -104,6 +104,7 @@ function startServerMonitor(server, isClusterPrimary = false) {
             server.statsManager.setWebsocketConnections(server.sessions.activeCount);
             lastBroadcastAt = _updateAndBroadcastStats(server, lastBroadcastAt, statsSendInterval);
         }, metricsInterval);
+        state.statsBroadcastTimer.unref?.();
         return;
     }
     state.playerUpdateTimer = setInterval(() => {
@@ -112,6 +113,7 @@ function startServerMonitor(server, isClusterPrimary = false) {
             _checkSessionPlayers(session, now, zombieThresholdMs);
         }
     }, playerUpdateInterval);
+    state.playerUpdateTimer.unref?.();
     let lastBroadcastAt = 0;
     state.statsBroadcastTimer = setInterval(() => {
         const { totalPlayers, playingPlayers, voiceConnections } = _countActiveMetrics(server.sessions.values());
@@ -131,6 +133,7 @@ function startServerMonitor(server, isClusterPrimary = false) {
         }
         lastBroadcastAt = _updateAndBroadcastStats(server, lastBroadcastAt, statsSendInterval);
     }, metricsInterval);
+    state.statsBroadcastTimer.unref?.();
 }
 function stopServerMonitor(server) {
     const state = _getMonitorState(server);

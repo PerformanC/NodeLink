@@ -170,6 +170,7 @@ function startServerMonitor(
         statsSendInterval
       )
     }, metricsInterval)
+    state.statsBroadcastTimer.unref?.()
 
     return
   }
@@ -180,6 +181,7 @@ function startServerMonitor(
       _checkSessionPlayers(session, now, zombieThresholdMs)
     }
   }, playerUpdateInterval)
+  state.playerUpdateTimer.unref?.()
 
   let lastBroadcastAt = 0
 
@@ -208,6 +210,7 @@ function startServerMonitor(
       statsSendInterval
     )
   }, metricsInterval)
+  state.statsBroadcastTimer.unref?.()
 }
 
 function stopServerMonitor(server: NodelinkServer): void {

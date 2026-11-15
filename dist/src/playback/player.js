@@ -2834,7 +2834,11 @@ export class Player {
             const nowPosition = this._getLyricsPosition(playbackSpeed);
             const drift = nowPosition - nextTimestamp;
             if (drift < -15) {
-                this._syncLyrics(true);
+                const retryDelayMs = Math.max(15, Math.round(-drift / playbackSpeed));
+                this._lyricsMarkerTimer = setTimeout(() => {
+                    this._syncLyrics(true);
+                }, retryDelayMs);
+                this._lyricsMarkerTimer.unref?.();
                 return;
             }
             if (Math.abs(drift) > 100) {
@@ -2848,6 +2852,7 @@ export class Player {
             });
             this._syncLyrics(true);
         }, delayMs);
+        this._lyricsMarkerTimer.unref?.();
     }
     /**
      * Computes current lyrics position based on packets received.
@@ -2859,7 +2864,7 @@ export class Player {
         return this._lyricsBasePosition + deltaPackets * 20 * playbackSpeed;
     }
     /**
-     * Recalculates the current lyric line index.
+     * Recalculates the current lyric line index using binary search O(log N).
      */
     _recalculateLyricsIndex(positionOverride, linesOverride, allowBackward = false) {
         if (!this.currentLyrics?.lines)
@@ -2871,16 +2876,18 @@ export class Player {
             const playbackSpeed = timescale.speed * timescale.rate;
             position = this._getLyricsPosition(playbackSpeed);
         }
+        let low = allowBackward ? 0 : Math.max(0, this.lyricsLineIndex);
+        let high = lines.length - 1;
         let foundIndex = -1;
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            if (!line)
-                continue;
-            if (line.timestamp <= position) {
-                foundIndex = i;
+        while (low <= high) {
+            const mid = (low + high) >> 1;
+            const line = lines[mid];
+            if (line && line.timestamp <= position) {
+                foundIndex = mid;
+                low = mid + 1;
             }
             else {
-                break;
+                high = mid - 1;
             }
         }
         if (!allowBackward && foundIndex < this.lyricsLineIndex) {
