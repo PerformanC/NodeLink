@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import inspector from 'node:inspector'
@@ -1263,6 +1264,47 @@ const connectEventSocket = (): void => {
   })
 }
 
+const masterPendingRequests = new Map<
+  string,
+  {
+    resolve: (val: unknown) => void
+    reject: (err: Error) => void
+    timeout: NodeJS.Timeout
+  }
+>()
+
+function executeMasterSourceTask<T = unknown>(
+  task: string,
+  payload: unknown,
+  timeoutMs = 60000
+): Promise<T> {
+  if (!commandSocket || commandSocket.destroyed) {
+    return Promise.reject(new Error('Command socket not connected to master'))
+  }
+  const id = crypto.randomBytes(16).toString('hex')
+  const payloadBuf = v8.serialize({ task, payload })
+
+  return new Promise<T>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      masterPendingRequests.delete(id)
+      reject(new Error(`Master source task '${task}' timed out`))
+    }, timeoutMs)
+
+    masterPendingRequests.set(id, {
+      resolve: (val) => resolve(val as T),
+      reject,
+      timeout
+    })
+
+    const ok = sendCommandFrame(4, id, payloadBuf)
+    if (!ok) {
+      clearTimeout(timeout)
+      masterPendingRequests.delete(id)
+      reject(new Error('Failed to write frame to master command socket'))
+    }
+  })
+}
+
 const connectCommandSocket = (): void => {
   if (!commandSocketPath) return
 
@@ -1339,6 +1381,30 @@ const connectCommandSocket = (): void => {
             'Worker',
             `Command socket parse error: ${getErrorMessage(e)}`
           )
+        }
+      } else if (type === 2) {
+        const pending = masterPendingRequests.get(id)
+        if (pending) {
+          clearTimeout(pending.timeout)
+          masterPendingRequests.delete(id)
+          try {
+            const data = v8.deserialize(payload)
+            pending.resolve(data)
+          } catch (e: unknown) {
+            pending.reject(e as Error)
+          }
+        }
+      } else if (type === 3) {
+        const pending = masterPendingRequests.get(id)
+        if (pending) {
+          clearTimeout(pending.timeout)
+          masterPendingRequests.delete(id)
+          try {
+            const err = v8.deserialize(payload)
+            pending.reject(new Error(String(err)))
+          } catch (e: unknown) {
+            pending.reject(e as Error)
+          }
         }
       }
     }
@@ -1614,6 +1680,10 @@ nodelink.statsManager = new StatsManager(nodelink)
 nodelink.credentialManager = new CredentialManager(nodelink)
 nodelink.trackCacheManager = new TrackCacheManager(nodelink)
 await nodelink.trackCacheManager.load()
+;(nodelink as Record<string, unknown>).sourceWorkerManager = {
+  execute: executeMasterSourceTask,
+  hasAvailableWorkers: true
+}
 nodelink.sources = new SourceManager(nodelink)
 nodelink.routePlanner = new RoutePlannerManager(
   nodelink

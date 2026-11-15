@@ -238,7 +238,14 @@ if (isMainThread) {
         processNextTask()
       } else if (msg.type === 'result') {
         const { socketPath, id, result, error } = msg
-        finishTask(socketPath, id, result, error)
+        finishTask(socketPath, id, result, error, false)
+
+        worker.load = Math.max(0, worker.load - 1)
+        processNextTask()
+      } else if (msg.type === 'binaryResult') {
+        const { socketPath, id, result, error } = msg
+        const buf = result ? Buffer.from(result) : undefined
+        finishTask(socketPath, id, buf, error, true)
 
         worker.load = Math.max(0, worker.load - 1)
         processNextTask()
@@ -400,23 +407,33 @@ if (isMainThread) {
    * Sends task completion result or error back through socket
    * @param socketPath - Unix socket path
    * @param id - Task identifier
-   * @param result - Result data (JSON string)
+   * @param result - Result data (JSON string or binary Buffer)
    * @param error - Error message if task failed
+   * @param isBinary - Whether result should be sent as binary frame (type 4)
    * @internal
    */
   function finishTask(
     socketPath: string,
     id: string,
-    result: string | undefined,
-    error: string | undefined
+    result: string | Buffer | undefined,
+    error: string | undefined,
+    isBinary = false
   ): void {
     getSocket(socketPath)
       .then((socket) => {
         socketLastUsed.set(socketPath, Date.now())
         if (error) {
           sendFrame(socket, id, 2, Buffer.from(error, 'utf8'))
-        } else if (result) {
-          sendFrame(socket, id, 0, Buffer.from(result, 'utf8'))
+        } else if (isBinary && Buffer.isBuffer(result)) {
+          sendFrame(socket, id, 4, result)
+        } else {
+          const body =
+            result !== undefined
+              ? Buffer.isBuffer(result)
+                ? result
+                : Buffer.from(result, 'utf8')
+              : Buffer.from('null', 'utf8')
+          sendFrame(socket, id, 0, body)
           sendFrame(socket, id, 1, Buffer.alloc(0))
         }
       })
@@ -428,6 +445,115 @@ if (isMainThread) {
         )
       })
   }
+
+  const controlSocketPath = process.env.SOURCE_SOCKET_PATH
+  let _controlSocket: Socket | null = null
+
+  const connectControlSocket = (): void => {
+    if (!controlSocketPath) return
+    const socket = net.createConnection(controlSocketPath, () => {
+      _controlSocket = socket
+      sockets.set(controlSocketPath, socket)
+      socketLastUsed.set(controlSocketPath, Date.now())
+
+      const helloPayload = v8.serialize({ pid: process.pid })
+      sendFrame(socket, '', 5, helloPayload)
+    })
+
+    const frameChunks: Buffer[] = []
+    let frameBytes = 0
+
+    const peekBytes = (count: number): Buffer => {
+      const first = frameChunks[0]
+      if (first && first.length >= count) return first.subarray(0, count)
+
+      const out = Buffer.allocUnsafe(count)
+      let offset = 0
+      for (const piece of frameChunks) {
+        const take = Math.min(piece.length, count - offset)
+        piece.copy(out, offset, 0, take)
+        offset += take
+        if (offset >= count) break
+      }
+      return out
+    }
+
+    const readBytes = (count: number): Buffer => {
+      const out = Buffer.allocUnsafe(count)
+      let offset = 0
+
+      while (offset < count) {
+        const piece = frameChunks[0]
+        if (!piece) break
+
+        const take = Math.min(piece.length, count - offset)
+        piece.copy(out, offset, 0, take)
+        offset += take
+
+        if (take === piece.length) frameChunks.shift()
+        else frameChunks[0] = piece.subarray(take)
+      }
+
+      frameBytes = Math.max(0, frameBytes - count)
+      return out
+    }
+
+    socket.on('data', (chunk: Buffer) => {
+      if (!chunk.length) return
+      frameChunks.push(chunk)
+      frameBytes += chunk.length
+
+      while (frameBytes >= 6) {
+        const header = peekBytes(6)
+        const idSize = header.readUInt8(0)
+        const type = header.readUInt8(1)
+        const payloadSize = header.readUInt32BE(2)
+        const totalSize = 6 + idSize + payloadSize
+
+        if (frameBytes < totalSize) break
+
+        const frame = readBytes(totalSize)
+        const id = frame.toString('utf8', 6, 6 + idSize)
+        const payload = frame.subarray(6 + idSize)
+
+        if (type === 6) {
+          try {
+            const data = v8.deserialize(payload) as {
+              task: string
+              payload: unknown
+            }
+            enqueueHeadQueue(taskQueue, {
+              id,
+              task: data.task as TaskData['task'],
+              payload: data.payload,
+              socketPath: controlSocketPath
+            })
+            maybeScaleUpMicroWorkers()
+            processNextTask()
+          } catch (e: unknown) {
+            utils.logger(
+              'error',
+              'SourceWorker',
+              `Failed to parse task frame from socket: ${(e as Error).message}`
+            )
+          }
+        }
+      }
+    })
+
+    socket.on('error', () => {
+      _controlSocket = null
+      sockets.delete(controlSocketPath)
+    })
+
+    socket.on('close', () => {
+      _controlSocket = null
+      sockets.delete(controlSocketPath)
+      setTimeout(connectControlSocket, 500)
+    })
+  }
+
+  if (controlSocketPath) connectControlSocket()
 
   /**
    * Sends a stream data chunk through socket
@@ -1539,6 +1665,38 @@ if (isMainThread) {
           )
           result = true
           break
+        case 'getTrackUrl': {
+          const { track, itag, isRecovering, isUpscaling } = payload as {
+            track: TrackInfo
+            itag?: number
+            isRecovering?: boolean
+            isUpscaling?: boolean
+          }
+          result = await nodelink.sources?.getTrackUrl(
+            track,
+            itag,
+            isRecovering,
+            isUpscaling
+          )
+          break
+        }
+      }
+      if (task === 'getTrackUrl') {
+        const bin = v8.serialize(result)
+        const ab = bin.buffer.slice(
+          bin.byteOffset,
+          bin.byteOffset + bin.byteLength
+        )
+        ;(parentPort as MessagePort).postMessage(
+          {
+            type: 'binaryResult',
+            id,
+            socketPath,
+            result: ab
+          },
+          [ab]
+        )
+        return
       }
       ;(parentPort as MessagePort).postMessage({
         type: 'result',

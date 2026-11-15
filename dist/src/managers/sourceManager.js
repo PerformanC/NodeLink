@@ -520,6 +520,23 @@ export default class SourcesManager {
             throw new Error(`Source ${track.sourceName} not found or does not support getTrackUrl`);
         }
         const sourceGetTrackUrl = instance.getTrackUrl;
+        const swm = this.nodelink.sourceWorkerManager;
+        if (swm?.execute && swm.hasAvailableWorkers) {
+            try {
+                const workerResult = await swm.execute('getTrackUrl', {
+                    track,
+                    itag,
+                    isRecovering,
+                    isUpscaling
+                });
+                if (workerResult) {
+                    return workerResult;
+                }
+            }
+            catch (err) {
+                logger('warn', 'Sources', `Source worker getTrackUrl failed for ${track.sourceName}, falling back to local: ${err.message}`);
+            }
+        }
         const activeSources = this.resolvingSources.getStore();
         if (activeSources?.has(instance)) {
             return {

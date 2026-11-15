@@ -784,6 +784,40 @@ export default class SourcesManager implements SourceManagerLike {
     }
     const sourceGetTrackUrl = instance.getTrackUrl
 
+    const swm = this.nodelink.sourceWorkerManager as
+      | {
+          execute?: <T>(task: string, payload: unknown) => Promise<T>
+          hasAvailableWorkers?: boolean
+        }
+      | undefined
+
+    if (swm?.execute && swm.hasAvailableWorkers) {
+      try {
+        const workerResult = await swm.execute<
+          TrackUrlResult & {
+            protocol?: string
+            format?: TrackFormat
+            trackInfo?: TrackInfoExtended
+            additionalData?: Record<string, unknown>
+          }
+        >('getTrackUrl', {
+          track,
+          itag,
+          isRecovering,
+          isUpscaling
+        })
+        if (workerResult) {
+          return workerResult
+        }
+      } catch (err) {
+        logger(
+          'warn',
+          'Sources',
+          `Source worker getTrackUrl failed for ${track.sourceName}, falling back to local: ${(err as Error).message}`
+        )
+      }
+    }
+
     const activeSources = this.resolvingSources.getStore()
     if (activeSources?.has(instance)) {
       return {

@@ -614,6 +614,38 @@ export default class WorkerManager {
                             errorMsg = payload.toString('utf8');
                         }
                         this._handleCommandResponse(id, null, errorMsg);
+                        continue;
+                    }
+                    if (type === 4) {
+                        try {
+                            const data = v8.deserialize(payload);
+                            const nodelink = getGlobalNodelink();
+                            const swm = nodelink?.sourceWorkerManager;
+                            const workerId = commandSocket._workerId;
+                            if (swm?.execute && workerId !== undefined) {
+                                swm
+                                    .execute(data.task, data.payload)
+                                    .then((res) => {
+                                    const resBuf = v8.serialize(res);
+                                    this._sendCommandSocketFrame(workerId, 2, id, resBuf);
+                                })
+                                    .catch((err) => {
+                                    const errBuf = v8.serialize(err.message);
+                                    this._sendCommandSocketFrame(workerId, 3, id, errBuf);
+                                });
+                            }
+                            else if (workerId !== undefined) {
+                                const errBuf = v8.serialize('SourceWorkerManager not available on master');
+                                this._sendCommandSocketFrame(workerId, 3, id, errBuf);
+                            }
+                        }
+                        catch (e) {
+                            const workerId = commandSocket._workerId;
+                            if (workerId !== undefined) {
+                                const errBuf = v8.serialize(e.message);
+                                this._sendCommandSocketFrame(workerId, 3, id, errBuf);
+                            }
+                        }
                     }
                 }
             });

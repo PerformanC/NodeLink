@@ -33,7 +33,13 @@ export enum FrameType {
   /** Error frame (2) - contains error message */
   ERROR = 2,
   /** Chat action frame (3) - contains live chat actions */
-  CHAT_ACTION = 3
+  CHAT_ACTION = 3,
+  /** Binary result frame (4) - contains v8 serialized binary payload */
+  BINARY = 4,
+  /** Hello frame (5) - worker handshake */
+  HELLO = 5,
+  /** Task frame (6) - master to worker task dispatch */
+  TASK = 6
 }
 
 /**
@@ -115,6 +121,22 @@ export interface ResultMessage extends WorkerMessage {
 }
 
 /**
+ * Message containing binary task result
+ * @public
+ */
+export interface BinaryResultMessage extends WorkerMessage {
+  type: 'binaryResult'
+  /** Socket path for response */
+  socketPath: string
+  /** Task identifier */
+  id: string
+  /** Binary ArrayBuffer result */
+  result?: ArrayBuffer
+  /** Error message (mutually exclusive with result) */
+  error?: string
+}
+
+/**
  * Message containing stream data chunk
  * @public
  */
@@ -189,6 +211,7 @@ export interface SourceHealthMetricMessage {
 export type WorkerMessageType =
   | ReadyMessage
   | ResultMessage
+  | BinaryResultMessage
   | StreamMessage
   | ChatActionMessage
   | EndMessage
@@ -227,6 +250,7 @@ export type TaskType =
   | 'sourceHealthProbe'
   | 'analyzePcm'
   | 'profilerCommand'
+  | 'getTrackUrl'
 
 /**
  * Base task payload structure
@@ -629,7 +653,8 @@ export interface SourceManager {
   getTrackUrl: (
     track: TrackInfo | TrackInfoExtended,
     itag?: number,
-    isRecovering?: boolean
+    isRecovering?: boolean,
+    isUpscaling?: boolean
   ) => Promise<
     TrackUrlResult & {
       protocol?: string

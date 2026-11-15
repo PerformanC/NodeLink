@@ -16,4 +16,10 @@ export var FrameType;
     FrameType[FrameType["ERROR"] = 2] = "ERROR";
     /** Chat action frame (3) - contains live chat actions */
     FrameType[FrameType["CHAT_ACTION"] = 3] = "CHAT_ACTION";
+    /** Binary result frame (4) - contains v8 serialized binary payload */
+    FrameType[FrameType["BINARY"] = 4] = "BINARY";
+    /** Hello frame (5) - worker handshake */
+    FrameType[FrameType["HELLO"] = 5] = "HELLO";
+    /** Task frame (6) - master to worker task dispatch */
+    FrameType[FrameType["TASK"] = 6] = "TASK";
 })(FrameType || (FrameType = {}));

@@ -428,7 +428,8 @@ export interface SourceManagerLike {
   getTrackUrl: (
     trackInfo: TrackInfoExtended,
     itag?: number,
-    isRecovering?: boolean
+    isRecovering?: boolean,
+    isUpscaling?: boolean
   ) => Promise<
     TrackUrlResult & {
       protocol?: string
