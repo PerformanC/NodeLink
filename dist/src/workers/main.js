@@ -1753,22 +1753,27 @@ async function processQueue(queueKey) {
             }
             case 'loadTracks': {
                 const { identifier } = (payload ?? {});
-                const re = /^(?:(?<url>(?:https?|ftts):\/\/\S+)|(?<source>[A-Za-z0-9]+):(?<query>[^/\s].*))$/i;
+                const re = /^(?:(?<url>(?:https?|ftts):\/\/\S+)|(?<source>(?![A-Za-z]:[\\/])[A-Za-z0-9]+):\s*(?<query>(?!\/\/).+)|(?<local>(?:\/|[A-Za-z]:\\|\\).+))$/is;
                 const match = re.exec(identifier);
                 if (!match)
                     throw new Error('Invalid identifier');
-                const { url, source, query } = (match.groups ?? {});
+                const { url, source, query, local } = (match.groups ?? {});
                 if (url)
                     result = await nodelink.sources.resolve(url);
+                else if (local) {
+                    result = await nodelink.sources.search('local', local.trim());
+                }
                 else if (source === 'search') {
-                    if (!query)
+                    const cleanQuery = query?.replace(/\r?\n+/g, ' ').trim();
+                    if (!cleanQuery)
                         throw new Error('Missing search query');
-                    result = await nodelink.sources.unifiedSearch(query);
+                    result = await nodelink.sources.unifiedSearch(cleanQuery);
                 }
                 else {
-                    if (!source || !query)
+                    const cleanQuery = query?.replace(/\r?\n+/g, ' ').trim();
+                    if (!source || !cleanQuery)
                         throw new Error('Missing source or query');
-                    result = await nodelink.sources.search(source, query);
+                    result = await nodelink.sources.search(source, cleanQuery);
                 }
                 break;
             }

@@ -569,7 +569,7 @@ export default class SourcesManager implements SourceManagerLike {
     }
 
     let searchType = 'track'
-    let searchQuery = query
+    let searchQuery = query.replace(/\r?\n+/g, ' ').trim()
 
     if (query.includes(':')) {
       const parts = query.split(':')

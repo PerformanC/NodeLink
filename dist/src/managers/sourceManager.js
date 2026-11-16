@@ -378,7 +378,7 @@ export default class SourcesManager {
             throw new Error(`Source or search alias not found for: ${sourceTerm}`);
         }
         let searchType = 'track';
-        let searchQuery = query;
+        let searchQuery = query.replace(/\r?\n+/g, ' ').trim();
         if (query.includes(':')) {
             const parts = query.split(':');
             const possibleType = (parts[0] ?? '').toLowerCase();
