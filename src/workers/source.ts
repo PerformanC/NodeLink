@@ -1796,7 +1796,7 @@ if (isMainThread) {
           utils.logger(
             'info',
             'SourceWorker',
-            `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`
+            `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}]`
           )
           const client = new StreamTransportClient({
             socketPath: transportSocketPath,

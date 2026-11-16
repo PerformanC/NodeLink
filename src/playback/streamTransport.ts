@@ -1171,7 +1171,7 @@ export class StreamTransportServer {
         logger(
           'info',
           'StreamTransport',
-          `Listening for binary streams via ${TRANSPORT_KIND} at ${this.socketPath}`
+          `Listening for binary streams via ${TRANSPORT_KIND}`
         )
         resolve()
       })

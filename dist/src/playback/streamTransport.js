@@ -881,7 +881,7 @@ export class StreamTransportServer {
                     }
                     catch { }
                 }
-                logger('info', 'StreamTransport', `Listening for binary streams via ${TRANSPORT_KIND} at ${this.socketPath}`);
+                logger('info', 'StreamTransport', `Listening for binary streams via ${TRANSPORT_KIND}`);
                 resolve();
             });
         });

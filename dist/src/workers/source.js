@@ -1272,7 +1272,7 @@ else {
                     }
                     const streamIdHex = idBuf.toString('hex');
                     const transportKind = process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket';
-                    utils.logger('info', 'SourceWorker', `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`);
+                    utils.logger('info', 'SourceWorker', `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}]`);
                     const client = new StreamTransportClient({
                         socketPath: transportSocketPath,
                         streamIdBytes: idBuf,
