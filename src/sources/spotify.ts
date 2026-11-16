@@ -859,18 +859,14 @@ export default class SpotifySource implements SourceInstance {
     term?: string,
     type = 'track'
   ): Promise<SourceResult> {
-    const sanitizedQuery = query.replace(/\r?\n+/g, ' ').trim()
-
-    if (term === 'spsuggest' || sanitizedQuery.startsWith('spsuggest:'))
+    if (term === 'spsuggest' || query.startsWith('spsuggest:'))
       return await this._resolveSearchSuggestions(
-        sanitizedQuery.replace(/^spsuggest:/, '').trim()
+        query.replace(/^spsuggest:/, '').trim()
       )
-    if (term === 'spsimilar' || sanitizedQuery.startsWith('spsimilar:'))
-      return await this._resolveSimilar(
-        sanitizedQuery.replace(/^spsimilar:/, '').trim()
-      )
+    if (term === 'spsimilar' || query.startsWith('spsimilar:'))
+      return await this._resolveSimilar(query.replace(/^spsimilar:/, '').trim())
     if (term && this.recommendationTerm.includes(term))
-      return await this.getRecommendations(sanitizedQuery)
+      return await this.getRecommendations(query)
 
     try {
       const limit = Math.min(
@@ -887,7 +883,7 @@ export default class SpotifySource implements SourceInstance {
               hash: 'fcad5a3e0d5af727fb76966f06971c19cfa2275e6ff7671196753e008611873c'
             },
             {
-              searchTerm: sanitizedQuery,
+              searchTerm: query,
               offset: 0,
               limit,
               numberOfTopResults: 5,
@@ -918,7 +914,7 @@ export default class SpotifySource implements SourceInstance {
         const res = await this._apiRequest<
           Record<string, SpotifyPagingObject<SpotifyTrack | SpotifyArtist>>
         >(
-          `/search?q=${encodeURIComponent(sanitizedQuery)}&type=${type}&limit=${limit}&market=${this.market}`
+          `/search?q=${encodeURIComponent(query)}&type=${type}&limit=${limit}&market=${this.market}`
         )
         if (res) {
           const results = this._processOfficialSearch(res, type)
@@ -2383,14 +2379,31 @@ export default class SpotifySource implements SourceInstance {
           allowExplicit: this.config.allowExplicit,
           minScore: 300
         })
-        if (!best && attemptedCandidates === 0 && query !== track.title) {
-          const titleRes = await sm.searchWithDefault(track.title)
-          if (titleRes.loadType === 'search' && titleRes.data.length) {
-            candidates.push(...titleRes.data)
-            best = getBestMatch(candidates, track, {
-              allowExplicit: this.config.allowExplicit,
-              minScore: 300
-            })
+        if (!best && attemptedCandidates === 0) {
+          if (query !== track.title) {
+            const titleRes = await sm.searchWithDefault(track.title)
+            if (titleRes.loadType === 'search' && titleRes.data.length) {
+              candidates.push(...titleRes.data)
+              best = getBestMatch(candidates, track, {
+                allowExplicit: this.config.allowExplicit,
+                minScore: 300
+              })
+            }
+          }
+          if (!best) {
+            const primaryTitle = track.title
+              .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')
+              .trim()
+            if (primaryTitle && primaryTitle !== track.title) {
+              const primaryRes = await sm.searchWithDefault(primaryTitle)
+              if (primaryRes.loadType === 'search' && primaryRes.data.length) {
+                candidates.push(...primaryRes.data)
+                best = getBestMatch(candidates, track, {
+                  allowExplicit: this.config.allowExplicit,
+                  minScore: 300
+                })
+              }
+            }
           }
         }
         if (!best) break
