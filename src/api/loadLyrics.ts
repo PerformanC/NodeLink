@@ -1,3 +1,4 @@
+import type { LyricsRequestType } from '../managers/lyricsManager.ts'
 import type {
   ApiNodelinkServer,
   ApiRequest,
@@ -40,6 +41,7 @@ interface LyricsSourceWorkerManager {
       decodedTrackInfo: EncodedTrackPayload['info']
       language?: string
       source?: string
+      type?: LyricsRequestType
     }
   ) => boolean
 }
@@ -75,6 +77,7 @@ interface LyricsWorkerManager {
       decodedTrackInfo: EncodedTrackPayload['info']
       language?: string
       source?: string
+      type?: LyricsRequestType
     }
   ) => Promise<LyricsResponseValue>
 }
@@ -94,7 +97,8 @@ interface LyricsManagerRuntime {
     track: Pick<EncodedTrackPayload, 'info'>,
     language?: string,
     skipTrackSource?: boolean,
-    requestedSource?: string
+    requestedSource?: string,
+    type?: LyricsRequestType
   ) => Promise<LyricsResponseValue>
 }
 
@@ -163,6 +167,19 @@ function getLanguageFromQuery(parsedUrl: URL): string | undefined {
 }
 
 /**
+ * Reads the optional `type` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Normalized lyrics request type (`onlyCaptions` or `lyrics`), or `undefined` when absent.
+ */
+function getTypeFromQuery(parsedUrl: URL): LyricsRequestType | undefined {
+  const raw = parsedUrl.searchParams.get('type')?.trim().toLowerCase()
+  if (raw === 'onlycaptions' || raw === 'captions') return 'onlyCaptions'
+  if (raw === 'lyrics') return 'lyrics'
+  return undefined
+}
+
+/**
  * Builds a strongly typed runtime view for the lyrics endpoint.
  *
  * @param nodelink - Router-facing runtime instance.
@@ -218,8 +235,8 @@ async function handler(
 
   const encodedTrack = getEncodedTrackFromQuery(parsedUrl)
   const language = getLanguageFromQuery(parsedUrl)
-
   const source = getSourceFromQuery(parsedUrl)
+  const type = getTypeFromQuery(parsedUrl)
 
   if (!encodedTrack) {
     logger('warn', 'Lyrics', MISSING_ENCODED_TRACK_MESSAGE)
@@ -251,7 +268,8 @@ async function handler(
         {
           decodedTrackInfo: decodedTrack.info,
           language,
-          source
+          source,
+          type
         }
       )
       if (delegated) {
@@ -265,14 +283,16 @@ async function handler(
       lyricsData = await runtime.workerManager.execute(worker, 'loadLyrics', {
         decodedTrackInfo: decodedTrack.info,
         language,
-        source
+        source,
+        type
       })
     } else {
       lyricsData = await runtime.lyrics.loadLyrics(
         decodedTrack,
         language,
         undefined,
-        source
+        source,
+        type
       )
     }
 

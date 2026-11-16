@@ -154,7 +154,7 @@ export interface YouTubeResolvedTrack {
       /**
        * Available caption tracks.
        */
-      captions?: YouTubeCaptionTrack[]
+      captions?: YouTubeCaptionTrack[] | string
     }
   }
 }

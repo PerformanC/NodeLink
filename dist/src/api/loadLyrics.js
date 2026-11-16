@@ -39,6 +39,20 @@ function getLanguageFromQuery(parsedUrl) {
     return language ? language : undefined;
 }
 /**
+ * Reads the optional `type` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Normalized lyrics request type (`onlyCaptions` or `lyrics`), or `undefined` when absent.
+ */
+function getTypeFromQuery(parsedUrl) {
+    const raw = parsedUrl.searchParams.get('type')?.trim().toLowerCase();
+    if (raw === 'onlycaptions' || raw === 'captions')
+        return 'onlyCaptions';
+    if (raw === 'lyrics')
+        return 'lyrics';
+    return undefined;
+}
+/**
  * Builds a strongly typed runtime view for the lyrics endpoint.
  *
  * @param nodelink - Router-facing runtime instance.
@@ -73,6 +87,7 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
     const encodedTrack = getEncodedTrackFromQuery(parsedUrl);
     const language = getLanguageFromQuery(parsedUrl);
     const source = getSourceFromQuery(parsedUrl);
+    const type = getTypeFromQuery(parsedUrl);
     if (!encodedTrack) {
         logger('warn', 'Lyrics', MISSING_ENCODED_TRACK_MESSAGE);
         sendErrorResponse(req, res, 400, 'Bad Request', MISSING_ENCODED_TRACK_MESSAGE, parsedUrl.pathname);
@@ -85,7 +100,8 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
             const delegated = runtime.sourceWorkerManager.delegate(req, res, 'loadLyrics', {
                 decodedTrackInfo: decodedTrack.info,
                 language,
-                source
+                source,
+                type
             });
             if (delegated) {
                 return;
@@ -97,11 +113,12 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
             lyricsData = await runtime.workerManager.execute(worker, 'loadLyrics', {
                 decodedTrackInfo: decodedTrack.info,
                 language,
-                source
+                source,
+                type
             });
         }
         else {
-            lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language, undefined, source);
+            lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language, undefined, source, type);
         }
         sendResponse(req, res, lyricsData, 200);
     }

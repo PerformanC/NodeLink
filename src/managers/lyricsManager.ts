@@ -39,6 +39,12 @@ export interface TrackInfoLike {
 }
 
 /**
+ * Lyrics loading mode requested by callers.
+ * @public
+ */
+export type LyricsRequestType = 'lyrics' | 'onlyCaptions'
+
+/**
  * Unified line structure used by lyrics payloads.
  * @public
  */
@@ -51,6 +57,12 @@ export interface LyricsLine {
   duration: number
   /** Optional per-word timing information. */
   words?: Array<Record<string, unknown>>
+  /** Optional semantic line type (spoken/sung lyric vs instrumental break). */
+  kind?: 'lyric' | 'instrumental'
+  /** Optional section label (e.g. Verse, Chorus, Bridge, Intro). */
+  section?: string
+  /** Whether the line represents background/harmony vocals. */
+  isBackground?: boolean
 }
 
 /**
@@ -66,6 +78,12 @@ export interface LyricsData {
   lines?: LyricsLine[]
   /** Provider that produced the final payload. */
   provider?: string
+  /** Whether payload represents musical lyrics or raw source captions. */
+  kind?: 'lyrics' | 'captions'
+  /** End timestamp (ms) of the instrumental intro before the first line. */
+  introEndMs?: number
+  /** Start timestamp (ms) of the instrumental outro after the last line. */
+  outroStartMs?: number
   /** Attribution required by some lyrics providers. */
   attribution?: {
     name: string
@@ -171,6 +189,39 @@ const isLyricsSourceEnabled = (
   return enabled === true
 }
 
+const getLyricsQualityTier = (result: LyricsLoadResult): number => {
+  if (result.loadType !== 'lyrics') return 0
+  const lines = result.data.lines ?? []
+  if (lines.some((line) => Array.isArray(line.words) && line.words.length > 0)) {
+    return 3
+  }
+  if (result.data.synced) return 2
+  return 1
+}
+
+const enrichTemporalMetadata = (
+  data: LyricsData,
+  trackLengthMs?: number
+): void => {
+  const lines = data.lines
+  if (!lines || lines.length === 0) return
+
+  const first = lines[0]
+  if (first && first.time > 0 && data.introEndMs === undefined) {
+    data.introEndMs = first.time
+  }
+
+  const last = lines[lines.length - 1]
+  if (last && data.outroStartMs === undefined) {
+    const lastEnd = last.time + Math.max(0, last.duration || 0)
+    if (trackLengthMs && trackLengthMs > lastEnd && lastEnd > 0) {
+      data.outroStartMs = lastEnd
+    } else if (!last.duration && last.time > 0) {
+      data.outroStartMs = last.time
+    }
+  }
+}
+
 export default class LyricsManager {
   nodelink: LyricsManagerContext
   lyricsSources: Map<string, LyricsSourceInstance>
@@ -260,7 +311,8 @@ export default class LyricsManager {
     decodedTrack: DecodedTrack | null | undefined,
     language?: string,
     skipTrackSource = false,
-    requestedSource?: string
+    requestedSource?: string,
+    type: LyricsRequestType = 'lyrics'
   ): Promise<LyricsLoadResult> {
     if (!decodedTrack?.info?.sourceName || !decodedTrack.info?.uri) {
       logger(
@@ -352,6 +404,24 @@ export default class LyricsManager {
       : undefined
     const isYouTube = sourceName === 'youtube' || sourceName === 'ytmusic'
 
+    if (type === 'onlyCaptions') {
+      if (!lyricsSource || skipTrackSource) {
+        return { loadType: 'empty', data: {} }
+      }
+      const captions = await this._fetchFrom(
+        lyricsSource,
+        sourceName,
+        trackInfo,
+        language
+      )
+      if (captions?.loadType === 'lyrics') {
+        captions.data.provider = sourceName
+        captions.data.kind = 'captions'
+        enrichTemporalMetadata(captions.data, trackInfo.length)
+      }
+      return captions
+    }
+
     let youtubeCaptions: LyricsLoadResult | null = null
     let lastError: LyricsLoadResult | null = null
     let sawEmpty = false
@@ -379,6 +449,8 @@ export default class LyricsManager {
         )
         if (lyrics?.loadType === 'lyrics') {
           lyrics.data.provider = sourceName
+          lyrics.data.kind = 'lyrics'
+          enrichTemporalMetadata(lyrics.data, trackInfo.length)
           return lyrics
         }
 
@@ -394,6 +466,13 @@ export default class LyricsManager {
       ...(this.nodelink.options.lyrics?.preferredSources ?? []),
       ...this.lyricsSources.keys()
     ])
+
+    let bestCandidate: {
+      result: Extract<LyricsLoadResult, { loadType: 'lyrics' }>
+      name: string
+      tier: number
+    } | null = null
+
     for (const name of sources) {
       const source = this.lyricsSources.get(name)
       if (!source || name === sourceName) continue
@@ -410,46 +489,59 @@ export default class LyricsManager {
         continue
       }
 
-      if (lyrics && lyrics.loadType !== 'empty') {
-        if (
-          isYouTube &&
-          youtubeCaptions?.loadType === 'lyrics' &&
-          lyrics.loadType === 'lyrics' &&
-          lyrics.data.synced &&
-          Array.isArray(lyrics.data.lines) &&
-          Array.isArray(youtubeCaptions.data.lines)
-        ) {
-          try {
-            logger(
-              'debug',
-              'Lyrics',
-              `Aligning ${name} lyrics with YouTube timing...`
-            )
-            const alignedLines = alignLyrics(
-              lyrics.data.lines,
-              youtubeCaptions.data
-            )
-            lyrics.data.lines = alignedLines
-          } catch (alignErr) {
-            logger(
-              'warn',
-              'Lyrics',
-              `Failed to align lyrics: ${getErrorMessage(alignErr)}`
-            )
-          }
+      if (lyrics?.loadType === 'lyrics') {
+        const tier = getLyricsQualityTier(lyrics)
+        if (!bestCandidate || tier > bestCandidate.tier) {
+          bestCandidate = { result: lyrics, name, tier }
         }
-
-        if (lyrics.loadType === 'lyrics') {
-          lyrics.data.provider = name
+        if (tier === 3) {
+          break
         }
-        return lyrics
+        continue
       }
 
       sawEmpty = true
     }
 
+    if (bestCandidate) {
+      const { result: lyrics, name } = bestCandidate
+      if (
+        isYouTube &&
+        youtubeCaptions?.loadType === 'lyrics' &&
+        lyrics.data.synced &&
+        Array.isArray(lyrics.data.lines) &&
+        Array.isArray(youtubeCaptions.data.lines)
+      ) {
+        try {
+          logger(
+            'debug',
+            'Lyrics',
+            `Aligning ${name} lyrics with YouTube timing...`
+          )
+          const alignedLines = alignLyrics(
+            lyrics.data.lines,
+            youtubeCaptions.data
+          )
+          lyrics.data.lines = alignedLines
+        } catch (alignErr) {
+          logger(
+            'warn',
+            'Lyrics',
+            `Failed to align lyrics: ${getErrorMessage(alignErr)}`
+          )
+        }
+      }
+
+      lyrics.data.provider = name
+      lyrics.data.kind = 'lyrics'
+      enrichTemporalMetadata(lyrics.data, trackInfo.length)
+      return lyrics
+    }
+
     if (isYouTube && youtubeCaptions?.loadType === 'lyrics') {
       youtubeCaptions.data.provider = sourceName
+      youtubeCaptions.data.kind = 'captions'
+      enrichTemporalMetadata(youtubeCaptions.data, trackInfo.length)
       return youtubeCaptions
     }
 

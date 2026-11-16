@@ -533,6 +533,15 @@ export interface LyricsLine {
     timestamp?: number | string
     duration?: number
   }>
+
+  /** Optional semantic line type (spoken/sung lyric vs instrumental break). */
+  kind?: 'lyric' | 'instrumental'
+
+  /** Optional section label (e.g. Verse, Chorus, Bridge, Intro). */
+  section?: string
+
+  /** Whether the line represents background/harmony vocals. */
+  isBackground?: boolean
 }
 
 /**

@@ -67,13 +67,28 @@ export default class UnisonLyrics {
             return null;
         };
         const lines = [];
-        const paragraphs = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
-        let paragraph = paragraphs.exec(ttml);
-        while (paragraph) {
-            const attrs = paragraph[1] ?? '';
-            const body = paragraph[2] ?? '';
+        const sectionStack = [];
+        const tokens = /<div\b([^>]*)>|<\/div>|<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
+        let token = tokens.exec(ttml);
+        while (token) {
+            if (token[0].startsWith('</div')) {
+                sectionStack.pop();
+                token = tokens.exec(ttml);
+                continue;
+            }
+            if (token[1] !== undefined && token[2] === undefined) {
+                const songPart = token[1].match(/\bitunes:songPart=["']([^"']+)["']/i)?.[1];
+                sectionStack.push(songPart?.trim() || undefined);
+                token = tokens.exec(ttml);
+                continue;
+            }
+            const attrs = token[2] ?? '';
+            const body = token[3] ?? '';
             const start = timeMs(attrs.match(/\bbegin=["']([^"']+)["']/i)?.[1]) ?? 0;
             const end = timeMs(attrs.match(/\bend=["']([^"']+)["']/i)?.[1]);
+            const section = attrs.match(/\bitunes:songPart=["']([^"']+)["']/i)?.[1]?.trim() ||
+                [...sectionStack].reverse().find(Boolean);
+            const isBackground = /\bttm:role=["']x-bg["']/i.test(attrs);
             const words = [];
             let text = '';
             let cursor = 0;
@@ -104,9 +119,11 @@ export default class UnisonLyrics {
                     text,
                     time: start,
                     duration: end === null ? 0 : Math.max(0, end - start),
-                    ...(words.length ? { words } : {})
+                    ...(words.length ? { words } : {}),
+                    ...(section ? { section } : {}),
+                    ...(isBackground ? { isBackground: true } : {})
                 });
-            paragraph = paragraphs.exec(ttml);
+            token = tokens.exec(ttml);
         }
         return lines.sort((left, right) => left.time - right.time);
     }

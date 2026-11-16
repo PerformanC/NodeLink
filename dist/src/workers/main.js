@@ -1778,7 +1778,8 @@ async function processQueue(queueKey) {
                 break;
             }
             case 'loadLyrics': {
-                const { decodedTrackInfo, language, source } = (payload ?? {});
+                const { decodedTrackInfo, language, source, type } = (payload ??
+                    {});
                 const trackInfo = {
                     ...decodedTrackInfo,
                     artworkUrl: decodedTrackInfo.artworkUrl ?? null,
@@ -1786,7 +1787,7 @@ async function processQueue(queueKey) {
                     uri: decodedTrackInfo.uri
                 };
                 const lyrics = await getLyricsManager();
-                result = await lyrics.loadLyrics({ info: trackInfo }, language, undefined, source);
+                result = await lyrics.loadLyrics({ info: trackInfo }, language, undefined, source, type);
                 break;
             }
             case 'loadMeaning': {
