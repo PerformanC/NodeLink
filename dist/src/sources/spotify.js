@@ -1944,6 +1944,12 @@ export default class SpotifySource {
                             }
                         }
                     }
+                    if (!best) {
+                        best = getBestMatch(candidates, track, {
+                            allowExplicit: this.config.allowExplicit,
+                            minScore: 200
+                        });
+                    }
                 }
                 if (!best)
                     break;
