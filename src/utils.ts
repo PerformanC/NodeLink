@@ -3177,6 +3177,14 @@ export function getBestMatch<T extends BestMatchCandidate>(
   const allowedDiff = targetDuration * durationTolerance
   const normOriginalTitle = normalize(original.title)
   const normOriginalAuthor = normalize(original.author)
+  const primaryTitleRaw =
+    original.title
+      .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')
+      .split(/\s*[-–—|]\s*/)[0] || ''
+  const normPrimaryTitle = normalize(primaryTitleRaw)
+  const primaryWords = new Set(
+    normPrimaryTitle.split(/\s+/).filter((w) => w.length > 0)
+  )
   let cleanTitleForWords = normOriginalTitle
   if (normOriginalAuthor && cleanTitleForWords.includes(normOriginalAuthor)) {
     const stripped = cleanTitleForWords.replace(normOriginalAuthor, '').trim()
@@ -3229,7 +3237,39 @@ export function getBestMatch<T extends BestMatchCandidate>(
         }
       }
     }
-    score += (overlap / Math.max(originalWords.size, 1)) * 300
+    let primaryOverlap = 0
+    if (primaryWords.size >= 2 && primaryWords.size < originalWords.size) {
+      for (const word of primaryWords) {
+        if (itemWordsSet.has(word)) {
+          primaryOverlap++
+        } else if (
+          word.length >= 2 &&
+          (normItemTitle.includes(word) || word.includes(normItemTitle))
+        ) {
+          primaryOverlap += 0.8
+        } else {
+          for (const iw of itemWords) {
+            if (
+              (iw.length >= 4 && word.startsWith(iw)) ||
+              (word.length >= 4 && iw.startsWith(word))
+            ) {
+              primaryOverlap += 0.8
+              break
+            }
+          }
+        }
+      }
+    }
+
+    const overallRatio = overlap / Math.max(originalWords.size, 1)
+    const primaryRatio =
+      primaryWords.size >= 2 ? primaryOverlap / primaryWords.size : 0
+    const effectiveRatio =
+      primaryWords.size >= 2 && primaryWords.size < originalWords.size
+        ? Math.max(overallRatio, primaryRatio * 0.95)
+        : overallRatio
+
+    score += effectiveRatio * 300
 
     for (const spec of specKeywords) {
       const inOriginal = originalSpec.includes(spec)
@@ -3302,6 +3342,13 @@ export function getBestMatch<T extends BestMatchCandidate>(
           authorMatched = true
           break
         }
+      }
+    }
+
+    if (!authorMatched && normItemAuthor && normItemAuthor.length >= 3) {
+      if (normOriginalTitle.includes(normItemAuthor)) {
+        score += 100
+        authorMatched = true
       }
     }
 
