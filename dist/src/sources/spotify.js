@@ -677,12 +677,13 @@ export default class SpotifySource {
      * @public
      */
     async search(query, term, type = 'track') {
-        if (term === 'spsuggest' || query.startsWith('spsuggest:'))
-            return await this._resolveSearchSuggestions(query.replace(/^spsuggest:/, '').trim());
-        if (term === 'spsimilar' || query.startsWith('spsimilar:'))
-            return await this._resolveSimilar(query.replace(/^spsimilar:/, '').trim());
+        const sanitizedQuery = query.replace(/\r?\n+/g, ' ').trim();
+        if (term === 'spsuggest' || sanitizedQuery.startsWith('spsuggest:'))
+            return await this._resolveSearchSuggestions(sanitizedQuery.replace(/^spsuggest:/, '').trim());
+        if (term === 'spsimilar' || sanitizedQuery.startsWith('spsimilar:'))
+            return await this._resolveSimilar(sanitizedQuery.replace(/^spsimilar:/, '').trim());
         if (term && this.recommendationTerm.includes(term))
-            return await this.getRecommendations(query);
+            return await this.getRecommendations(sanitizedQuery);
         try {
             const limit = Math.min(Math.max(this.nodelink.options.search?.maxResults ?? 10, 1), 50);
             // Priority 1: Internal Search (Rich nodes + Local matching)
@@ -691,7 +692,7 @@ export default class SpotifySource {
                     name: 'searchDesktop',
                     hash: 'fcad5a3e0d5af727fb76966f06971c19cfa2275e6ff7671196753e008611873c'
                 }, {
-                    searchTerm: query,
+                    searchTerm: sanitizedQuery,
                     offset: 0,
                     limit,
                     numberOfTopResults: 5,
@@ -717,7 +718,7 @@ export default class SpotifySource {
             }
             // Priority 2: Official Catalog Search
             if (this.accessToken) {
-                const res = await this._apiRequest(`/search?q=${encodeURIComponent(query)}&type=${type}&limit=${limit}&market=${this.market}`);
+                const res = await this._apiRequest(`/search?q=${encodeURIComponent(sanitizedQuery)}&type=${type}&limit=${limit}&market=${this.market}`);
                 if (res) {
                     const results = this._processOfficialSearch(res, type);
                     return results.length

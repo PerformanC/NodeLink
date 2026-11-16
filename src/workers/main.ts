@@ -2355,22 +2355,27 @@ async function processQueue(queueKey: string): Promise<void> {
       case 'loadTracks': {
         const { identifier } = (payload ?? {}) as { identifier: string }
         const re =
-          /^(?:(?<url>(?:https?|ftts):\/\/\S+)|(?<source>[A-Za-z0-9]+):(?<query>[^/\s].*))$/i
+          /^(?:(?<url>(?:https?|ftts):\/\/\S+)|(?<source>(?![A-Za-z]:[\\/])[A-Za-z0-9]+):\s*(?<query>(?!\/\/).+)|(?<local>(?:\/|[A-Za-z]:\\|\\).+))$/is
         const match = re.exec(identifier)
         if (!match) throw new Error('Invalid identifier')
 
-        const { url, source, query } = (match.groups ?? {}) as {
+        const { url, source, query, local } = (match.groups ?? {}) as {
           url?: string
           source?: string
           query?: string
+          local?: string
         }
         if (url) result = await nodelink.sources.resolve(url)
-        else if (source === 'search') {
-          if (!query) throw new Error('Missing search query')
-          result = await nodelink.sources.unifiedSearch(query)
+        else if (local) {
+          result = await nodelink.sources.search('local', local.trim())
+        } else if (source === 'search') {
+          const cleanQuery = query?.replace(/\r?\n+/g, ' ').trim()
+          if (!cleanQuery) throw new Error('Missing search query')
+          result = await nodelink.sources.unifiedSearch(cleanQuery)
         } else {
-          if (!source || !query) throw new Error('Missing source or query')
-          result = await nodelink.sources.search(source, query)
+          const cleanQuery = query?.replace(/\r?\n+/g, ' ').trim()
+          if (!source || !cleanQuery) throw new Error('Missing source or query')
+          result = await nodelink.sources.search(source, cleanQuery)
         }
         break
       }

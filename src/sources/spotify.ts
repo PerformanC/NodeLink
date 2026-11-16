@@ -859,14 +859,18 @@ export default class SpotifySource implements SourceInstance {
     term?: string,
     type = 'track'
   ): Promise<SourceResult> {
-    if (term === 'spsuggest' || query.startsWith('spsuggest:'))
+    const sanitizedQuery = query.replace(/\r?\n+/g, ' ').trim()
+
+    if (term === 'spsuggest' || sanitizedQuery.startsWith('spsuggest:'))
       return await this._resolveSearchSuggestions(
-        query.replace(/^spsuggest:/, '').trim()
+        sanitizedQuery.replace(/^spsuggest:/, '').trim()
       )
-    if (term === 'spsimilar' || query.startsWith('spsimilar:'))
-      return await this._resolveSimilar(query.replace(/^spsimilar:/, '').trim())
+    if (term === 'spsimilar' || sanitizedQuery.startsWith('spsimilar:'))
+      return await this._resolveSimilar(
+        sanitizedQuery.replace(/^spsimilar:/, '').trim()
+      )
     if (term && this.recommendationTerm.includes(term))
-      return await this.getRecommendations(query)
+      return await this.getRecommendations(sanitizedQuery)
 
     try {
       const limit = Math.min(
@@ -883,7 +887,7 @@ export default class SpotifySource implements SourceInstance {
               hash: 'fcad5a3e0d5af727fb76966f06971c19cfa2275e6ff7671196753e008611873c'
             },
             {
-              searchTerm: query,
+              searchTerm: sanitizedQuery,
               offset: 0,
               limit,
               numberOfTopResults: 5,
@@ -914,7 +918,7 @@ export default class SpotifySource implements SourceInstance {
         const res = await this._apiRequest<
           Record<string, SpotifyPagingObject<SpotifyTrack | SpotifyArtist>>
         >(
-          `/search?q=${encodeURIComponent(query)}&type=${type}&limit=${limit}&market=${this.market}`
+          `/search?q=${encodeURIComponent(sanitizedQuery)}&type=${type}&limit=${limit}&market=${this.market}`
         )
         if (res) {
           const results = this._processOfficialSearch(res, type)
