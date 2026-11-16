@@ -2381,10 +2381,12 @@ async function processQueue(queueKey: string): Promise<void> {
       }
 
       case 'loadLyrics': {
-        const { decodedTrackInfo, language, source } = (payload ?? {}) as {
+        const { decodedTrackInfo, language, source, type } = (payload ??
+          {}) as {
           decodedTrackInfo: TrackInfo
           language?: string
           source?: string
+          type?: 'lyrics' | 'onlyCaptions'
         }
         const trackInfo: TrackInfoExtended = {
           ...decodedTrackInfo,
@@ -2397,7 +2399,8 @@ async function processQueue(queueKey: string): Promise<void> {
           { info: trackInfo },
           language,
           undefined,
-          source
+          source,
+          type
         )
         break
       }

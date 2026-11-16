@@ -1631,7 +1631,8 @@ if (isMainThread) {
             },
             (payload as { language?: string }).language,
             undefined,
-            (payload as { source?: string }).source
+            (payload as { source?: string }).source,
+            (payload as { type?: 'lyrics' | 'onlyCaptions' }).type
           )
           break
         }

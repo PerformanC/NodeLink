@@ -345,13 +345,19 @@ export default class LRCLIBLyrics {
       }
 
       const text = rawLine.replace(TIME_TAG_PATTERN, '').trim()
-
-      if (text.length === 0) {
-        continue
-      }
+      const isInstrumental =
+        text.length > 0 &&
+        /^(?:\.{2,}|•{2,}|♪+|\[(?:instrumental|music|interlude|solo|break|intro|outro)\]|end\s+of\s+lyrics?)$/i.test(
+          text
+        )
 
       for (const time of timestamps) {
-        lines.push({ text, time, duration: 0 })
+        lines.push({
+          text,
+          time,
+          duration: 0,
+          ...(isInstrumental ? { kind: 'instrumental' as const } : {})
+        })
       }
     }
 
@@ -387,15 +393,19 @@ export default class LRCLIBLyrics {
   private applyLineDurations(lines: LyricsLine[]): LyricsLine[] {
     const sortedLines = [...lines].sort((left, right) => left.time - right.time)
 
-    return sortedLines.map((line, index) => {
-      const nextLine = sortedLines[index + 1]
+    return sortedLines
+      .map((line, index) => {
+        const nextLine = sortedLines[index + 1]
 
-      return {
-        ...line,
-        duration:
-          nextLine && nextLine.time > line.time ? nextLine.time - line.time : 0
-      }
-    })
+        return {
+          ...line,
+          duration:
+            nextLine && nextLine.time > line.time
+              ? nextLine.time - line.time
+              : 0
+        }
+      })
+      .filter((line) => line.text.length > 0)
   }
 
   /**
