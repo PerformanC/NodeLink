@@ -377,7 +377,14 @@ export default class PinterestSource
       /https?:\/\/(?:[^/]+\.)?pinterest\.(?:com|fr|de|ch|jp|cl|ca|it|co\.uk|nz|ru|com\.au|at|pt|co\.kr|es|com\.mx|dk|ph|th|com\.uy|co|nl|info|kr|ie|vn|com\.vn|ec|mx|in|pe|co\.at|hu|co\.in|co\.nz|id|com\.ec|com\.py|tw|be|uk|com\.bo|com\.pe)\/pin\/(?:[\w-]+--)?(\d+)/i
     ]
     this.priority = 100
+    this.streamCapabilities = {
+      protocols: ['https', 'hls'],
+      formats: ['mp4', 'm3u8'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Validates whether the provided value is a plain object record.

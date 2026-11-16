@@ -18,11 +18,16 @@ import {
 import type PluginManager from '../managers/pluginManager.ts'
 import type { PluginManagerContext } from '../managers/pluginManager.ts'
 import { migrateConfig } from '../modules/config/configMigration.ts'
+import {
+  createDecodedPCMStream,
+  createDemuxedStream
+} from '../playback/processing/streamProcessor.ts'
 import { StreamTransportClient } from '../playback/streamTransport.ts'
 
 import type {
   JsonValue,
-  NodelinkConfig
+  NodelinkConfig,
+  StreamOutputMode
 } from '../typings/config/config.types.ts'
 import type { NodeLink } from '../typings/playback/player.types.ts'
 import type {
@@ -1722,6 +1727,7 @@ if (isMainThread) {
             url,
             protocol,
             additionalData,
+            outputMode,
             transportSocketPath,
             streamIdBytes,
             securityTokenBytes,
@@ -1732,6 +1738,7 @@ if (isMainThread) {
             url: string
             protocol?: string
             additionalData?: Record<string, unknown>
+            outputMode?: StreamOutputMode
             transportSocketPath: string
             streamIdBytes: Uint8Array
             securityTokenBytes: Uint8Array
@@ -1767,19 +1774,35 @@ if (isMainThread) {
             throw new Error(errMsg)
           }
 
+          let producedStream = fetched.stream
+          let producedType = fetched.type || 'audio/mpeg'
+          if (outputMode === 'pcm') {
+            producedStream = createDecodedPCMStream(
+              fetched.stream,
+              producedType,
+              nodelink as unknown as NodeLink,
+              url
+            )
+            producedType = 'pcm'
+          } else if (outputMode === 'demuxed') {
+            const demuxed = createDemuxedStream(fetched.stream, producedType)
+            producedStream = demuxed.stream
+            producedType = demuxed.type
+          }
+
           const streamIdHex = idBuf.toString('hex')
           const transportKind =
             process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket'
           utils.logger(
             'info',
             'SourceWorker',
-            `[Thread ${workerData.threadId}] Producing '${track.title}' via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`
+            `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`
           )
           const client = new StreamTransportClient({
             socketPath: transportSocketPath,
             streamIdBytes: idBuf,
             securityTokenBytes: tokenBuf,
-            sourceStream: fetched.stream,
+            sourceStream: producedStream,
             maxRecordPayloadBytes,
             artificialDelayMs
           })
@@ -1793,7 +1816,7 @@ if (isMainThread) {
 
           result = {
             started: true,
-            type: fetched.type || 'audio/mpeg'
+            type: producedType
           }
           break
         }

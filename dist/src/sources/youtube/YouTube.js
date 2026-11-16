@@ -830,6 +830,8 @@ export default class YouTubeSource {
     cipherManager;
     /** Live chat connection handler for YouTube live streams. */
     liveChat;
+    /** Declarative stream capabilities for transport routing. */
+    streamCapabilities;
     /** Map of active download streams keyed by a unique symbol or string, used for cancellation. */
     activeStreams;
     /** SABR streams tracked for guild-aware abort when a player is destroyed. */
@@ -871,6 +873,12 @@ export default class YouTubeSource {
             /^https?:\/\/music\.youtube\.com\/(?:watch\?(?:[^#]*&)?v=[\w-]+(?:&list=[\w-]+)?|playlist\?(?:[^#]*&)?list=[\w-]+|search\?(?:[^#]*&)?(?:q|search_query)=[^&#]+|browse\/[\w-]+)/
         ];
         this.priority = 100;
+        this.streamCapabilities = {
+            heavyByDefault: true,
+            protocols: ['sabr', 'hls', 'http', 'https'],
+            formats: ['mp4', 'webm', 'mpegts'],
+            codecs: ['aac', 'opus']
+        };
         this.clients = {};
         this.oauth = null;
         this.visitorDataInterval = null;

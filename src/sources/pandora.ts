@@ -195,7 +195,14 @@ export default class PandoraSource implements SourceInstance {
     this.config = (nodelink.options.sources?.pandora ??
       {}) as PandoraSourceConfig
     this.csrfTokenConfig = this.config.csrfToken ?? null
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp4', 'm4a', 'mp3'],
+      codecs: ['aac', 'mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the Pandora source by obtaining authentication tokens.

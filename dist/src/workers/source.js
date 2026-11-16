@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import v8 from 'node:v8';
 import { isMainThread, parentPort, workerData as rawWorkerData, Worker } from 'node:worker_threads';
 import { migrateConfig } from '../modules/config/configMigration.js';
+import { createDecodedPCMStream, createDemuxedStream } from '../playback/processing/streamProcessor.js';
 import { StreamTransportClient } from '../playback/streamTransport.js';
 import * as utils from '../utils.js';
 import { createHeadQueue, dequeueHeadQueue, enqueueHeadQueue, getHeadQueueLength } from './headQueue.js';
@@ -1240,7 +1241,7 @@ else {
                     break;
                 }
                 case 'startStreamTransport': {
-                    const { track, url, protocol, additionalData, transportSocketPath, streamIdBytes, securityTokenBytes, maxRecordPayloadBytes, artificialDelayMs } = payload;
+                    const { track, url, protocol, additionalData, outputMode, transportSocketPath, streamIdBytes, securityTokenBytes, maxRecordPayloadBytes, artificialDelayMs } = payload;
                     const idBuf = Buffer.from(streamIdBytes);
                     const tokenBuf = Buffer.from(securityTokenBytes);
                     securityTokenBytes.fill(0);
@@ -1258,14 +1259,25 @@ else {
                             : 'Failed to open source stream in Source Worker';
                         throw new Error(errMsg);
                     }
+                    let producedStream = fetched.stream;
+                    let producedType = fetched.type || 'audio/mpeg';
+                    if (outputMode === 'pcm') {
+                        producedStream = createDecodedPCMStream(fetched.stream, producedType, nodelink, url);
+                        producedType = 'pcm';
+                    }
+                    else if (outputMode === 'demuxed') {
+                        const demuxed = createDemuxedStream(fetched.stream, producedType);
+                        producedStream = demuxed.stream;
+                        producedType = demuxed.type;
+                    }
                     const streamIdHex = idBuf.toString('hex');
                     const transportKind = process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket';
-                    utils.logger('info', 'SourceWorker', `[Thread ${workerData.threadId}] Producing '${track.title}' via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`);
+                    utils.logger('info', 'SourceWorker', `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}, endpoint=${transportSocketPath}]`);
                     const client = new StreamTransportClient({
                         socketPath: transportSocketPath,
                         streamIdBytes: idBuf,
                         securityTokenBytes: tokenBuf,
-                        sourceStream: fetched.stream,
+                        sourceStream: producedStream,
                         maxRecordPayloadBytes,
                         artificialDelayMs
                     });
@@ -1278,7 +1290,7 @@ else {
                     });
                     result = {
                         started: true,
-                        type: fetched.type || 'audio/mpeg'
+                        type: producedType
                     };
                     break;
                 }

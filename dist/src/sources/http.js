@@ -225,7 +225,12 @@ export default class HttpSource {
                 : {};
         this.searchTerms = [];
         this.priority = 10;
+        this.streamCapabilities = {
+            protocols: ['http', 'https'],
+            formats: ['arbitrary']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes provider resources.
      * @returns Always true for this provider.

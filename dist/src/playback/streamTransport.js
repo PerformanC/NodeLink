@@ -1030,6 +1030,7 @@ export class StreamTransportServer {
                     this.rejectedConnections++;
                     this.unauthorizedAttempts++;
                     this.lastRejectReason = auth.reason;
+                    logger('warn', 'StreamTransport', `Rejected ${TRANSPORT_KIND} handshake [reason=${auth.reason}, streamId=${handshake.streamIdBytes.toString('hex')}]`);
                     try {
                         socket.write(encodeErrorRecord(StreamErrorCode.UNAUTHORIZED, `Unauthorized: ${auth.reason}`));
                     }
@@ -1083,6 +1084,7 @@ export class StreamTransportServer {
                 this.rejectedConnections++;
                 this.lastRejectReason = error.message;
                 terminalHandled = true;
+                logger('warn', 'StreamTransport', `Protocol error on ${TRANSPORT_KIND} stream [streamId=${registration?.streamIdHex || 'unauthenticated'}]: ${error.message}`);
                 if (registration) {
                     this._saveMetricsSnapshot(registration.streamIdHex, registration.reserveStream);
                     this.registry.markErrored(registration.streamIdHex);

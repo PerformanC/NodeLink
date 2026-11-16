@@ -318,7 +318,14 @@ export default class GeniusSource implements SourceInstance {
     this.patterns = [GENIUS_PATTERN]
     this.searchTerms = []
     this.priority = 100
+    this.streamCapabilities = {
+      isMirror: true,
+      protocols: ['http'],
+      formats: ['arbitrary']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Announces the Genius source during worker initialization.

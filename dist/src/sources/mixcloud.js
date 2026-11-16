@@ -79,7 +79,14 @@ export default class MixcloudSource {
         ];
         this.searchTerms = ['mcsearch'];
         this.priority = 90;
+        this.streamCapabilities = {
+            heavyByDefault: true,
+            protocols: ['hls', 'https'],
+            formats: ['mpegts', 'm4a'],
+            codecs: ['aac']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes source resources.
      * @returns Always true for this provider.

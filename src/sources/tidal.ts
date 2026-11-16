@@ -197,7 +197,14 @@ export default class TidalSource {
       configuredQualities.length > 0
         ? configuredQualities
         : DEFAULT_HIFI_QUALITIES
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['flac', 'm4a', 'mp4'],
+      codecs: ['flac', 'aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes source token state.

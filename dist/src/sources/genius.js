@@ -60,7 +60,13 @@ export default class GeniusSource {
         this.patterns = [GENIUS_PATTERN];
         this.searchTerms = [];
         this.priority = 100;
+        this.streamCapabilities = {
+            isMirror: true,
+            protocols: ['http'],
+            formats: ['arbitrary']
+        };
     }
+    streamCapabilities;
     /**
      * Announces the Genius source during worker initialization.
      *

@@ -161,7 +161,14 @@ export default class JioSaavnSource {
     this.playlistLoadLimit =
       this.config.playlistLoadLimit || DEFAULT_PLAYLIST_LIMIT
     this.artistLoadLimit = this.config.artistLoadLimit || DEFAULT_ARTIST_LIMIT
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the provider.

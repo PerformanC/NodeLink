@@ -81,7 +81,12 @@ export default class LocalSource {
         this.searchTerms = [];
         this.priority = 20;
         this.config = this.getConfig();
+        this.streamCapabilities = {
+            protocols: ['local'],
+            formats: ['arbitrary']
+        };
     }
+    streamCapabilities;
     /**
      * Reads and normalizes the local-source configuration from the shared
      * runtime.

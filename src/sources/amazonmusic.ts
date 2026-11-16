@@ -193,7 +193,10 @@ export default class AmazonMusicSource implements SourceInstance {
       playlistLoadLimit: 0,
       albumLoadLimit: 0
     }) as AmazonMusicSourceConfig
+    this.streamCapabilities = { isMirror: true }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Performs source-level initialization.

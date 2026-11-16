@@ -142,7 +142,15 @@ export default class ChzzkSource implements SourceInstance {
    */
   constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
+    this.streamCapabilities = {
+      heavyByDefault: true,
+      protocols: ['hls', 'https'],
+      formats: ['aac', 'mp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the Chzzk source.

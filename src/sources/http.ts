@@ -271,7 +271,13 @@ export default class HttpSource implements SourceInstance {
         : {}
     this.searchTerms = []
     this.priority = 10
+    this.streamCapabilities = {
+      protocols: ['http', 'https'],
+      formats: ['arbitrary']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes provider resources.

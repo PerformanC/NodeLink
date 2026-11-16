@@ -139,7 +139,15 @@ export default class NicoVideoSource {
             /^https?:\/\/nico\.ms\/(\w+)/
         ];
         this.priority = 75;
+        this.streamCapabilities = {
+            encryptedStream: true,
+            heavyByDefault: true,
+            protocols: ['hls'],
+            formats: ['mpegts', 'aac'],
+            codecs: ['aac']
+        };
     }
+    streamCapabilities;
     /**
      * Validates whether a raw HTTP payload can be treated as an object record.
      *

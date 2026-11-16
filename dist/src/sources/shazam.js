@@ -81,7 +81,9 @@ export default class ShazamSource {
         this.patterns = [SHAZAM_PATTERN];
         this.priority = 90;
         this.allowExplicit = true;
+        this.streamCapabilities = { isMirror: true };
     }
+    streamCapabilities;
     /**
      * Reads the Shazam configuration from the shared runtime.
      *

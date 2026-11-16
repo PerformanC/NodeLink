@@ -1405,6 +1405,24 @@ export class Player {
       }
     )
 
+    const extraData = additionalData as Record<string, unknown>
+    if (
+      resolvedUrlData.format &&
+      typeof resolvedUrlData.format === 'string' &&
+      !extraData.__resolvedFormat
+    ) {
+      extraData.__resolvedFormat = resolvedUrlData.format
+    }
+    if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+      extraData.isLive = resolvedUrlData.isLive
+    }
+    if (
+      resolvedUrlData.isEncrypted !== undefined &&
+      extraData.isEncrypted === undefined
+    ) {
+      extraData.isEncrypted = resolvedUrlData.isEncrypted
+    }
+
     const fetched = await this.nodelink.sources.getTrackStream(
       track,
       resolvedUrlData.url as string,
@@ -3870,11 +3888,27 @@ export class Player {
       throw new Error('Failed to get stream URL for mix track')
     }
 
+    const mixAdditionalData: Record<string, unknown> = {
+      ...(urlData.additionalData ?? {})
+    }
+    if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+      mixAdditionalData.__resolvedFormat = urlData.format
+    }
+    if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+      mixAdditionalData.isLive = urlData.isLive
+    }
+    if (
+      urlData.isEncrypted !== undefined &&
+      mixAdditionalData.isEncrypted === undefined
+    ) {
+      mixAdditionalData.isEncrypted = urlData.isEncrypted
+    }
+
     const fetched = await this.nodelink.sources.getTrackStream(
       (urlData.newTrack?.info as TrackInfoExtended) || trackPayload.info,
       urlData.url as string,
       urlData.protocol as string,
-      urlData.additionalData
+      mixAdditionalData
     )
 
     if (fetched.exception) {

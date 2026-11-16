@@ -154,7 +154,13 @@ class MonochromeSource {
             /^https?:\/\/(?:www\.)?(?:monochrome\.(?:st|tf)|tracks\.monochrome\.st)\/(track|tracks|releases?|album|playlist|artist|video)\/([\w-]+)/i,
             /^https?:\/\/(?:www\.)?tidal\.com\/(?:browse\/)?(track|album|playlist|artist|video)\/([\w-]+)/i
         ];
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['flac', 'm4a', 'mp4'],
+            codecs: ['flac', 'aac']
+        };
     }
+    streamCapabilities;
     /**
      * Performs provider-specific resource initialization.
      * Emits a deprecation warning regarding source instability.

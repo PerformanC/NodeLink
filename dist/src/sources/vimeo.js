@@ -146,7 +146,14 @@ export default class VimeoSource {
         this.searchTerms = [];
         this.patterns = VIMEO_PATTERNS;
         this.priority = 70;
+        this.streamCapabilities = {
+            heavyByDefault: true,
+            protocols: ['hls', 'segmented', 'https'],
+            formats: ['mpegts', 'mp4'],
+            codecs: ['aac']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes the source.
      *

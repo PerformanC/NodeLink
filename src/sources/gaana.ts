@@ -274,6 +274,9 @@ export default class GaanaSource
    */
   public readonly streamQuality: string
 
+  /** Declarative stream capabilities for transport routing. */
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
+
   /**
    * Creates a Gaana source instance.
    * @param nodelink - Runtime NodeLink context.
@@ -288,6 +291,13 @@ export default class GaanaSource
       /^@?(?:https?:\/\/)?(?:(?:www|m)\.)?gaana\.com\/(?:[a-z]{2,10}\/)?(?<type>song|album|playlist|artist)\/(?<seokey>[\w-]+)\/?(?:[?#].*)?$/i
     ]
     this.priority = 70
+    this.streamCapabilities = {
+      encryptedStream: true,
+      heavyByDefault: true,
+      protocols: ['hls'],
+      formats: ['mp4', 'mpegts'],
+      codecs: ['aac']
+    }
 
     this.maxSearchResults =
       this.asNumber(this.nodelink.options.search.maxResults) ?? 10

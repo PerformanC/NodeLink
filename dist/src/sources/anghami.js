@@ -297,7 +297,9 @@ export default class AnghamiSource {
         this.cookieHeader = this.sourceConfig.cookies ?? '';
         if (this.cookieHeader)
             this.parseFingerprintFromCookies();
+        this.streamCapabilities = { isMirror: true };
     }
+    streamCapabilities;
     async setup() {
         return true;
     }

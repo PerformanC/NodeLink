@@ -531,7 +531,14 @@ export default class AudiomackSource {
    */
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp3', 'm4a', 'mp4'],
+      codecs: ['mpeg', 'aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Announces the Audiomack source during worker initialization.

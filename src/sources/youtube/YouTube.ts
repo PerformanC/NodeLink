@@ -913,6 +913,9 @@ export default class YouTubeSource implements SourceVariantHandler {
   /** Live chat connection handler for YouTube live streams. */
   private liveChat: YouTubeLiveChat
 
+  /** Declarative stream capabilities for transport routing. */
+  public readonly streamCapabilities: import('../../typings/sources/source.types.ts').SourceStreamCapabilities
+
   /** Map of active download streams keyed by a unique symbol or string, used for cancellation. */
   private activeStreams: Map<string | symbol, CancelSignal>
   /** SABR streams tracked for guild-aware abort when a player is destroyed. */
@@ -969,6 +972,12 @@ export default class YouTubeSource implements SourceVariantHandler {
     ]
 
     this.priority = 100
+    this.streamCapabilities = {
+      heavyByDefault: true,
+      protocols: ['sabr', 'hls', 'http', 'https'],
+      formats: ['mp4', 'webm', 'mpegts'],
+      codecs: ['aac', 'opus']
+    }
     this.clients = {}
     this.oauth = null
     this.visitorDataInterval = null

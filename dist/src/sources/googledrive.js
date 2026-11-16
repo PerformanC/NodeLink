@@ -55,7 +55,13 @@ export default class GoogleDriveSource {
     userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36';
     constructor(nodelink) {
         this.nodelink = nodelink;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp4', 'mp3', 'flac', 'ogg', 'wav'],
+            codecs: ['aac', 'mpeg', 'flac', 'vorbis', 'wav']
+        };
     }
+    streamCapabilities;
     async setup() {
         logger('info', 'Sources', 'Google Drive source initialized');
         return true;

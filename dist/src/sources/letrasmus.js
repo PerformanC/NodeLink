@@ -198,7 +198,9 @@ export default class LetrasMusSource {
                 options.search?.maxResults > 0
                 ? options.search.maxResults
                 : 10;
+        this.streamCapabilities = { isMirror: true };
     }
+    streamCapabilities;
     /**
      * Announces the source during worker initialization.
      *

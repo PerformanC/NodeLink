@@ -151,7 +151,9 @@ export default class AppleMusicSource {
             albumLoadLimit: 0,
             allowExplicit: true
         });
+        this.streamCapabilities = { isMirror: true };
     }
+    streamCapabilities;
     /**
      * Initializes the source by obtaining a valid Media API token.
      * Attempts to read from CredentialManager, then config, and finally scrapes the web interface.
