@@ -4396,6 +4396,7 @@ export class Player {
       const teSection = this.fading?.trackEnd as FadingSection | undefined
       const hasFade =
         teSection &&
+        this.fading?.enabled === true &&
         Number.isFinite(teSection.duration) &&
         teSection.duration > 0
       const fadeDuration = hasFade ? Math.min(teSection.duration, remaining) : 0
