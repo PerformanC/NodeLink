@@ -141,6 +141,86 @@ const readVint = (buf: Buffer, start: number, end: number): VintResult => {
   return value
 }
 
+export const readWebmCues = (
+  header: Buffer
+): Array<{ timeMs: number; byte: number }> | null => {
+  const element = (offset: number) => {
+    const idLength = readVintLength(header, offset)
+    if (typeof idLength !== 'number') return null
+    const sizeLength = readVintLength(header, offset + idLength)
+    if (typeof sizeLength !== 'number') return null
+    const size = readVint(
+      header,
+      offset + idLength,
+      offset + idLength + sizeLength
+    )
+    if (typeof size !== 'bigint') return null
+    const start = offset + idLength + sizeLength
+    return {
+      tag: header.subarray(offset, offset + idLength).toString('hex'),
+      start,
+      end: start + Number(size)
+    }
+  }
+  const uint = (start: number, end: number): number =>
+    header.subarray(start, end).reduce((value, byte) => value * 256 + byte, 0)
+
+  let segmentStart = -1
+  let timecodeScale = 1_000_000
+  const cues: Array<{ time: number; position: number }> = []
+  let offset = 0
+  while (offset < header.length) {
+    const el = element(offset)
+    if (!el) return null
+    if (el.tag === '18538067') {
+      segmentStart = el.start
+      offset = el.start
+      continue
+    }
+    if (el.tag === '1f43b675') break
+    if (el.end > header.length) return null
+
+    if (el.tag === '1549a966') {
+      for (let at = el.start; at < el.end; ) {
+        const child = element(at)
+        if (!child) break
+        if (child.tag === '2ad7b1') timecodeScale = uint(child.start, child.end)
+        at = child.end
+      }
+    } else if (el.tag === '1c53bb6b') {
+      for (let at = el.start; at < el.end; ) {
+        const point = element(at)
+        if (!point) return null
+        let time = -1
+        let position = -1
+        const walk = (start: number, end: number): void => {
+          for (let i = start; i < end; ) {
+            const child = element(i)
+            if (!child) return
+            if (child.tag === 'b3') time = uint(child.start, child.end)
+            else if (child.tag === 'f1' && position < 0)
+              position = uint(child.start, child.end)
+            else if (child.tag === 'b7') walk(child.start, child.end)
+            i = child.end
+          }
+        }
+        if (point.tag === 'bb') walk(point.start, point.end)
+        if (time >= 0 && position >= 0) cues.push({ time, position })
+        at = point.end
+      }
+    }
+    offset = el.end
+  }
+
+  if (segmentStart < 0 || cues.length === 0) return null
+  return cues
+    .map((cue) => ({
+      timeMs: (cue.time * timecodeScale) / 1_000_000,
+      byte: segmentStart + cue.position
+    }))
+    .sort((a, b) => a.timeMs - b.timeMs)
+}
+
 /**
  * Base demuxer for WebM streams that emit Opus packets.
  * @remarks
@@ -163,13 +243,17 @@ abstract class WebmBaseDemuxer extends Transform {
   protected currentTrack: WebmTrackInfo | null
   protected pendingTrack: WebmTrackInfo
   protected ebmlFound: boolean
+  protected startTimeMs: number
+  protected clusterTimeMs: number
 
   /**
    * Creates a new WebM demuxer instance.
    * @param options - Transform stream options.
    */
-  constructor(options: TransformOptions = {}) {
+  constructor(options: TransformOptions = {}, startTimeMs = 0) {
     super({ readableObjectMode: true, ...options })
+    this.startTimeMs = startTimeMs
+    this.clusterTimeMs = 0
     this.on('error', (err: Error & { code?: string | number }) => {
       const code = err.code ? ` (${err.code})` : ''
       logger('error', 'WebmDemuxer', `Stream error: ${err.message}${code}`)
@@ -395,12 +479,16 @@ abstract class WebmBaseDemuxer extends Transform {
         // Emit a tight copy so downstream listeners do not retain the ring backing store.
         this.emit('head', toTightBuffer(data))
       } catch (_e) {}
+    } else if (tag === 'e7') {
+      this.clusterTimeMs = data.reduce((value, byte) => value * 256 + byte, 0)
     } else if (tag === 'a3') {
       const firstByte = data[0]
       if (
         this.currentTrack &&
         firstByte !== undefined &&
-        (firstByte & 0xf) === this.currentTrack.number
+        (firstByte & 0xf) === this.currentTrack.number &&
+        (this.startTimeMs <= 0 ||
+          this.clusterTimeMs + data.readInt16BE(1) >= this.startTimeMs)
       ) {
         // Avoid retaining large backing stores through subarray views.
         const packet = toTightBuffer(data.subarray(4))
