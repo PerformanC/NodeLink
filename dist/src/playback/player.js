@@ -2194,10 +2194,29 @@ export class Player {
             this._isResuming = true;
             const audioStream = this._getAudioStream();
             audioStream?.setCrossfadePaused?.(false);
+            const pending = this._fadeTimers?.pause;
+            if (pending) {
+                if ('interval' in pending) {
+                    clearInterval(pending.interval);
+                    if (pending.timeout)
+                        clearTimeout(pending.timeout);
+                }
+                else
+                    clearTimeout(pending);
+                this._fadeTimers.pause = null;
+            }
             this._fading('resume');
-            if (audioStream)
+            const stillPlaying = this.connection?.playerState?.status === 'playing';
+            if (audioStream && !stillPlaying)
                 this.connection?.unpause?.('requested');
             this._rescheduleCrossfade(this._pausedAtPosition);
+            if (audioStream && stillPlaying) {
+                this._isResuming = false;
+                this._pausedAtPosition = undefined;
+                this._fading('trackEndSchedule', {
+                    startPosition: this._realPosition()
+                });
+            }
         }
         this.emitEvent(GatewayEvents.PAUSE, { paused: this.isPaused });
         return true;
