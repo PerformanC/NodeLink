@@ -167,6 +167,7 @@ export class Player {
   public duckingController: DuckingController | null = null
   private _fadeTimers: FadeTimers = { trackEnd: null, pause: null, stop: null }
   private _isResuming = false
+  private _seekFadeToken = 0
   private _pendingTrackStartFade = false
   private _ignoreIdleStoppedUntil = 0
   private _lyricsBasePosition = 0
@@ -2328,6 +2329,23 @@ export class Player {
       (this.track.info.length > 0 && seekPosition > this.track.info.length)
     )
       return false
+
+    if (
+      !forceLegacy &&
+      !this._isRecovering &&
+      !this.isPaused &&
+      this._fading('seekOut')
+    ) {
+      const token = ++this._seekFadeToken
+      await sleep((this.fading?.seek?.duration ?? 0) + 750)
+      if (
+        token !== this._seekFadeToken ||
+        this.destroying ||
+        this.track !== seekTrack
+      )
+        return false
+    }
+
     this._isSeeking = true
     try {
       const sourceName = this.track.info.sourceName
@@ -2412,6 +2430,7 @@ export class Player {
       const startPosition = this._realPosition()
       const result = await seekPromise
       if (this.destroying || this.track !== seekTrack) return false
+      this._fading('seek')
       if (result) {
         this.emitEvent(GatewayEvents.SEEK, {
           position: this.position,
@@ -2423,7 +2442,6 @@ export class Player {
         }
         if (this.isLyricsSubscribed)
           this._recalculateLyricsIndex(undefined, undefined, true)
-        this._fading('seek')
         if (this.isPaused) {
           this.connection?.pause?.('requested')
           this._pausedAtPosition = this.position
@@ -4320,6 +4338,7 @@ export class Player {
       | 'trackStop'
       | 'seek'
       | 'seekPrepare'
+      | 'seekOut'
       | 'pause'
       | 'resume',
     payload: { resource?: AudioResource; startPosition?: number } = {}
@@ -4482,7 +4501,11 @@ export class Player {
     if (action === 'trackStart' || action === 'trackStartArm')
       section = this.fading.trackStart
     else if (action === 'trackStop') section = this.fading.trackStop
-    else if (action === 'seek' || action === 'seekPrepare')
+    else if (
+      action === 'seek' ||
+      action === 'seekPrepare' ||
+      action === 'seekOut'
+    )
       section = this.fading.seek
     else if (action === 'pause') section = this.fading.pause
     else if (action === 'resume') section = this.fading.resume
@@ -4560,6 +4583,16 @@ export class Player {
       if (fadeType === 'scratch') {
         if (resource.scratchTo) resource.scratchTo(0, 'stop')
       }
+      return true
+    }
+
+    if (action === 'seekOut') {
+      const stream = this.connection?.audioStream as AudioResource | undefined
+      if (!stream || fadeType === 'scratch') return false
+      if (fadeType === 'volume' || fadeType === 'both')
+        stream.fadeTo?.(0, section.duration, section.curve)
+      if (fadeType === 'tape' || fadeType === 'both')
+        stream.tapeTo?.(section.duration, 'stop', section.curve)
       return true
     }
 
