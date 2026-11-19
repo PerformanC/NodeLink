@@ -4389,9 +4389,7 @@ export class Player {
       if (!Number.isFinite(total) || total <= 0) return false
 
       const startPosition = payload.startPosition || 0
-      const playbackSpeed =
-        this._getAudioStream()?.getEffectiveRate?.() ??
-        this._getTimescaleSpeed()
+      const playbackSpeed = this._getTimescaleSpeed()
       const remaining =
         Math.max(0, total - startPosition) /
         (playbackSpeed > 0 ? playbackSpeed : 1)
