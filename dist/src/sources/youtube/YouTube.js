@@ -1,4 +1,5 @@
 import { PassThrough, Readable } from 'node:stream';
+import { readWebmCues } from '../../playback/demuxers/WebmOpus.js';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
 import { openMp4HttpAudio } from '../../playback/processing/streamProcessor.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
@@ -3047,6 +3048,9 @@ export default class YouTubeSource {
                 effectiveSeekMs = 0;
             }
         }
+        if (effectiveSeekMs > 0)
+            stream.webmStartTimeMs =
+                effectiveSeekMs;
         const startStreaming = async () => {
             const MIN_TARGET_SECONDS = 2;
             const MAX_TARGET_SECONDS = 12;
@@ -3122,9 +3126,17 @@ export default class YouTubeSource {
                     if (!isDestroyed && !cancelSignal.aborted) {
                         if (headerData && firstClusterIndex > 0) {
                             stream.write(headerData.subarray(0, firstClusterIndex));
-                            const seekRatio = Math.min(Math.max(effectiveSeekMs / decodedTrack.length, 0), 1);
-                            totalBytesReceived = Math.min(Math.floor(seekRatio * totalContentLength), totalContentLength - 1);
-                            needsClusterAlignment = true;
+                            const cue = readWebmCues(headerData.subarray(0, firstClusterIndex))
+                                ?.filter((entry) => entry.timeMs <= effectiveSeekMs)
+                                .at(-1);
+                            if (cue && cue.byte < totalContentLength) {
+                                totalBytesReceived = cue.byte;
+                            }
+                            else {
+                                const seekRatio = Math.min(Math.max(effectiveSeekMs / decodedTrack.length, 0), 1);
+                                totalBytesReceived = Math.min(Math.floor(seekRatio * totalContentLength), totalContentLength - 1);
+                                needsClusterAlignment = true;
+                            }
                             logger('debug', 'YouTube', `Prepared WebM seek to ${effectiveSeekMs}ms at target byte ${totalBytesReceived}/${totalContentLength} for "${decodedTrack.title}"`);
                         }
                         else if (headerData) {

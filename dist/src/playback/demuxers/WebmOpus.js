@@ -101,6 +101,97 @@ const readVint = (buf, start, end) => {
     }
     return value;
 };
+/**
+ * Reads the Cues index from a WebM header.
+ * @remarks
+ * Only Cues placed before the first Cluster are found, which is where YouTube puts them in its WebM audio.
+ * Otherwise this returns null and the caller falls back to a proportional byte estimate.
+ */
+export const readWebmCues = (header) => {
+    const element = (offset) => {
+        const idLength = readVintLength(header, offset);
+        if (typeof idLength !== 'number')
+            return null;
+        const sizeLength = readVintLength(header, offset + idLength);
+        if (typeof sizeLength !== 'number')
+            return null;
+        const size = readVint(header, offset + idLength, offset + idLength + sizeLength);
+        if (typeof size !== 'bigint')
+            return null;
+        const start = offset + idLength + sizeLength;
+        return {
+            tag: header.subarray(offset, offset + idLength).toString('hex'),
+            start,
+            end: start + Number(size)
+        };
+    };
+    const uint = (start, end) => header.subarray(start, end).reduce((value, byte) => value * 256 + byte, 0);
+    let segmentStart = -1;
+    let timecodeScale = 1_000_000;
+    const cues = [];
+    let offset = 0;
+    while (offset < header.length) {
+        const el = element(offset);
+        if (!el)
+            return null;
+        if (el.tag === '18538067') {
+            segmentStart = el.start;
+            offset = el.start;
+            continue;
+        }
+        if (el.tag === '1f43b675')
+            break;
+        if (el.end > header.length)
+            return null;
+        if (el.tag === '1549a966') {
+            for (let at = el.start; at < el.end;) {
+                const child = element(at);
+                if (!child)
+                    break;
+                if (child.tag === '2ad7b1')
+                    timecodeScale = uint(child.start, child.end);
+                at = child.end;
+            }
+        }
+        else if (el.tag === '1c53bb6b') {
+            for (let at = el.start; at < el.end;) {
+                const point = element(at);
+                if (!point)
+                    return null;
+                let time = -1;
+                let position = -1;
+                const walk = (start, end) => {
+                    for (let i = start; i < end;) {
+                        const child = element(i);
+                        if (!child)
+                            return;
+                        if (child.tag === 'b3')
+                            time = uint(child.start, child.end);
+                        else if (child.tag === 'f1' && position < 0)
+                            position = uint(child.start, child.end);
+                        else if (child.tag === 'b7')
+                            walk(child.start, child.end);
+                        i = child.end;
+                    }
+                };
+                if (point.tag === 'bb')
+                    walk(point.start, point.end);
+                if (time >= 0 && position >= 0)
+                    cues.push({ time, position });
+                at = point.end;
+            }
+        }
+        offset = el.end;
+    }
+    if (segmentStart < 0 || cues.length === 0)
+        return null;
+    return cues
+        .map((cue) => ({
+        timeMs: (cue.time * timecodeScale) / 1_000_000,
+        byte: segmentStart + cue.position
+    }))
+        .sort((a, b) => a.timeMs - b.timeMs);
+};
 const readUnsigned = (data) => {
     let value = 0n;
     for (const byte of data)

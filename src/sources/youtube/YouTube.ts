@@ -1,4 +1,5 @@
 import { PassThrough, Readable } from 'node:stream'
+import { readWebmCues } from '../../playback/demuxers/WebmOpus.ts'
 import HLSHandler from '../../playback/hls/HLSHandler.ts'
 import { openMp4HttpAudio } from '../../playback/processing/streamProcessor.ts'
 import type { SabrStreamConfig } from '../../typings/sources/sabr.types.ts'
@@ -4106,6 +4107,9 @@ export default class YouTubeSource implements SourceVariantHandler {
         effectiveSeekMs = 0
       }
     }
+    if (effectiveSeekMs > 0)
+      (stream as unknown as Record<string, unknown>).webmStartTimeMs =
+        effectiveSeekMs
 
     const startStreaming = async (): Promise<void> => {
       const MIN_TARGET_SECONDS = 2
@@ -4191,15 +4195,24 @@ export default class YouTubeSource implements SourceVariantHandler {
           if (!isDestroyed && !cancelSignal.aborted) {
             if (headerData && firstClusterIndex > 0) {
               stream.write(headerData.subarray(0, firstClusterIndex))
-              const seekRatio = Math.min(
-                Math.max(effectiveSeekMs / decodedTrack.length, 0),
-                1
+              const cue = readWebmCues(
+                headerData.subarray(0, firstClusterIndex)
               )
-              totalBytesReceived = Math.min(
-                Math.floor(seekRatio * totalContentLength),
-                totalContentLength - 1
-              )
-              needsClusterAlignment = true
+                ?.filter((entry) => entry.timeMs <= effectiveSeekMs)
+                .at(-1)
+              if (cue && cue.byte < totalContentLength) {
+                totalBytesReceived = cue.byte
+              } else {
+                const seekRatio = Math.min(
+                  Math.max(effectiveSeekMs / decodedTrack.length, 0),
+                  1
+                )
+                totalBytesReceived = Math.min(
+                  Math.floor(seekRatio * totalContentLength),
+                  totalContentLength - 1
+                )
+                needsClusterAlignment = true
+              }
               logger(
                 'debug',
                 'YouTube',

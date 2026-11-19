@@ -2765,11 +2765,19 @@ class StreamAudioResource extends BaseAudioResource {
     streams.push(decoder)
     this.pipes?.push(decoder)
 
+    const source = stream as unknown as {
+      webmStartTimeMs?: number
+      _sourceStream?: { webmStartTimeMs?: number }
+    }
+    const requestedSeekMs =
+      seekTargetMs ??
+      source.webmStartTimeMs ??
+      source._sourceStream?.webmStartTimeMs
     const normalizedSeekTarget =
-      typeof seekTargetMs === 'number' &&
-      Number.isFinite(seekTargetMs) &&
-      seekTargetMs > 0
-        ? seekTargetMs
+      typeof requestedSeekMs === 'number' &&
+      Number.isFinite(requestedSeekMs) &&
+      requestedSeekMs > 0
+        ? requestedSeekMs
         : 0
     const hasFiniteEndTime =
       typeof endTimeMs === 'number' &&
