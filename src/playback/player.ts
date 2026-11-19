@@ -2424,8 +2424,13 @@ export class Player {
         if (this.isLyricsSubscribed)
           this._recalculateLyricsIndex(undefined, undefined, true)
         this._fading('seek')
-        this._fading('trackEndSchedule', { startPosition: this.position })
-        if (this.nextResourceIsCrossfade) {
+        if (this.isPaused) {
+          this.connection?.pause?.('requested')
+          this._pausedAtPosition = this.position
+        } else {
+          this._fading('trackEndSchedule', { startPosition: this.position })
+        }
+        if (this.nextResourceIsCrossfade && !this.isPaused) {
           this._crossfadePreparationSafetyMs = SEEK_CROSSFADE_SAFETY_MS
           this._rescheduleCrossfade(this.position)
 
