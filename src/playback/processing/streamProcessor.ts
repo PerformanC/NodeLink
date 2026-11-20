@@ -2612,7 +2612,14 @@ class StreamAudioResource extends BaseAudioResource {
 
     const streams: (Readable | Transform)[] = [stream]
 
-    const demuxer = new WebmOpusDemuxer()
+    const source = stream as unknown as {
+      webmStartTimeMs?: number
+      _sourceStream?: { webmStartTimeMs?: number }
+    }
+    const demuxer = new WebmOpusDemuxer(
+      {},
+      source.webmStartTimeMs ?? source._sourceStream?.webmStartTimeMs ?? 0
+    )
     streams.push(demuxer)
     this.pipes?.push(demuxer)
 

@@ -2021,7 +2021,8 @@ class StreamAudioResource extends BaseAudioResource {
             channels: AUDIO_CONFIG.channels
         });
         const streams = [stream];
-        const demuxer = new WebmOpusDemuxer();
+        const source = stream;
+        const demuxer = new WebmOpusDemuxer({}, source.webmStartTimeMs ?? source._sourceStream?.webmStartTimeMs ?? 0);
         streams.push(demuxer);
         this.pipes?.push(demuxer);
         streams.push(decoder);
