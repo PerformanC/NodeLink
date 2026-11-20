@@ -830,6 +830,7 @@ async function handler(
     let rangeStart = 0
     let rangeEnd = totalFileSize > 0 ? totalFileSize - 1 : 0
     let rangeHeaderBytesToSend: Buffer | null = null
+    let pcmSkipBytes = 0
 
     const rangeHeader = req.headers.range
     if (
@@ -871,6 +872,9 @@ async function handler(
       }
 
       const alignedPcmByteOffset = Math.floor(pcmByteOffset / 4) * 4
+      // If the requested range starts at a non-frame-aligned PCM byte, seek to the aligned
+      // position but skip the extra leading bytes so returned data matches Content-Range exactly.
+      pcmSkipBytes = pcmByteOffset - alignedPcmByteOffset
       const seekPositionMs = Math.floor((alignedPcmByteOffset / 192000) * 1000)
       input.position = seekPositionMs
     }
@@ -1113,20 +1117,31 @@ async function handler(
         return
       }
 
+      let skipRemaining = pcmSkipBytes
       const limiter = new Transform({
         transform(chunk: Buffer, _enc, cb) {
+          let buf = chunk
+          if (skipRemaining > 0) {
+            if (buf.length <= skipRemaining) {
+              skipRemaining -= buf.length
+              cb()
+              return
+            }
+            buf = buf.subarray(skipRemaining)
+            skipRemaining = 0
+          }
           if (bytesRemaining <= 0) {
             cb()
             return
           }
-          if (chunk.length <= bytesRemaining) {
-            bytesRemaining -= chunk.length
-            cb(null, chunk)
+          if (buf.length <= bytesRemaining) {
+            bytesRemaining -= buf.length
+            cb(null, buf)
             if (bytesRemaining <= 0) {
               limiter.end()
             }
           } else {
-            const slice = chunk.subarray(0, bytesRemaining)
+            const slice = buf.subarray(0, bytesRemaining)
             bytesRemaining = 0
             cb(null, slice)
             limiter.end()
