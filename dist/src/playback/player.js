@@ -2194,10 +2194,29 @@ export class Player {
             this._isResuming = true;
             const audioStream = this._getAudioStream();
             audioStream?.setCrossfadePaused?.(false);
+            const pending = this._fadeTimers?.pause;
+            if (pending) {
+                if ('interval' in pending) {
+                    clearInterval(pending.interval);
+                    if (pending.timeout)
+                        clearTimeout(pending.timeout);
+                }
+                else
+                    clearTimeout(pending);
+                this._fadeTimers.pause = null;
+            }
             this._fading('resume');
-            if (audioStream)
+            const stillPlaying = this.connection?.playerState?.status === 'playing';
+            if (audioStream && !stillPlaying)
                 this.connection?.unpause?.('requested');
             this._rescheduleCrossfade(this._pausedAtPosition);
+            if (audioStream && stillPlaying) {
+                this._isResuming = false;
+                this._pausedAtPosition = undefined;
+                this._fading('trackEndSchedule', {
+                    startPosition: this._realPosition()
+                });
+            }
         }
         this.emitEvent(GatewayEvents.PAUSE, { paused: this.isPaused });
         return true;
@@ -3032,12 +3051,12 @@ export class Player {
             if (!Number.isFinite(total) || total <= 0)
                 return false;
             const startPosition = payload.startPosition || 0;
-            const playbackSpeed = this._getAudioStream()?.getEffectiveRate?.() ??
-                this._getTimescaleSpeed();
+            const playbackSpeed = this._getTimescaleSpeed();
             const remaining = Math.max(0, total - startPosition) /
                 (playbackSpeed > 0 ? playbackSpeed : 1);
             const teSection = this.fading?.trackEnd;
             const hasFade = teSection &&
+                this.fading?.enabled === true &&
                 Number.isFinite(teSection.duration) &&
                 teSection.duration > 0;
             const fadeDuration = hasFade ? Math.min(teSection.duration, remaining) : 0;
