@@ -1349,17 +1349,9 @@ export class SabrStream extends PassThrough {
                         1000).toString();
                 }
             }
-            const mediaHeader = h;
-            const formatIdKey = key;
             const itag = h.itag ?? h.formatId?.itag;
             const discard = itag !== undefined &&
                 this.downloadedSegmentsByItag.get(itag)?.has(segmentNumber) === true;
-            if (!discard) {
-                if (!this.pendingRangesHeaders.has(formatIdKey)) {
-                    this.pendingRangesHeaders.set(formatIdKey, []);
-                }
-                this.pendingRangesHeaders.get(formatIdKey)?.push(mediaHeader);
-            }
             logger(discard ? 'trace' : 'debug', 'SABR', `${discard ? 'Duplicate media header' : 'MediaHeader'}: id=${headerId} itag=${h.itag} seq=${segmentNumber} dur=${h.durationMs}ms`);
             this.partialSegmentQueue.set(headerId, {
                 formatIdKey: key,
@@ -1401,8 +1393,15 @@ export class SabrStream extends PassThrough {
             }
             if (segmentDuration > 0) {
                 this.totalDownloadedMs += segmentDuration;
-                if ((s.loadedBytes ?? 0) > 0)
+                if ((s.loadedBytes ?? 0) > 0) {
+                    /* INFO: A header can arrive even if the response ends before the segment does. */
+                    const headers = this.pendingRangesHeaders.get(s.formatIdKey);
+                    if (headers)
+                        headers.push(s.mediaHeader);
+                    else
+                        this.pendingRangesHeaders.set(s.formatIdKey, [s.mediaHeader]);
                     this.recordMediaProgress();
+                }
                 logger('debug', 'SABR', `Segment received: itag=${itag} seq=${s.segmentNumber} dur=${segmentDuration}ms totalDownloaded=${Math.floor(this.totalDownloadedMs)}ms`);
             }
             if (itag) {

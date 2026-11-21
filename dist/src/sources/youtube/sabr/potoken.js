@@ -191,10 +191,7 @@ class WebPoMinter {
     constructor(mintCallback) {
         this.mintCallback = mintCallback;
     }
-    static async create(integrityToken, webPoSignalOutput) {
-        const getMinter = webPoSignalOutput[0];
-        if (!getMinter)
-            throw new Error('PMD:Undefined');
+    static async create(integrityToken, getMinter) {
         if (!integrityToken)
             throw new Error('No integrity token provided');
         const mintCallback = await getMinter(base64ToU8(integrityToken));
@@ -378,10 +375,23 @@ export class PoTokenManager {
                         .window;
                     if (win)
                         win.yt = ytObj;
-                    if (ytcfg.VISITOR_DATA &&
-                        typeof ytcfg.VISITOR_DATA === 'string' &&
-                        !this.visitorData) {
-                        this.visitorData = ytcfg.VISITOR_DATA;
+                    if (!this.visitorData) {
+                        const topLevel = ytcfg.VISITOR_DATA;
+                        if (typeof topLevel === 'string' && topLevel) {
+                            this.visitorData = topLevel;
+                        }
+                        else {
+                            const context = ytcfg.INNERTUBE_CONTEXT;
+                            const client = context && typeof context === 'object' && 'client' in context
+                                ? context.client
+                                : undefined;
+                            const visitorData = client && typeof client === 'object' && 'visitorData' in client
+                                ? client.visitorData
+                                : undefined;
+                            if (typeof visitorData === 'string' && visitorData) {
+                                this.visitorData = visitorData;
+                            }
+                        }
                     }
                 }
                 catch { }
@@ -488,13 +498,25 @@ export class PoTokenManager {
             this.visitorData = existingVisitorData;
         }
         logger('debug', 'PoToken', `VisitorData: ${this.visitorData?.slice(0, 20) ?? '(none, will extract from homepage)'}...`);
-        const initializationGeneration = this.initializationGeneration;
-        this.initializationPromise = this._initializeWithDom();
+        this.initializationPromise = (async () => {
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const initializationGeneration = this.initializationGeneration;
+                const initialized = await this._initializeWithDom();
+                if (initializationGeneration !== this.initializationGeneration) {
+                    throw new Error('BotGuard initialization was reset');
+                }
+                if (initialized)
+                    return;
+                /* INFO: A snapshot without a minter cannot be reused for attestation. */
+                if (attempt === 0) {
+                    this.reset();
+                    this.visitorData = existingVisitorData || null;
+                }
+            }
+            throw new Error('PMD:Undefined');
+        })();
         try {
             await this.initializationPromise;
-            if (initializationGeneration !== this.initializationGeneration) {
-                throw new Error('BotGuard initialization was reset');
-            }
         }
         catch (error) {
             this.reset();
@@ -507,6 +529,7 @@ export class PoTokenManager {
     }
     /**
      * Internal helper to perform BotGuard initialization with NativeDOM.
+     * @returns False when the snapshot does not provide a minter callback.
      * @internal
      */
     async _initializeWithDom() {
@@ -557,6 +580,9 @@ export class PoTokenManager {
         logger('debug', 'PoToken', 'Generating snapshot and creating minter...');
         const webPoSignalOutput = [];
         const botguardResponse = await this.botguard.snapshot({ webPoSignalOutput });
+        const getMinter = webPoSignalOutput[0];
+        if (typeof getMinter !== 'function')
+            return false;
         const requestKey = 'O43z0dpjhgX20SCx4KAo';
         const integrityTokenResponse = await fetch(buildURL('GenerateIT', true), {
             method: 'POST',
@@ -580,8 +606,9 @@ export class PoTokenManager {
             throw new Error('Could not get integrity token');
         this.integrityToken = token;
         logger('debug', 'PoToken', `IntegrityToken retrieved. Length: ${this.integrityToken.length}`);
-        this.minter = await WebPoMinter.create(this.integrityToken, webPoSignalOutput);
+        this.minter = await WebPoMinter.create(this.integrityToken, getMinter);
         logger('debug', 'PoToken', 'Initialization complete');
+        return true;
     }
     /**
      * Generates PO tokens for a specific video ID.
