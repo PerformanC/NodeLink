@@ -10,7 +10,7 @@
  * @module YouTubeVisionOSClient
  */
 import { logger, makeRequest } from '../../../utils.js';
-import { BaseClient, buildTrack, checkURLType, YOUTUBE_CONSTANTS } from '../common.js';
+import { BaseClient, buildTrack, checkURLType, extractPlaylistSelection, YOUTUBE_CONSTANTS } from '../common.js';
 /**
  * YouTube VISIONOS innertube client.
  *
@@ -39,12 +39,12 @@ export default class VisionOs extends BaseClient {
         return {
             client: {
                 clientName: 'VISIONOS',
-                clientVersion: '0.1',
-                userAgent: 'com.google.ios.youtube/0.1 (RealityDevice14,1; U; CPU visionOS 1_3 like Mac OS X;)',
+                clientVersion: '1.08',
+                userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.1)',
                 deviceMake: 'Apple',
-                deviceModel: 'RealityDevice14,1',
+                deviceModel: 'RealityDevice17,1',
                 osName: 'visionOS',
-                osVersion: '1.3.21O771',
+                osVersion: '26.5.23O471',
                 hl: context.client.hl,
                 gl: context.client.gl,
                 visitorData: context.client.visitorData
@@ -60,6 +60,13 @@ export default class VisionOs extends BaseClient {
      */
     getPlayerParams() {
         return '2AMB';
+    }
+    /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return false;
     }
     /**
      * VISIONOS client does not require a player script.
@@ -208,8 +215,8 @@ export default class VisionOs extends BaseClient {
                 return await this._handlePlayerResponse(playerResponse, sourceName, videoId);
             }
             case YOUTUBE_CONSTANTS.PLAYLIST: {
-                const playlistIdMatch = url.match(/[?&]list=([\w-]+)/);
-                if (!playlistIdMatch?.[1]) {
+                const { playlistId, videoId: currentVideoId, targetIndex } = extractPlaylistSelection(url);
+                if (!playlistId) {
                     logger('error', 'YouTube-VisionOS', `Could not parse playlist ID from URL: ${url}`);
                     return {
                         loadType: 'error',
@@ -220,9 +227,6 @@ export default class VisionOs extends BaseClient {
                         }
                     };
                 }
-                const playlistId = playlistIdMatch[1];
-                const videoIdMatch = url.match(/[?&]v=([\w-]+)/);
-                const currentVideoId = videoIdMatch?.[1] ?? null;
                 const requestBody = {
                     context: this.getClient(context),
                     playlistId,
@@ -251,7 +255,7 @@ export default class VisionOs extends BaseClient {
                         }
                     };
                 }
-                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName);
+                return await this._handlePlaylistResponse(playlistId, currentVideoId, playlistResponse, sourceName, context, targetIndex);
             }
             default:
                 return { loadType: 'empty', data: {} };

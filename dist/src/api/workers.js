@@ -1,9 +1,5 @@
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { sendErrorResponse, sendResponse } from '../utils.js';
-/**
- * Loopback addresses allowed to access the workers patch endpoint when
- * external patching is disabled.
- */
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 /**
  * Creates a strongly typed runtime view for the workers endpoint.
  *
@@ -29,7 +25,7 @@ function getEndpointConfig(nodelink) {
     const endpoint = nodelink.options.cluster?.endpoint;
     const code = typeof endpoint?.code === 'string' && endpoint.code.length > 0
         ? endpoint.code
-        : 'CAPYBARA';
+        : '';
     return {
         patchEnabled: endpoint?.patchEnabled === true,
         allowExternalPatch: endpoint?.allowExternalPatch === true,
@@ -151,13 +147,21 @@ function handlePatch(nodelink, req, res, parsedUrl) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'Workers patch endpoint is disabled.', parsedUrl.pathname);
         return;
     }
-    const remoteAddress = req.socket?.remoteAddress ?? '';
-    if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+    const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers);
+    if (!endpointConfig.allowExternalPatch && !isLocal) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'External access to the workers patch endpoint is blocked.', parsedUrl.pathname);
         return;
     }
+    const serverPassword = nodelink.options.server.password;
+    const authHeader = req.headers?.authorization;
+    const isServerAuth = authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`;
     const payload = getPatchPayload(req.body);
-    if (payload.code !== endpointConfig.code) {
+    const isCodeAuth = typeof endpointConfig.code === 'string' &&
+        endpointConfig.code.length > 0 &&
+        typeof payload.code === 'string' &&
+        payload.code.length > 0 &&
+        payload.code === endpointConfig.code;
+    if (!isServerAuth && !isCodeAuth) {
         sendErrorResponse(req, res, 403, 'Forbidden', 'Invalid workers patch code.', parsedUrl.pathname);
         return;
     }

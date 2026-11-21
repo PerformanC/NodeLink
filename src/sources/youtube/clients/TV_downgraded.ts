@@ -24,7 +24,12 @@ import type {
 } from '../../../typings/sources/youtube.types.ts'
 import type { HttpProxyConfig } from '../../../typings/utils.types.ts'
 import { logger, makeRequest } from '../../../utils.ts'
-import { BaseClient, checkURLType, YOUTUBE_CONSTANTS } from '../common.ts'
+import {
+  BaseClient,
+  checkURLType,
+  extractPlaylistSelection,
+  YOUTUBE_CONSTANTS
+} from '../common.ts'
 
 /**
  * YouTube TVHTML5 innertube client.
@@ -75,7 +80,7 @@ export default class TV_DOWN extends BaseClient {
    */
   override getPlayerParams(): string | null {
     // around D8 03 01 w field 59? or 27? makes me confused.
-    // will appear betwenn 0AMB ... xxxxxxMIw (-5/6 letters that always updates)
+    // will appear between 0AMB ... xxxxxxMIw (-5/6 letters that always updates)
     return '2AMB'
   }
 
@@ -85,6 +90,14 @@ export default class TV_DOWN extends BaseClient {
    * @returns Always true for the TV client
    */
   override requirePlayerScript(): boolean {
+    return true
+  }
+
+  /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
     return true
   }
 
@@ -182,8 +195,12 @@ export default class TV_DOWN extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!playlistIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           logger(
             'error',
             'YouTube-TV_DOWN',
@@ -198,10 +215,6 @@ export default class TV_DOWN extends BaseClient {
             }
           }
         }
-
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
 
         const requestBody: Record<string, unknown> = {
           context: this.getClient(context),
@@ -245,7 +258,8 @@ export default class TV_DOWN extends BaseClient {
           currentVideoId,
           playlistResponse,
           sourceName,
-          context
+          context,
+          targetIndex
         )
       }
 

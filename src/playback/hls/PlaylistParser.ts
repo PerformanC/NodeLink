@@ -46,8 +46,13 @@ export function parse(content: string, baseUrl: string): HLSPlaylist {
   let currentMap: HLSSegmentMap | null = null
   let mediaSequence = 0
   let lastByteRange: HLSByteRange | null = null
+  let segmentIndex = 0
+  let pendingDiscontinuity = false
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line === undefined) continue
+
     if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
       const parts = line.split(':')
       if (parts[1]) mediaSequence = parseInt(parts[1], 10)
@@ -55,16 +60,10 @@ export function parse(content: string, baseUrl: string): HLSPlaylist {
     } else if (line.startsWith('#EXT-X-TARGETDURATION:')) {
       const parts = line.split(':')
       if (parts[1]) result.targetDuration = parseFloat(parts[1])
-    }
-  }
-
-  let segmentIndex = 0
-  let pendingDiscontinuity = false
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (line === undefined) continue
-
-    if (line.startsWith('#EXT-X-DISCONTINUITY')) {
+    } else if (
+      line.startsWith('#EXT-X-DISCONTINUITY') &&
+      !line.startsWith('#EXT-X-DISCONTINUITY-SEQUENCE')
+    ) {
       pendingDiscontinuity = true
     } else if (line.startsWith('#EXT-X-KEY:')) {
       currentKey = parseAttributes(line, baseUrl) as unknown as HLSSegmentKey

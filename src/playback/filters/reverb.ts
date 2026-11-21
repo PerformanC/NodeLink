@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 
@@ -74,6 +75,7 @@ class CombFilter {
  * @public
  */
 export default class Reverb extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 10
   private combFiltersL: CombFilter[]
   private combFiltersR: CombFilter[]
@@ -341,6 +343,85 @@ export default class Reverb extends AnimatableFilter {
       chunk.writeInt16LE(clamp16Bit(finalRight), i + 2)
     }
 
+    return chunk
+  }
+
+  /** Float32 reverb path keeps comb/allpass state and output above full scale. */
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 8 !== 0)
+      throw new RangeError(
+        'Reverb Float32 input must contain complete stereo frames'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    for (let i = 0; i < chunk.length; i += 8) {
+      const leftInput = chunk.readFloatLE(i),
+        rightInput = chunk.readFloatLE(i + 4)
+      const monoInput = (leftInput + rightInput) * 0.5
+      let leftOut = 0,
+        rightOut = 0
+      if (this.isCustom) {
+        for (let j = 0; j < this.customCombsL.length; j++) {
+          const l = this.customCombsL[j],
+            r = this.customCombsR[j]
+          if (l && r) {
+            leftOut += l.process(monoInput)
+            rightOut += r.process(monoInput)
+          }
+        }
+      } else {
+        for (let j = 0; j < this.combFiltersL.length; j++) {
+          const l = this.combFiltersL[j],
+            r = this.combFiltersR[j]
+          if (l && r) {
+            leftOut += l.process(monoInput)
+            rightOut += r.process(monoInput)
+          }
+        }
+        for (let j = 0; j < this.allpassBuffersL.length; j++) {
+          const l = this.allpassBuffersL[j],
+            r = this.allpassBuffersR[j]
+          if (l && r) {
+            leftOut = this.processAllpass(
+              leftOut,
+              l,
+              this.allpassWriteL,
+              j,
+              this.allpassStateL,
+              j
+            )
+            rightOut = this.processAllpass(
+              rightOut,
+              r,
+              this.allpassWriteR,
+              j,
+              this.allpassStateR,
+              j
+            )
+          }
+        }
+      }
+      leftOut *= this.combNorm
+      rightOut *= this.combNorm
+      this.wetLPL += 0.2 * (leftOut - this.wetLPL)
+      this.wetLPR += 0.2 * (rightOut - this.wetLPR)
+      this.wetHPAccL += 0.011 * (this.wetLPL - this.wetHPAccL)
+      this.wetHPAccR += 0.011 * (this.wetLPR - this.wetHPAccR)
+      const wetL = this.wetLPL - this.wetHPAccL,
+        wetR = this.wetLPR - this.wetHPAccR
+      const wet1 = this.wet * (this.width * 0.5 + 0.5)
+      const wet2 = this.wet * ((1 - this.width) * 0.5)
+      const outL =
+        leftInput +
+        this.alpha *
+          (leftInput * this.dry + wetL * wet1 + wetR * wet2 - leftInput)
+      const outR =
+        rightInput +
+        this.alpha *
+          (rightInput * this.dry + wetR * wet1 + wetL * wet2 - rightInput)
+      chunk.writeFloatLE(outL, i)
+      chunk.writeFloatLE(outR, i + 4)
+    }
     return chunk
   }
 

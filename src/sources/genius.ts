@@ -1,9 +1,12 @@
 import type {
+  SourceInstance,
   SourceResult,
+  TrackData,
   TrackInfo,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestHeaders,
   HttpRequestResult,
@@ -21,7 +24,7 @@ const GENIUS_HEADERS: HttpRequestHeaders = {
   Pragma: 'no-cache'
 }
 const GENIUS_PATTERN =
-  /https?:\/\/(?:www\.)?genius\.com\/(?:videos|a\/)?([\w-]+)/
+  /^https?:\/\/(?:www\.)?genius\.com\/(?:(?:videos|a)\/)?(?!(?:videos|a)(?:[/?#]|$))([\w-]+)\/?(?:[?#].*)?$/
 const PRELOADED_STATE_REGEX =
   /<script[^>]*>\s*window\.__PRELOADED_STATE__\s*=\s*JSON\.parse\((.+?)\);\s*<\/script>/s
 
@@ -261,7 +264,30 @@ interface GeniusSourceManager {
 /**
  * Genius source implementation.
  */
-export default class GeniusSource {
+export default class GeniusSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating Genius source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'genius.track.resolve',
+      name: 'Genius Song URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://genius.com/Queen-bohemian-rhapsody-lyrics'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Bohemian Rhapsody' },
+          sourceName: { op: 'equals', value: 'genius' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -313,6 +339,10 @@ export default class GeniusSource {
     return { loadType: 'empty', data: {} }
   }
 
+  public isLinkMatch(link: string): boolean {
+    return this.parseGeniusUrl(link) !== null
+  }
+
   /**
    * Resolves a Genius article or video page into a playlist of delegated media
    * candidates, or a single fallback track when no media embeds can be parsed.
@@ -321,17 +351,21 @@ export default class GeniusSource {
    * @returns A playlist, an empty payload, or a structured exception.
    */
   public async resolve(url: string): Promise<SourceResult> {
-    const match = url.match(GENIUS_PATTERN)
-    if (!match) {
+    const targetUrl = this.parseGeniusUrl(url)
+    if (!targetUrl) {
       return { loadType: 'empty', data: {} }
     }
 
     try {
-      const { body, error, statusCode } = await http1makeRequest(url, {
-        method: 'GET',
-        headers: GENIUS_HEADERS,
-        disableBodyCompression: true
-      })
+      const { body, error, statusCode } = await http1makeRequest(
+        targetUrl.href,
+        {
+          method: 'GET',
+          headers: GENIUS_HEADERS,
+          disableBodyCompression: true,
+          shouldFollowRedirect: (nextUrl) => this.isGeniusUrl(nextUrl)
+        }
+      )
 
       if (error || statusCode !== 200) {
         throw new Error(error ?? `Genius returned status ${statusCode}`)
@@ -401,7 +435,7 @@ export default class GeniusSource {
           identifier: `genius:${songId}`,
           title,
           author: artist,
-          uri: url,
+          uri: targetUrl.href,
           artworkUrl,
           length: 0,
           isSeekable: true,
@@ -427,6 +461,48 @@ export default class GeniusSource {
       return { loadType: 'playlist', data: playlist }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const slugMatch = targetUrl.href.match(GENIUS_PATTERN)
+      const slug = slugMatch?.[1]
+      if (slug) {
+        logger(
+          'warn',
+          'Genius',
+          `Direct HTML resolution failed (${message}), deriving track from URL slug: ${slug}`
+        )
+        const cleanTitle = slug
+          .replace(/-lyrics$/i, '')
+          .replace(/-/g, ' ')
+          .replace(/\b\w/g, (c) => c.toUpperCase())
+
+        const fallbackTrack = this.createTrackInfo({
+          identifier: `genius:${slug}`,
+          title: cleanTitle,
+          author: 'Genius',
+          uri: targetUrl.href,
+          artworkUrl: null,
+          length: 0,
+          isSeekable: true,
+          isStream: false
+        })
+
+        const playlist: GeniusPlaylistData = {
+          info: {
+            name: `${cleanTitle} (Genius)`,
+            selectedTrack: 0
+          },
+          pluginInfo: {} as Record<string, unknown>,
+          tracks: [
+            {
+              encoded: encodeTrack(fallbackTrack),
+              info: fallbackTrack,
+              pluginInfo: {} as Record<string, unknown>
+            }
+          ]
+        }
+
+        return { loadType: 'playlist', data: playlist }
+      }
+
       logger('error', 'Genius', `Error resolving URL: ${message}`)
       return { loadType: 'error', exception: { message, severity: 'fault' } }
     }
@@ -440,13 +516,13 @@ export default class GeniusSource {
    * @param decodedTrack Decoded Genius track information.
    * @returns A delegated track URL descriptor or a structured exception.
    */
-  public async getTrackUrl(
-    decodedTrack: TrackInfo
-  ): Promise<TrackUrlResult | SourceResult> {
+  public async getTrackUrl(decodedTrack: TrackInfo): Promise<TrackUrlResult> {
     const sourceManager = this.getSourceManager()
     if (!sourceManager) {
       return {
-        loadType: 'error',
+        url: '',
+        protocol: 'http',
+        format: 'arbitrary',
         exception: {
           message: 'Source manager is not available for Genius resolution.',
           severity: 'fault'
@@ -461,7 +537,10 @@ export default class GeniusSource {
 
         if (targetTrack) {
           const streamInfo = await sourceManager.getTrackUrl(targetTrack.info)
-          return { newTrack: targetTrack, ...streamInfo }
+          return {
+            newTrack: targetTrack as unknown as TrackData,
+            ...streamInfo
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -474,13 +553,18 @@ export default class GeniusSource {
     }
 
     try {
-      const query = `${decodedTrack.title} ${decodedTrack.author}`
+      const query =
+        decodedTrack.author && decodedTrack.author !== 'Genius'
+          ? `${decodedTrack.title} ${decodedTrack.author}`
+          : decodedTrack.title
       const searchResult = await sourceManager.searchWithDefault(query)
       const candidates = this.extractSearchCandidates(searchResult)
 
       if (candidates.length === 0) {
         return {
-          loadType: 'error',
+          url: '',
+          protocol: 'http',
+          format: 'arbitrary',
           exception: {
             message: 'No alternative stream found via default search.',
             severity: 'fault'
@@ -491,7 +575,9 @@ export default class GeniusSource {
       const bestMatch = this.findBestMatch(candidates, decodedTrack)
       if (!bestMatch) {
         return {
-          loadType: 'error',
+          url: '',
+          protocol: 'http',
+          format: 'arbitrary',
           exception: {
             message: 'No suitable alternative stream found after filtering.',
             severity: 'fault'
@@ -500,11 +586,13 @@ export default class GeniusSource {
       }
 
       const streamInfo = await sourceManager.getTrackUrl(bestMatch.info)
-      return { newTrack: bestMatch, ...streamInfo }
+      return { newTrack: bestMatch as unknown as TrackData, ...streamInfo }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return {
-        loadType: 'error',
+        url: '',
+        protocol: 'http',
+        format: 'arbitrary',
         exception: {
           message,
           severity: 'fault'
@@ -622,12 +710,33 @@ export default class GeniusSource {
     }
   }
 
+  private parseGeniusUrl(rawUrl: string): URL | null {
+    try {
+      const parsed = new URL(rawUrl)
+      return this.isGeniusUrl(parsed) ? parsed : null
+    } catch {
+      return null
+    }
+  }
+
+  private isGeniusUrl(url: URL): boolean {
+    return (
+      (url.protocol === 'https:' || url.protocol === 'http:') &&
+      (url.hostname === 'genius.com' || url.hostname === 'www.genius.com') &&
+      url.port === '' &&
+      url.username === '' &&
+      url.password === '' &&
+      GENIUS_PATTERN.test(url.href)
+    )
+  }
+
   /**
-   * Extracts the Genius preloaded state from the page HTML and narrows it to
-   * the subset used by this source.
+   * Extracts the Genius preloaded state from the page HTML.
    *
-   * @param html Raw Genius page HTML.
-   * @returns A narrowed preloaded state or `null` when the payload cannot be parsed.
+   * Genius embeds its state as a serialized JSON string literal passed to
+   * `JSON.parse(...)`. Single-quoted literals are normalized to valid JSON
+   * string syntax and decoded with two native `JSON.parse` passes so page
+   * content is never evaluated as code.
    */
   private extractPreloadedState(html: string): GeniusPreloadedState | null {
     const scriptMatch = html.match(PRELOADED_STATE_REGEX)
@@ -638,16 +747,51 @@ export default class GeniusSource {
     }
 
     try {
-      const parseFunction = new Function(
-        `return JSON.parse(${jsonParseArg})`
-      ) as () => JsonValue
-      const payload = parseFunction()
-      return this.toPreloadedState(payload)
+      const payload = this.parsePreloadedJson(jsonParseArg)
+      return payload ? this.toPreloadedState(payload) : null
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      logger('debug', 'Genius', `JavaScript execution failed: ${message}`)
+      logger('debug', 'Genius', `Failed to parse preloaded state: ${message}`)
       return null
     }
+  }
+
+  private parsePreloadedJson(rawArgument: string): JsonValue | null {
+    const literal = rawArgument.trim()
+    const quote = literal[0]
+    if (
+      (quote !== "'" && quote !== '"') ||
+      literal.length < 2 ||
+      literal[literal.length - 1] !== quote
+    ) {
+      return null
+    }
+
+    let hasUnescapedQuote = false
+    const normalized = literal.slice(1, -1).replace(/\\.|['"]/g, (token) => {
+      if (token === quote) {
+        hasUnescapedQuote = true
+        return token
+      }
+      if (token === "\\'") {
+        return "'"
+      }
+      if (token === '"') {
+        return '\\"'
+      }
+      return token
+    })
+
+    if (hasUnescapedQuote) {
+      return null
+    }
+
+    const serializedJson = JSON.parse(`"${normalized}"`) as JsonValue
+    if (typeof serializedJson !== 'string') {
+      return null
+    }
+
+    return JSON.parse(serializedJson) as JsonValue
   }
 
   /**

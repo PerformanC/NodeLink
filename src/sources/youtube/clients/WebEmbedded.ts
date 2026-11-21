@@ -24,6 +24,7 @@ import {
   BaseClient,
   buildTrack,
   checkURLType,
+  extractPlaylistSelection,
   YOUTUBE_CONSTANTS
 } from '../common.ts'
 
@@ -74,6 +75,14 @@ export default class WebEmbedded extends BaseClient {
    */
   override getPlayerParams(): string | null {
     return '2AMB'
+  }
+
+  /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
+    return false
   }
 
   /**
@@ -273,8 +282,12 @@ export default class WebEmbedded extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!playlistIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           logger(
             'error',
             'youtube-webembedded',
@@ -289,10 +302,6 @@ export default class WebEmbedded extends BaseClient {
             }
           }
         }
-
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
 
         const requestBody: YouTubeNextRequestBody = {
           context: this.getClient(context),
@@ -341,7 +350,9 @@ export default class WebEmbedded extends BaseClient {
           playlistId,
           currentVideoId,
           playlistResponse,
-          sourceName
+          sourceName,
+          context,
+          targetIndex
         )
       }
 

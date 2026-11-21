@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { buildVoiceFrame, resolveVoiceFormat, VOICE_FORMATS, VOICE_FRAME_OPS } from './voiceFrames.js';
+import { buildVoiceFrame, parseVoiceFrameHeader, resolveVoiceFormat, VOICE_FORMATS, VOICE_FRAME_OPS } from './voiceFrames.js';
 const EMPTY_BUFFER = Buffer.alloc(0);
 let voiceRuntimePromise = null;
 const getVoiceRuntime = async () => {
@@ -161,4 +161,41 @@ export function createVoiceRelay({ enabled, format, sendFrame, logger }) {
         conn._voiceRelayAttached = false;
     };
     return { attach, detach };
+}
+export class VoiceRouter {
+    sockets = new Map();
+    registerSocket(guildId, socket) {
+        if (!guildId || !socket)
+            return;
+        let set = this.sockets.get(guildId);
+        if (!set) {
+            set = new Set();
+            this.sockets.set(guildId, set);
+        }
+        set.add(socket);
+        const cleanup = () => {
+            const current = this.sockets.get(guildId);
+            if (!current)
+                return;
+            current.delete(socket);
+            if (current.size === 0)
+                this.sockets.delete(guildId);
+        };
+        socket.on('close', cleanup);
+        socket.on('error', cleanup);
+    }
+    handleFrame(frame) {
+        const header = parseVoiceFrameHeader(frame);
+        if (!header?.guildId)
+            return;
+        const targets = this.sockets.get(header.guildId);
+        if (!targets || targets.size === 0)
+            return;
+        for (const socket of targets) {
+            try {
+                socket.send(frame);
+            }
+            catch { }
+        }
+    }
 }

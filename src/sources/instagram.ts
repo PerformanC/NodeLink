@@ -12,15 +12,24 @@ import type {
   InstagramNodeLinkContext,
   InstagramOgFetchResult,
   InstagramParsedOgMetadata,
+  InstagramPostMedia,
   InstagramRawTrackData,
   InstagramTrackData,
   InstagramUrlInfo
 } from '../typings/sources/instagram.types.ts'
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   BestMatchTrackInfo,
@@ -43,7 +52,209 @@ import {
  * extraction, authenticated audio API calls, and mirror track
  * resolution on other sources.
  */
-export default class InstagramSource {
+export default class InstagramSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating Instagram source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'instagram.reel.stream',
+      name: 'Instagram reel direct video/audio stream playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/reels/Dd7vMRnR6ft/'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          author: {
+            op: 'matches',
+            value: 'dannyelalff'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [
+            {
+              container: 'mp4',
+              codec: 'aac'
+            }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.audio.stream',
+      name: 'Instagram audio page direct audio stream playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/reels/audio/2923115364369679/'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Bem'
+          },
+          author: {
+            op: 'matches',
+            value: 'Chapéu de Palha'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [
+            {
+              container: 'mp4',
+              codec: 'aac'
+            }
+          ],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.reel.singular',
+      name: 'Instagram reel resolution using singular reel path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/reel/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.post.standard',
+      name: 'Instagram post resolution using standard post path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/p/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.reel.share',
+      name: 'Instagram share reel resolution path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.instagram.com/share/reel/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'instagram.search',
+      name: 'Instagram search with reel URL query',
+      input: {
+        type: 'search',
+        value: 'https://www.instagram.com/reel/Dd7vMRnR6ft/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Salmos'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'instagram'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -54,8 +265,8 @@ export default class InstagramSource {
    *
    * @remarks
    * - Index 0: Audio page (`/reels/audio/:id`)
-   * - Index 1: Standard post (`/p/:shortcode`)
-   * - Index 2: Reel/short-video (`/reel/:shortcode` or `/reels/:shortcode`)
+   * - Index 1: Standard post (`/p/:shortcode`, `/tv/:shortcode`, `/share/p/:shortcode`)
+   * - Index 2: Reel/short-video (`/reel/:shortcode`, `/reels/:shortcode`, `/share/reel/:shortcode`)
    */
   public readonly patterns: RegExp[]
 
@@ -81,8 +292,8 @@ export default class InstagramSource {
     this.nodelink = nodelink
     this.patterns = [
       /^https?:\/\/(?:www\.)?instagram\.com\/reels\/audio\/(\d+)/,
-      /^https?:\/\/(?:www\.)?instagram\.com\/p\/([\w-]+)/,
-      /^https?:\/\/(?:www\.)?instagram\.com\/(?:reels?|reel)\/([\w-]+)/
+      /^https?:\/\/(?:www\.)?instagram\.com\/(?:p|tv|share\/p)\/([\w-]+)/,
+      /^https?:\/\/(?:www\.)?instagram\.com\/(?:reels?|share\/reel)\/([\w-]+)/
     ]
     this.priority = 70
 
@@ -92,7 +303,6 @@ export default class InstagramSource {
       csrfToken: null,
       igAppId: null,
       fbLsd: null,
-      docId_post: '10015901848480474',
       jazoest: '2957'
     }
   }
@@ -114,8 +324,10 @@ export default class InstagramSource {
       this.nodelink.credentialManager.get<InstagramCachedConfig>(
         'instagram_api_config'
       )
-    if (cachedConfig) {
-      this.apiConfig = { ...this.apiConfig, ...cachedConfig }
+    if (cachedConfig?.csrfToken && cachedConfig.igAppId && cachedConfig.fbLsd) {
+      this.apiConfig.csrfToken = cachedConfig.csrfToken
+      this.apiConfig.igAppId = cachedConfig.igAppId
+      this.apiConfig.fbLsd = cachedConfig.fbLsd
       logger(
         'info',
         'Sources',
@@ -145,8 +357,8 @@ export default class InstagramSource {
       const igAppId = body.match(/"appId":"(.*?)"/)?.[1]
       const fbLsd =
         body.match(/"LSD",\[\],{"token":"(.*?)"},/)?.[1] ||
-        body.match(/name="lsd" value="(.*?)"/)?.[1]
-      const docIdPost = body.match(/"PostPage",\[\],"(\d+)",/)?.[1]
+        body.match(/name="lsd" value="(.*?)"/)?.[1] ||
+        body.match(/<script\b[^>]*\bid="__eqmc"[^>]*>[^<]*"l":"([^"]+)"/)?.[1]
 
       if (!csrfToken || !igAppId || !fbLsd) {
         logger(
@@ -160,15 +372,13 @@ export default class InstagramSource {
       this.apiConfig.csrfToken = csrfToken
       this.apiConfig.igAppId = igAppId
       this.apiConfig.fbLsd = fbLsd
-      if (docIdPost) this.apiConfig.docId_post = docIdPost
 
       this.nodelink.credentialManager.set<InstagramCachedConfig>(
         'instagram_api_config',
         {
           csrfToken: this.apiConfig.csrfToken,
           igAppId: this.apiConfig.igAppId,
-          fbLsd: this.apiConfig.fbLsd,
-          docId_post: this.apiConfig.docId_post
+          fbLsd: this.apiConfig.fbLsd
         },
         24 * 60 * 60 * 1000
       )
@@ -591,7 +801,11 @@ export default class InstagramSource {
         }
 
         let pathSegment: 'p' | 'reel' = 'p'
-        if (url.includes('/reel/') || url.includes('/reels/')) {
+        if (
+          url.includes('/reel/') ||
+          url.includes('/reels/') ||
+          url.includes('/share/reel/')
+        ) {
           pathSegment = 'reel'
         }
         return {
@@ -646,55 +860,11 @@ export default class InstagramSource {
   }
 
   /**
-   * Encodes the GraphQL request body for a post query.
-   *
-   * @param shortcode - Instagram post shortcode.
-   * @returns URL-encoded form body string.
-   */
-  private _encodePostRequestData(shortcode: string): string {
-    const variables = JSON.stringify({
-      shortcode: shortcode,
-      fetch_comment_count: 'null',
-      fetch_related_profile_media_count: 'null',
-      parent_comment_count: 'null',
-      child_comment_count: 'null',
-      fetch_like_count: 'null',
-      fetch_tagged_user_count: 'null',
-      fetch_preview_comment_count: 'null',
-      has_threaded_comments: 'false',
-      hoisted_comment_id: 'null',
-      hoisted_reply_id: 'null'
-    })
-
-    const requestData: Record<string, string> = {
-      av: '0',
-      __user: '0',
-      __a: '1',
-      __req: '3',
-      dpr: '1',
-      __ccg: 'UNKNOWN',
-      lsd: this.apiConfig.fbLsd ?? '',
-      jazoest: this.apiConfig.jazoest,
-      doc_id: this.apiConfig.docId_post,
-      variables: variables,
-      fb_api_req_friendly_name: 'PolarisPostActionLoadPostQueryQuery',
-      fb_api_caller_class: 'RelayModern'
-    }
-
-    const params = new URLSearchParams()
-    for (const key in requestData) {
-      const value = requestData[key]
-      if (value !== undefined) {
-        params.append(key, value)
-      }
-    }
-    return params.toString()
-  }
-
-  /**
    * Fetches audio information from the authenticated Instagram audio API.
    *
-   * Supports both original sound info and music info payloads.
+   * Supports both original sound info and music info payloads. When the
+   * initial response carries no usable audio, retries once with the
+   * pagination cursor from `paging_info`, which yields valid items.
    *
    * @param audioId - Instagram audio cluster ID.
    * @returns Fetch result containing audio stream URL and metadata, or an error.
@@ -709,6 +879,68 @@ export default class InstagramSource {
       }
     }
 
+    const first = await this._postClipsMusic(audioId)
+    if (first.exception || !first.responseData) {
+      return {
+        data: null,
+        exception: first.exception ?? {
+          message: 'Invalid data structure in Audio API JSON response',
+          severity: 'fault'
+        }
+      }
+    }
+
+    let result = this._parseClipsMusicResponse(first.responseData)
+    if (!result.data) {
+      const maxId = this._extractClipsMusicMaxId(first.responseData)
+      if (maxId) {
+        logger(
+          'debug',
+          'Sources',
+          `Retrying Instagram audio API with paging cursor for ${audioId}`
+        )
+        const second = await this._postClipsMusic(audioId, maxId)
+        if (!second.exception && second.responseData) {
+          result = this._parseClipsMusicResponse(second.responseData)
+        }
+      }
+    }
+
+    return result
+  }
+
+  /**
+   * Extracts the pagination cursor from a clips music response.
+   *
+   * @param responseData - Parsed clips music response body.
+   * @returns Pagination cursor when present, otherwise `null`.
+   */
+  private _extractClipsMusicMaxId(
+    responseData: Record<string, unknown>
+  ): string | null {
+    const payload = responseData.payload as Record<string, unknown> | undefined
+    const pagingInfo = (payload?.paging_info ?? responseData.paging_info) as
+      | Record<string, unknown>
+      | undefined
+    const maxId = pagingInfo?.max_id
+    return typeof maxId === 'string' && maxId ? maxId : null
+  }
+
+  /**
+   * Posts to the Instagram clips music API and parses the response envelope.
+   *
+   * @param audioId - Instagram audio cluster ID.
+   * @param maxId - Optional pagination cursor for follow-up requests.
+   * @returns Parsed response body, or a transport-level exception when the
+   * request or envelope parsing fails.
+   */
+  private async _postClipsMusic(
+    audioId: string,
+    maxId?: string
+  ): Promise<{
+    responseData: Record<string, unknown> | null
+    exception: InstagramFetchResult['exception']
+  }> {
     const headers: Record<string, string> = {
       Accept: '*/*',
       'Accept-Language': 'en-US,en;q=0.9',
@@ -725,13 +957,18 @@ export default class InstagramSource {
       Referer: `https://www.instagram.com/reels/audio/${audioId}/`
     }
 
-    const body = new URLSearchParams({
+    const params: Record<string, string> = {
       audio_cluster_id: audioId,
       lsd: this.apiConfig.fbLsd ?? '',
       jazoest: this.apiConfig.jazoest,
       __user: '0',
       __a: '1'
-    }).toString()
+    }
+    if (maxId) {
+      params.max_id = maxId
+      params.original_sound_audio_asset_id = audioId
+    }
+    const body = new URLSearchParams(params).toString()
 
     let response = null
     try {
@@ -749,7 +986,7 @@ export default class InstagramSource {
         `Internal error during Instagram Audio API request for audioId ${audioId}: ${message}`
       )
       return {
-        data: null,
+        responseData: null,
         exception: {
           message: `Internal error during Audio API request: ${message}`,
           severity: 'fault'
@@ -762,7 +999,7 @@ export default class InstagramSource {
         response.error ||
         `Audio API request failed with code ${response.statusCode}`
       return {
-        data: null,
+        responseData: null,
         exception: {
           message: String(errorMsg),
           severity: 'fault',
@@ -781,7 +1018,7 @@ export default class InstagramSource {
         responseData = JSON.parse(bodyStr)
       } catch (_e) {
         return {
-          data: null,
+          responseData: null,
           exception: {
             message: 'Invalid JSON response from Audio API',
             severity: 'fault'
@@ -792,7 +1029,7 @@ export default class InstagramSource {
 
     if (!responseData) {
       return {
-        data: null,
+        responseData: null,
         exception: {
           message: 'Invalid data structure in Audio API JSON response',
           severity: 'fault'
@@ -800,7 +1037,24 @@ export default class InstagramSource {
       }
     }
 
-    const data = responseData as Record<string, unknown>
+    return {
+      responseData: responseData as Record<string, unknown>,
+      exception: null
+    }
+  }
+
+  /**
+   * Parses audio metadata from a clips music response body.
+   *
+   * Supports both original sound info and music info payloads.
+   *
+   * @param responseData - Parsed clips music response body.
+   * @returns Fetch result containing audio stream URL and metadata, or an error.
+   */
+  private _parseClipsMusicResponse(
+    responseData: Record<string, unknown>
+  ): InstagramFetchResult {
+    const data = responseData
     let payload: Record<string, unknown> | null = null
     if (data.payload) {
       payload = data.payload as Record<string, unknown>
@@ -929,105 +1183,6 @@ export default class InstagramSource {
   }
 
   /**
-   * Fetches a video from Instagram's logged-out clips query.
-   *
-   * @param postId - Instagram shortcode for the video.
-   * @returns Video data when found, otherwise `null`.
-   */
-  private async _fetchFromClipsQuery(
-    postId: string
-  ): Promise<InstagramFetchResult | null> {
-    try {
-      const alphabet =
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
-      let mediaId = 0n
-      for (const character of postId) {
-        mediaId = mediaId * 64n + BigInt(alphabet.indexOf(character))
-      }
-
-      const variables = JSON.stringify({
-        data: {
-          chaining_mode: 'same_author',
-          clips_media_id: mediaId.toString()
-        },
-        __relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider: false,
-        __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: false
-      })
-      const query = new URLSearchParams({
-        doc_id: '27695069083459414',
-        variables
-      })
-      const response = await makeRequest(
-        `https://www.instagram.com/graphql/query/?${query.toString()}`,
-        { method: 'GET' }
-      )
-      if (response.error || response.statusCode !== 200) return null
-
-      const responseData =
-        typeof response.body === 'string'
-          ? (JSON.parse(response.body) as Record<string, unknown>)
-          : (response.body as Record<string, unknown>)
-      const edges = (
-        (responseData.data as Record<string, unknown> | undefined)
-          ?.xdt_api__v1__clips__clips_on_logged_out_connection_v2 as
-          | Record<string, unknown>
-          | undefined
-      )?.edges as
-        | Array<{ node: { media?: Record<string, unknown> } }>
-        | undefined
-      const media = edges
-        ?.map((edge) => edge.node.media)
-        .find((item) => item?.code === postId)
-      if (media?.media_type !== 2) return null
-
-      const videoVersions = media.video_versions as
-        | Array<Record<string, unknown>>
-        | undefined
-      const videoUrl = videoVersions?.find(
-        (version) => typeof version.url === 'string'
-      )?.url as string | undefined
-      if (!videoUrl) return null
-
-      const user = media.user as Record<string, unknown> | undefined
-      const caption = media.caption as Record<string, unknown> | undefined
-      const imageVersions = media.image_versions2 as
-        | Record<string, unknown>
-        | undefined
-      const imageCandidates = imageVersions?.candidates as
-        | Array<Record<string, unknown>>
-        | undefined
-      const manifest = media.video_dash_manifest as string | undefined
-      const manifestDuration = manifest?.match(
-        /mediaPresentationDuration="PT([\d.]+)S"/
-      )?.[1]
-
-      return {
-        data: {
-          videoUrl,
-          author: (user?.username as string) || 'User Unknown',
-          length: Math.round(Number(manifestDuration || 0) * 1000),
-          thumbnail:
-            (imageCandidates?.find(
-              (candidate) => typeof candidate.url === 'string'
-            )?.url as string | undefined) || '',
-          title: (caption?.text as string) || 'Instagram Video',
-          isStream: false,
-          isSeekable: true
-        },
-        exception: null
-      }
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      logger(
-        'debug',
-        'Sources',
-        `Instagram clips query failed for ${postId}: ${message}`
-      )
-      return null
-    }
-  }
-
-  /**
    * Fetches post/reel media information from the Instagram GraphQL API.
    *
    * Handles both single video posts and carousel posts with video children.
@@ -1047,25 +1202,74 @@ export default class InstagramSource {
       }
     }
 
-    // this no longer works btw...
-    // only is working from clips, but there are ways to do it on /embed/ too.
-    const headers: Record<string, string> = {
-      Accept: '*/*',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'X-FB-Friendly-Name': 'PolarisPostActionLoadPostQueryQuery',
-      'X-CSRFToken': this.apiConfig.csrfToken ?? '',
-      'X-IG-App-ID': this.apiConfig.igAppId ?? '',
-      'X-FB-LSD': this.apiConfig.fbLsd ?? '',
-      'X-ASBD-ID': '129477',
-      'Sec-Fetch-Site': 'same-origin',
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
-      Origin: 'https://www.instagram.com',
-      Referer: `https://www.instagram.com/${pathSegment || 'p'}/${postId}/`
+    if (
+      !this.apiConfig.csrfToken ||
+      !this.apiConfig.igAppId ||
+      !this.apiConfig.fbLsd
+    ) {
+      if (!(await this.setup())) {
+        return {
+          data: null,
+          exception: {
+            message: 'Instagram API parameters not available.',
+            severity: 'fault'
+          }
+        }
+      }
     }
 
-    const encodedData = this._encodePostRequestData(postId)
+    const alphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+    let shortcode = postId
+    if (shortcode.length > 28) {
+      shortcode = shortcode.slice(0, -28)
+    }
+    let mediaId = 0n
+    for (const character of shortcode) {
+      const index = alphabet.indexOf(character)
+      if (index < 0) {
+        return {
+          data: null,
+          exception: {
+            message: 'Invalid Instagram shortcode.',
+            severity: 'common'
+          }
+        }
+      }
+      mediaId = mediaId * 64n + BigInt(index)
+    }
+
+    const friendlyName = 'PolarisLoggedOutDesktopWWWPostRootContentQuery'
+    const headers: Record<string, string> = {
+      Accept: '*/*',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'X-FB-Friendly-Name': friendlyName,
+      'X-CSRFToken': this.apiConfig.csrfToken ?? '',
+      'X-IG-App-ID': this.apiConfig.igAppId ?? '',
+      'X-IG-Max-Touch-Points': '0',
+      'X-FB-LSD': this.apiConfig.fbLsd ?? '',
+      'X-ASBD-ID': '359341',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Sec-Fetch-Dest': 'empty',
+      'Sec-Fetch-Mode': 'cors',
+      'Sec-Fetch-Site': 'same-origin',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) Gecko/20100101 Firefox/159.0',
+      Origin: 'https://www.instagram.com',
+      Referer: `https://www.instagram.com/${pathSegment || 'reel'}/${postId}/`
+    }
+
+    const encodedData = new URLSearchParams({
+      __d: 'www',
+      __user: '0',
+      __a: '1',
+      __comet_req: '7',
+      lsd: this.apiConfig.fbLsd ?? '',
+      fb_api_caller_class: 'RelayModern',
+      fb_api_req_friendly_name: friendlyName,
+      variables: JSON.stringify({ media_id: mediaId.toString() }),
+      doc_id: '27776306792043877'
+    }).toString()
 
     let response = null
     try {
@@ -1080,12 +1284,12 @@ export default class InstagramSource {
       logger(
         'error',
         'Sources',
-        `Internal error during Instagram GraphQL request for postId ${postId}: ${message}`
+        `Internal error during Instagram Polaris request for postId ${postId}: ${message}`
       )
       return {
         data: null,
         exception: {
-          message: `Internal error during GraphQL request: ${message}`,
+          message: `Internal error during Polaris request: ${message}`,
           severity: 'fault'
         }
       }
@@ -1094,7 +1298,7 @@ export default class InstagramSource {
     if (response.error || response.statusCode !== 200) {
       const errorMsg =
         response.error ||
-        `GraphQL request failed with code ${response.statusCode}`
+        `Polaris request failed with code ${response.statusCode}`
       return {
         data: null,
         exception: {
@@ -1108,33 +1312,27 @@ export default class InstagramSource {
     let responseData: unknown = response.body
     if (typeof responseData === 'string') {
       try {
-        responseData = JSON.parse(responseData)
+        responseData = JSON.parse(responseData.replace(/^for \(;;\);/, ''))
       } catch (_e) {
         return {
           data: null,
           exception: {
-            message: 'Invalid JSON response from GraphQL',
+            message: 'Invalid JSON response from Polaris',
             severity: 'fault'
           }
         }
       }
     }
 
-    const data = responseData as Record<string, unknown> | null
-    if (!data?.data) {
-      return {
-        data: null,
-        exception: {
-          message: 'Invalid data structure in GraphQL JSON response',
-          severity: 'fault'
-        }
+    const data = responseData as {
+      data?: {
+        xig_polaris_media?: {
+          if_not_gated_logged_out?: InstagramPostMedia | null
+        } | null
       }
-    }
-
-    const media = (data.data as Record<string, unknown>)
-      .xdt_shortcode_media as Record<string, unknown> | null
-
-    if (media === null) {
+    } | null
+    const media = data?.data?.xig_polaris_media?.if_not_gated_logged_out
+    if (!media) {
       return {
         data: null,
         exception: {
@@ -1144,23 +1342,22 @@ export default class InstagramSource {
       }
     }
 
-    let videoNode: Record<string, unknown> | null = null
-
-    if (media.is_video) {
-      videoNode = media
-    } else if (
-      media.__typename === 'XDTGraphSidecar' &&
-      media.edge_sidecar_to_children
-    ) {
-      const edges = (media.edge_sidecar_to_children as Record<string, unknown>)
-        .edges as Array<{ node: Record<string, unknown> }> | undefined
-      const videoEdge = edges?.find((edge) => edge.node.is_video)
-      if (videoEdge) {
-        videoNode = videoEdge.node
+    let videoNode = media
+    const carouselMedia = media.carousel_media
+    if (Array.isArray(carouselMedia)) {
+      const videoChild = carouselMedia.find(
+        (item) =>
+          Array.isArray(item?.video_versions) && item.video_versions.length > 0
+      )
+      if (videoChild) {
+        videoNode = videoChild
       }
     }
 
-    if (!videoNode) {
+    const videoUrl = videoNode.video_versions?.find(
+      (version) => typeof version.url === 'string'
+    )?.url
+    if (!videoUrl) {
       return {
         data: null,
         exception: {
@@ -1170,33 +1367,25 @@ export default class InstagramSource {
       }
     }
 
-    const videoUrl = videoNode.video_url as string | undefined
-    if (!videoUrl) {
-      return {
-        data: null,
-        exception: {
-          message: 'Video URL not found in API response.',
-          severity: 'common'
-        }
-      }
-    }
-
-    const captionEdges = (
-      media.edge_media_to_caption as Record<string, unknown> | undefined
-    )?.edges as Array<{ node: Record<string, unknown> }> | undefined
-    const title = (captionEdges?.[0]?.node?.text as string) || 'Instagram Video'
-    const owner = media.owner as Record<string, unknown> | undefined
+    const user = videoNode.user ?? media.user
+    const caption = videoNode.caption ?? media.caption
+    const imageVersions = videoNode.image_versions2 ?? media.image_versions2
+    const thumbnail = imageVersions?.candidates?.find(
+      (candidate) => typeof candidate.url === 'string'
+    )?.url
+    const manifest = videoNode.video_dash_manifest ?? media.video_dash_manifest
+    const manifestDuration =
+      typeof manifest === 'string'
+        ? manifest.match(/mediaPresentationDuration="PT([\d.]+)S"/)?.[1]
+        : undefined
 
     return {
       data: {
-        videoUrl: videoUrl,
-        author: (owner?.username as string) || 'User Unknown',
-        length: ((videoNode.video_duration as number) || 0) * 1000,
-        thumbnail:
-          (videoNode.display_url as string) ||
-          (media.display_url as string) ||
-          '',
-        title: title,
+        videoUrl,
+        author: user?.username || 'User Unknown',
+        length: Math.round(Number(manifestDuration || 0) * 1000),
+        thumbnail: thumbnail || '',
+        title: caption?.text || 'Instagram Video',
         isStream: false,
         isSeekable: true
       },
@@ -1234,9 +1423,8 @@ export default class InstagramSource {
     let fetchError: InstagramFetchResult['exception'] = null
 
     if (type === 'post') {
-      const clipsResult = await this._fetchFromClipsQuery(contentId)
       ;({ data: trackData, exception: fetchError } =
-        clipsResult ?? (await this._fetchFromGraphQL(contentId, pathSegment)))
+        await this._fetchFromGraphQL(contentId, pathSegment))
     } else if (type === 'audio') {
       ;({ data: trackData, exception: fetchError } =
         await this._fetchFromAudioAPI(contentId))
@@ -1337,7 +1525,7 @@ export default class InstagramSource {
    */
   public async getTrackUrl(
     track: InstagramDecodedTrack
-  ): Promise<TrackUrlResult | SourceResult> {
+  ): Promise<TrackUrlResult> {
     const urlInfo = this._extractInfo(track.uri)
     if (urlInfo.error || !urlInfo.id) {
       return {
@@ -1356,9 +1544,8 @@ export default class InstagramSource {
     let fetchError: InstagramFetchResult['exception'] = null
 
     if (type === 'post') {
-      const clipsResult = await this._fetchFromClipsQuery(contentId)
       ;({ data: trackData, exception: fetchError } =
-        clipsResult ?? (await this._fetchFromGraphQL(contentId, pathSegment)))
+        await this._fetchFromGraphQL(contentId, pathSegment))
     } else if (type === 'audio') {
       ;({ data: trackData, exception: fetchError } =
         await this._fetchFromAudioAPI(contentId))
@@ -1470,17 +1657,34 @@ export default class InstagramSource {
           response.error || 'Failed to get stream, no stream object returned.'
         )
       }
+      const upstream = response.stream
       const stream = new PassThrough()
-      response.stream.on('data', (chunk: Buffer) => {
-        stream.write(chunk)
+
+      upstream.on('data', (chunk: Buffer) => {
+        if (!stream.write(chunk)) {
+          upstream.pause()
+        }
       })
-      response.stream.on('end', () => {
-        stream.end()
-        stream.emit('finishBuffering')
+
+      stream.on('drain', () => {
+        if (!stream.destroyed) {
+          upstream.resume()
+        }
       })
-      response.stream.on('error', (err: Error) => {
-        stream.destroy(err)
+
+      upstream.on('end', () => {
+        if (!stream.writableEnded) {
+          stream.emit('finishBuffering')
+          stream.end()
+        }
       })
+
+      upstream.on('error', (err: Error) => {
+        if (!stream.destroyed) {
+          stream.destroy(err)
+        }
+      })
+
       return { stream, type: 'video/mp4' }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
@@ -1524,6 +1728,65 @@ export default class InstagramSource {
         severity: 'common',
         cause: 'NoResults'
       }
+    }
+  }
+
+  /**
+   * Executes a test variant for Instagram source testing.
+   *
+   * @param variant - Test variant definition.
+   * @param track - Resolved track info.
+   * @param streamSpec - Optional stream validation specification.
+   * @returns Test variant result payload.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    const urlData = await this.getTrackUrl(track)
+    if (!urlData || 'exception' in urlData || !urlData.url) {
+      const errorMsg =
+        urlData && 'exception' in urlData && urlData.exception?.message
+          ? urlData.exception.message
+          : 'Failed to resolve track streaming URL'
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: errorMsg
+      }
+    }
+
+    const container = 'mp4'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    const streamResult = await this.loadStream(track, urlData.url)
+    if (!('stream' in streamResult) || !streamResult.stream) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: streamResult.exception?.message || 'Failed to load audio stream'
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
     }
   }
 }

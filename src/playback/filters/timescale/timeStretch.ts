@@ -147,7 +147,7 @@ export default class TimeStretch {
       const mixed = this._mixSegment(segment)
       const emitFrames = allowPartial ? this.frameSize : this._analysisHop
       outputChunks.push(mixed.subarray(0, emitFrames * this.channels))
-      this._advance(start)
+      this._advance()
 
       if (allowPartial) break
     }
@@ -263,13 +263,21 @@ export default class TimeStretch {
 
   /**
    * Advances the internal input position and discards old buffer data.
-   * @param startFrame - The chosen start frame for the segment.
    */
-  private _advance(startFrame: number): void {
+  private _advance(): void {
     const inputHop = this._analysisHop * this._tempo
-    this._inputPos = startFrame + inputHop
+    /*
+      INFO: Correlation selects audio near the timing cursor; it must not
+        move the cursor itself. On silence, the earliest match can keep
+        winning forever, so resetting to that match prevents progress.
+    */
+    this._inputPos += inputHop
 
-    const discard = Math.max(0, Math.floor(this._inputPos) - this.search)
+    /* INFO: Preserve any hop beyond buffered input for the next chunk. */
+    const discard = Math.min(
+      this._buffer.frameCount,
+      Math.max(0, Math.floor(this._inputPos) - this.search)
+    )
     if (discard > 0) {
       this._buffer.discard(discard)
       this._inputPos -= discard

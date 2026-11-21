@@ -5,6 +5,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import v8 from 'node:v8';
 import { logger } from '../utils.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -72,6 +73,10 @@ const buildSourceWorkerExecArgv = (options = null) => {
     for (const arg of envExtraArgs) {
         args.add(arg);
     }
+    const execPath = resolveSourceExecPath();
+    if (execPath.endsWith('.ts')) {
+        args.add('--experimental-strip-types');
+    }
     return Array.from(args);
 };
 class SourceWorkerManager {
@@ -79,6 +84,7 @@ class SourceWorkerManager {
     workers;
     requests;
     workerLoads;
+    healthProbeSources;
     maxWorkers;
     scaleUpThreshold;
     scaleCooldownMs;
@@ -88,11 +94,13 @@ class SourceWorkerManager {
     isDestroying;
     _onClusterExit;
     clientSockets;
+    workerSockets;
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.workers = [];
         this.requests = new Map();
         this.workerLoads = new Map(); // worker.id -> pending count
+        this.healthProbeSources = [];
         this.maxWorkers = Math.max(1, nodelink.options.cluster?.specializedSourceWorker?.count || 1);
         this.scaleUpThreshold =
             nodelink.options.cluster?.specializedSourceWorker?.scaleUpThreshold || 30;
@@ -107,6 +115,49 @@ class SourceWorkerManager {
         this.isDestroying = false;
         this._onClusterExit = null;
         this.clientSockets = new Set();
+        this.workerSockets = new Map();
+    }
+    _registerWorkerSocket(pid, socket) {
+        const worker = this.workers.find((w) => w.process?.pid === pid);
+        if (!worker)
+            return;
+        const existing = this.workerSockets.get(worker.id);
+        if (existing && existing !== socket) {
+            try {
+                existing.destroy();
+            }
+            catch { }
+        }
+        ;
+        socket._workerId = worker.id;
+        this.workerSockets.set(worker.id, socket);
+    }
+    _removeWorkerSocket(socket) {
+        const workerId = socket._workerId;
+        if (workerId && this.workerSockets.get(workerId) === socket) {
+            this.workerSockets.delete(workerId);
+        }
+    }
+    _sendTaskFrame(socket, id, type, payload) {
+        if (!socket || socket.destroyed || !socket.writable)
+            return false;
+        const idBuf = Buffer.from(id, 'utf8');
+        const header = Buffer.allocUnsafe(6);
+        header.writeUInt8(idBuf.length, 0);
+        header.writeUInt8(type, 1);
+        header.writeUInt32BE(payload.length, 2);
+        try {
+            socket.cork();
+            socket.write(header);
+            if (idBuf.length > 0)
+                socket.write(idBuf);
+            socket.write(payload);
+            socket.uncork();
+            return true;
+        }
+        catch {
+            return false;
+        }
     }
     _safeUnlinkSocketPath() {
         if (!this.socketPath || os.platform() === 'win32')
@@ -128,6 +179,7 @@ class SourceWorkerManager {
             });
             socket.on('close', () => {
                 this.clientSockets.delete(socket);
+                this._removeWorkerSocket(socket);
             });
             const peekBytes = (count) => {
                 const first = frameChunks[0];
@@ -178,6 +230,47 @@ class SourceWorkerManager {
                     const frame = readBytes(totalSize);
                     const id = frame.toString('utf8', 6, 6 + idSize);
                     const payload = frame.subarray(6 + idSize);
+                    if (type === 5) {
+                        try {
+                            const data = v8.deserialize(payload);
+                            if (data?.pid) {
+                                this._registerWorkerSocket(data.pid, socket);
+                            }
+                        }
+                        catch { }
+                        continue;
+                    }
+                    if (type === 4) {
+                        const request = this.requests.get(id);
+                        if (request) {
+                            if (request.timeout) {
+                                clearTimeout(request.timeout);
+                                request.timeout = null;
+                            }
+                            try {
+                                const data = v8.deserialize(payload);
+                                const resAny = request.res;
+                                if (typeof resAny.endBinary === 'function') {
+                                    resAny.endBinary(data);
+                                }
+                                else {
+                                    const jsonBuf = Buffer.from(JSON.stringify(data));
+                                    if (!request.res.headersSent) {
+                                        request.res.setHeader?.('Content-Type', 'application/json');
+                                        request.res.writeHead(200);
+                                    }
+                                    request.res.write(jsonBuf);
+                                    request.res.end();
+                                }
+                            }
+                            catch (e) {
+                                request.res.writeHead(500);
+                                request.res.end(e.message);
+                            }
+                            this._cleanupRequest(id, request);
+                        }
+                        continue;
+                    }
                     const request = this.requests.get(id);
                     if (request) {
                         if (type === 0) {
@@ -292,6 +385,7 @@ class SourceWorkerManager {
         this._onClusterExit = (worker, _code, _signal) => {
             if (worker.workerType !== 'source')
                 return;
+            this.workerSockets.delete(worker.id);
             if (this.isDestroying)
                 return;
             logger('warn', 'SourceCluster', `Source worker manager ${worker.process.pid} exited. Respawning...`);
@@ -317,18 +411,48 @@ class SourceWorkerManager {
     }
     _forkWorker() {
         const worker = cluster.fork({
-            WORKER_TYPE: 'source'
+            WORKER_TYPE: 'source',
+            SOURCE_SOCKET_PATH: this.socketPath
         });
         worker.workerType = 'source';
         worker.on('message', (msg) => {
-            if (msg.type === 'ready')
+            if (msg.type === 'ready') {
                 logger('info', 'SourceCluster', `Source worker manager ${msg.pid} ready`);
+            }
+            else if (msg.type === 'sourceHealthMetric') {
+                const healthManager = this.nodelink.sourceHealthManager;
+                if (healthManager) {
+                    if (msg.payload.success) {
+                        healthManager.recordSuccess(msg.payload.sourceName, msg.payload.duration);
+                    }
+                    else {
+                        healthManager.recordFailure(msg.payload.sourceName, msg.payload.duration, msg.payload.error);
+                    }
+                }
+            }
+            else if (msg.type === 'sourceHealthReady') {
+                this.healthProbeSources = msg.payload.sources;
+                this.nodelink.sourceHealthManager?.setProbeSources(msg.payload.sources);
+            }
         });
         worker.on('error', (err) => {
             logger('error', 'SourceCluster', `Source worker ${worker.id} error: ${err.message}`);
         });
         this.workers.push(worker);
         this.workerLoads.set(worker.id, 0);
+    }
+    /** Runs a lightweight declarative health case on an available source worker. */
+    getHealthProbeSources() {
+        return [...this.healthProbeSources];
+    }
+    /** Runs a lightweight declarative health case on an available source worker. */
+    async runHealthProbe(sourceName) {
+        const worker = this.workers
+            .filter((candidate) => candidate?.isConnected?.())
+            .sort((a, b) => (this.workerLoads.get(a.id) || 0) - (this.workerLoads.get(b.id) || 0))[0];
+        if (!worker)
+            throw new Error('No source worker is available for health probe');
+        await this._executeOnWorker(worker, 'sourceHealthProbe', { sourceName }, { timeoutMs: 7000 });
     }
     _decrementLoad(workerId) {
         const load = this.workerLoads.get(workerId) || 0;
@@ -488,15 +612,22 @@ class SourceWorkerManager {
         res.on?.('close', () => {
             this._cleanupRequest(id, request);
         });
-        bestWorker.send({
-            type: 'sourceTask',
-            payload: {
-                id,
-                task,
-                payload,
-                socketPath: this.socketPath
-            }
-        });
+        const socket = this.workerSockets.get(bestWorker.id);
+        if (socket && !socket.destroyed) {
+            const serialized = v8.serialize({ task, payload });
+            this._sendTaskFrame(socket, id, 6, serialized);
+        }
+        else {
+            bestWorker.send({
+                type: 'sourceTask',
+                payload: {
+                    id,
+                    task,
+                    payload,
+                    socketPath: this.socketPath
+                }
+            });
+        }
         return true;
     }
     _createInternalResponse(resolve, reject, parseJson) {
@@ -512,6 +643,10 @@ class SourceWorkerManager {
             write(chunk) {
                 if (chunk)
                     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            },
+            endBinary(data) {
+                this.headersSent = true;
+                resolve(data);
             },
             end(chunk) {
                 if (chunk)
@@ -571,16 +706,44 @@ class SourceWorkerManager {
             const currentLoad = this.workerLoads.get(worker.id) || 0;
             this.workerLoads.set(worker.id, currentLoad + 1);
             this._tryScaleUp(false);
-            worker.send({
-                type: 'sourceTask',
-                payload: {
-                    id,
-                    task,
-                    payload,
-                    socketPath: this.socketPath
-                }
-            });
+            const socket = this.workerSockets.get(worker.id);
+            if (socket && !socket.destroyed) {
+                const serialized = v8.serialize({ task, payload });
+                this._sendTaskFrame(socket, id, 6, serialized);
+            }
+            else {
+                worker.send({
+                    type: 'sourceTask',
+                    payload: {
+                        id,
+                        task,
+                        payload,
+                        socketPath: this.socketPath
+                    }
+                });
+            }
         });
+    }
+    get hasAvailableWorkers() {
+        return this.workers.some((worker) => worker?.isConnected?.());
+    }
+    execute(task, payload, options = {}) {
+        let bestWorker = null;
+        let minLoad = Number.POSITIVE_INFINITY;
+        for (const worker of this.workers) {
+            if (!worker?.isConnected?.())
+                continue;
+            const load = this.workerLoads.get(worker.id) || 0;
+            if (load < minLoad) {
+                minLoad = load;
+                bestWorker = worker;
+            }
+        }
+        if (!bestWorker) {
+            return Promise.reject(new Error('No available source workers'));
+        }
+        logger('debug', 'SourceCluster', `Dispatching task '${task}' to source worker ${bestWorker.id} (pid: ${bestWorker.process?.pid || 'unknown'}, current load: ${minLoad})`);
+        return this._executeOnWorker(bestWorker, task, payload, options);
     }
     async executeAll(task, payload, options = {}) {
         const targets = this.workers.filter((worker) => worker?.isConnected?.());

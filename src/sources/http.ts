@@ -7,6 +7,7 @@ import type {
   IcyMetadataPayload
 } from '../typings/sources/http.types.ts'
 import type {
+  SourceInstance,
   SourceResult,
   TrackData,
   TrackInfo,
@@ -14,6 +15,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestResult,
   HttpResponseHeaders,
@@ -25,7 +27,7 @@ import { encodeTrack, getVersion, http1makeRequest, logger } from '../utils.ts'
  * Default user agent for HTTP source requests.
  * @internal
  */
-const DEFAULT_HTTP_USER_AGENT = `NodeLink/${getVersion()} (https://github.com/PerformanC/NodeLink)`
+const DEFAULT_HTTP_USER_AGENT = `Mozilla/5.0 (compatible; NodeLink/${getVersion()})`
 
 /**
  * Extracts file extension from URL.
@@ -186,7 +188,53 @@ class IcyMetadataTransform extends Transform {
  * Generic HTTP source.
  * @public
  */
-export default class HttpSource {
+export default class HttpSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating HTTP source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'http.track.resolve',
+      name: 'HTTP Direct Track URL resolution (MP3)',
+      input: {
+        type: 'resolve',
+        value: 'https://www.w3schools.com/html/horse.mp3'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'horse.mp3' },
+          sourceName: { op: 'equals', value: 'http' },
+          uri: {
+            op: 'equals',
+            value: 'https://www.w3schools.com/html/horse.mp3'
+          }
+        }
+      }
+    },
+    {
+      id: 'http.track.ogg',
+      name: 'HTTP Direct Track URL resolution (OGG)',
+      input: {
+        type: 'resolve',
+        value: 'https://upload.wikimedia.org/wikipedia/commons/c/c8/Example.ogg'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Example.ogg' },
+          sourceName: { op: 'equals', value: 'http' },
+          uri: {
+            op: 'equals',
+            value:
+              'https://upload.wikimedia.org/wikipedia/commons/c/c8/Example.ogg'
+          }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -213,7 +261,7 @@ export default class HttpSource {
    */
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
-    const rawHttpConfig = nodelink.options.sources?.http
+    const rawHttpConfig = nodelink.options?.sources?.http
     this.config =
       rawHttpConfig &&
       typeof rawHttpConfig === 'object' &&
@@ -252,11 +300,23 @@ export default class HttpSource {
       const userAgent = this.config.userAgent || DEFAULT_HTTP_USER_AGENT
       const requestHeaders = { 'User-Agent': userAgent }
       const validAudioPrefixes = ['audio/', 'video/']
-      const validApplicationTypes = ['application/octet-stream']
-      const isValidMediaType = (contentType: string): boolean =>
-        validAudioPrefixes.some((prefix) => contentType.startsWith(prefix)) ||
-        validApplicationTypes.includes(contentType) ||
-        contentType === ''
+      const validApplicationTypes = [
+        'application/octet-stream',
+        'application/ogg',
+        'application/x-mpegurl',
+        'application/vnd.apple.mpegurl'
+      ]
+      const isValidMediaType = (contentType: string): boolean => {
+        const cleanContentType =
+          contentType.split(';')[0]?.trim().toLowerCase() || ''
+        return (
+          validAudioPrefixes.some((prefix) =>
+            cleanContentType.startsWith(prefix)
+          ) ||
+          validApplicationTypes.includes(cleanContentType) ||
+          cleanContentType === ''
+        )
+      }
 
       let data = await http1makeRequest(url, {
         method: 'HEAD',
@@ -365,9 +425,20 @@ export default class HttpSource {
     )
     const fileNameMatch = contentDisposition.match(/filename="([^"]+)"/i)
 
+    const urlFilename = (() => {
+      try {
+        const pathname = new URL(url).pathname
+        const lastPart = pathname.split('/').filter(Boolean).pop()
+        return lastPart ? decodeURIComponent(lastPart) : null
+      } catch {
+        return null
+      }
+    })()
+
     const title =
       headerToString(headerRecord['icy-name']) ||
       fileNameMatch?.[1] ||
+      urlFilename ||
       'Unknown'
 
     const description = headerToString(headerRecord['icy-description'])
@@ -430,7 +501,7 @@ export default class HttpSource {
    * @param info - Track info payload.
    * @returns URL and protocol tuple.
    */
-  public getTrackUrl(info: Pick<TrackInfo, 'uri'>): TrackUrlResult {
+  public async getTrackUrl(info: TrackInfo): Promise<TrackUrlResult> {
     return { url: info.uri, protocol: 'http' }
   }
 
@@ -451,7 +522,7 @@ export default class HttpSource {
 
   /**
    * Loads stream for HTTP track.
-   * @param _decodedTrack - Decoded track payload (unused).
+   * @param decodedTrack - Decoded track payload.
    * @param url - Stream URL.
    * @returns Stream payload or exception.
    */
@@ -460,7 +531,7 @@ export default class HttpSource {
     url: string,
     _protocol?: string,
     additionalData?: Record<string, unknown>
-  ): Promise<TrackStreamResult | SourceResult> {
+  ): Promise<TrackStreamResult> {
     try {
       const guildId = String(additionalData?.guildId || 'unbound')
       const trackId = String(decodedTrack?.identifier || url)
@@ -757,7 +828,7 @@ export default class HttpSource {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       logger('error', 'Sources', `Failed to load http stream: ${message}`)
-      return { loadType: 'error', exception: { message, severity: 'common' } }
+      return { exception: { message, severity: 'common' } }
     }
   }
 }

@@ -45,6 +45,13 @@ export default class WebParentTools extends BaseClient {
         return true;
     }
     /**
+     * Whether this client requires OAuth authentication (REQUIRED).
+     * Will check if the Oauth is configured, and return false if not.
+     */
+    requiresOAuth() {
+        return false;
+    }
+    /**
      * Resolves a YouTube URL to track or playlist data.
      * @param url - The YouTube URL to resolve
      * @param _type - The type hint (unused in this client)

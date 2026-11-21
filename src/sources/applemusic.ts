@@ -8,7 +8,13 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
-import { encodeTrack, getBestMatch, http1makeRequest } from '../utils.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
+import {
+  capTotalTracks,
+  encodeTrack,
+  getBestMatch,
+  http1makeRequest
+} from '../utils.ts'
 
 /**
  * Metadata for Apple Music catalog resource attributes.
@@ -102,6 +108,76 @@ interface AppleMusicResource {
  */
 export default class AppleMusicSource implements SourceInstance {
   /**
+   * Declarative test suite for validating Apple Music source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'applemusic.track.resolve',
+      name: 'Apple Music Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://music.apple.com/us/album/get-lucky/617154241?i=617154366'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'applemusic' }
+        }
+      }
+    },
+    {
+      id: 'applemusic.album.resolve',
+      name: 'Apple Music Album URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://music.apple.com/us/album/random-access-memories/617154241'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 10 },
+        metadata: {
+          author: { op: 'matches', value: 'Daft Punk' }
+        }
+      }
+    },
+    {
+      id: 'applemusic.playlist.resolve',
+      name: 'Apple Music Playlist URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 20 }
+      }
+    },
+    {
+      id: 'applemusic.search.amsearch',
+      name: 'Apple Music Search query (amsearch:)',
+      input: {
+        type: 'search',
+        value: 'Daft Punk Get Lucky',
+        searchType: 'amsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          sourceName: { op: 'equals', value: 'applemusic' }
+        }
+      }
+    }
+  ]
+
+  /**
    * The global worker NodeLink instance.
    * @internal
    */
@@ -124,7 +200,7 @@ export default class AppleMusicSource implements SourceInstance {
    * @public
    */
   public readonly patterns = [
-    /https?:\/\/(?:www\.)?music\.apple\.com\/([a-z]{2})?\/?(album|playlist|artist|song)\/[^/]+\/([a-zA-Z0-9\-.]+)(?:\?i=(\d+))?/
+    /^https?:\/\/(?:www\.)?music\.apple\.com\/([a-z]{2})?\/?(album|playlist|artist|song)\/[^/]+\/([a-zA-Z0-9\-.]+)(?:\?i=(\d+))?/
   ]
 
   /**
@@ -286,7 +362,8 @@ export default class AppleMusicSource implements SourceInstance {
       const tokenMatch = jsData.match(
         /(?<token>(ey[\w-]+)\.([\w-]+)\.([\w-]+))/
       )
-      return tokenMatch?.groups?.token || null
+      const token = tokenMatch?.groups?.token
+      return token ? Buffer.from(token).toString('utf8') : null
     } catch {
       return null
     }
@@ -488,14 +565,26 @@ export default class AppleMusicSource implements SourceInstance {
       `/catalog/${country}/albums/${id}/tracks`
     )
     return {
-      loadType: 'album',
+      loadType: 'playlist',
       data: {
         info: {
           name: album.attributes?.name || 'Unknown Album',
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'album',
+          identifier: id,
+          url:
+            album.attributes?.url ??
+            `https://music.apple.com/${country}/album/${id}`,
+          artworkUrl: this.parseArtwork(album.attributes?.artwork) || '',
+          author: album.attributes?.artistName?.trim() || '',
+          totalTracks: capTotalTracks(
+            album.attributes?.trackCount ?? tracks.length,
+            this.nodelink.options.playback?.maxPlaylistLength
+          )
+        }
       }
     }
   }
@@ -529,7 +618,19 @@ export default class AppleMusicSource implements SourceInstance {
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'playlist',
+          identifier: id,
+          url:
+            playlist.attributes?.url ??
+            `https://music.apple.com/${country}/playlist/${id}`,
+          artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
+          author: playlist.attributes?.curatorName?.trim() || '',
+          totalTracks: capTotalTracks(
+            playlist.relationships?.tracks?.meta?.total ?? tracks.length,
+            this.nodelink.options.playback?.maxPlaylistLength
+          )
+        }
       }
     }
   }
@@ -559,14 +660,23 @@ export default class AppleMusicSource implements SourceInstance {
       .filter((t): t is TrackData => !!t)
 
     return {
-      loadType: 'artist',
+      loadType: 'playlist',
       data: {
         info: {
           name: `${artist.attributes?.name}'s Top Tracks`,
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'artist',
+          identifier: id,
+          url:
+            artist.attributes?.url ??
+            `https://music.apple.com/${country}/artist/${id}`,
+          artworkUrl: this.parseArtwork(artist.attributes?.artwork) || '',
+          author: artist.attributes?.name?.trim() || '',
+          totalTracks: tracks.length
+        }
       }
     }
   }
@@ -590,7 +700,13 @@ export default class AppleMusicSource implements SourceInstance {
       parent.type === 'albums' ? this.albumPageLimit : this.playlistPageLimit
     const allowed = maxPages > 0 ? Math.min(pages, maxPages) : pages
 
-    const artwork = this.parseArtwork(parent.attributes?.artwork)
+    // Album tracks share the album's cover. Playlist tracks come from many
+    // albums and carry their own artwork, so the playlist cover must not
+    // replace it.
+    const artwork =
+      parent.type === 'albums'
+        ? this.parseArtwork(parent.attributes?.artwork)
+        : null
     const editorialVideo = this.extractVideoUrl(parent.attributes)
 
     const results = baseTracks

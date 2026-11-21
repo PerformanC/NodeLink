@@ -1,11 +1,19 @@
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackStreamResult,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type {
   HttpRequestResult,
   HttpResponseHeaders,
@@ -36,16 +44,6 @@ type NicoVideoHeaders = Record<string, string> & {
 }
 
 /**
- * Owner payload returned by NicoVideo search results.
- */
-interface NicoVideoOwner {
-  /**
-   * Display name of the uploader when NicoVideo provides it.
-   */
-  name?: string
-}
-
-/**
  * Search entry returned by the NicoVideo snapshot API.
  */
 interface NicoVideoSearchItem {
@@ -60,9 +58,9 @@ interface NicoVideoSearchItem {
   title: string
 
   /**
-   * Optional uploader metadata.
+   * Numeric uploader user identifier.
    */
-  owner?: NicoVideoOwner
+  userId?: number
 
   /**
    * Thumbnail URL exposed by the search API.
@@ -72,88 +70,24 @@ interface NicoVideoSearchItem {
   /**
    * Track duration in seconds.
    */
-  duration: number
+  lengthSeconds: number
 }
 
 /**
- * Search response returned by NicoVideo.
+ * Search response returned by NicoVideo snapshot API.
  */
 interface NicoVideoSearchResponse {
+  /**
+   * Status code returned in snapshot metadata.
+   */
+  meta?: {
+    status?: number
+  }
+
   /**
    * Matching search results.
    */
   data?: NicoVideoSearchItem[]
-}
-
-/**
- * JSON-LD author payload embedded in the watch page response.
- */
-interface NicoVideoJsonLdAuthor {
-  /**
-   * Display name of the video author.
-   */
-  name?: string
-}
-
-/**
- * JSON-LD video payload embedded in the NicoVideo watch page.
- */
-interface NicoVideoJsonLd {
-  /**
-   * Schema.org entry type.
-   */
-  '@type'?: string
-
-  /**
-   * ISO-8601 duration string returned by NicoVideo.
-   */
-  duration?: string
-
-  /**
-   * Author metadata attached to the track.
-   */
-  author?: NicoVideoJsonLdAuthor
-
-  /**
-   * Video title.
-   */
-  name?: string
-
-  /**
-   * Canonical NicoVideo URL.
-   */
-  '@id'?: string
-
-  /**
-   * Thumbnail variants attached to the video.
-   */
-  thumbnailUrl?: string[]
-}
-
-/**
- * Metadata wrapper returned by the watch page response.
- */
-interface NicoVideoWatchMetadata {
-  [x: string]: unknown
-  /**
-   * Available JSON-LD entries extracted from the watch page.
-   */
-  jsonLds?: NicoVideoJsonLd[]
-}
-
-/**
- * Client metadata returned by the NicoVideo watch page.
- */
-interface NicoVideoClientResponse {
-  /**
-   * Canonical watch identifier used by the page response.
-   */
-  watchId?: string
-
-  /**
-   * Playback tracking identifier required to request HLS access.
-   */
-  watchTrackId?: string
 }
 
 /**
@@ -217,47 +151,60 @@ interface NicoVideoDmcMedia {
 }
 
 /**
- * Media wrapper returned by the watch page response.
+ * Video metadata returned by the v3_guest watch API.
  */
-interface NicoVideoMediaResponse {
+interface NicoVideoV3Video {
   /**
-   * Domand playback payload used for HLS access.
+   * Video identifier (e.g. sm9).
    */
-  domand?: NicoVideoDmcMedia
+  id: string
+
+  /**
+   * Video title.
+   */
+  title: string
+
+  /**
+   * Duration in seconds.
+   */
+  duration: number
+
+  /**
+   * Thumbnail variants.
+   */
+  thumbnail?: {
+    url?: string | null
+    player?: string | null
+    ogp?: string | null
+  }
 }
 
 /**
- * Response payload returned by the NicoVideo watch page.
+ * Owner metadata returned by the v3_guest watch API.
  */
-interface NicoVideoWatchResponsePayload {
-  /**
-   * Client metadata for the current watch page.
-   */
-  client?: NicoVideoClientResponse
-
-  /**
-   * Stream metadata for the current watch page.
-   */
-  media?: NicoVideoMediaResponse
+interface NicoVideoV3Owner {
+  id?: number
+  nickname?: string
+  iconUrl?: string
 }
 
 /**
- * Watch page response returned by `?responseType=json`.
+ * v3_guest watch API response payload.
  */
-interface NicoVideoWatchPageResponse {
-  /**
-   * Parsed data payload returned by NicoVideo.
-   */
+interface NicoVideoV3Response {
+  meta?: {
+    status?: number
+  }
   data?: {
-    /**
-     * Watch page metadata block.
-     */
-    metadata?: NicoVideoWatchMetadata
-
-    /**
-     * Playback response block.
-     */
-    response?: NicoVideoWatchResponsePayload
+    video?: NicoVideoV3Video
+    owner?: NicoVideoV3Owner
+    client?: {
+      watchId?: string
+      watchTrackId?: string
+    }
+    media?: {
+      domand?: NicoVideoDmcMedia
+    }
   }
 }
 
@@ -299,31 +246,6 @@ interface NicoVideoAdditionalData {
    * Stream start offset in milliseconds when resuming playback.
    */
   startTime?: number
-}
-
-/**
- * Successful track URL payload stored in the NodeLink track cache.
- */
-interface NicoVideoTrackUrlSuccess {
-  /**
-   * NicoVideo streams are resolved as HLS playlists.
-   */
-  url: string
-
-  /**
-   * NicoVideo streams are resolved as HLS playlists.
-   */
-  protocol: 'hls'
-
-  /**
-   * NicoVideo HLS audio is treated as AAC in the source pipeline.
-   */
-  format: 'aac'
-
-  /**
-   * Additional metadata needed when opening the stream.
-   */
-  additionalData: NicoVideoAdditionalData
 }
 
 /**
@@ -375,7 +297,116 @@ interface NicoVideoTrackData {
 /**
  * NicoVideo source implementation.
  */
-export default class NicoVideoSource {
+export default class NicoVideoSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating NicoVideo source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'nicovideo.watch.stream',
+      name: 'NicoVideo standard watch video playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.nicovideo.jp/watch/sm9'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: '中の'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'nicovideo'
+          }
+        },
+        stream: {
+          required: true,
+          download: {
+            mode: 'window',
+            maxDurationMs: 10000,
+            maxBytes: 512 * 1024
+          },
+          minBytes: 100000,
+          validFormats: [{ container: 'mp4', codec: 'aac' }]
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'nicovideo.short.stream',
+      name: 'NicoVideo short URL playback',
+      input: {
+        type: 'resolve',
+        value: 'https://nico.ms/sm9'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: '中の'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'nicovideo'
+          }
+        },
+        stream: {
+          required: true,
+          download: {
+            mode: 'window',
+            maxDurationMs: 10000,
+            maxBytes: 512 * 1024
+          },
+          minBytes: 100000,
+          validFormats: [{ container: 'mp4', codec: 'aac' }]
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'nicovideo.search',
+      name: 'NicoVideo search query',
+      input: {
+        type: 'search',
+        value: 'Bad Apple',
+        searchType: 'ncsearch'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'search'
+        },
+        collection: {
+          minItems: 1
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
+
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -444,23 +475,6 @@ export default class NicoVideoSource {
   }
 
   /**
-   * Narrows the NicoVideo watch page payload returned by `responseType=json`.
-   *
-   * @param value - Raw response body returned by the watch page request.
-   * @returns Typed watch page response, or `null` when the payload is not
-   * object-like.
-   */
-  private getWatchPageResponse(
-    value: HttpRequestResult['body']
-  ): NicoVideoWatchPageResponse | null {
-    if (!this.isJsonRecord(value)) {
-      return null
-    }
-
-    return value as NicoVideoWatchPageResponse
-  }
-
-  /**
    * Narrows the HLS access-right response returned by NicoVideo.
    *
    * @param value - Raw response body returned by the access-right request.
@@ -505,7 +519,8 @@ export default class NicoVideoSource {
    */
   private buildHeaders(accessRightKey?: string): NicoVideoHeaders {
     const headers: NicoVideoHeaders = {
-      'User-Agent': 'NodeLink',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'X-Request-With': 'https://www.nicovideo.jp',
       Referer: 'https://www.nicovideo.jp/',
       'X-Frontend-Id': '6',
@@ -517,34 +532,6 @@ export default class NicoVideoSource {
     }
 
     return headers
-  }
-
-  /**
-   * Converts a NicoVideo ISO-8601 duration string into milliseconds.
-   *
-   * Handles all duration components (hours, minutes and seconds), e.g. a
-   * "PT4M05S" string correctly resolves to 245000 ms instead of only the
-   * trailing seconds value.
-   *
-   * @param duration - NicoVideo ISO-8601 duration string.
-   * @returns Duration in milliseconds.
-   */
-  private parseDurationMillis(duration?: string): number {
-    if (!duration) {
-      return 0
-    }
-
-    const match = duration.match(
-      /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?/
-    )
-    if (!match) {
-      return 0
-    }
-
-    const hours = Number.parseInt(match[1] ?? '0', 10)
-    const minutes = Number.parseInt(match[2] ?? '0', 10)
-    const seconds = Number.parseFloat(match[3] ?? '0')
-    return Math.round((hours * 3600 + minutes * 60 + seconds) * 1000)
   }
 
   /**
@@ -665,14 +652,15 @@ export default class NicoVideoSource {
     const params = new URLSearchParams({
       q: query,
       targets: 'title,tags',
-      fields: 'contentId,title,owner,thumbnailUrl,duration',
+      fields: 'contentId,title,userId,thumbnailUrl,lengthSeconds',
       _sort: '-viewCounter',
       _context: 'NodeLink',
       _limit: '25'
     })
 
     const { body, error, statusCode } = await http1makeRequest(
-      `https://api.search.nicovideo.jp/api/v2/snapshot/video/contents/search?${params.toString()}`
+      `https://snapshot.search.nicovideo.jp/api/v2/snapshot/video/contents/search?${params.toString()}`,
+      { headers: this.buildHeaders() }
     )
 
     if (error || statusCode !== 200) {
@@ -697,8 +685,8 @@ export default class NicoVideoSource {
       const trackInfo: NicoVideoTrackInfo = {
         identifier: item.contentId,
         isSeekable: true,
-        author: item.owner?.name ?? 'Unknown Artist',
-        length: item.duration * 1000,
+        author: item.userId ? `User ${item.userId}` : 'Unknown Artist',
+        length: (item.lengthSeconds ?? 0) * 1000,
         isStream: false,
         position: 0,
         title: item.title,
@@ -732,10 +720,12 @@ export default class NicoVideoSource {
       return { loadType: 'empty', data: {} }
     }
 
-    const { body, error, statusCode } = await http1makeRequest(
-      `https://www.nicovideo.jp/watch/${videoId}?responseType=json`,
-      { headers: this.buildHeaders() }
-    )
+    const actionTrackId = `AAAAAAAAAA_${Date.now()}`
+    const apiUrl = `https://www.nicovideo.jp/api/watch/v3_guest/${videoId}?actionTrackId=${actionTrackId}`
+
+    const { body, error, statusCode } = await http1makeRequest(apiUrl, {
+      headers: this.buildHeaders()
+    })
 
     if (error || statusCode !== 200) {
       return {
@@ -750,13 +740,13 @@ export default class NicoVideoSource {
       }
     }
 
-    const watchPage = this.getWatchPageResponse(body)
-    const jsonLd = watchPage?.data?.metadata?.jsonLds?.find(
-      (entry) => entry['@type'] === 'VideoObject'
-    )
-    const videoIdFromApi = watchPage?.data?.response?.client?.watchId
+    const response = (
+      this.isJsonRecord(body) ? body : null
+    ) as NicoVideoV3Response | null
+    const video = response?.data?.video
+    const owner = response?.data?.owner
 
-    if (!jsonLd || !videoIdFromApi) {
+    if (!video?.id) {
       return {
         loadType: 'error',
         exception: {
@@ -767,15 +757,19 @@ export default class NicoVideoSource {
     }
 
     const track: NicoVideoTrackInfo = {
-      identifier: videoIdFromApi,
+      identifier: video.id,
       isSeekable: true,
-      author: jsonLd.author?.name ?? 'Unknown Artist',
-      length: this.parseDurationMillis(jsonLd.duration),
+      author: owner?.nickname ?? 'Unknown Artist',
+      length: (video.duration ?? 0) * 1000,
       isStream: false,
       position: 0,
-      title: jsonLd.name ?? 'Unknown Title',
-      uri: jsonLd['@id'] ?? `https://www.nicovideo.jp/watch/${videoIdFromApi}`,
-      artworkUrl: jsonLd.thumbnailUrl?.[0] ?? null,
+      title: video.title ?? 'Unknown Title',
+      uri: `https://www.nicovideo.jp/watch/${video.id}`,
+      artworkUrl:
+        video.thumbnail?.ogp ??
+        video.thumbnail?.player ??
+        video.thumbnail?.url ??
+        null,
       isrc: null,
       sourceName: 'nicovideo',
       details: []
@@ -797,16 +791,16 @@ export default class NicoVideoSource {
    * @param track - Decoded track information provided by the playback system.
    * @param forceRefresh - When `true`, bypasses the track cache and resolves a
    * fresh HLS session.
-   * @returns Cached or freshly resolved HLS access data, or an exception
-   * payload when playback rights cannot be established.
+   * @returns Cached or freshly resolved HLS access data.
    */
   public async getTrackUrl(
     track: TrackInfo,
+    _itag?: number,
     forceRefresh = false
-  ): Promise<TrackUrlResult | SourceResult> {
+  ): Promise<TrackUrlResult> {
     if (!forceRefresh) {
       const cached =
-        this.nodelink.trackCacheManager?.get<NicoVideoTrackUrlSuccess>(
+        this.nodelink.trackCacheManager?.get<TrackUrlResult>(
           'nicovideo',
           track.identifier
         ) ?? null
@@ -816,54 +810,46 @@ export default class NicoVideoSource {
       }
     }
 
+    const videoId =
+      track.identifier && /^[a-zA-Z0-9_-]+$/.test(track.identifier)
+        ? track.identifier
+        : this.getVideoId(track.uri || '')
+
+    if (!videoId) {
+      throw new Error('Invalid NicoVideo identifier or URL.')
+    }
+
+    const actionTrackId = `AAAAAAAAAA_${Date.now()}`
+    const watchUrl = `https://www.nicovideo.jp/api/watch/v3_guest/${videoId}?actionTrackId=${actionTrackId}`
+
     const {
       body: pageData,
       error,
       statusCode
-    } = await http1makeRequest(`${track.uri}?responseType=json`, {
+    } = await http1makeRequest(watchUrl, {
       headers: this.buildHeaders()
     })
 
-    if (error || statusCode !== 200) {
-      return {
-        loadType: 'error',
-        exception: {
-          message: `Failed to get track page: ${this.getRequestFailureMessage(
-            error,
-            statusCode
-          )}`,
-          severity: 'fault'
-        }
-      }
+    if (error || statusCode !== 200 || !this.isJsonRecord(pageData)) {
+      throw new Error(
+        `Failed to get track page: ${this.getRequestFailureMessage(
+          error,
+          statusCode
+        )}`
+      )
     }
 
-    const response = this.getWatchPageResponse(pageData)?.data?.response
-    if (!response) {
-      return {
-        loadType: 'error',
-        exception: {
-          message: 'Failed to extract response data from page',
-          severity: 'fault'
-        }
-      }
-    }
-
-    const dmcMedia = response.media?.domand
-    const watchTrackId = response.client?.watchTrackId
+    const response = pageData as NicoVideoV3Response
+    const dmcMedia = response.data?.media?.domand
+    const watchTrackId = response.data?.client?.watchTrackId
     const accessRightKey = dmcMedia?.accessRightKey
 
     if (!dmcMedia || !watchTrackId || !accessRightKey) {
-      return {
-        loadType: 'error',
-        exception: {
-          message: 'Failed to extract required DMC info for stream access',
-          severity: 'fault'
-        }
-      }
+      throw new Error('Failed to extract required DMC info for stream access.')
     }
 
     const streamRequestUrl =
-      `https://nvapi.nicovideo.jp/v1/watch/${track.identifier}/access-rights/hls` +
+      `https://nvapi.nicovideo.jp/v1/watch/${videoId}/access-rights/hls` +
       `?actionTrackId=${encodeURIComponent(watchTrackId)}&__retry=1`
     const postBody = { outputs: this.buildOutputData(dmcMedia) }
 
@@ -874,22 +860,21 @@ export default class NicoVideoSource {
       statusCode: streamStatus
     } = await http1makeRequest(streamRequestUrl, {
       method: 'POST',
-      headers: this.buildHeaders(accessRightKey),
+      headers: {
+        ...this.buildHeaders(accessRightKey),
+        'Content-Type': 'application/json'
+      },
       body: postBody,
       disableBodyCompression: true
     })
 
     if (streamError || streamStatus !== 201) {
-      return {
-        loadType: 'error',
-        exception: {
-          message: `Failed to get stream access rights: ${this.getRequestFailureMessage(
-            streamError,
-            streamStatus
-          )}`,
-          severity: 'fault'
-        }
-      }
+      throw new Error(
+        `Failed to get stream access rights: ${this.getRequestFailureMessage(
+          streamError,
+          streamStatus
+        )}`
+      )
     }
 
     const cookie = this.getCookieHeaderValue(streamHeaders)
@@ -897,13 +882,7 @@ export default class NicoVideoSource {
       this.getAccessRightsResponse(streamData)?.data?.contentUrl
 
     if (!masterPlaylistUrl) {
-      return {
-        loadType: 'error',
-        exception: {
-          message: 'Failed to extract master playlist URL',
-          severity: 'fault'
-        }
-      }
+      throw new Error('Failed to extract master playlist URL.')
     }
 
     const {
@@ -911,30 +890,23 @@ export default class NicoVideoSource {
       error: masterError,
       statusCode: masterStatus
     } = await http1makeRequest(masterPlaylistUrl, {
-      headers: { Cookie: cookie ?? '' }
+      headers: {
+        ...this.buildHeaders(),
+        ...(cookie ? { Cookie: cookie } : {})
+      }
     })
 
-    if (masterError || masterStatus !== 200) {
-      return {
-        loadType: 'error',
-        exception: {
-          message: `Failed to fetch master HLS playlist: ${this.getRequestFailureMessage(
-            masterError,
-            masterStatus
-          )}`,
-          severity: 'fault'
-        }
-      }
-    }
-
-    if (typeof masterPlaylistContent !== 'string') {
-      return {
-        loadType: 'error',
-        exception: {
-          message: 'Master playlist response was not returned as text',
-          severity: 'fault'
-        }
-      }
+    if (
+      masterError ||
+      masterStatus !== 200 ||
+      typeof masterPlaylistContent !== 'string'
+    ) {
+      throw new Error(
+        `Failed to fetch master HLS playlist: ${this.getRequestFailureMessage(
+          masterError,
+          masterStatus
+        )}`
+      )
     }
 
     const lines = masterPlaylistContent.split('\n')
@@ -942,38 +914,16 @@ export default class NicoVideoSource {
       (line) => line.startsWith('#EXT-X-MEDIA') && line.includes('TYPE=AUDIO')
     )
 
-    if (!audioTag) {
-      const result: NicoVideoTrackUrlSuccess = {
-        url: masterPlaylistUrl,
-        protocol: 'hls',
-        format: 'aac',
-        additionalData: { cookie }
-      }
-
-      this.nodelink.trackCacheManager?.set(
-        'nicovideo',
-        track.identifier,
-        result,
-        1000 * 60 * 60
-      )
-
-      return result
-    }
-
-    const audioUri = audioTag.match(/URI="([^"]+)"/)?.[1]
-    if (!audioUri) {
-      return {
-        loadType: 'error',
-        exception: {
-          message: 'Could not parse audio URI from master playlist',
-          severity: 'fault'
-        }
+    let playlistUrl = masterPlaylistUrl
+    if (audioTag) {
+      const audioUri = audioTag.match(/URI="([^"]+)"/)?.[1]
+      if (audioUri) {
+        playlistUrl = new URL(audioUri, masterPlaylistUrl).toString()
       }
     }
 
-    const audioPlaylistUrl = new URL(audioUri, masterPlaylistUrl).toString()
-    const result: NicoVideoTrackUrlSuccess = {
-      url: audioPlaylistUrl,
+    const result: TrackUrlResult = {
+      url: playlistUrl,
       protocol: 'hls',
       format: 'aac',
       additionalData: { cookie }
@@ -993,7 +943,6 @@ export default class NicoVideoSource {
    * Opens the NicoVideo audio stream from a previously resolved HLS playlist.
    *
    * @param _track - Decoded track information passed by the playback system.
-   * The current implementation does not need it after URL resolution.
    * @param url - HLS playlist URL returned by `getTrackUrl(...)`.
    * @param protocol - Stream protocol returned by `getTrackUrl(...)`.
    * @param additionalData - Extra stream metadata such as cookies and resume
@@ -1005,8 +954,8 @@ export default class NicoVideoSource {
     _track: TrackInfo,
     url: string,
     protocol?: string,
-    additionalData?: TrackUrlResult['additionalData']
-  ): Promise<TrackStreamResult | SourceResult> {
+    additionalData?: Record<string, unknown>
+  ): Promise<TrackStreamResult> {
     if (protocol === 'hls') {
       const headers = this.buildHeaders()
       const streamData = this.getAdditionalData(additionalData)
@@ -1025,12 +974,90 @@ export default class NicoVideoSource {
       return { stream, type: 'fmp4' }
     }
 
-    return {
-      loadType: 'error',
-      exception: {
-        message: 'Unsupported protocol',
-        severity: 'common'
+    throw new Error('Unsupported protocol')
+  }
+
+  /**
+   * Executes a specific variant for testing.
+   *
+   * @param variant - The test variant to execute.
+   * @param track - The track information.
+   * @param streamSpec - Optional stream validation specifications.
+   * @returns A result object detailing resolution and stream state.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    let urlData: TrackUrlResult
+    try {
+      urlData = await this.getTrackUrl(track)
+    } catch (err) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to resolve track streaming URL'
       }
+    }
+
+    if (!urlData.url) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: 'Failed to resolve track streaming URL'
+      }
+    }
+
+    const container = 'mp4'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    let streamResult: TrackStreamResult
+    try {
+      streamResult = await this.loadStream(
+        track,
+        urlData.url,
+        urlData.protocol,
+        urlData.additionalData
+      )
+    } catch (err) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error:
+          err instanceof Error ? err.message : 'Failed to load audio stream'
+      }
+    }
+
+    if (!streamResult.stream) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: 'Failed to load audio stream'
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
     }
   }
 }

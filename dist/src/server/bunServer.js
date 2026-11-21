@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { logger, parseClient, verifyDiscordID } from '../utils.js';
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/;
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/;
@@ -107,7 +108,7 @@ export function createBunServer(context, getRequestHandler) {
     const server = Bun.serve({
         port,
         hostname: host,
-        maxRequestBodySize: 1024 * 1024 * 50,
+        maxRequestBodySize: context.options.server?.maxBodySize ?? 1024 * 1024,
         idleTimeout: 60,
         error(error) {
             logger('error', 'Server', `HTTP server error: ${error instanceof Error ? error.message : String(error)}`);
@@ -134,13 +135,13 @@ export function createBunServer(context, getRequestHandler) {
                 : url.pathname;
             if (pathname === '/v4/profiler/socket') {
                 const remoteAddress = server.requestIP(req)?.address || 'unknown';
-                const isInternal = /^(::1|localhost|127\.0\.0\.1)/.test(remoteAddress);
+                const isInternal = isLoopbackRequest(remoteAddress, Object.fromEntries(req.headers));
                 const endpoint = context.options.cluster?.endpoint || {};
                 const patchEnabled = endpoint.patchEnabled === true;
                 const allowExternalPatch = endpoint.allowExternalPatch === true;
                 const expectedCode = typeof endpoint.code === 'string' && endpoint.code.length > 0
                     ? endpoint.code
-                    : 'CAPYBARA';
+                    : '';
                 const providedCode = url.searchParams.get('code') ||
                     req.headers.get('x-nodelink-code') ||
                     req.headers.get('x-worker-code');
@@ -156,7 +157,16 @@ export function createBunServer(context, getRequestHandler) {
                         statusText: 'Forbidden'
                     });
                 }
-                if (!providedCode || providedCode !== expectedCode) {
+                const serverPassword = context.options.server.password;
+                const authHeader = req.headers.get('authorization');
+                const isServerAuth = authHeader === serverPassword ||
+                    authHeader === `Bearer ${serverPassword}`;
+                const isCodeAuth = typeof expectedCode === 'string' &&
+                    expectedCode.length > 0 &&
+                    typeof providedCode === 'string' &&
+                    providedCode.length > 0 &&
+                    providedCode === expectedCode;
+                if (!isServerAuth && !isCodeAuth) {
                     return new Response('Invalid or missing profiler code.', {
                         status: 403,
                         statusText: 'Forbidden'
@@ -182,13 +192,42 @@ export function createBunServer(context, getRequestHandler) {
             const liveMatch = pathname.match(LIVE_PATH_RE);
             const isMainWs = pathname === '/v4/websocket';
             if (isMainWs || voiceMatch || liveMatch) {
-                const remoteAddress = server.requestIP(req)?.address || 'unknown';
+                const peerAddress = server.requestIP(req)?.address || 'unknown';
+                const upgradeReqShim = {
+                    method: req.method,
+                    url: req.url,
+                    headers: Object.fromEntries(req.headers),
+                    socket: { remoteAddress: peerAddress }
+                };
+                const remoteAddress = context.admissionManager.resolveClientAddress(upgradeReqShim) ??
+                    peerAddress;
                 const clientAddress = `[External] (${remoteAddress})`;
+                const isIpBlocked = context.admissionManager.isIpBlocked(remoteAddress);
+                if (isIpBlocked) {
+                    return new Response('Forbidden', {
+                        status: 403,
+                        statusText: 'Forbidden'
+                    });
+                }
+                const admissionContext = context.admissionManager.resolveContext(upgradeReqShim, url);
+                const admissionDecision = context.admissionManager.admit(admissionContext);
+                if (!admissionDecision.allowed) {
+                    return new Response('Too Many Requests', {
+                        status: admissionDecision.status,
+                        statusText: 'Too Many Requests',
+                        headers: {
+                            'Retry-After': String(admissionDecision.retryAfterSeconds),
+                            'Nodelink-Api-Version': '4',
+                            IamNodelink: 'true'
+                        }
+                    });
+                }
                 const clientName = req.headers.get('client-name');
                 const auth = req.headers.get('authorization');
                 const userId = req.headers.get('user-id');
                 let sessionId = req.headers.get('session-id');
                 if (auth !== password) {
+                    context.admissionManager.recordAuthFailure(remoteAddress);
                     logger('warn', 'Server', `Unauthorized connection attempt from ${clientAddress} - Invalid password provided: ${auth || 'None'}`);
                     return new Response('Invalid password provided.', {
                         status: 401,
@@ -253,9 +292,21 @@ export function createBunServer(context, getRequestHandler) {
                     eventName = '/v4/websocket/youtube/live';
                     routeId = liveMatch[1] ?? null;
                 }
-                if (sessionId && !context.sessions.resumableSessions.has(sessionId)) {
+                if (sessionId && !context.sessions.isResumable(sessionId)) {
                     logger('warn', 'Server', `Session-ID provided by ${clientAddress} does not exist or is not resumable: ${sessionId}, creating a new session`);
                     sessionId = null;
+                }
+                /* INFO: Bun has no TCP connection hook, so peer and per-client capacity are reserved per upgrade */
+                const releaseCapacity = context.admissionManager.reserveUpgrade(peerAddress, admissionContext.ip, true);
+                if (!releaseCapacity) {
+                    return new Response('Too many concurrent connections.', {
+                        status: 429,
+                        statusText: 'Too Many Requests',
+                        headers: {
+                            'Nodelink-Api-Version': '4',
+                            IamNodelink: 'true'
+                        }
+                    });
                 }
                 const success = server.upgrade(req, {
                     data: {
@@ -266,11 +317,13 @@ export function createBunServer(context, getRequestHandler) {
                         url: req.url,
                         pathname,
                         eventName,
-                        routeId
+                        routeId,
+                        releaseCapacity
                     }
                 });
                 if (success)
                     return undefined;
+                releaseCapacity();
                 return new Response('WebSocket upgrade failed', {
                     status: 400,
                     headers: {
@@ -342,8 +395,9 @@ export function createBunServer(context, getRequestHandler) {
                             end.push(cb);
                             trigger();
                         }
-                        else if (ev === 'error')
+                        else if (ev === 'error') {
                             err.push(cb);
+                        }
                     }
                 };
                 const resShim = {
@@ -447,6 +501,7 @@ export function createBunServer(context, getRequestHandler) {
                 wrapper._handleMessage(message);
             },
             close(ws, code, reason) {
+                ws.data?.releaseCapacity?.();
                 const wrapper = ws.data?.wrapper;
                 if (!wrapper) {
                     logger('debug', 'WebSocket', `Bun close received without wrapper (code: ${code}, remote: ${ws.data?.remoteAddress || 'unknown'})`);
@@ -488,7 +543,7 @@ export async function cleanupBunServer(context, server) {
         // Without this, Bun.stop(true) tears TCP connections down without
         // sending close frames, surfacing as ECONNRESET on the client.
         let closedCount = 0;
-        for (const session of context.sessions.activeSessions.values()) {
+        for (const session of context.sessions.values()) {
             if (!session.socket)
                 continue;
             try {
@@ -505,8 +560,7 @@ export async function cleanupBunServer(context, server) {
                 }
             }
         }
-        context.sessions.activeSessions.clear();
-        context.sessions.resumableSessions.clear();
+        context.sessions.clearSessions();
         logger('info', 'WebSocket', `Signalled close to ${closedCount} WebSocket connection(s)`);
         // Prefer graceful stop so the close frames above flush. If clients
         // don't drain within 1.5s (slow networks, half-open peers), fall

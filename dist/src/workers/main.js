@@ -6,6 +6,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
     }
     return path;
 };
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import inspector from 'node:inspector';
@@ -826,24 +827,30 @@ const handleSocketDisconnect = (socketType, socket) => {
     }
     else if (commandSocket === socket) {
         commandSocket = null;
+        const err = new Error('Master command socket disconnected');
+        for (const [, req] of masterPendingRequests) {
+            clearTimeout(req.timeout);
+            req.reject(err);
+        }
+        masterPendingRequests.clear();
     }
     notifySocketDisconnected(socketType);
     scheduleReconnect(socketType);
 };
 const sendEventHello = () => {
-    if (!eventSocket || eventSocket.destroyed)
+    if (!eventSocket || eventSocket.destroyed || !eventSocket.writable)
         return false;
     const payload = v8.serialize({ pid: process.pid });
-    const header = Buffer.alloc(6);
+    const header = Buffer.allocUnsafe(6);
     header.writeUInt8(0, 0);
     header.writeUInt8(0, 1);
     header.writeUInt32BE(payload.length, 2);
     try {
         eventSocket.cork();
-        const okHeader = eventSocket.write(header);
-        const okPayload = eventSocket.write(payload);
+        eventSocket.write(header);
+        eventSocket.write(payload);
         eventSocket.uncork();
-        return okHeader && okPayload;
+        return true;
     }
     catch {
         return false;
@@ -865,6 +872,32 @@ const connectEventSocket = () => {
         handleSocketDisconnect('event', socket);
     });
 };
+const masterPendingRequests = new Map();
+function executeMasterSourceTask(task, payload, timeoutMs = 60000) {
+    if (!commandSocket || commandSocket.destroyed || !commandSocket.writable) {
+        return Promise.reject(new Error('Command socket not connected to master'));
+    }
+    const id = crypto.randomBytes(16).toString('hex');
+    const payloadBuf = v8.serialize({ task, payload });
+    logger('debug', 'Worker', `Delegating task '${task}' to master source worker via command socket`);
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            masterPendingRequests.delete(id);
+            reject(new Error(`Master source task '${task}' timed out`));
+        }, timeoutMs);
+        masterPendingRequests.set(id, {
+            resolve: (val) => resolve(val),
+            reject,
+            timeout
+        });
+        const ok = sendCommandFrame(4, id, payloadBuf);
+        if (!ok) {
+            clearTimeout(timeout);
+            masterPendingRequests.delete(id);
+            reject(new Error('Failed to write frame to master command socket'));
+        }
+    });
+}
 const connectCommandSocket = () => {
     if (!commandSocketPath)
         return;
@@ -932,6 +965,34 @@ const connectCommandSocket = () => {
                 }
                 catch (e) {
                     logger('error', 'Worker', `Command socket parse error: ${getErrorMessage(e)}`);
+                }
+            }
+            else if (type === 2) {
+                const pending = masterPendingRequests.get(id);
+                if (pending) {
+                    clearTimeout(pending.timeout);
+                    masterPendingRequests.delete(id);
+                    try {
+                        const data = v8.deserialize(payload);
+                        pending.resolve(data);
+                    }
+                    catch (e) {
+                        pending.reject(e);
+                    }
+                }
+            }
+            else if (type === 3) {
+                const pending = masterPendingRequests.get(id);
+                if (pending) {
+                    clearTimeout(pending.timeout);
+                    masterPendingRequests.delete(id);
+                    try {
+                        const err = v8.deserialize(payload);
+                        pending.reject(new Error(String(err)));
+                    }
+                    catch (e) {
+                        pending.reject(e);
+                    }
                 }
             }
         }
@@ -1031,20 +1092,22 @@ function sendStreamError(streamId, error) {
  * Send a binary command frame to the master process.
  */
 function sendCommandFrame(type, requestId, payloadBuf) {
-    if (!commandSocket || commandSocket.destroyed)
+    if (!commandSocket || commandSocket.destroyed || !commandSocket.writable) {
         return false;
+    }
     const idBuf = Buffer.from(requestId || '', 'utf8');
-    const header = Buffer.alloc(6);
+    const header = Buffer.allocUnsafe(6);
     header.writeUInt8(idBuf.length, 0);
     header.writeUInt8(type, 1);
     header.writeUInt32BE(payloadBuf.length, 2);
     try {
         commandSocket.cork();
-        const okHeader = commandSocket.write(header);
-        const okId = commandSocket.write(idBuf);
-        const okPayload = commandSocket.write(payloadBuf);
+        commandSocket.write(header);
+        if (idBuf.length > 0)
+            commandSocket.write(idBuf);
+        commandSocket.write(payloadBuf);
         commandSocket.uncork();
-        return okHeader && okId && okPayload;
+        return true;
     }
     catch {
         return false;
@@ -1163,6 +1226,12 @@ nodelink.statsManager = new StatsManager(nodelink);
 nodelink.credentialManager = new CredentialManager(nodelink);
 nodelink.trackCacheManager = new TrackCacheManager(nodelink);
 await nodelink.trackCacheManager.load();
+nodelink.sourceWorkerManager = {
+    execute: executeMasterSourceTask,
+    get hasAvailableWorkers() {
+        return Boolean(commandSocket && !commandSocket.destroyed && commandSocket.writable);
+    }
+};
 nodelink.sources = new SourceManager(nodelink);
 nodelink.routePlanner = new RoutePlannerManager(nodelink);
 nodelink.connectionManager = new ConnectionManager(nodelink);
@@ -1221,6 +1290,7 @@ function startTimers(hibernating = false) {
             }
         }
     }, updateInterval);
+    playerUpdateTimer.unref?.();
     statsUpdateTimer = setInterval(() => {
         if (!process.connected)
             return;
@@ -1266,6 +1336,7 @@ function startTimers(hibernating = false) {
                             clearInterval(aggressiveGC);
                         }
                     }, 1000);
+                    aggressiveGC.unref?.();
                 }
             }
         }
@@ -1336,6 +1407,7 @@ function startTimers(hibernating = false) {
             }
         }
     }, statsInterval);
+    statsUpdateTimer.unref?.();
 }
 async function initialize() {
     await nodelink.credentialManager.load();
@@ -1404,7 +1476,9 @@ async function startLoadStream(streamId, payload) {
         throw new Error(fetched.exception.message || 'Failed to load stream');
     }
     const createPCMStream = await getCreatePCMStream();
-    const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {});
+    const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {}, nodelink.options.playback?.audio?.loudnessNormalizer ?? false, (urlResult.newTrack?.info || trackInfo).sourceName === 'http'
+        ? urlResult.url
+        : undefined);
     const entry = {
         pcmStream,
         fetched,
@@ -1497,7 +1571,7 @@ async function processQueue(queueKey) {
         switch (type) {
             case 'createPlayer': {
                 const createPayload = payload;
-                const { sessionId, guildId, userId, voice } = createPayload;
+                const { sessionId, guildId, userId, voice, audioProcessingMode } = createPayload;
                 if (!sessionId || !guildId || !userId) {
                     result = { created: false, reason: 'Invalid createPlayer payload' };
                     break;
@@ -1532,7 +1606,8 @@ async function processQueue(queueKey) {
                 const player = new PlayerClass({
                     nodelink: nodelink,
                     session: mockSession,
-                    guildId
+                    guildId,
+                    audioProcessingMode
                 });
                 players.set(playerKey, player);
                 if (voice)
@@ -1646,27 +1721,33 @@ async function processQueue(queueKey) {
             }
             case 'loadTracks': {
                 const { identifier } = (payload ?? {});
-                const re = /^(?:(?<url>(?:https?|ftts):\/\/\S+)|(?<source>[A-Za-z0-9]+):(?<query>[^/\s].*))$/i;
+                const re = /^(?:(?<url>(?:https?|ftts):\/\/\S+)|(?<source>(?![A-Za-z]:[\\/])[A-Za-z0-9]+):\s*(?<query>(?!\/\/).+)|(?<local>(?:\/|[A-Za-z]:\\|\\).+))$/is;
                 const match = re.exec(identifier);
                 if (!match)
                     throw new Error('Invalid identifier');
-                const { url, source, query } = (match.groups ?? {});
+                const { url, source, query, local } = (match.groups ?? {});
                 if (url)
                     result = await nodelink.sources.resolve(url);
+                else if (local) {
+                    result = await nodelink.sources.search('local', local.trim());
+                }
                 else if (source === 'search') {
-                    if (!query)
+                    const cleanQuery = query?.replace(/\r?\n+/g, ' ').trim();
+                    if (!cleanQuery)
                         throw new Error('Missing search query');
-                    result = await nodelink.sources.unifiedSearch(query);
+                    result = await nodelink.sources.unifiedSearch(cleanQuery);
                 }
                 else {
-                    if (!source || !query)
+                    const cleanQuery = query?.replace(/\r?\n+/g, ' ').trim();
+                    if (!source || !cleanQuery)
                         throw new Error('Missing source or query');
-                    result = await nodelink.sources.search(source, query);
+                    result = await nodelink.sources.search(source, cleanQuery);
                 }
                 break;
             }
             case 'loadLyrics': {
-                const { decodedTrackInfo, language } = (payload ?? {});
+                const { decodedTrackInfo, language, source, type } = (payload ??
+                    {});
                 const trackInfo = {
                     ...decodedTrackInfo,
                     artworkUrl: decodedTrackInfo.artworkUrl ?? null,
@@ -1674,7 +1755,7 @@ async function processQueue(queueKey) {
                     uri: decodedTrackInfo.uri
                 };
                 const lyrics = await getLyricsManager();
-                result = await lyrics.loadLyrics({ info: trackInfo }, language);
+                result = await lyrics.loadLyrics({ info: trackInfo }, language, undefined, source, type);
                 break;
             }
             case 'loadMeaning': {

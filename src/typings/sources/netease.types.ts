@@ -293,6 +293,8 @@ export interface NeteaseArtistResponse {
  * @public
  */
 export interface NeteasePluginInfo {
+  [key: string]: unknown
+
   /**
    * Netease song identifier.
    */
@@ -381,7 +383,7 @@ export type NeteaseSourceResult =
   | { loadType: 'search'; data: NeteaseTrackData[] }
   | { loadType: 'playlist'; data: NeteasePlaylistData }
   | { loadType: 'empty'; data: Record<string, never> }
-  | { exception: NeteaseException }
+  | { loadType: 'error'; exception: NeteaseException }
 
 /**
  * Decoded track payload accepted by `getTrackUrl`.

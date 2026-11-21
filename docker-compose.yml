@@ -1,5 +1,8 @@
 services:
   nodelink:
+    # Pre-built image options (Docker Hub or GitHub Container Registry):
+    # image: ghcr.io/performanc/nodelink:dev     # Bleeding edge dev build (push on branch dev)
+    # image: ghcr.io/performanc/nodelink:latest  # Official stable release
     build:
       context: .
       dockerfile: Dockerfile

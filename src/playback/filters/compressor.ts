@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 
@@ -16,6 +17,7 @@ const gainToDb = (gain: number): number =>
  * @public
  */
 export default class Compressor extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 11
   private threshold = -24
   private ratio = 4
@@ -107,6 +109,33 @@ export default class Compressor extends AnimatableFilter {
       chunk.writeInt16LE(clamp16Bit(right * effectiveGain * 32768), i + 2)
     }
 
+    return chunk
+  }
+
+  /** Float32 equivalent of the legacy detector and gain curve without PCM saturation. */
+  public processFloat32(chunk: Buffer): Buffer {
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    const attackCoef = Math.exp(-1 / (this.attack * SAMPLE_RATE))
+    const releaseCoef = Math.exp(-1 / (this.release * SAMPLE_RATE))
+    const makeupGain = dbToGain(this.makeupGain)
+    for (let i = 0; i < chunk.length; i += 8) {
+      const left = chunk.readFloatLE(i)
+      const right = chunk.readFloatLE(i + 4)
+      const absSample = Math.max(Math.abs(left), Math.abs(right))
+      this.envelope =
+        absSample > this.envelope
+          ? attackCoef * (this.envelope - absSample) + absSample
+          : releaseCoef * (this.envelope - absSample) + absSample
+      const envelopeDb = gainToDb(this.envelope)
+      const reductionDb =
+        envelopeDb > this.threshold
+          ? (this.threshold - envelopeDb) * (1 - 1 / this.ratio)
+          : 0
+      const gain = 1 + this.alpha * (dbToGain(reductionDb) * makeupGain - 1)
+      chunk.writeFloatLE(left * gain, i)
+      chunk.writeFloatLE(right * gain, i + 4)
+    }
     return chunk
   }
 

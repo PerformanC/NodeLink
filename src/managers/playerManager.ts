@@ -1,4 +1,5 @@
 import type { Player as PlaybackPlayer } from '../playback/player.ts'
+import type { AudioProcessingMode } from '../playback/processing/audioContract.ts'
 import type { Session } from '../typings/index.types.ts'
 import type {
   CrossfadeConfig,
@@ -15,36 +16,13 @@ import type {
 } from '../typings/playback/player.types.ts'
 import { logger } from '../utils.ts'
 
-/**
- * Minimal worker shape required by player manager cluster operations.
- * @public
- */
-interface ClusterWorkerLike {
-  id: number
-}
-
-/**
- * Minimal worker manager contract consumed by player manager.
- * @public
- */
-interface WorkerManagerLike {
-  getWorkerForGuild: (playerKey: string) => ClusterWorkerLike | null
-  execute: <T = unknown>(
-    worker: ClusterWorkerLike,
-    type: string,
-    payload: Record<string, unknown>,
-    options?: { fast?: boolean; timeoutMs?: number }
-  ) => Promise<T>
-  assignGuildToWorker: (playerKey: string, worker: ClusterWorkerLike) => void
-  unassignGuild: (playerKey: string) => void
-  isGuildAssigned: (playerKey: string) => boolean
-}
+type WorkerManagerLike = import('./workerManager.ts').default
 
 /**
  * Action names used by player interceptors.
  * @public
  */
-type PlayerInterceptorAction =
+export type PlayerInterceptorAction =
   | 'play'
   | 'preload'
   | 'clearNextTrack'
@@ -61,7 +39,7 @@ type PlayerInterceptorAction =
  * Interceptor signature for player command hooks.
  * @public
  */
-type PlayerInterceptor = (
+export type PlayerInterceptor = (
   action: PlayerInterceptorAction,
   guildId: string,
   args: readonly unknown[]
@@ -71,16 +49,22 @@ type PlayerInterceptor = (
  * Minimal NodeLink runtime context consumed by player manager.
  * @public
  */
-interface PlayerManagerNodelinkContext extends PlaybackNodeLink {
+interface PlayerManagerNodelinkContext {
+  options: import('../typings/config/config.types.ts').NodelinkConfig
+  logger: typeof import('../utils.ts').logger
+  statsManager: import('./statsManager.ts').default
+  sources: import('./sourceManager.ts').default | null
+  lyrics: import('./lyricsManager.ts').default | null
   sessions: {
     get: (id: string) => Session | undefined
   }
   statistics: {
     players: number
   }
+  admissionManager?: import('./admissionManager.ts').default | null
   workerManager: WorkerManagerLike | null
-  pluginManager: import('./pluginManager.ts').default | null
-  extensions?: PlaybackNodeLink['extensions'] & {
+  pluginManager?: import('./pluginManager.ts').default | null
+  extensions?: {
     playerInterceptors?: PlayerInterceptor[]
   }
 }
@@ -93,6 +77,14 @@ interface ClusterPlayerSnapshot {
   guildId: string
   userId: string | undefined
   sessionId: string
+  track: null
+  isPaused: false
+  connection: null
+  connStatus: 'disconnected'
+  _lastStreamDataTime: number
+  _sendUpdate: () => boolean
+  emitEvent: (event: string, data?: Record<string, unknown>) => void
+  destroy: () => void
 }
 
 /**
@@ -151,7 +143,7 @@ interface MixState {
  * Internal union for locally managed players and cluster snapshots.
  * @public
  */
-type ManagedPlayer = PlaybackPlayer | ClusterPlayerSnapshot
+export type ManagedPlayer = PlaybackPlayer | ClusterPlayerSnapshot
 
 /**
  * Session-scoped manager that controls player lifecycle and player commands.
@@ -235,7 +227,7 @@ export default class PlayerManager {
   private isClusterPlayerSnapshot(
     player: ManagedPlayer
   ): player is ClusterPlayerSnapshot {
-    return typeof (player as Partial<PlaybackPlayer>).play !== 'function'
+    return !('play' in player)
   }
 
   /**
@@ -365,7 +357,8 @@ export default class PlayerManager {
    */
   async create(
     guildId: string,
-    voice?: Partial<PlayerVoiceState>
+    voice?: Partial<PlayerVoiceState>,
+    audioProcessingMode?: AudioProcessingMode | null
   ): Promise<ManagedPlayer> {
     const session = this.getSessionOrThrow()
     const playerKey = this.getPlayerKey(guildId)
@@ -389,7 +382,8 @@ export default class PlayerManager {
       session,
       guildId,
       voice,
-      playerKey
+      playerKey,
+      audioProcessingMode
     ).finally(() => {
       this.pendingCreates.delete(playerKey)
     })
@@ -406,7 +400,8 @@ export default class PlayerManager {
     session: Session,
     guildId: string,
     voice: Partial<PlayerVoiceState> | undefined,
-    playerKey: string
+    playerKey: string,
+    audioProcessingMode?: AudioProcessingMode | null
   ): Promise<ManagedPlayer> {
     if (this.isCluster) {
       const workerManager = this.getWorkerManagerOrThrow()
@@ -431,7 +426,8 @@ export default class PlayerManager {
             sessionId: this.sessionId,
             guildId,
             userId: this.getSessionUserId(session),
-            voice
+            voice,
+            audioProcessingMode
           }
         )
 
@@ -450,7 +446,15 @@ export default class PlayerManager {
           this.players.set(playerKey, {
             guildId,
             userId: this.getSessionUserId(session),
-            sessionId: this.sessionId
+            sessionId: this.sessionId,
+            track: null,
+            isPaused: false,
+            connection: null,
+            connStatus: 'disconnected',
+            _lastStreamDataTime: 0,
+            _sendUpdate: () => true,
+            emitEvent: () => {},
+            destroy: () => {}
           })
         }
 
@@ -503,13 +507,15 @@ export default class PlayerManager {
     )
 
     const player = new Player({
-      nodelink: this.nodelink,
+      nodelink: this.nodelink as PlaybackNodeLink,
       session: localSession,
-      guildId
+      guildId,
+      audioProcessingMode
     })
 
     this.players.set(playerKey, player)
     this.nodelink.statistics.players += 1
+    this.nodelink.admissionManager?.recordPlayerCreate(this.sessionId)
 
     this.nodelink.pluginManager?.callHook(
       'onPlayerCreate',
@@ -553,6 +559,7 @@ export default class PlayerManager {
 
       workerManager.unassignGuild(playerKey)
       this.players.delete(playerKey)
+      this.nodelink.admissionManager?.recordPlayerDestroy(this.sessionId)
 
       this.nodelink.pluginManager?.callHook(
         'onPlayerDestroy',
@@ -570,6 +577,7 @@ export default class PlayerManager {
       0,
       this.nodelink.statistics.players - 1
     )
+    this.nodelink.admissionManager?.recordPlayerDestroy(this.sessionId)
 
     this.nodelink.pluginManager?.callHook(
       'onPlayerDestroy',
@@ -741,9 +749,7 @@ export default class PlayerManager {
       return interception.result as PlayerCommandResponse
 
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'setFilters', [
-        filtersPayload
-      ])
+      return this.runClusterMutation(guildId, 'setFilters', [filtersPayload])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -789,9 +795,7 @@ export default class PlayerManager {
       return interception.result as PlayerCommandResponse
 
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'setCrossfade', [
-        crossfadeConfig
-      ])
+      return this.runClusterMutation(guildId, 'setCrossfade', [crossfadeConfig])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -816,6 +820,21 @@ export default class PlayerManager {
   }
 
   /**
+   * Enables or disables auto-ducking.
+   */
+  async setDucking(
+    guildId: string,
+    enabled: boolean
+  ): Promise<boolean | PlayerCommandResponse> {
+    if (this.isCluster) {
+      return this.runClusterMutation(guildId, 'setDucking', [enabled])
+    }
+
+    const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
+    return player.setDucking(enabled)
+  }
+
+  /**
    * Applies voice state updates to the player.
    */
   async updateVoice(
@@ -831,9 +850,7 @@ export default class PlayerManager {
       return interception.result as PlayerCommandResponse
 
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'updateVoice', [
-        voicePayload
-      ])
+      return this.runClusterMutation(guildId, 'updateVoice', [voicePayload])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -867,10 +884,7 @@ export default class PlayerManager {
     volume: number | null = null
   ): Promise<MixAddResult | PlayerCommandResponse> {
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'addMix', [
-        trackPayload,
-        volume
-      ])
+      return this.runClusterMutation(guildId, 'addMix', [trackPayload, volume])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))
@@ -977,9 +991,7 @@ export default class PlayerManager {
     >
   ): Promise<PlayerCommandResponse | undefined> {
     if (this.isCluster) {
-      return this.runClusterMutation(guildId, 'updateSponsorBlock', [
-        updates
-      ])
+      return this.runClusterMutation(guildId, 'updateSponsorBlock', [updates])
     }
 
     const player = this.getLocalPlayerOrThrow(this.getPlayerKey(guildId))

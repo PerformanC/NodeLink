@@ -21,12 +21,57 @@ const BASE64_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN0PQRSTUVWXYZO12345
  */
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0';
 /**
+ * User agent string used for web scraping operations to trigger SSR JSON-LD output.
+ * @internal
+ */
+const BOT_USER_AGENT = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
+/**
  * VK Music source implementation.
  * Integrates with the VK API and web scraping for track resolution and search.
  * Supports HLS and direct MP3 streams.
  * @public
  */
 export default class VKMusicSource {
+    /**
+     * Declarative test suite for validating VK Music source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'vkmusic.track.resolve',
+            name: 'VK Music Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://vk.com/audio-2001479830_123479830'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'Sonidos del Bosque'
+                    },
+                    author: {
+                        op: 'matches',
+                        value: 'Sonido del Bosque y Naturaleza'
+                    },
+                    sourceName: { op: 'equals', value: 'vkmusic' }
+                }
+            }
+        },
+        {
+            id: 'vkmusic.search.vksearch',
+            name: 'VK Music Search query (vksearch:)',
+            input: {
+                type: 'search',
+                value: 'vksearch:Radiohead Creep'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 }
+            }
+        }
+    ];
     /**
      * The NodeLink worker context.
      * @internal
@@ -53,11 +98,11 @@ export default class VKMusicSource {
      * @public
      */
     patterns = [
-        /vk\.(?:com|ru)\/.*?[?&]z=audio_playlist(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
-        /vk\.(?:com|ru)\/(?:music\/(?:playlist|album)\/)(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
-        /vk\.(?:com|ru)\/audio(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/)(?<hash>[a-z0-9]+))?/i,
-        /vk\.(?:com|ru)\/artist\/(?<id>[^/?#\s&]+)/i,
-        /vk\.(?:com|ru)\/audios(?<id>-?\d+)/i
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/.*?[?&]z=audio_playlist(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/(?:music\/(?:playlist|album)\/)(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/|(?:\?|&)access_hash=)(?<hash>[a-z0-9]+))?/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/audio(?<owner>-?\d+)_(?<id>\d+)(?:(?:%2F|_|\/)(?<hash>[a-z0-9]+))?/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/artist\/(?<id>[^/?#\s&]+)/i,
+        /^(?:https?:\/\/)?(?:www\.|m\.)?vk\.(?:com|ru)\/audios(?<id>-?\d+)/i
     ];
     /**
      * Priority score for source selection.
@@ -337,14 +382,30 @@ export default class VKMusicSource {
         return this._scrapePlaylist(url);
     }
     /**
+     * Validates if a parsed URL targets an official VK domain.
+     * @internal
+     */
+    _isVkUrl(url) {
+        return ((url.protocol === 'https:' || url.protocol === 'http:') &&
+            /^(?:(?:www\.|m\.)?vk\.(?:com|ru))$/i.test(url.hostname) &&
+            url.port === '' &&
+            url.username === '' &&
+            url.password === '');
+    }
+    /**
      * Scrapes track metadata from a VK web page.
      * @internal
      */
     async _scrapePlaylist(url) {
         try {
-            const res = await http1makeRequest(url, {
+            const parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+            if (!this._isVkUrl(parsedUrl)) {
+                return { loadType: 'empty', data: {} };
+            }
+            const res = await http1makeRequest(parsedUrl.href, {
                 headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-                proxy: this.config.network?.proxy ?? this.config.proxy
+                proxy: this.config.network?.proxy ?? this.config.proxy,
+                shouldFollowRedirect: (nextUrl) => this._isVkUrl(nextUrl)
             });
             if (res.statusCode !== 200)
                 throw new Error(`HTTP ${res.statusCode}`);
@@ -422,14 +483,36 @@ export default class VKMusicSource {
      */
     async _scrapeTrack(url) {
         try {
-            const res = await http1makeRequest(url, {
-                headers: { 'User-Agent': USER_AGENT, Cookie: this.cookie },
-                proxy: this.config.network?.proxy ?? this.config.proxy
+            const parsedUrl = new URL(url.startsWith('http') ? url : `https://${url}`);
+            if (!this._isVkUrl(parsedUrl)) {
+                return { loadType: 'empty', data: {} };
+            }
+            const headers = this.cookie
+                ? { 'User-Agent': USER_AGENT, Cookie: this.cookie }
+                : { 'User-Agent': BOT_USER_AGENT };
+            const res = await http1makeRequest(parsedUrl.href, {
+                headers,
+                proxy: this.config.network?.proxy ?? this.config.proxy,
+                shouldFollowRedirect: (nextUrl) => this._isVkUrl(nextUrl)
             });
             if (res.statusCode !== 200)
                 throw new Error(`HTTP ${res.statusCode}`);
-            const body = typeof res.body === 'string' ? res.body : JSON.stringify(res.body);
-            const dataAudioMatch = body.match(/data-audio="([^"]+)"/);
+            let body = typeof res.body === 'string' ? res.body : JSON.stringify(res.body);
+            let dataAudioMatch = body.match(/data-audio="([^"]+)"/);
+            if (!dataAudioMatch && this.cookie) {
+                const botRes = await http1makeRequest(parsedUrl.href, {
+                    headers: { 'User-Agent': BOT_USER_AGENT },
+                    proxy: this.config.network?.proxy ?? this.config.proxy,
+                    shouldFollowRedirect: (nextUrl) => this._isVkUrl(nextUrl)
+                });
+                if (botRes.statusCode === 200) {
+                    body =
+                        typeof botRes.body === 'string'
+                            ? botRes.body
+                            : JSON.stringify(botRes.body);
+                    dataAudioMatch = body.match(/data-audio="([^"]+)"/);
+                }
+            }
             if (dataAudioMatch?.[1]) {
                 const data = JSON.parse(dataAudioMatch[1].replace(/&quot;/g, '"'));
                 let track = this._parseMeta(data);
@@ -444,6 +527,45 @@ export default class VKMusicSource {
                 return track
                     ? { loadType: 'track', data: track }
                     : { loadType: 'empty', data: {} };
+            }
+            const jsonLdMatch = body.match(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+            if (jsonLdMatch?.[1]) {
+                try {
+                    const jsonLd = JSON.parse(jsonLdMatch[1]);
+                    if (jsonLd['@type'] === 'MusicRecording') {
+                        const author = jsonLd.byArtist?.name || 'Unknown Artist';
+                        const title = jsonLd.recordingOf?.name || jsonLd.name || 'Unknown Title';
+                        const artworkUrl = jsonLd.image || null;
+                        const idMatch = (jsonLd['@id'] || url).match(/audio(?<id>-?\d+_\d+)/i);
+                        const identifier = idMatch?.groups?.id ||
+                            url.replace(/^https?:\/\/vk\.(?:com|ru)\/audio/i, '');
+                        const trackInfo = {
+                            identifier,
+                            isSeekable: true,
+                            author,
+                            length: 0,
+                            isStream: false,
+                            position: 0,
+                            title,
+                            uri: jsonLd['@id'] || url,
+                            artworkUrl,
+                            isrc: null,
+                            sourceName: 'vkmusic'
+                        };
+                        return {
+                            loadType: 'track',
+                            data: {
+                                encoded: encodeTrack({
+                                    ...trackInfo,
+                                    details: [null]
+                                }),
+                                info: trackInfo,
+                                pluginInfo: {}
+                            }
+                        };
+                    }
+                }
+                catch { }
             }
             throw new Error('Track data block not found.');
         }

@@ -71,8 +71,9 @@ export default class ConnectionManager {
             // Delay the first check so it doesn't feel like part of the startup latency
             setTimeout(() => {
                 this.checkConnection().catch(() => { });
-            }, 5000);
+            }, 5000).unref?.();
             this.interval = setInterval(() => this.checkConnection().catch(() => { }), checkInterval);
+            this.interval.unref?.();
         }
     }
     /**
@@ -311,6 +312,7 @@ export default class ConnectionManager {
                 stream.destroy();
                 finalize();
             }, maxDurationMs);
+            timeoutTimer.unref?.();
             stream.on('data', (chunk) => {
                 if (latencyMs === undefined) {
                     latencyMs = performance.now() - startTime;

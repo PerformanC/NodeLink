@@ -4,6 +4,9 @@ import type {
   VoiceConnection,
   VoicePlayerState
 } from '@performanc/voice'
+import type { AudioProcessingMode } from '../../playback/processing/audioContract.ts'
+import type { TrackPreAnalysisProfile } from '../../playback/processing/MusicalAnalyzer.ts'
+import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
 import type { TrackData } from '../index.types.ts'
 import type {
   TrackStreamResult,
@@ -142,6 +145,9 @@ export interface AudioResource {
   getRMS?: () => number
   isSilent?: () => boolean
   setLoudnessNormalizer?(enabled: boolean): void
+  getAudioProcessingTelemetry?():
+    | import('../../playback/processing/audioContract.ts').AudioProcessingTelemetrySnapshot
+    | null
   destroy(): void
   stream?: VoiceAudioStream | null
 }
@@ -157,7 +163,7 @@ export interface TrackEnergy {
 }
 
 /** Supported crossfade buffering modes. */
-export type CrossfadeMode = 'preload' | 'stream'
+export type CrossfadeMode = 'preload' | 'stream' | 'smart'
 
 /** Per-player crossfade configuration. */
 export interface CrossfadeConfig {
@@ -172,8 +178,13 @@ export interface CrossfadeConfig {
 /** PCM buffering options passed to the crossfade controller. */
 export interface CrossfadePrepareOptions {
   durationMs: number
+  outgoingTrackId?: string
+  incomingTrackId?: string
   minBufferMs?: number
   bufferMs?: number
+  getOutgoingTailRms?: () => number | undefined
+  getOutgoingProfile?: () => TrackPreAnalysisProfile | null | undefined
+  getIncomingProfile?: () => TrackPreAnalysisProfile | null | undefined
 }
 
 export interface ExtendedAudioStream extends AudioResource {
@@ -263,6 +274,9 @@ export interface AudioMixer {
   readLayerChunks: (
     chunkSize: number
   ) => Map<string, { buffer: Buffer; volume: number }>
+  readLayerChunksAligned: (
+    frames: number
+  ) => Map<string, { buffer: Buffer; volume: number }>
   mixBuffers: (
     mainPCM: Buffer,
     layersPCM: Map<string, { buffer: Buffer; volume: number }>
@@ -323,8 +337,8 @@ export interface PlayerSponsorBlockState {
 export interface NodeLinkOptions {
   defaultVolume?: number
   eventTimeoutMs?: number
-  trackStuckThresholdMs: number
-  playerUpdateInterval: number
+  trackStuckThresholdMs?: number
+  playerUpdateInterval?: number
   enableHoloTracks?: boolean
   fetchChannelInfo?: boolean
   resolveExternalLinks?: boolean
@@ -336,10 +350,12 @@ export interface NodeLinkOptions {
     skipMarginMs?: number
   }
   audio?: {
+    processingMode?: AudioProcessingMode
     encryption?: string | null
     fading?: FadingConfig
     loudnessNormalizer?: boolean
     resamplingQuality?: string
+    opusComplexity?: number
     lookaheadMs?: number
     gateThresholdLUFS?: number
     filterTransitions?: FilterTransitionsConfig
@@ -392,7 +408,7 @@ export interface NodeLinkOptions {
     routePlanner?: {
       strategy?: string
       bannedIpCooldown?: number
-      ipBlocks?: Array<string | { cidr: string }>
+      ipBlocks?: RoutePlannerIpBlockEntry[]
       [key: string]: unknown
     }
     [key: string]: unknown
@@ -412,7 +428,8 @@ export interface SourceManagerLike {
   getTrackUrl: (
     trackInfo: TrackInfoExtended,
     itag?: number,
-    isRecovering?: boolean
+    isRecovering?: boolean,
+    isUpscaling?: boolean
   ) => Promise<
     TrackUrlResult & {
       protocol?: string
@@ -472,28 +489,28 @@ export type LoggerFn = (level: string, ...args: unknown[]) => void
  * NodeLink runtime context required by the player.
  */
 export interface NodeLink {
-  options: NodeLinkOptions & {
-    trackStuckThresholdMs: number
-    playerUpdateInterval: number
-  }
+  options: NodeLinkOptions
   logger: LoggerFn
   statsManager: StatsManagerLike
   voiceRelay?: {
     attach?: (connection: VoiceConnection, guildId: string) => void
     detach?: (connection: VoiceConnection) => void
-  }
+  } | null
   sources: SourceManagerLike
   lyrics: LyricsManagerLike | null
   statistics?: { players?: number }
   extensions?: {
-    audioInterceptors?: Array<() => import('node:stream').Transform>
+    audioInterceptors?: Array<
+      (() => import('node:stream').Transform) & {
+        audioCapabilities?: import('../../playback/processing/audioContract.ts').AudioCapabilities
+      }
+    >
   } & Record<string, unknown>
   pluginManager?: import('../../managers/pluginManager.ts').default | null
   trackCacheManager?:
     | import('../../managers/trackCacheManager.ts').default
     | null
   getLyricsManager?: () => Promise<LyricsManagerLike>
-  [key: string]: unknown
 }
 
 /**
@@ -514,6 +531,8 @@ export interface PlayerOptions {
   nodelink: NodeLink
   session: Session
   guildId: string
+  /** Optional per-player audio processing mode override. Null inherits global config. */
+  audioProcessingMode?: AudioProcessingMode | null
 }
 
 /**
@@ -558,7 +577,12 @@ export type CreateAudioResource = (
   audioMixer: AudioMixer | null,
   returnPCM?: boolean,
   loudnessNormalizer?: boolean,
-  enableCrossfade?: boolean
+  enableCrossfade?: boolean,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null,
+  float32PCMOutput?: boolean,
+  directHttpUrl?: string
 ) => AudioResource
 
 /**
@@ -576,7 +600,10 @@ export type CreateSeekeableAudioResource = (
   audioMixer: AudioMixer | null,
   returnPCM?: boolean,
   enableAGC?: boolean,
-  enableCrossfade?: boolean
+  enableCrossfade?: boolean,
+  processingMode?:
+    | import('../../playback/processing/audioContract.ts').AudioProcessingMode
+    | null
 ) => Promise<
   AudioResource | { exception: { message: string; severity?: string } }
 >

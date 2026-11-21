@@ -4,10 +4,13 @@ import type {
 } from '../typings/config/config.types.ts'
 import type {
   SourceResult,
+  TrackData,
   TrackInfo,
+  TrackStreamResult,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
 
@@ -63,6 +66,52 @@ const SCRAPE_USER_AGENT =
  * @public
  */
 export default class SongLinkSource {
+  /**
+   * Declarative test suite for validating Song.link source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'songlink.song.resolve',
+      name: 'Song.link song resolution (/s/ID)',
+      input: {
+        type: 'resolve',
+        value: 'https://song.link/s/4eoOQgFQ0rLMKNP8KcUNWc'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'ocean eyes'
+          },
+          author: {
+            op: 'matches',
+            value: 'Billie Eilish'
+          }
+        }
+      }
+    },
+    {
+      id: 'songlink.search',
+      name: 'Song.link search via iTunes (slsearch:)',
+      input: {
+        type: 'search',
+        value: 'Billie Eilish ocean eyes',
+        searchType: 'slsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'ocean eyes'
+          }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -140,7 +189,8 @@ export default class SongLinkSource {
     }
   ) {
     this.nodelink = nodelink
-    this.config = this.nodelink.options.sources.songlink
+    this.config = (this.nodelink.options?.sources?.songlink ??
+      {}) as SonglinkSourceConfig
     this.searchTerms = ['slsearch']
     this.patterns = [SONG_LINK_PATTERN]
     this.priority = 95
@@ -159,18 +209,18 @@ export default class SongLinkSource {
    * @returns Always true.
    */
   public async setup(): Promise<boolean> {
-    this.apiKey = this.asString(this.config.apiKey)
-    this.userCountry = this.asString(this.config.userCountry) ?? 'US'
-    this.songIfSingle = this.asBoolean(this.config.songIfSingle) ?? true
-    this.preferredPlatforms = Array.isArray(this.config.preferredPlatforms)
+    this.apiKey = this.asString(this.config?.apiKey)
+    this.userCountry = this.asString(this.config?.userCountry) ?? 'US'
+    this.songIfSingle = this.asBoolean(this.config?.songIfSingle) ?? true
+    this.preferredPlatforms = Array.isArray(this.config?.preferredPlatforms)
       ? (this.config.preferredPlatforms.filter(
           (item): item is string => typeof item === 'string'
         ) as string[])
       : [...DEFAULT_PLATFORM_ORDER]
-    this.fallbackToAny = this.asBoolean(this.config.fallbackToAny) ?? true
+    this.fallbackToAny = this.asBoolean(this.config?.fallbackToAny) ?? true
     this.useScrapeFallback =
-      this.asBoolean(this.config.useScrapeFallback) ?? true
-    this.useApi = this.asBoolean(this.config.useApi) ?? true
+      this.asBoolean(this.config?.useScrapeFallback) ?? true
+    this.useApi = this.asBoolean(this.config?.useApi) ?? true
     return true
   }
 
@@ -240,6 +290,71 @@ export default class SongLinkSource {
         }
       }
 
+      const entities = this.asRecord(data?.entitiesByUniqueId) || {}
+      const entityId = this.asString(data?.entityUniqueId) || ''
+      const entity =
+        this.asRecord(entities[entityId]) || this.asRecord(data?.entityData)
+      const firstSection = Array.isArray(data?.sections)
+        ? (this.asRecord(data.sections[0]) ?? null)
+        : null
+
+      const title =
+        this.asString(entity?.title) || this.asString(firstSection?.title)
+      const author =
+        this.asString(entity?.artistName) ||
+        this.asString(firstSection?.artistName) ||
+        'Unknown Artist'
+
+      if (title) {
+        const durationSec = this.asNumber(entity?.duration)
+        const durationMs = this.asNumber(
+          this.asRecord(data?.entityData)?.duration
+        )
+        const length =
+          durationMs !== null
+            ? durationMs
+            : durationSec !== null
+              ? durationSec * 1000
+              : 0
+
+        const trackInfo: TrackInfo = {
+          identifier: entityId || url,
+          isSeekable: true,
+          author,
+          length,
+          isStream: false,
+          position: 0,
+          title,
+          uri: url,
+          artworkUrl:
+            this.asString(entity?.thumbnailUrl) ||
+            this.asString(firstSection?.thumbnailUrl) ||
+            null,
+          isrc: this.asString(entity?.isrc) || null,
+          sourceName: 'songlink'
+        }
+
+        const encodedInput: TrackEncodeInput = { ...trackInfo, details: [] }
+        const decorated: SourceResult = {
+          loadType: 'track',
+          data: {
+            encoded: encodeTrack(encodedInput),
+            info: trackInfo,
+            pluginInfo: {
+              songlink: songlinkInfo
+            }
+          }
+        }
+
+        this.nodelink.trackCacheManager?.set(
+          'songlink',
+          url,
+          decorated,
+          this.cacheTtlMs
+        )
+        return decorated
+      }
+
       return {
         loadType: 'error',
         exception: {
@@ -270,23 +385,37 @@ export default class SongLinkSource {
     _searchType = 'track'
   ): Promise<SourceResult> {
     try {
-      const maxSearchRaw = this.nodelink.options.search?.maxResults
+      const maxSearchRaw = this.nodelink.options?.search?.maxResults
       const limit =
         typeof maxSearchRaw === 'number' && Number.isFinite(maxSearchRaw)
           ? maxSearchRaw
           : 10
+      let entity = 'song'
+      if (_searchType === 'album') {
+        entity = 'album'
+      } else if (_searchType === 'podcast') {
+        entity = 'podcast,podcastEpisode'
+      }
+
       const searchUrl = new URL('https://itunes.apple.com/search')
       searchUrl.searchParams.set('term', query)
       searchUrl.searchParams.set('country', this.userCountry || 'US')
-      searchUrl.searchParams.set('entity', 'song,album,podcast,podcastEpisode')
+      searchUrl.searchParams.set('entity', entity)
       searchUrl.searchParams.set('limit', String(limit))
-      searchUrl.searchParams.set('callback', '__jp33')
 
       const { body, statusCode } = await http1makeRequest(searchUrl.toString())
       if (statusCode !== 200) return { loadType: 'empty', data: {} }
 
-      const payload =
-        typeof body === 'string' ? this._parseJsonp(body) : this.asRecord(body)
+      let payload: Record<string, unknown> | null = null
+      if (typeof body === 'string') {
+        try {
+          payload = JSON.parse(body) as Record<string, unknown>
+        } catch {
+          payload = this._parseJsonp(body)
+        }
+      } else {
+        payload = this.asRecord(body)
+      }
       const results = payload?.results
       if (!Array.isArray(results) || results.length === 0) {
         return { loadType: 'empty', data: {} }
@@ -423,20 +552,68 @@ export default class SongLinkSource {
         }
       }
 
-      const resolved = await this.nodelink.sources.resolve(uri)
+      if (SONG_LINK_PATTERN.test(uri)) {
+        const data = await this._fetchSongLinkData(uri)
+        const linksByPlatform = this.asRecord(data?.linksByPlatform) || {}
+        const platforms = this._buildPlatformOrder(linksByPlatform)
+
+        for (const platform of platforms) {
+          const platformData = this.asRecord(linksByPlatform[platform])
+          const link = this.asString(platformData?.url)
+          if (!link) continue
+
+          const sourceName =
+            PLATFORM_SOURCE_MAP[platform as keyof typeof PLATFORM_SOURCE_MAP]
+          if (!sourceName || !this._isSourceAvailable(sourceName)) continue
+
+          try {
+            const resolved = await this.nodelink.sources.resolve(link)
+            if (
+              resolved.loadType === 'track' &&
+              this.isTrackResultData(resolved.data)
+            ) {
+              const streamInfo = await this.nodelink.sources.getTrackUrl(
+                resolved.data.info
+              )
+              return { newTrack: resolved.data, ...streamInfo }
+            }
+          } catch {}
+        }
+      } else {
+        try {
+          const resolved = await this.nodelink.sources.resolve(uri)
+          if (
+            resolved.loadType === 'track' &&
+            this.isTrackResultData(resolved.data)
+          ) {
+            const streamInfo = await this.nodelink.sources.getTrackUrl(
+              resolved.data.info
+            )
+            return { newTrack: resolved.data, ...streamInfo }
+          }
+        } catch {}
+      }
+
+      const query = `${decodedTrack.author} - ${decodedTrack.title}`
+      const searchResult = await this.nodelink.sources.searchWithDefault(query)
       if (
-        resolved.loadType === 'track' &&
-        this.isTrackResultData(resolved.data)
+        searchResult?.loadType === 'search' &&
+        Array.isArray(searchResult.data) &&
+        searchResult.data.length > 0
       ) {
-        const streamInfo = await this.nodelink.sources.getTrackUrl(
-          resolved.data.info
-        )
-        return { newTrack: resolved.data, ...streamInfo }
+        const candidates = searchResult.data as TrackData[]
+        const bestMatch = candidates[0]
+        if (bestMatch?.info) {
+          const streamInfo = await this.nodelink.sources.getTrackUrl(
+            bestMatch.info
+          )
+          return { ...streamInfo, newTrack: { info: bestMatch.info } }
+        }
       }
 
       return {
         exception: {
-          message: 'Resolved URL did not return a playable track.',
+          message: 'Unable to find a playable stream for this track.',
           severity: 'common'
         }
       }
@@ -451,6 +628,22 @@ export default class SongLinkSource {
   }
 
   /**
+   * Delegates stream reading to the matched source.
+   */
+  public async loadStream(
+    track: TrackInfo,
+    url: string,
+    protocol?: string,
+    additionalData?: Record<string, unknown>
+  ): Promise<TrackStreamResult> {
+    const sourceManager = (this.nodelink as WorkerNodeLink)?.sources
+    if (!sourceManager) {
+      throw new Error('Source manager is not available for Song.link streaming')
+    }
+    return sourceManager.getTrackStream(track, url, protocol, additionalData)
+  }
+
+  /**
    * Fetches Song.link payload from API or HTML fallback.
    * @param url - Song.link URL.
    * @returns Parsed Song.link payload.
@@ -458,7 +651,7 @@ export default class SongLinkSource {
   private async _fetchSongLinkData(
     url: string
   ): Promise<Record<string, unknown> | null> {
-    if (this.useApi) {
+    if (this.useApi && this.apiKey) {
       try {
         const apiUrl = new URL('https://api.song.link/v1-alpha.1/links')
         apiUrl.searchParams.set('url', url)
@@ -468,9 +661,7 @@ export default class SongLinkSource {
         if (this.songIfSingle) {
           apiUrl.searchParams.set('songIfSingle', 'true')
         }
-        if (this.apiKey) {
-          apiUrl.searchParams.set('key', this.apiKey)
-        }
+        apiUrl.searchParams.set('key', this.apiKey)
 
         const { body, statusCode } = await http1makeRequest(apiUrl.toString())
         const parsed = this.asRecord(body)
@@ -624,19 +815,32 @@ export default class SongLinkSource {
 
     if (Object.keys(linksByPlatform).length === 0) return null
 
+    const firstSectionWithInfo = sections.find(
+      (s) => this.asRecord(s)?.title || this.asRecord(s)?.artistName
+    ) as Record<string, unknown> | undefined
+
     const entitiesByUniqueId: Record<string, unknown> = {}
     const entityId = this.asString(pageData.entityUniqueId)
     const entityData = this.asRecord(pageData.entityData)
-    if (entityId && entityData) {
-      const durationRaw = this.asNumber(entityData.duration)
+    if (entityId) {
+      const durationRaw = this.asNumber(entityData?.duration)
       entitiesByUniqueId[entityId] = {
-        id: entityData.id,
-        type: this.asString(entityData.type) || undefined,
-        title: this.asString(entityData.title) || undefined,
-        artistName: this.asString(entityData.artistName) || undefined,
-        thumbnailUrl: this.asString(entityData.thumbnailUrl) || undefined,
+        id: entityData?.id,
+        type: this.asString(entityData?.type) || undefined,
+        title:
+          this.asString(entityData?.title) ||
+          this.asString(firstSectionWithInfo?.title) ||
+          undefined,
+        artistName:
+          this.asString(entityData?.artistName) ||
+          this.asString(firstSectionWithInfo?.artistName) ||
+          undefined,
+        thumbnailUrl:
+          this.asString(entityData?.thumbnailUrl) ||
+          this.asString(firstSectionWithInfo?.thumbnailUrl) ||
+          undefined,
         duration: durationRaw !== null ? durationRaw / 1000 : undefined,
-        isrc: this.asString(entityData.isrc) || null
+        isrc: this.asString(entityData?.isrc) || null
       }
     }
 
@@ -648,7 +852,9 @@ export default class SongLinkSource {
         this.asString(pageProps?.pageUrl) ||
         undefined,
       linksByPlatform,
-      entitiesByUniqueId
+      entitiesByUniqueId,
+      entityData,
+      sections
     }
   }
 

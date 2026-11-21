@@ -9,6 +9,7 @@ import type {
  * @public
  */
 export abstract class BaseFilter implements FilterInstance {
+  public audioCapabilities?: FilterInstance['audioCapabilities']
   /**
    * The priority of the filter. Lower values run first.
    */

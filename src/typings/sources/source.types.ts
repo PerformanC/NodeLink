@@ -17,6 +17,9 @@ import type {
 } from '../modules/credential.types.ts'
 import type { LoggerFn, TrackInfoExtended } from '../playback/player.types.ts'
 import type { TrackCacheEntry } from '../playback/trackCache.types.ts'
+import type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
+
+export type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
 
 /**
  * Frame type identifier for socket communication protocol
@@ -30,7 +33,13 @@ export enum FrameType {
   /** Error frame (2) - contains error message */
   ERROR = 2,
   /** Chat action frame (3) - contains live chat actions */
-  CHAT_ACTION = 3
+  CHAT_ACTION = 3,
+  /** Binary result frame (4) - contains v8 serialized binary payload */
+  BINARY = 4,
+  /** Hello frame (5) - worker handshake */
+  HELLO = 5,
+  /** Task frame (6) - master to worker task dispatch */
+  TASK = 6
 }
 
 /**
@@ -91,6 +100,8 @@ export interface ReadyMessage extends WorkerMessage {
   type: 'ready'
   /** Process ID of the worker (optional, main thread only) */
   pid?: number
+  /** Lightweight declarative source cases available in this micro-worker. */
+  healthProbeSources?: string[]
 }
 
 /**
@@ -105,6 +116,22 @@ export interface ResultMessage extends WorkerMessage {
   id: string
   /** JSON-stringified result data (mutually exclusive with error) */
   result?: string
+  /** Error message (mutually exclusive with result) */
+  error?: string
+}
+
+/**
+ * Message containing binary task result
+ * @public
+ */
+export interface BinaryResultMessage extends WorkerMessage {
+  type: 'binaryResult'
+  /** Socket path for response */
+  socketPath: string
+  /** Task identifier */
+  id: string
+  /** Binary ArrayBuffer result */
+  result?: ArrayBuffer
   /** Error message (mutually exclusive with result) */
   error?: string
 }
@@ -169,16 +196,27 @@ export interface ErrorMessage extends WorkerMessage {
 }
 
 /**
+ * Source health metric message emitted by worker threads
+ * @public
+ */
+export interface SourceHealthMetricMessage {
+  type: 'sourceHealthMetric'
+  payload: SourceHealthMetricPayload
+}
+
+/**
  * Union type of all possible worker messages
  * @public
  */
 export type WorkerMessageType =
   | ReadyMessage
   | ResultMessage
+  | BinaryResultMessage
   | StreamMessage
   | ChatActionMessage
   | EndMessage
   | ErrorMessage
+  | SourceHealthMetricMessage
 
 /**
  * Task data structure sent to micro-workers
@@ -209,7 +247,10 @@ export type TaskType =
   | 'loadStream'
   | 'loadLiveChat'
   | 'cancelLiveChat'
+  | 'sourceHealthProbe'
+  | 'analyzePcm'
   | 'profilerCommand'
+  | 'getTrackUrl'
 
 /**
  * Base task payload structure
@@ -425,6 +466,25 @@ export interface TrackData {
 }
 
 /**
+ * Collection-level metadata carried in `PlaylistData.pluginInfo`.
+ * @public
+ */
+export interface PlaylistPluginInfo extends Record<string, unknown> {
+  /** Kind of collection, e.g. `playlist` or `album`. */
+  type?: string
+  /** Source-specific collection ID. */
+  identifier?: string
+  /** Canonical URL of the collection. */
+  url?: string
+  /** Cover image URL. */
+  artworkUrl?: string | null
+  /** Owner / curator / artist name. */
+  author?: string | null
+  /** Total tracks in the collection, which can exceed the tracks returned. */
+  totalTracks?: number
+}
+
+/**
  * Complete playlist object returned by source methods.
  * @public
  */
@@ -436,8 +496,12 @@ export interface PlaylistData {
     /** Selected track index. */
     selectedTrack: number
   }
-  /** Source-specific metadata. */
-  pluginInfo: Record<string, unknown>
+  /**
+   * Collection metadata. Sources that can provide it fill `type`,
+   * `identifier`, `url`, `artworkUrl`, `author` and `totalTracks`; sources may
+   * add their own keys alongside.
+   */
+  pluginInfo: PlaylistPluginInfo
   /** Tracks in the playlist. */
   tracks: TrackData[]
 }
@@ -510,6 +574,8 @@ export interface SourceInstance {
   patterns?: RegExp[]
   /** Priority for URL pattern matching (higher wins). */
   priority?: number
+  /** Whether the source supports protected volume mode (Float32). Default is true. */
+  isVolProtectedSupport?: boolean
   /** Live chat handler (YouTube). */
   handleLiveChat?: (socket: unknown, videoId: string) => Promise<unknown>
   /** Live chat accessor (YouTube). */
@@ -589,7 +655,8 @@ export interface SourceManager {
   getTrackUrl: (
     track: TrackInfo | TrackInfoExtended,
     itag?: number,
-    isRecovering?: boolean
+    isRecovering?: boolean,
+    isUpscaling?: boolean
   ) => Promise<
     TrackUrlResult & {
       protocol?: string
@@ -615,6 +682,10 @@ export interface SourceManager {
   getSource: (name: string) => SourceInstance | null
   /** Load sources from folder */
   loadFolder: () => Promise<void>
+  /** Run a lightweight case from the provider's declarative source tests. */
+  runHealthProbe: (sourceName: string) => Promise<void>
+  /** List providers with a lightweight declarative health case. */
+  getHealthProbeSources: () => string[]
   /** Primary source instances keyed by source name */
   sources: Map<string, SourceInstance>
   /** Get names of all enabled sources */

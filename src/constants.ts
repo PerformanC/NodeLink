@@ -222,7 +222,11 @@ export const GatewayEvents = {
   /** EternalBox jumped to different track in queue */
   ETERNALBOX_JUMP: 'EternalBoxJumpEvent',
   /** Live stream metadata was updated */
-  STREAM_METADATA: 'StreamMetadataEvent'
+  STREAM_METADATA: 'StreamMetadataEvent',
+  /** Initial source health snapshot */
+  SOURCE_HEALTH_SNAPSHOT: 'SourceHealthSnapshotEvent',
+  /** Real-time source health state transition */
+  SOURCE_HEALTH_CHANGE: 'SourceHealthChangeEvent'
 } as const
 
 /**

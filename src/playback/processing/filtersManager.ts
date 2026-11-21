@@ -11,7 +11,6 @@ import type {
 } from '../../typings/playback/filters.types.ts'
 import type { FiltersState } from '../../typings/playback/player.types.ts'
 import type { IFiltersManager } from '../../typings/playback/processing.types.ts'
-
 import ChannelMix from '../filters/channelMix.ts'
 import Chorus from '../filters/chorus.ts'
 import Compressor from '../filters/compressor.ts'
@@ -31,6 +30,8 @@ import Tesseract from '../filters/tesseract.ts'
 import Timescale from '../filters/timescale.ts'
 import Tremolo from '../filters/tremolo.ts'
 import Vibrato from '../filters/vibrato.ts'
+import type { AudioProcessingMode } from './audioContract.ts'
+import { assertAudioCapabilities } from './audioContract.ts'
 
 const FILTER_CLASSES: Record<string, FilterClass> = {
   tremolo: Tremolo,
@@ -85,6 +86,8 @@ export class FiltersManager extends Transform implements IFiltersManager {
    * @internal
    */
   private filterInstances: Record<string, FilterInstance>
+  private readonly processingMode: AudioProcessingMode
+  private completedInitialUpdate = false
 
   /**
    * When true, _transform passes chunks through without processing.
@@ -104,10 +107,12 @@ export class FiltersManager extends Transform implements IFiltersManager {
   constructor(
     nodelink: FiltersManagerContext,
     initialFilters: FiltersState = {},
-    options: TransformOptions = {}
+    options: TransformOptions = {},
+    processingMode: AudioProcessingMode = 'legacy'
   ) {
     super(options)
     this.nodelink = nodelink
+    this.processingMode = processingMode
     this.activeFilters = []
     this.filterInstances = {}
 
@@ -134,6 +139,12 @@ export class FiltersManager extends Transform implements IFiltersManager {
       normalizedSettings[canonical] = (settings as Record<string, unknown>)[
         name
       ]
+    }
+
+    if (this.processingMode === 'protected') {
+      this._updateProtected(normalizedSettings)
+      this.completedInitialUpdate = true
+      return
     }
 
     const updatedKeys = new Set<string>()
@@ -167,6 +178,67 @@ export class FiltersManager extends Transform implements IFiltersManager {
     }
 
     this.activeFilters.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+    this.completedInitialUpdate = true
+  }
+
+  private _updateProtected(settings: Record<string, unknown>): void {
+    const updatedKeys = new Set<string>()
+    const staged = { ...this.filterInstances }
+    const replaced: FilterInstance[] = []
+
+    for (const [name, config] of Object.entries(settings)) {
+      if (!config) continue
+      updatedKeys.add(name)
+      const Filter = FILTER_CLASSES[name]
+      const existing = this.filterInstances[name]
+      if (!Filter && existing && this.completedInitialUpdate) {
+        throw new Error(
+          `Protected mode cannot atomically update extension filter '${name}' while it is active; recreate the audio resource to apply the change`
+        )
+      }
+      const candidate = Filter ? new Filter() : existing
+      const capabilities = candidate?.audioCapabilities
+      if (!capabilities)
+        throw new Error(
+          `Protected mode rejected filter '${name}' without an explicit Float32/amplitude capability declaration`
+        )
+      assertAudioCapabilities(capabilities)
+      const deliberateBound =
+        capabilities.amplitudeBehavior === 'bounded' &&
+        capabilities.amplitudeBounds.intentional
+      if (
+        !capabilities.sampleFormats.includes('f32le') ||
+        (capabilities.amplitudeBehavior !== 'preserves-headroom' &&
+          !deliberateBound)
+      ) {
+        throw new Error(
+          `Protected mode requires filter '${name}' to accept f32le and preserve headroom or declare intentional amplitude shaping`
+        )
+      }
+      if (!candidate?.processFloat32)
+        throw new Error(
+          `Protected mode filter '${name}' declares Float32 support without a processFloat32 implementation`
+        )
+      if (Filter) {
+        candidate.update?.(settings as FilterSettings)
+        staged[name] = candidate
+        if (existing) replaced.push(existing)
+      } else if (candidate) {
+        candidate.update?.(settings as FilterSettings)
+      }
+    }
+
+    const active: FilterInstance[] = []
+    for (const [name, instance] of Object.entries(staged)) {
+      if (!instance) continue
+      if (updatedKeys.has(name) || instance.isActive?.()) active.push(instance)
+    }
+    active.sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+
+    // Commit only after all validation and construction succeeded.
+    this.filterInstances = staged
+    this.activeFilters = active
+    for (const instance of replaced) instance.destroy?.()
   }
 
   /**
@@ -180,7 +252,13 @@ export class FiltersManager extends Transform implements IFiltersManager {
     let processed = chunk
     for (const filter of this.activeFilters) {
       if (filter.isActive?.() === false) continue
-      processed = filter.process(processed)
+      if (this.processingMode === 'protected') {
+        if (!filter.processFloat32)
+          throw new Error('Protected filter has no Float32 processor')
+        processed = filter.processFloat32(processed)
+      } else {
+        processed = filter.process(processed)
+      }
     }
     return processed
   }
@@ -193,8 +271,12 @@ export class FiltersManager extends Transform implements IFiltersManager {
     let totalLength = 0
 
     for (const filter of this.activeFilters) {
-      if (filter.flush) {
-        const flushed = filter.flush()
+      const flush =
+        this.processingMode === 'protected'
+          ? (filter.flushFloat32 ?? filter.flush)
+          : filter.flush
+      if (flush) {
+        const flushed = flush.call(filter)
         if (flushed && flushed.length > 0) {
           flushedChunks.push(flushed)
           totalLength += flushed.length

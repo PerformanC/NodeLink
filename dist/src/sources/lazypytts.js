@@ -12,6 +12,44 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
  */
 export default class LazyPyTtsSource {
     /**
+     * Declarative test suite for validating LazyPy TTS source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'lazypytts.tts.resolve',
+            name: 'LazyPy TTS resolution',
+            input: {
+                type: 'resolve',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    author: { op: 'equals', value: 'LazyPy TTS' },
+                    sourceName: { op: 'equals', value: 'lazypytts' }
+                }
+            }
+        },
+        {
+            id: 'lazypytts.tts.search',
+            name: 'LazyPy TTS Search query (lazypytts:)',
+            input: {
+                type: 'search',
+                searchType: 'lazypytts',
+                value: 'Hello world'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Hello world' },
+                    sourceName: { op: 'equals', value: 'lazypytts' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime NodeLink context.
      */
     nodelink;
@@ -302,10 +340,9 @@ export default class LazyPyTtsSource {
      * @returns Parsed input object.
      */
     _parseInput(query) {
-        let raw = String(query || '').trim();
+        const raw = String(query || '').trim();
         if (!raw)
             return { service: '', voice: '', text: '' };
-        raw = raw.replace(/^lazypytts:/i, '').replace(/^lazytts:/i, '');
         const parsed = this._parseQueryString(raw) || this._parseColonInput(raw);
         return {
             service: this._safeDecode(parsed.service),

@@ -10,6 +10,13 @@ import type {
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
 import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
+import type {
   TwitchClipNode,
   TwitchGraphQLOperation,
   TwitchGraphQLResponse,
@@ -35,7 +42,114 @@ const TWITCH_USHER_URL = 'https://usher.ttvnw.net'
  * Integrates with Twitch's GraphQL and Usher APIs to resolve streams, VODs, and clips.
  * @public
  */
-export default class TwitchSource implements SourceInstance {
+export default class TwitchSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating Twitch source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'twitch.clip.stream',
+      name: 'Twitch clip video playback',
+      input: {
+        type: 'resolve',
+        value: 'https://clips.twitch.tv/DelightfulManlyCobblerLitty'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'ESLCS'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'twitch'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [{ container: 'mp4', codec: 'aac' }]
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'twitch.channel.clip.stream',
+      name: 'Twitch channel clip URL playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.twitch.tv/eslcs/clip/DelightfulManlyCobblerLitty'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'ESLCS'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'twitch'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [{ container: 'mp4', codec: 'aac' }]
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'twitch.live.channel',
+      name: 'Twitch live channel resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.twitch.tv/eslcs'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          sourceName: {
+            op: 'equals',
+            value: 'twitch'
+          }
+        },
+        stream: {
+          required: false,
+          download: 'complete'
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
+
   /**
    * The NodeLink worker context.
    * @internal
@@ -48,6 +162,7 @@ export default class TwitchSource implements SourceInstance {
    * @public
    */
   public readonly patterns = [
+    /^https?:\/\/clips\.twitch\.tv\/([\w%-_]+)/i,
     /^https?:\/\/(?:www\.|go\.|m\.)?twitch\.tv\/(?:[\w_]+\/clip\/([\w%-_]+)|videos\/(\d+)|([\w_]+))/i
   ]
 
@@ -214,8 +329,13 @@ export default class TwitchSource implements SourceInstance {
    * @public
    */
   public async resolve(url: string): Promise<SourceResult> {
-    const pattern = this.patterns[0]
-    const match = pattern?.exec(url)
+    const clipsMatch = this.patterns[0]?.exec(url)
+    if (clipsMatch?.[1]) {
+      return await this._loadClip(clipsMatch[1], url)
+    }
+
+    const mainPattern = this.patterns[1]
+    const match = mainPattern?.exec(url)
     if (!match) return { loadType: 'empty', data: {} }
 
     const [, clipSlug, vodId, channelName] = match
@@ -254,14 +374,7 @@ export default class TwitchSource implements SourceInstance {
           durationSeconds
         }
       }`,
-      variables: { slug },
-      extensions: {
-        persistedQuery: {
-          version: 1,
-          sha256Hash:
-            '0d6d8d951d3b5305a3f2a0f2661b8a6a6d25dc042b155d8df8586905f0a0f435'
-        }
-      }
+      variables: { slug }
     }
 
     const res = (await this._gqlRequest(payload)) as TwitchGraphQLResponse
@@ -422,19 +535,25 @@ export default class TwitchSource implements SourceInstance {
    * Identifies if the track is a clip, VOD, or live stream and delegates to appropriate stream fetchers.
    *
    * @param track - Metadata of the track.
+   * @param _itag - Unused itag placeholder kept for source compatibility.
+   * @param _isRecovering - Whether this is a recovery attempt.
    * @returns A promise resolving to the playable stream result.
    * @public
    */
-  public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
-    const pattern = this.patterns[0]
-    const match = pattern?.exec(track.uri)
+  public async getTrackUrl(
+    track: TrackInfo,
+    _itag?: number,
+    _isRecovering?: boolean
+  ): Promise<TrackUrlResult> {
+    const clipsMatch = this.patterns[0]?.exec(track.uri)
+    if (clipsMatch?.[1]) {
+      return await this._getClipStreamUrl(clipsMatch[1])
+    }
+
+    const mainPattern = this.patterns[1]
+    const match = mainPattern?.exec(track.uri)
     if (!match) {
-      return {
-        exception: {
-          message: 'Invalid Twitch URI provided.',
-          severity: 'common'
-        }
-      }
+      throw new Error('Invalid Twitch URI provided.')
     }
 
     const [, clipSlug, vodId, channelName] = match
@@ -443,12 +562,7 @@ export default class TwitchSource implements SourceInstance {
     if (vodId) return await this._getVodStreamUrl(vodId)
     if (channelName) return await this._getLiveStreamUrl(channelName)
 
-    return {
-      exception: {
-        message: 'Could not identify Twitch resource type.',
-        severity: 'fault'
-      }
-    }
+    throw new Error('Could not identify Twitch resource type.')
   }
 
   /**
@@ -459,23 +573,19 @@ export default class TwitchSource implements SourceInstance {
     channel: string
   ): Promise<TwitchPlaybackAccessToken | null> {
     const payload: TwitchGraphQLOperation = {
-      operationName: 'PlaybackAccessToken_Template',
-      query: `query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!, $platform: String!) {
-        streamPlaybackAccessToken(channelName: $login, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isLive) {
+      operationName: 'PlaybackAccessToken',
+      query: `query PlaybackAccessToken($login: String!, $playerType: String!, $platform: String!) {
+        streamPlaybackAccessToken(channelName: $login, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) {
           value
           signature
           authorization {
             isForbidden
             forbiddenReasonCode
           }
-          __typename
         }
       }`,
       variables: {
-        isLive: true,
         login: channel.toLowerCase(),
-        isVod: false,
-        vodID: '',
         playerType: 'site',
         platform: 'web'
       }
@@ -492,40 +602,37 @@ export default class TwitchSource implements SourceInstance {
   private async _getLiveStreamUrl(
     channelName: string
   ): Promise<TrackUrlResult> {
-    try {
-      const token = await this._fetchLiveAccessToken(channelName)
-      if (!token)
-        throw new Error('Failed to obtain live playback access token.')
+    const token = await this._fetchLiveAccessToken(channelName)
+    if (!token) {
+      throw new Error('Failed to obtain live playback access token.')
+    }
 
-      const params = new URLSearchParams({
-        player_type: 'site',
-        token: token.value,
-        sig: token.signature,
-        allow_source: 'true',
-        allow_audio_only: 'true'
-      })
+    const params = new URLSearchParams({
+      player_type: 'site',
+      token: token.value,
+      sig: token.signature,
+      allow_source: 'true',
+      allow_audio_only: 'true'
+    })
 
-      const hlsUrl = `${TWITCH_USHER_URL}/api/channel/hls/${channelName.toLowerCase()}.m3u8?${params.toString()}`
-      const res = await http1makeRequest(hlsUrl)
+    const hlsUrl = `${TWITCH_USHER_URL}/api/channel/hls/${channelName.toLowerCase()}.m3u8?${params.toString()}`
+    const res = await http1makeRequest(hlsUrl)
 
-      if (res.error || res.statusCode !== 200 || typeof res.body !== 'string') {
-        throw new Error(
-          `Failed to fetch HLS master playlist: ${res.error || res.statusCode}`
-        )
-      }
+    if (res.error || res.statusCode !== 200 || typeof res.body !== 'string') {
+      throw new Error(
+        `Failed to fetch HLS master playlist: ${res.error || res.statusCode}`
+      )
+    }
 
-      const stream = this._parseM3U8(res.body)
-      if (!stream)
-        throw new Error('No compatible variants found in HLS playlist.')
+    const stream = this._parseM3U8(res.body)
+    if (!stream) {
+      throw new Error('No compatible variants found in HLS playlist.')
+    }
 
-      return {
-        url: stream.url,
-        protocol: 'hls',
-        format: 'mpegts'
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      return { exception: { message, severity: 'fault' } }
+    return {
+      url: stream.url,
+      protocol: 'hls',
+      format: 'mpegts'
     }
   }
 
@@ -565,37 +672,30 @@ export default class TwitchSource implements SourceInstance {
    * @internal
    */
   private async _getClipStreamUrl(slug: string): Promise<TrackUrlResult> {
-    try {
-      const meta = await this._fetchClipMetadata(slug)
-      if (!meta?.videoQualities?.length) {
-        throw new Error('Clip metadata lookup failed.')
-      }
+    const meta = await this._fetchClipMetadata(slug)
+    if (!meta?.videoQualities?.length) {
+      throw new Error('Clip metadata lookup failed.')
+    }
 
-      // Select highest quality variant
-      const best = meta.videoQualities.sort(
-        (a, b) =>
-          Number.parseInt(b.quality, 10) - Number.parseInt(a.quality, 10)
-      )[0]
+    // Select highest quality variant
+    const best = meta.videoQualities.sort(
+      (a, b) => Number.parseInt(b.quality, 10) - Number.parseInt(a.quality, 10)
+    )[0]
 
-      if (!best) throw new Error('No playable qualities identified for clip.')
+    if (!best) throw new Error('No playable qualities identified for clip.')
 
-      const token = await this._fetchClipAccessToken(slug)
-      if (!token)
-        throw new Error('Failed to obtain clip playback access token.')
+    const token = await this._fetchClipAccessToken(slug)
+    if (!token) throw new Error('Failed to obtain clip playback access token.')
 
-      const params = new URLSearchParams({
-        token: token.value,
-        sig: token.signature
-      })
+    const params = new URLSearchParams({
+      token: token.value,
+      sig: token.signature
+    })
 
-      return {
-        url: `${best.sourceURL}?${params.toString()}`,
-        protocol: 'https',
-        format: 'mp4'
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      return { exception: { message, severity: 'fault' } }
+    return {
+      url: `${best.sourceURL}?${params.toString()}`,
+      protocol: 'https',
+      format: 'mp4'
     }
   }
 
@@ -607,15 +707,14 @@ export default class TwitchSource implements SourceInstance {
     vodId: string
   ): Promise<TwitchPlaybackAccessToken | null> {
     const payload: TwitchGraphQLOperation = {
-      operationName: 'PlaybackAccessToken_Template',
-      query: `query PlaybackAccessToken_Template($isVod: Boolean!, $vodID: ID!, $playerType: String!, $platform: String!) {
-        videoPlaybackAccessToken(id: $vodID, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isVod) {
+      operationName: 'PlaybackAccessToken',
+      query: `query PlaybackAccessToken($vodID: ID!, $playerType: String!, $platform: String!) {
+        videoPlaybackAccessToken(id: $vodID, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) {
           value
           signature
         }
       }`,
       variables: {
-        isVod: true,
         vodID: vodId,
         playerType: 'site',
         platform: 'web'
@@ -631,38 +730,48 @@ export default class TwitchSource implements SourceInstance {
    * @internal
    */
   private async _getVodStreamUrl(vodId: string): Promise<TrackUrlResult> {
-    try {
-      const token = await this._fetchVodAccessToken(vodId)
-      if (!token) throw new Error('Failed to obtain VOD playback access token.')
+    const token = await this._fetchVodAccessToken(vodId)
+    if (!token) throw new Error('Failed to obtain VOD playback access token.')
 
-      const params = new URLSearchParams({
-        player_type: 'html5',
-        token: token.value,
-        sig: token.signature,
-        allow_source: 'true',
-        allow_audio_only: 'true'
-      })
+    const params = new URLSearchParams({
+      player_type: 'html5',
+      token: token.value,
+      sig: token.signature,
+      allow_source: 'true',
+      allow_audio_only: 'true'
+    })
 
-      const vodUrl = `${TWITCH_USHER_URL}/vod/${vodId}.m3u8?${params.toString()}`
-      return {
-        url: vodUrl,
-        protocol: 'hls',
-        format: 'mpegts'
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      return { exception: { message, severity: 'fault' } }
+    const vodUrl = `${TWITCH_USHER_URL}/vod/${vodId}.m3u8?${params.toString()}`
+    return {
+      url: vodUrl,
+      protocol: 'hls',
+      format: 'mpegts'
     }
   }
 
   /**
-   * Basic M3U8 parser to select the highest bandwidth variant or audio-only variant.
+   * Basic M3U8 parser to select audio-only variant or highest bandwidth variant.
    * @param data - Raw M3U8 content.
    * @returns Selected stream URL or null.
    * @internal
    */
   private _parseM3U8(data: string): { url: string } | null {
     const lines = data.split('\n')
+
+    // Prioritize audio-only variant for audio playback
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]?.trim()
+      if (
+        line?.includes('VIDEO="audio_only"') ||
+        line?.includes('NAME="audio_only"')
+      ) {
+        const nextUrl = lines[i + 1]?.trim()
+        if (nextUrl && !nextUrl.startsWith('#')) {
+          return { url: nextUrl }
+        }
+      }
+    }
+
     let bestBandwidth = 0
     let bestUrl: string | null = null
 
@@ -675,7 +784,10 @@ export default class TwitchSource implements SourceInstance {
           const bw = Number.parseInt(bwStr, 10)
           if (bw > bestBandwidth) {
             bestBandwidth = bw
-            bestUrl = lines[i + 1] ?? null
+            const nextUrl = lines[i + 1]?.trim()
+            if (nextUrl && !nextUrl.startsWith('#')) {
+              bestUrl = nextUrl
+            }
           }
         }
       }
@@ -683,7 +795,7 @@ export default class TwitchSource implements SourceInstance {
 
     if (bestUrl) return { url: bestUrl }
 
-    // Fallback to audio-only if no stream-inf found (unlikely for Twitch Usher)
+    // Fallback to audio-only if no stream-inf found
     for (const line of lines) {
       if (line.startsWith('#EXT-X-MEDIA:') && line.includes('TYPE=AUDIO')) {
         const match = line.match(/URI="([^"]+)"/)
@@ -729,18 +841,21 @@ export default class TwitchSource implements SourceInstance {
     })
 
     if (res.error || res.statusCode !== 200 || !res.stream) {
-      return {
-        exception: {
-          message: `Direct stream fetch failed: ${res.error || res.statusCode}`,
-          severity: 'fault'
-        }
-      }
+      throw new Error(
+        `Direct stream fetch failed: ${res.error || res.statusCode}`
+      )
     }
 
     const passthrough = new PassThrough()
     const source = res.stream as Readable
 
-    source.pipe(passthrough)
+    source.on('data', (chunk: Buffer) => {
+      if (!passthrough.write(chunk)) source.pause()
+    })
+
+    passthrough.on('drain', () => {
+      source.resume()
+    })
 
     source.on('end', () => {
       if (!passthrough.writableEnded) {
@@ -776,6 +891,91 @@ export default class TwitchSource implements SourceInstance {
         message: 'Twitch source does not support catalog search.',
         severity: 'common'
       }
+    }
+  }
+
+  /**
+   * Executes a specific variant for testing.
+   *
+   * @param variant - The test variant to execute.
+   * @param track - The track information.
+   * @param streamSpec - Optional stream validation specifications.
+   * @returns A result object detailing resolution and stream state.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    let urlData: TrackUrlResult
+    try {
+      urlData = await this.getTrackUrl(track)
+    } catch (err) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed to resolve track streaming URL'
+      }
+    }
+
+    if (!urlData.url) {
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: 'Failed to resolve track streaming URL'
+      }
+    }
+
+    const isHls = urlData.protocol === 'hls'
+    const container = isHls ? 'mpegts' : 'mp4'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    let streamResult: TrackStreamResult
+    try {
+      streamResult = await this.loadStream(
+        track,
+        urlData.url,
+        urlData.protocol,
+        urlData.additionalData
+      )
+    } catch (err) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error:
+          err instanceof Error ? err.message : 'Failed to load audio stream'
+      }
+    }
+
+    if (!streamResult.stream) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: 'Failed to load audio stream'
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
     }
   }
 

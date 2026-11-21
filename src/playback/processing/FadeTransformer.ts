@@ -178,6 +178,52 @@ export class FadeTransformer extends Transform implements IFadeTransformer {
     return chunk
   }
 
+  /** Float32 variant used only by the opt-in Protected flow; no amplitude clamp. */
+  public processFloat32(chunk: Buffer): Buffer {
+    const sampleCount = chunk.length / 4
+    if (!Number.isInteger(sampleCount) || sampleCount % this.channels !== 0) {
+      throw new RangeError(
+        'Protected fade input must contain complete Float32 frames'
+      )
+    }
+    if (sampleCount === 0) return chunk
+    let gainStart = this.currentGain
+    let gainEnd = this.currentGain
+    if (this.fade) {
+      const { startGain, targetGain, durationMs, elapsedMs, curve } = this.fade
+      const chunkDurationMs =
+        (sampleCount / this.channels / this.sampleRate) * 1000
+      const nextElapsed = Math.min(durationMs, elapsedMs + chunkDurationMs)
+      const progressStart = durationMs === 0 ? 1 : elapsedMs / durationMs
+      const progressEnd = durationMs === 0 ? 1 : nextElapsed / durationMs
+      gainStart =
+        startGain + (targetGain - startGain) * _applyCurve(progressStart, curve)
+      gainEnd =
+        startGain + (targetGain - startGain) * _applyCurve(progressEnd, curve)
+      this.fade.elapsedMs = nextElapsed
+      if (nextElapsed >= durationMs) {
+        this.fade = null
+        this.currentGain = targetGain
+      } else {
+        this.currentGain = gainEnd
+      }
+    }
+    if (gainStart === 1 && gainEnd === 1) return chunk
+    const step = sampleCount > 1 ? (gainEnd - gainStart) / (sampleCount - 1) : 0
+    for (let i = 0; i < sampleCount; i++) {
+      const offset = i * 4
+      const output = chunk.readFloatLE(offset) * (gainStart + step * i)
+      if (
+        !Number.isFinite(output) ||
+        Math.abs(output) > 3.4028234663852886e38
+      ) {
+        throw new RangeError(`Protected fade overflow at sample ${i}`)
+      }
+      chunk.writeFloatLE(output, offset)
+    }
+    return chunk
+  }
+
   /**
    * Flushes any buffered data (returns empty as it's real-time).
    */

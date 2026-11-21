@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
+import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
 /**
@@ -7,6 +7,77 @@ const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
  * @public
  */
 export default class QobuzSource {
+    /**
+     * Declarative test suite for validating Qobuz source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'qobuz.track.resolve',
+            name: 'Qobuz Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://open.qobuz.com/track/8767428'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    author: { op: 'matches', value: 'Daft Punk' },
+                    sourceName: { op: 'equals', value: 'qobuz' }
+                }
+            }
+        },
+        {
+            id: 'qobuz.album.resolve',
+            name: 'Qobuz Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://open.qobuz.com/album/0886443973442'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 1 },
+                metadata: {
+                    author: { op: 'matches', value: 'Daft Punk' }
+                }
+            }
+        },
+        {
+            id: 'qobuz.search.qbsearch',
+            name: 'Qobuz Search query (qbsearch:)',
+            input: {
+                type: 'search',
+                searchType: 'qbsearch',
+                value: 'Daft Punk Get Lucky'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    sourceName: { op: 'equals', value: 'qobuz' }
+                }
+            }
+        },
+        {
+            id: 'qobuz.search.qbisrc',
+            name: 'Qobuz Search query (qbisrc:)',
+            input: {
+                type: 'search',
+                searchType: 'qbisrc',
+                value: 'USQX91300809'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    isrc: { op: 'matches', value: 'USQX91300809' },
+                    sourceName: { op: 'equals', value: 'qobuz' }
+                }
+            }
+        }
+    ];
     /**
      * Runtime NodeLink context.
      */
@@ -57,7 +128,7 @@ export default class QobuzSource {
         this.searchTerms = ['qbsearch', 'qbisrc'];
         this.recommendationTerm = ['qbrec'];
         this.patterns = [
-            /https?:\/\/(?:www\.|play\.|open\.)?qobuz\.com\/(?:(?:[a-z]{2}-[a-z]{2}\/)?(track|album|playlist|artist)\/(?:.+?\/)?([a-zA-Z0-9]+)|(playlist)\/(\d+))/
+            /^https?:\/\/(?:www\.|play\.|open\.)?qobuz\.com\/(?:(?:[a-z]{2}-[a-z]{2}\/)?(track|album|playlist|artist)\/(?:.+?\/)?([a-zA-Z0-9]+)|(playlist)\/(\d+))/
         ];
         this.priority = 90;
         this.appId = null;
@@ -311,7 +382,16 @@ export default class QobuzSource {
                     selectedTrack: 0
                 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    type: 'playlist',
+                    identifier: id,
+                    url: `https://open.qobuz.com/playlist/${id}`,
+                    artworkUrl: this.getPlaylistCoverUrl(data),
+                    author: this.asString(this.asRecord(data.owner)?.name)?.trim() || '',
+                    totalTracks: capTotalTracks(this.asNumber(data.tracks_count) ??
+                        this.asNumber(tracksBlock.total) ??
+                        tracks.length, max)
+                }
             }
         };
     }
@@ -515,6 +595,24 @@ export default class QobuzSource {
         }
         const encoded = (seed + info + extras).slice(0, -44);
         return Buffer.from(encoded, 'base64').toString();
+    }
+    /**
+     * Picks the cover image for a playlist payload.
+     * Qobuz returns up to four track covers per playlist at several sizes; the
+     * first one at the largest size is used as the thumbnail.
+     * @param playlist - Raw `/playlist/get` payload.
+     * @returns The cover URL, or an empty string when none is present.
+     */
+    getPlaylistCoverUrl(playlist) {
+        for (const key of ['images300', 'images150', 'images']) {
+            const images = playlist[key];
+            if (!Array.isArray(images))
+                continue;
+            const first = images.find((url) => typeof url === 'string' && url.length > 0);
+            if (first)
+                return first;
+        }
+        return '';
     }
     /**
      * Builds encoded track payload.

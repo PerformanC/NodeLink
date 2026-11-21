@@ -9,6 +9,7 @@ import type {
   TrackStreamResult,
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   VimeoApiV2Video,
   VimeoAudioTrack,
@@ -179,6 +180,45 @@ function selectAudioTrack(tracks: VimeoAudioTrack[]): VimeoAudioTrack | null {
  * @public
  */
 export default class VimeoSource {
+  /**
+   * Declarative test suite for validating Vimeo source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'vimeo.video.resolve',
+      name: 'Vimeo Video URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://vimeo.com/76979871'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'The New Vimeo Player' },
+          author: { op: 'matches', value: 'Vimeo' },
+          sourceName: { op: 'equals', value: 'vimeo' }
+        }
+      }
+    },
+    {
+      id: 'vimeo.player.resolve',
+      name: 'Vimeo Player URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://player.vimeo.com/video/76979871'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'The New Vimeo Player' },
+          author: { op: 'matches', value: 'Vimeo' },
+          sourceName: { op: 'equals', value: 'vimeo' }
+        }
+      }
+    }
+  ]
+
   public readonly nodelink: VimeoNodeLinkContext
   public readonly config: VimeoNodeLinkContext['options']
   public readonly searchTerms: string[]

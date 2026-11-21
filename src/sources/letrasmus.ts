@@ -5,6 +5,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   HttpRequestResult,
@@ -102,6 +103,11 @@ interface LetrasSolrDoc {
    * Artwork URL when available.
    */
   img?: string | null
+
+  /**
+   * High quality artwork URL when available.
+   */
+  imgm?: string | null
 }
 
 /**
@@ -346,6 +352,59 @@ function buildTrackUrl(dns: string, url: string): string {
  */
 export default class LetrasMusSource {
   /**
+   * Declarative test suite for validating LetrasMus source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'letrasmus.track.resolve',
+      name: 'Letras.mus Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.letras.mus.br/daft-punk/get-lucky/'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'letrasmus' }
+        }
+      }
+    },
+    {
+      id: 'letrasmus.search.lmsearch',
+      name: 'Letras.mus Search query (lmsearch:)',
+      input: {
+        type: 'search',
+        searchType: 'lmsearch',
+        value: 'Daft Punk Get Lucky'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          sourceName: { op: 'equals', value: 'letrasmus' }
+        }
+      }
+    },
+    {
+      id: 'letrasmus.recommendations.lmrec',
+      name: 'Letras.mus Artist radio recommendations (lmrec:)',
+      input: {
+        type: 'search',
+        searchType: 'lmrec',
+        value: 'daft-punk'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 5 }
+      }
+    }
+  ]
+
+  /**
    * Runtime worker context used by the source implementation.
    */
   public readonly nodelink: WorkerNodeLink
@@ -467,13 +526,7 @@ export default class LetrasMusSource {
 
       const html = this.getTextBody({ body })
       if (error || statusCode !== 200 || !html) {
-        return {
-          loadType: 'error',
-          exception: {
-            message: `Failed to fetch Letras page: ${error ?? statusCode}`,
-            severity: 'fault'
-          }
-        }
+        return await this.resolveViaSolr(url)
       }
 
       const omq = extractOmqLyric(html)
@@ -519,6 +572,14 @@ export default class LetrasMusSource {
         })
       }
     } catch (error) {
+      const solrResult = await this.resolveViaSolr(url).catch(() => null)
+      if (
+        solrResult &&
+        solrResult.loadType !== 'empty' &&
+        solrResult.loadType !== 'error'
+      ) {
+        return solrResult
+      }
       return {
         loadType: 'error',
         exception: {
@@ -527,6 +588,52 @@ export default class LetrasMusSource {
         }
       }
     }
+  }
+
+  /**
+   * Resolves track metadata via the Solr catalog fallback when page fetching is blocked.
+   *
+   * @param url Public LetrasMus page URL.
+   * @returns Track or empty result payload.
+   */
+  private async resolveViaSolr(url: string): Promise<SourceResult> {
+    const songMatch =
+      /^https?:\/\/(?:www\.)?letras\.(?:mus\.br|com)\/([a-z0-9-]+)\/([a-z0-9-]+)\/?/i.exec(
+        url
+      )
+
+    if (songMatch) {
+      const artistSlug = songMatch[1]
+      const songSlug = songMatch[2]
+      if (artistSlug && songSlug) {
+        const queryTerm = `${artistSlug.replace(/-/g, ' ')} ${songSlug.replace(/-/g, ' ')}`
+        const tracks = await this.searchSolr(queryTerm)
+        const matched =
+          tracks.find((t) => {
+            const matchUri = t.info.uri.toLowerCase()
+            return (
+              matchUri.includes(`/${artistSlug}/${songSlug}/`) ||
+              matchUri.includes(`/${songSlug}/`)
+            )
+          }) || tracks[0]
+
+        if (matched) {
+          return {
+            loadType: 'track',
+            data: {
+              ...matched,
+              info: {
+                ...matched.info,
+                identifier: url,
+                uri: url
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { loadType: 'empty', data: {} }
   }
 
   /**
@@ -677,7 +784,7 @@ export default class LetrasMusSource {
           length: 0,
           title: doc.txt || 'Unknown',
           uri,
-          artworkUrl: doc.img || null
+          artworkUrl: doc.imgm || doc.img || null
         })
       })
   }
@@ -749,7 +856,21 @@ export default class LetrasMusSource {
       return { loadType: 'empty', data: {} }
     }
 
-    return { loadType: 'search', data: tracks }
+    const playlistName =
+      this.getString(payload, 'Name') || `${artistSlug} Radio`
+    return {
+      loadType: 'playlist',
+      data: {
+        info: {
+          name: playlistName,
+          selectedTrack: 0
+        },
+        pluginInfo: {
+          type: 'recommendations'
+        },
+        tracks
+      }
+    }
   }
 
   /**
@@ -982,7 +1103,8 @@ export default class LetrasMusSource {
       url: this.getString(record, 'url'),
       art: this.getString(record, 'art'),
       txt: this.getString(record, 'txt'),
-      img: this.getString(record, 'img')
+      img: this.getString(record, 'img'),
+      imgm: this.getString(record, 'imgm')
     }
   }
 

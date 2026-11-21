@@ -8,6 +8,27 @@ const NEWGROUNDS_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWe
  * @public
  */
 export default class NewgroundsSource {
+    /**
+     * Declarative test suite for validating Newgrounds source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'newgrounds.track.resolve',
+            name: 'Newgrounds Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.newgrounds.com/audio/listen/467339'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'At the Speed of Light' },
+                    sourceName: { op: 'equals', value: 'newgrounds' }
+                }
+            }
+        }
+    ];
     nodelink;
     patterns = [NEWGROUNDS_AUDIO_PATTERN];
     priority = 50;

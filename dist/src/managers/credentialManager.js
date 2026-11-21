@@ -67,16 +67,7 @@ export default class CredentialManager extends BaseCacheManager {
      * @param ttlMs - Time-to-live in milliseconds (0 = no expiry).
      */
     set(key, value, ttlMs = 0) {
-        const now = Date.now();
-        const current = this.cache.get(key);
-        const expiresAt = ttlMs > 0 ? now + ttlMs : null;
-        this.cache.set(key, {
-            value,
-            createdAt: current?.createdAt ?? now,
-            updatedAt: now,
-            expiresAt
-        });
-        this.save();
+        this._setEntry(key, value, ttlMs);
     }
     /**
      * Removes a credential entry.
@@ -84,10 +75,7 @@ export default class CredentialManager extends BaseCacheManager {
      * @returns True if an entry was removed.
      */
     delete(key) {
-        const existed = this.cache.delete(key);
-        if (existed)
-            this.save();
-        return existed;
+        return this._deleteEntry(key);
     }
     /**
      * Checks whether a credential entry exists and is not expired.

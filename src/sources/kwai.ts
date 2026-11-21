@@ -1,11 +1,19 @@
-import { PassThrough, pipeline } from 'node:stream'
+import { PassThrough } from 'node:stream'
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackStreamResult,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
 
@@ -88,7 +96,128 @@ interface KwaiTrackData {
 /**
  * Kwai source implementation.
  */
-export default class KwaiSource {
+export default class KwaiSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating Kwai source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'kwai.video.stream',
+      name: 'Kwai native video stream playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.kwai.com/video/5215881428622069111'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'Vida na natureza'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'kwai'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [{ container: 'mp4', codec: 'aac' }],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'kwai.video.short_domain',
+      name: 'Kwai video resolution without www prefix',
+      input: {
+        type: 'resolve',
+        value: 'https://kwai.com/video/5215881428622069111'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'Vida na natureza'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'kwai'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'kwai.video.user_handle',
+      name: 'Kwai video resolution with user handle in path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.kwai.com/@frmrt264/video/5215881428622069111'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'Vida na natureza'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'kwai'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'kwai.video.user_handle_short_domain',
+      name: 'Kwai video resolution with user handle on short domain',
+      input: {
+        type: 'resolve',
+        value: 'https://kwai.com/@frmrt264/video/5215881428622069111'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'Vida na natureza'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'kwai'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
   /**
    * Runtime worker context used by the source implementation.
    */
@@ -176,15 +305,12 @@ export default class KwaiSource {
    * @returns Direct media URL descriptor or an exception payload when Kwai does
    * not expose the video URL anymore.
    */
-  public async getTrackUrl(
-    track: TrackInfo
-  ): Promise<TrackUrlResult | SourceResult> {
+  public async getTrackUrl(track: TrackInfo): Promise<TrackUrlResult> {
     try {
       const videoData = await this.getVideoInfo(track.identifier)
 
       if (!videoData.videoUrl) {
         return {
-          loadType: 'error',
           exception: {
             message: 'Video URL not found',
             severity: 'fault',
@@ -200,7 +326,6 @@ export default class KwaiSource {
       }
     } catch (error) {
       return {
-        loadType: 'error',
         exception: {
           message:
             error instanceof Error ? error.message : 'Failed to get video URL',
@@ -222,7 +347,7 @@ export default class KwaiSource {
   public async loadStream(
     _decodedTrack: TrackInfo,
     url: string
-  ): Promise<TrackStreamResult | SourceResult> {
+  ): Promise<TrackStreamResult> {
     try {
       const response = await http1makeRequest(url, {
         method: 'GET',
@@ -236,44 +361,125 @@ export default class KwaiSource {
       })
 
       if (response.error || !response.stream) {
-        throw new Error(
-          response.error || 'Failed to get stream, no stream object returned.'
-        )
+        return {
+          exception: {
+            message:
+              response.error ||
+              'Failed to get stream, no stream object returned.',
+            severity: 'fault'
+          }
+        }
       }
 
       if (response.statusCode !== 200) {
-        throw new Error(`Kwai returned status ${response.statusCode}`)
+        return {
+          exception: {
+            message: `Kwai returned status ${response.statusCode}`,
+            severity: 'fault'
+          }
+        }
       }
 
+      const upstream = response.stream
       const stream = new PassThrough()
-      stream.once('close', () => {
-        ;(response.stream as { destroy?: () => void }).destroy?.()
-      })
-      pipeline(
-        response.stream,
-        stream,
-        (error: NodeJS.ErrnoException | null) => {
-          if (error) {
-            if (error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
-              logger('error', 'Kwai', `Stream error: ${error.message}`)
-            }
-            return
-          }
-          stream.emit('finishBuffering')
+
+      upstream.on('data', (chunk: Buffer) => {
+        if (!stream.write(chunk)) {
+          upstream.pause()
         }
-      )
+      })
+
+      stream.on('drain', () => {
+        if (!stream.destroyed) {
+          upstream.resume()
+        }
+      })
+
+      upstream.on('end', () => {
+        if (!stream.writableEnded) {
+          stream.emit('finishBuffering')
+          stream.end()
+        }
+      })
+
+      upstream.on('error', (err: Error) => {
+        if (!stream.destroyed) {
+          stream.destroy(err)
+        }
+      })
 
       return { stream, type: 'mp4' }
     } catch (error) {
       return {
-        loadType: 'error',
         exception: {
           message:
             error instanceof Error ? error.message : 'Failed to load stream',
-          severity: 'fault',
-          cause: 'Kwai Source'
+          severity: 'fault'
         }
       }
+    }
+  }
+
+  /**
+   * Executes a test variant for Kwai source testing.
+   *
+   * @param variant - Test variant definition.
+   * @param track - Resolved track info.
+   * @param streamSpec - Optional stream validation specification.
+   * @returns Test variant result payload.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    const urlData = await this.getTrackUrl(track)
+    if (!urlData || 'exception' in urlData || !urlData.url) {
+      const errorMsg =
+        urlData && 'exception' in urlData && urlData.exception?.message
+          ? urlData.exception.message
+          : 'Failed to resolve track streaming URL'
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: errorMsg
+      }
+    }
+
+    const container = 'mp4'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    const streamResult = await this.loadStream(track, urlData.url)
+    if (!('stream' in streamResult) || !streamResult.stream) {
+      const errorMsg =
+        'exception' in streamResult && streamResult.exception?.message
+          ? streamResult.exception.message
+          : 'Failed to load audio stream'
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: errorMsg
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
     }
   }
 
@@ -295,6 +501,36 @@ export default class KwaiSource {
     }
 
     return match[1]
+  }
+
+  /**
+   * Decodes common HTML entities in a string.
+   *
+   * @param value - String potentially containing HTML entities.
+   * @returns Decoded string or original value.
+   */
+  private decodeHtmlEntities(value: string | null): string | null {
+    if (!value) return value
+    return value
+      .replace(/&amp;/g, '&')
+      .replace(/&ugrave;/g, 'ù')
+      .replace(/&uacute;/g, 'ú')
+      .replace(/&aacute;/g, 'á')
+      .replace(/&eacute;/g, 'é')
+      .replace(/&iacute;/g, 'í')
+      .replace(/&oacute;/g, 'ó')
+      .replace(/&atilde;/g, 'ã')
+      .replace(/&otilde;/g, 'õ')
+      .replace(/&ccedil;/g, 'ç')
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
+        String.fromCodePoint(Number.parseInt(hex, 16))
+      )
+      .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .trim()
   }
 
   /**
@@ -364,10 +600,11 @@ export default class KwaiSource {
       this.decodeUnicodeEscapes(
         videoData.match(/user_name:"((?:\\.|[^"])*)"/)?.[1] ?? null
       ) ?? 'Unknown'
-    const title =
+    const rawTitle =
       this.decodeUnicodeEscapes(
         videoData.match(/caption:"((?:\\.|[^"])*)"/)?.[1] ?? null
       ) ?? (author === 'Unknown' ? 'Kwai Video' : `Kwai - ${author}`)
+    const title = this.decodeHtmlEntities(rawTitle) ?? rawTitle
     const durationText = videoData.match(/ext_params:\{[^}]*sound:(\d+)/)?.[1]
     const thumbnail = this.decodeUnicodeEscapes(
       videoData.match(

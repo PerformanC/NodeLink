@@ -7,9 +7,13 @@ import type {
   IVolumeTransformer,
   ScratchStyle
 } from '../../typings/playback/processing.types.ts'
+import type { AudioProcessingMode } from './audioContract.ts'
+import { Float32AudioMixer } from './Float32AudioMixer.ts'
+import { int16PcmToFloat32Pcm } from './float32Pcm.ts'
 
 const FRAME_SIZE = 3840
 const EMPTY_BUFFER = Buffer.alloc(0)
+const PROTECTED_FRAME_SIZE = FRAME_SIZE * 2
 
 /**
  * Controller that coordinates filters, volume, fading, scratching, and mixing in a single stream.
@@ -23,6 +27,9 @@ export class FlowController extends Transform {
   private readonly audioMixer: AudioMixer | null
   private pendingBuffer: Buffer | null
   private pendingLength: number
+  private readonly processingMode: AudioProcessingMode
+  private readonly frameSize: number
+  private readonly float32Mixer: Float32AudioMixer | null
 
   /**
    * Creates a new FlowController.
@@ -37,21 +44,62 @@ export class FlowController extends Transform {
     fade: IFadeTransformer,
     tape: ITapeTransformer,
     scratch: IScratchTransformer,
-    audioMixer: AudioMixer | null = null
+    audioMixer: AudioMixer | null = null,
+    processingMode: AudioProcessingMode = 'legacy'
   ) {
-    super({ highWaterMark: FRAME_SIZE * 4 })
+    super({
+      highWaterMark:
+        (processingMode === 'protected' ? PROTECTED_FRAME_SIZE : FRAME_SIZE) * 4
+    })
 
     this.volume = volume
     this.fade = fade
     this.tape = tape
     this.scratch = scratch
     this.audioMixer = audioMixer
-    this.pendingBuffer = Buffer.allocUnsafe(FRAME_SIZE)
+    this.processingMode = processingMode
+    this.frameSize =
+      processingMode === 'protected' ? PROTECTED_FRAME_SIZE : FRAME_SIZE
+    this.float32Mixer =
+      processingMode === 'protected' ? new Float32AudioMixer() : null
+    this.pendingBuffer = Buffer.allocUnsafe(this.frameSize)
     this.pendingLength = 0
   }
 
   private _processFrame(frame: Buffer): void {
     let output: Buffer = frame
+
+    if (this.processingMode === 'protected') {
+      const tapeFloat = (
+        this.tape as unknown as { processFloat32?: (pcm: Buffer) => Buffer }
+      ).processFloat32
+      const scratchFloat = (
+        this.scratch as unknown as { processFloat32?: (pcm: Buffer) => Buffer }
+      ).processFloat32
+      if (this.tape.isActive() && !tapeFloat)
+        throw new Error(
+          'TapeTransformer does not support Protected Float32 processing'
+        )
+      if (this.scratch.isActive() && !scratchFloat)
+        throw new Error(
+          'ScratchTransformer does not support Protected Float32 processing'
+        )
+      output = tapeFloat ? tapeFloat.call(this.tape, output) : output
+      output = scratchFloat ? scratchFloat.call(this.scratch, output) : output
+      const volumeFloat = (
+        this.volume as unknown as { processFloat32?: (pcm: Buffer) => Buffer }
+      ).processFloat32
+      const fadeFloat = (
+        this.fade as unknown as { processFloat32?: (pcm: Buffer) => Buffer }
+      ).processFloat32
+      if (!volumeFloat || !fadeFloat)
+        throw new Error('Protected flow component lacks Float32 support')
+      output = volumeFloat.call(this.volume, output)
+      output = fadeFloat.call(this.fade, output)
+      output = this._mixProtected(output)
+      this.push(output)
+      return
+    }
 
     output = this.tape.process(output)
     output = this.scratch.process(output)
@@ -70,6 +118,24 @@ export class FlowController extends Transform {
     }
 
     this.push(output)
+  }
+
+  private _mixProtected(output: Buffer): Buffer {
+    if (!this.audioMixer || this.audioMixer.enabled === false) return output
+    const layerChunks = this.audioMixer.readLayerChunksAligned(
+      output.length / 8
+    )
+    if (layerChunks.size === 0) return output
+    const format = this.float32Mixer!.format
+    const sources = [{ data: output, gain: 1, format }]
+    for (const layer of layerChunks.values()) {
+      sources.push({
+        data: int16PcmToFloat32Pcm(layer.buffer),
+        gain: layer.volume,
+        format
+      })
+    }
+    return this.float32Mixer!.mix(sources)
   }
 
   /**
@@ -116,6 +182,14 @@ export class FlowController extends Transform {
     type: 'start' | 'stop',
     curve?: string
   ): void {
+    if (
+      this.processingMode === 'protected' &&
+      !('processFloat32' in this.tape)
+    ) {
+      throw new Error(
+        'Tape effects are not available in Protected mode until Float32 resampling is supported'
+      )
+    }
     this.tape.tapeTo(durationMs, type, curve)
   }
 
@@ -125,6 +199,14 @@ export class FlowController extends Transform {
    * @param style - The style of scratch to apply.
    */
   public scratchTo(durationMs: number, style: ScratchStyle): void {
+    if (
+      this.processingMode === 'protected' &&
+      !('processFloat32' in this.scratch)
+    ) {
+      throw new Error(
+        'Scratch effects are not available in Protected mode until Float32 resampling is supported'
+      )
+    }
     this.scratch.scratchTo(durationMs, style)
   }
 
@@ -169,24 +251,24 @@ export class FlowController extends Transform {
     let offset = 0
 
     if (this.pendingLength > 0) {
-      const needed = FRAME_SIZE - this.pendingLength
+      const needed = this.frameSize - this.pendingLength
       const toCopy = Math.min(needed, chunk.length)
       chunk.copy(this.pendingBuffer, this.pendingLength, 0, toCopy)
       this.pendingLength += toCopy
       offset += toCopy
 
-      if (this.pendingLength === FRAME_SIZE) {
+      if (this.pendingLength === this.frameSize) {
         this._processFrame(this.pendingBuffer)
         this.pendingLength = 0
       }
     }
 
     const remaining = chunk.length - offset
-    const fullFrameBytes = remaining - (remaining % FRAME_SIZE)
+    const fullFrameBytes = remaining - (remaining % this.frameSize)
     const end = offset + fullFrameBytes
 
-    for (let i = offset; i < end; i += FRAME_SIZE) {
-      this._processFrame(chunk.subarray(i, i + FRAME_SIZE))
+    for (let i = offset; i < end; i += this.frameSize) {
+      this._processFrame(chunk.subarray(i, i + this.frameSize))
     }
 
     if (end < chunk.length) {
@@ -205,12 +287,47 @@ export class FlowController extends Transform {
     this.pendingLength = 0
 
     if (remaining.length > 0) {
-      remaining = this.tape.process(remaining)
-      remaining = this.scratch.process(remaining)
-      remaining = this.volume.process(remaining)
-      remaining = this.fade.process(remaining)
+      if (this.processingMode === 'protected') {
+        const tapeFloat = (
+          this.tape as unknown as { processFloat32?: (pcm: Buffer) => Buffer }
+        ).processFloat32
+        const scratchFloat = (
+          this.scratch as unknown as {
+            processFloat32?: (pcm: Buffer) => Buffer
+          }
+        ).processFloat32
+        const volumeFloat = (
+          this.volume as unknown as { processFloat32?: (pcm: Buffer) => Buffer }
+        ).processFloat32
+        const fadeFloat = (
+          this.fade as unknown as { processFloat32?: (pcm: Buffer) => Buffer }
+        ).processFloat32
+        if (this.tape.isActive() && !tapeFloat)
+          throw new Error(
+            'TapeTransformer does not support Protected Float32 processing'
+          )
+        if (this.scratch.isActive() && !scratchFloat)
+          throw new Error(
+            'ScratchTransformer does not support Protected Float32 processing'
+          )
+        if (!volumeFloat || !fadeFloat)
+          throw new Error('Protected flow component lacks Float32 support')
+        remaining = tapeFloat ? tapeFloat.call(this.tape, remaining) : remaining
+        remaining = scratchFloat
+          ? scratchFloat.call(this.scratch, remaining)
+          : remaining
+        remaining = volumeFloat.call(this.volume, remaining)
+        remaining = fadeFloat.call(this.fade, remaining)
+        remaining = this._mixProtected(remaining)
+      } else {
+        remaining = this.tape.process(remaining)
+        remaining = this.scratch.process(remaining)
+        remaining = this.volume.process(remaining)
+        remaining = this.fade.process(remaining)
+      }
 
       if (
+        this.processingMode !== 'protected' &&
         this.audioMixer &&
         this.audioMixer.enabled !== false &&
         this.audioMixer.hasActiveLayers()
@@ -221,7 +338,8 @@ export class FlowController extends Transform {
         } catch (_error) {}
       }
 
-      const finalRemainder = remaining.length % 4
+      const finalRemainder =
+        remaining.length % (this.processingMode === 'protected' ? 8 : 4)
       if (finalRemainder > 0) {
         remaining = remaining.subarray(0, remaining.length - finalRemainder)
       }
@@ -229,7 +347,7 @@ export class FlowController extends Transform {
       if (remaining.length > 0) this.push(remaining)
     }
 
-    const silence = Buffer.alloc(FRAME_SIZE, 0)
+    const silence = Buffer.alloc(this.frameSize, 0)
     let drainLimit = 500
     while (
       (this.scratch.isActive() || this.tape.isActive()) &&

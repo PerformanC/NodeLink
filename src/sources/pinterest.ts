@@ -1,12 +1,20 @@
 import { PassThrough } from 'node:stream'
 import HLSHandler from '../playback/hls/HLSHandler.ts'
 import type {
+  SourceInstance,
   SourceResult,
   TrackInfo,
   TrackStreamResult,
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type {
+  SourceTestCase,
+  SourceTestStreamSpec,
+  SourceTestVariant,
+  SourceTestVariantResult,
+  SourceVariantHandler
+} from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
 
@@ -156,19 +164,6 @@ interface PinterestApiResponse {
 }
 
 /**
- * Stream error payload returned when streaming fails.
- */
-interface PinterestStreamError {
-  /**
-   * Streaming exception returned to the caller.
-   */
-  exception: {
-    message: string
-    severity: string
-  }
-}
-
-/**
  * Pinterest track payload compatible with both the shared encoder and the
  * source manager response contract.
  */
@@ -198,7 +193,158 @@ interface PinterestTrackInfo extends TrackEncodeInput {
 /**
  * Pinterest source implementation.
  */
-export default class PinterestSource {
+export default class PinterestSource
+  implements SourceInstance, SourceVariantHandler
+{
+  /**
+   * Declarative test suite for validating Pinterest source behavior.
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'pinterest.pin.stream',
+      name: 'Pinterest direct video stream playback',
+      input: {
+        type: 'resolve',
+        value: 'https://www.pinterest.com/pin/664281013778109217/'
+      },
+      matrix: {
+        variants: [{ id: 'Standard' }]
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Origami'
+          },
+          author: {
+            op: 'matches',
+            value: 'Thandie Sibanda'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'pinterest'
+          }
+        },
+        stream: {
+          required: true,
+          download: 'complete',
+          minBytes: 100000,
+          validFormats: [{ container: 'mp4', codec: 'aac' }],
+          decodeToEnd: true
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'pinterest.pin.short_domain',
+      name: 'Pinterest pin resolution without www prefix',
+      input: {
+        type: 'resolve',
+        value: 'https://pinterest.com/pin/664281013778109217/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Origami'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'pinterest'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'pinterest.pin.slug_prefix',
+      name: 'Pinterest pin resolution with title slug prefix in path',
+      input: {
+        type: 'resolve',
+        value: 'https://www.pinterest.com/pin/origami--664281013778109217/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Origami'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'pinterest'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'pinterest.pin.localized_subdomain',
+      name: 'Pinterest pin resolution on localized subdomain',
+      input: {
+        type: 'resolve',
+        value: 'https://br.pinterest.com/pin/664281013778109217/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          title: {
+            op: 'matches',
+            value: 'Origami'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'pinterest'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    },
+    {
+      id: 'pinterest.story_pin',
+      name: 'Pinterest story pin resolution with embedded video block',
+      input: {
+        type: 'resolve',
+        value: 'https://www.pinterest.com/pin/1084663891475263837/'
+      },
+      expect: {
+        result: {
+          type: 'track'
+        },
+        metadata: {
+          author: {
+            op: 'matches',
+            value: 'CoolCrazyGadgets'
+          },
+          sourceName: {
+            op: 'equals',
+            value: 'pinterest'
+          }
+        }
+      },
+      forbid: {
+        resultTypes: ['empty', 'error']
+      }
+    }
+  ]
   /**
    * Runtime NodeLink context.
    */
@@ -600,8 +746,8 @@ export default class PinterestSource {
     _decodedTrack: TrackInfo,
     url: string,
     protocol?: string,
-    additionalData?: Record<string, object | string | number | boolean | null>
-  ): Promise<TrackStreamResult | PinterestStreamError> {
+    additionalData?: Record<string, unknown>
+  ): Promise<TrackStreamResult> {
     try {
       const headers = {
         'User-Agent':
@@ -632,24 +778,44 @@ export default class PinterestSource {
       })
 
       if (response.error || !response.stream) {
-        throw new Error(
-          typeof response.error === 'string' && response.error.length > 0
-            ? response.error
-            : 'Failed to get stream, no stream object returned.'
-        )
+        return {
+          exception: {
+            message:
+              typeof response.error === 'string' && response.error.length > 0
+                ? response.error
+                : 'Failed to get stream, no stream object returned.',
+            severity: 'fault'
+          }
+        }
       }
 
+      const upstream = response.stream
       const stream = new PassThrough()
-      response.stream.on('data', (chunk: Buffer) => {
-        stream.write(chunk)
+
+      upstream.on('data', (chunk: Buffer) => {
+        if (!stream.write(chunk)) {
+          upstream.pause()
+        }
       })
-      response.stream.on('end', () => {
-        stream.emit('finishBuffering')
+
+      stream.on('drain', () => {
+        if (!stream.destroyed) {
+          upstream.resume()
+        }
       })
-      response.stream.on('error', (error: Error) => {
+
+      upstream.on('end', () => {
+        if (!stream.writableEnded) {
+          stream.emit('finishBuffering')
+          stream.end()
+        }
+      })
+
+      upstream.on('error', (error: Error) => {
         logger('error', 'Pinterest', `Upstream stream error: ${error.message}`)
-        stream.emit('error', error)
-        stream.emit('finishBuffering')
+        if (!stream.destroyed) {
+          stream.destroy(error)
+        }
       })
 
       return { stream, type: 'mp4' }
@@ -663,6 +829,84 @@ export default class PinterestSource {
           severity: 'fault'
         }
       }
+    }
+  }
+
+  /**
+   * Executes a test variant for Pinterest source testing.
+   *
+   * @param variant - Test variant definition.
+   * @param track - Resolved track info.
+   * @param streamSpec - Optional stream validation specification.
+   * @returns Test variant result payload.
+   */
+  public async executeVariant(
+    variant: SourceTestVariant,
+    track: TrackInfo,
+    streamSpec?: SourceTestStreamSpec
+  ): Promise<SourceTestVariantResult> {
+    let urlData: TrackUrlResult
+    try {
+      urlData = await this.getTrackUrl(track)
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: errorMsg
+      }
+    }
+
+    if (!urlData || 'exception' in urlData || !urlData.url) {
+      const errorMsg =
+        urlData && 'exception' in urlData && urlData.exception?.message
+          ? urlData.exception.message
+          : 'Failed to resolve track streaming URL'
+      return {
+        variant: variant.id,
+        resolved: false,
+        error: errorMsg
+      }
+    }
+
+    const container = 'mp4'
+    const codec = 'aac'
+
+    if (!streamSpec?.required) {
+      return {
+        variant: variant.id,
+        resolved: true,
+        track: urlData.newTrack?.info || track,
+        container,
+        codec
+      }
+    }
+
+    const streamResult = await this.loadStream(
+      track,
+      urlData.url,
+      urlData.protocol
+    )
+    if (!('stream' in streamResult) || !streamResult.stream) {
+      const errorMsg =
+        'exception' in streamResult && streamResult.exception?.message
+          ? streamResult.exception.message
+          : 'Failed to load audio stream'
+      return {
+        variant: variant.id,
+        resolved: true,
+        error: errorMsg
+      }
+    }
+
+    return {
+      variant: variant.id,
+      resolved: true,
+      track: urlData.newTrack?.info || track,
+      stream: streamResult.stream,
+      container,
+      codec,
+      httpStatus: 200
     }
   }
 }

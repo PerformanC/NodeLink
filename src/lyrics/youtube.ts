@@ -111,7 +111,15 @@ export default class YouTubeLyrics {
       trackInfo.sourceName
     )
 
-    const captionTracks = resolvedTrack.data?.pluginInfo?.captions
+    let captionTracks = resolvedTrack.data?.pluginInfo?.captions
+    if (typeof captionTracks === 'string') {
+      try {
+        captionTracks = JSON.parse(captionTracks) as YouTubeCaptionTrack[]
+      } catch {
+        captionTracks = []
+      }
+    }
+
     if (resolvedTrack.loadType !== 'track' || !Array.isArray(captionTracks)) {
       logger(
         'debug',

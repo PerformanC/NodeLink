@@ -1,5 +1,6 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 import LFO from './dsp/lfo.ts'
@@ -7,6 +8,7 @@ import LFO from './dsp/lfo.ts'
 const CHANNELS = 2
 
 export default class Tesseract extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 11
   private lfoTheta: LFO
   private lfoPhi: LFO
@@ -17,6 +19,8 @@ export default class Tesseract extends AnimatableFilter {
   private delaySamples = Math.floor(SAMPLE_RATE * 0.015)
   private delayBufferL = new Int16Array(this.delaySamples)
   private delayBufferR = new Int16Array(this.delaySamples)
+  private delayFloatL: Float64Array | null = null
+  private delayFloatR: Float64Array | null = null
   private delayIndex = 0
 
   constructor() {
@@ -102,12 +106,44 @@ export default class Tesseract extends AnimatableFilter {
     return chunk
   }
 
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 8 !== 0)
+      throw new RangeError(
+        'Tesseract Float32 input must contain complete stereo frames'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    this.delayFloatL ??= new Float64Array(this.delaySamples)
+    this.delayFloatR ??= new Float64Array(this.delaySamples)
+    for (let i = 0; i < chunk.length; i += 8) {
+      const theta = this.lfoTheta.getValue() * Math.PI
+      const phi = this.lfoPhi.getValue() * Math.PI
+      const gamma = this.lfoGamma.getValue() * Math.PI
+      const left = chunk.readFloatLE(i),
+        right = chunk.readFloatLE(i + 4)
+      const y = this.delayFloatL[this.delayIndex] ?? 0
+      const z = this.delayFloatR[this.delayIndex] ?? 0
+      this.delayFloatL[this.delayIndex] = left
+      this.delayFloatR[this.delayIndex] = right
+      this.delayIndex = (this.delayIndex + 1) % this.delaySamples
+      const lr = left * Math.cos(theta) - y * Math.sin(theta)
+      const rr = right * Math.cos(phi) - z * Math.sin(phi)
+      const outL = lr * Math.cos(gamma) - rr * Math.sin(gamma)
+      const outR = lr * Math.sin(gamma) + rr * Math.cos(gamma)
+      chunk.writeFloatLE(left * (1 - this.alpha) + outL * this.alpha, i)
+      chunk.writeFloatLE(right * (1 - this.alpha) + outR * this.alpha, i + 4)
+    }
+    return chunk
+  }
+
   public override flush(): Buffer {
     this.lfoTheta.phase = 0
     this.lfoPhi.phase = 0
     this.lfoGamma.phase = 0
     this.delayBufferL.fill(0)
     this.delayBufferR.fill(0)
+    this.delayFloatL?.fill(0)
+    this.delayFloatR?.fill(0)
     this.delayIndex = 0
     return Buffer.alloc(0)
   }

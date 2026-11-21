@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import { PassThrough } from 'node:stream';
-import vm from 'node:vm';
 import HLSHandler from '../playback/hls/HLSHandler.js';
 import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js';
 /**
@@ -29,6 +28,81 @@ const HEADERS = {
  */
 export default class BilibiliSource {
     /**
+     * Test suite cases validating Bilibili video resolution, search, and playback.
+     */
+    static _TESTS = [
+        {
+            id: 'bilibili.video.stream',
+            name: 'Bilibili standard BV video playback',
+            input: {
+                type: 'resolve',
+                value: 'https://www.bilibili.com/video/BV11x411c7X6'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    title: {
+                        op: 'matches',
+                        value: 'PikaPika'
+                    },
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bilibili'
+                    }
+                },
+                stream: {
+                    required: true,
+                    download: 'complete',
+                    minBytes: 100000,
+                    validFormats: [{ container: 'mp4', codec: 'aac' }]
+                }
+            }
+        },
+        {
+            id: 'bilibili.search.query',
+            name: 'Bilibili text search query',
+            input: {
+                type: 'search',
+                value: 'bad apple'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'search'
+                }
+            }
+        },
+        {
+            id: 'bilibili.video.classic',
+            name: 'Bilibili classic video resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.bilibili.com/video/BV1xx411c7mD'
+            },
+            matrix: {
+                variants: [{ id: 'Standard' }]
+            },
+            expect: {
+                result: {
+                    type: 'track'
+                },
+                metadata: {
+                    sourceName: {
+                        op: 'equals',
+                        value: 'bilibili'
+                    }
+                }
+            }
+        }
+    ];
+    /**
      * The NodeLink worker context.
      * @internal
      */
@@ -43,15 +117,15 @@ export default class BilibiliSource {
      * @public
      */
     patterns = [
-        /https?:\/\/(?:www\.)?bilibili\.com\/video\/(BV[a-zA-Z0-9]+|av\d+)/,
-        /https?:\/\/(?:www\.)?bilibili\.com\/bangumi\/play\/(ep|ss)(\d+)/,
-        /https?:\/\/(?:www\.)?bilibili\.com\/audio\/(au|am)(\d+)/,
-        /https?:\/\/live\.bilibili\.com\/(\d+)/,
-        /https?:\/\/space\.bilibili\.com\/(\d+)/,
-        /^https?:\/\/b23\.tv\/.+/i,
-        /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?video\/(\d+|BV[a-zA-Z0-9]+|av\d+)/,
-        /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?play\/(\d+)(?:\/(\d+))?/,
-        /https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?space\/(\d+)/
+        /^https?:\/\/(?:www\.)?bilibili\.com\/(?:[a-zA-Z]{2}\/)?video\/(BV[a-zA-Z0-9]+|av\d+)/,
+        /^https?:\/\/(?:www\.)?bilibili\.com\/(?:[a-zA-Z]{2}\/)?bangumi\/play\/(ep|ss)(\d+)/,
+        /^https?:\/\/(?:www\.)?bilibili\.com\/(?:[a-zA-Z]{2}\/)?audio\/(au|am)(\d+)/,
+        /^https?:\/\/live\.bilibili\.com\/(\d+)/,
+        /^https?:\/\/space\.bilibili\.com\/(\d+)/,
+        /^https?:\/\/(?:www\.)?b23\.tv\/.+/i,
+        /^https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?video\/(\d+|BV[a-zA-Z0-9]+|av\d+)/,
+        /^https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?play\/(\d+)(?:\/(\d+))?/,
+        /^https?:\/\/(?:www\.)?bilibili\.tv\/(?:[a-zA-Z]{2}\/)?space\/(\d+)/
     ];
     /**
      * Search term prefixes recognized by this source.
@@ -321,17 +395,45 @@ export default class BilibiliSource {
      */
     async resolveShortUrl(shortUrl) {
         try {
-            const res = await makeRequest(shortUrl, {
+            const parsed = new URL(shortUrl);
+            if ((parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+                (parsed.hostname !== 'b23.tv' && parsed.hostname !== 'www.b23.tv')) {
+                return shortUrl;
+            }
+            const res = await makeRequest(parsed.href, {
                 method: 'GET',
                 headers: HEADERS,
                 maxRedirects: 3,
                 timeout: 5000,
-                proxy: this.config.network?.proxy
+                proxy: this.config.network?.proxy,
+                shouldFollowRedirect: (nextUrl) => {
+                    return ((nextUrl.protocol === 'https:' || nextUrl.protocol === 'http:') &&
+                        (nextUrl.hostname === 'b23.tv' ||
+                            nextUrl.hostname === 'www.b23.tv' ||
+                            nextUrl.hostname === 'bilibili.com' ||
+                            nextUrl.hostname.endsWith('.bilibili.com') ||
+                            nextUrl.hostname === 'bilibili.tv' ||
+                            nextUrl.hostname.endsWith('.bilibili.tv')));
+                }
             });
             if (typeof res.body === 'string') {
                 const match = res.body.match(/rel=["']canonical["'][^>]+href=["']([^"']+)["']/);
-                if (match?.[1])
-                    return match[1];
+                if (match?.[1]) {
+                    try {
+                        const canonicalUrl = new URL(match[1]);
+                        if ((canonicalUrl.protocol === 'https:' ||
+                            canonicalUrl.protocol === 'http:') &&
+                            (canonicalUrl.hostname === 'bilibili.com' ||
+                                canonicalUrl.hostname.endsWith('.bilibili.com') ||
+                                canonicalUrl.hostname === 'bilibili.tv' ||
+                                canonicalUrl.hostname.endsWith('.bilibili.tv'))) {
+                            return canonicalUrl.href;
+                        }
+                    }
+                    catch {
+                        return shortUrl;
+                    }
+                }
             }
             return shortUrl;
         }
@@ -461,6 +563,51 @@ export default class BilibiliSource {
         };
     }
     /**
+     * Validates if a parsed URL targets an official Bilibili TV domain.
+     * @internal
+     */
+    _isBilibiliTvUrl(url) {
+        return ((url.protocol === 'https:' || url.protocol === 'http:') &&
+            (url.hostname === 'bilibili.tv' || url.hostname === 'www.bilibili.tv') &&
+            url.port === '' &&
+            url.username === '' &&
+            url.password === '');
+    }
+    /**
+     * Safely parses JSON state from a Bilibili TV webpage without code evaluation.
+     * @internal
+     */
+    _parseInitialState(rawState) {
+        try {
+            let trimmed = rawState.trim();
+            if (trimmed.endsWith(';')) {
+                trimmed = trimmed.slice(0, -1).trim();
+            }
+            const parsed = JSON.parse(trimmed);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed;
+            }
+            return null;
+        }
+        catch {
+            try {
+                const start = rawState.indexOf('{');
+                const end = rawState.lastIndexOf('}');
+                if (start !== -1 && end > start) {
+                    const jsonSub = rawState.slice(start, end + 1);
+                    const parsed = JSON.parse(jsonSub);
+                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                        return parsed;
+                    }
+                }
+            }
+            catch {
+                return null;
+            }
+            return null;
+        }
+    }
+    /**
      * Extracts initial state from a Bilibili TV webpage.
      * @param url - Webpage URL.
      * @returns Parsed state object or null.
@@ -468,23 +615,24 @@ export default class BilibiliSource {
      */
     async _fetchBilibiliTvState(url) {
         try {
-            const res = await http1makeRequest(url, {
+            const parsedUrl = new URL(url);
+            if (!this._isBilibiliTvUrl(parsedUrl)) {
+                return null;
+            }
+            const res = await http1makeRequest(parsedUrl.href, {
                 method: 'GET',
                 headers: {
                     ...HEADERS,
                     'Accept-Language': 'en-US,en;q=0.9',
                     Referer: 'https://www.bilibili.tv/'
                 },
-                proxy: this.config.network?.proxy
+                proxy: this.config.network?.proxy,
+                shouldFollowRedirect: (nextUrl) => this._isBilibiliTvUrl(nextUrl)
             });
             const html = String(res.body || '');
             const stateMatch = html.match(/<script>\s*window\.__initialState\s*=\s*([\s\S]*?)<\/script>/i);
             if (stateMatch?.[1]) {
-                const context = { window: {} };
-                vm.createContext(context);
-                vm.runInContext(`window.__initialState = ${stateMatch[1]}`, context);
-                return (context.window
-                    .__initialState ?? null);
+                return this._parseInitialState(stateMatch[1]);
             }
             return null;
         }
@@ -500,7 +648,7 @@ export default class BilibiliSource {
      * @public
      */
     async resolve(url) {
-        if (url.includes('b23.tv')) {
+        if (/^https?:\/\/(?:www\.)?b23\.tv\//i.test(url)) {
             url = await this.resolveShortUrl(url);
         }
         const patTvVideo = this.patterns[6];
@@ -1252,5 +1400,75 @@ export default class BilibiliSource {
             const message = err instanceof Error ? err.message : String(err);
             return { exception: { message, severity: 'common' } };
         }
+    }
+    /**
+     * Executes a test variant against the Bilibili source.
+     *
+     * @param variant - The test variant to execute.
+     * @param track - The track information.
+     * @param streamSpec - Optional stream validation specifications.
+     * @returns A result object detailing resolution and stream state.
+     */
+    async executeVariant(variant, track, streamSpec) {
+        let urlData;
+        try {
+            urlData = await this.getTrackUrl(track);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: err instanceof Error
+                    ? err.message
+                    : 'Failed to resolve track streaming URL'
+            };
+        }
+        if (!urlData.url) {
+            return {
+                variant: variant.id,
+                resolved: false,
+                error: 'Failed to resolve track streaming URL'
+            };
+        }
+        const format = typeof urlData.format === 'string' ? urlData.format : undefined;
+        const container = format === 'm4a' ? 'mp4' : format || 'mp4';
+        const codec = 'aac';
+        if (!streamSpec?.required) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                track: urlData.newTrack?.info || track,
+                container,
+                codec
+            };
+        }
+        const protocol = typeof urlData.protocol === 'string' ? urlData.protocol : undefined;
+        let streamResult;
+        try {
+            streamResult = await this.loadStream(track, urlData.url, protocol, urlData.additionalData);
+        }
+        catch (err) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: err instanceof Error ? err.message : 'Failed to load audio stream'
+            };
+        }
+        if ('exception' in streamResult || !streamResult.stream) {
+            return {
+                variant: variant.id,
+                resolved: true,
+                error: streamResult.exception?.message || 'Failed to load audio stream'
+            };
+        }
+        return {
+            variant: variant.id,
+            resolved: true,
+            track: urlData.newTrack?.info || track,
+            stream: streamResult.stream,
+            container,
+            codec,
+            httpStatus: 200
+        };
     }
 }

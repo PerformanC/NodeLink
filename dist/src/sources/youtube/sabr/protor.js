@@ -344,8 +344,8 @@ export const VideoPlaybackAbrRequest = {
         if (msg.clientAbrState) {
             writer.writeMessage(1, ClientAbrState.encode(msg.clientAbrState, new ProtoWriter()));
         }
-        if (msg.selectedFormatIds) {
-            for (const f of msg.selectedFormatIds) {
+        if (msg.initializationFormatIds) {
+            for (const f of msg.initializationFormatIds) {
                 writer.writeMessage(2, FormatId.encode(f, new ProtoWriter()));
             }
         }
@@ -356,13 +356,13 @@ export const VideoPlaybackAbrRequest = {
         }
         writer.writeInt64(4, msg.playerTimeMs);
         writer.writeBytes(5, msg.videoPlaybackUstreamerConfig);
-        if (msg.preferredAudioFormatIds) {
-            for (const f of msg.preferredAudioFormatIds) {
+        if (msg.selectedAudioFormatIds) {
+            for (const f of msg.selectedAudioFormatIds) {
                 writer.writeMessage(16, FormatId.encode(f, new ProtoWriter()));
             }
         }
-        if (msg.preferredVideoFormatIds) {
-            for (const f of msg.preferredVideoFormatIds) {
+        if (msg.selectedVideoFormatIds) {
+            for (const f of msg.selectedVideoFormatIds) {
                 writer.writeMessage(17, FormatId.encode(f, new ProtoWriter()));
             }
         }
@@ -873,10 +873,17 @@ export function base64ToU8(base64) {
  * @public
  */
 export function concatenateChunks(chunks) {
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    let totalLength = 0;
+    const chunkCount = chunks.length;
+    for (let i = 0; i < chunkCount; i++) {
+        totalLength += chunks[i]?.length ?? 0;
+    }
     const result = new Uint8Array(totalLength);
     let offset = 0;
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunkCount; i++) {
+        const chunk = chunks[i];
+        if (!chunk)
+            continue;
         result.set(chunk, offset);
         offset += chunk.length;
     }
