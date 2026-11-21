@@ -299,7 +299,13 @@ export default class AudiomackSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp3', 'm4a', 'mp4'],
+            codecs: ['mpeg', 'aac']
+        };
     }
+    streamCapabilities;
     /**
      * Announces the Audiomack source during worker initialization.
      *

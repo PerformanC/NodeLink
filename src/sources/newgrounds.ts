@@ -67,7 +67,14 @@ export default class NewgroundsSource implements SourceInstance {
    */
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp3'],
+      codecs: ['mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the Newgrounds source.

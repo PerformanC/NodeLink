@@ -342,7 +342,10 @@ export default class AnghamiSource {
     this.cookieHeader = this.sourceConfig.cookies ?? ''
 
     if (this.cookieHeader) this.parseFingerprintFromCookies()
+    this.streamCapabilities = { isMirror: true }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   public async setup(): Promise<boolean> {
     return true

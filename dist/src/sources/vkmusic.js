@@ -147,7 +147,13 @@ export default class VKMusicSource {
         });
         this.accessToken = this.config.userToken || null;
         this.cookie = this.config.userCookie || '';
+        this.streamCapabilities = {
+            protocols: ['hls', 'https'],
+            formats: ['mpegts', 'mp3'],
+            codecs: ['aac', 'mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Performs source-level initialization.
      * Loads cached tokens or performs authentication if credentials are provided.

@@ -135,10 +135,11 @@ export type WorkerPlayer = {
   _isRestoring?: boolean
   updateVoice: (voice: PlayerVoiceState) => void
   volume: (volume: number) => void
-  setFilters: (filters: Record<string, unknown>) => void
+  setFilters: (filters: Record<string, unknown> | object) => void
   pause: (pause: boolean) => void
   play: (track: PlayPayload) => Promise<unknown>
   destroy: (disconnect?: boolean) => void
+  exportHandoffState: () => PlayerHandoffSnapshot
 } & Record<string, unknown>
 
 /**
@@ -175,20 +176,28 @@ export interface CreatePlayerPayload {
 }
 
 /**
+ * Live handoff state exported directly by an active Player.
+ */
+export interface PlayerHandoffSnapshot {
+  guildId: string
+  sessionId: string
+  userId: string
+  track?: PlayPayload & { track?: string }
+  position?: number
+  capturedAt?: number
+  isPaused?: boolean
+  volume?: number
+  filters?: Record<string, unknown> | object
+  voice?: PlayerVoiceState
+  contentLength?: number | null
+  downloadedBytes?: number
+}
+
+/**
  * Payload used to restore players from snapshots.
  */
 export interface RestorePlayerPayload {
-  snapshot: {
-    guildId: string
-    sessionId: string
-    userId: string
-    track?: PlayPayload & { track?: string }
-    position?: number
-    isPaused?: boolean
-    volume?: number
-    filters?: Record<string, unknown>
-    voice?: PlayerVoiceState
-  }
+  snapshot: PlayerHandoffSnapshot
 }
 
 /**

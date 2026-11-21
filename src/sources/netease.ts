@@ -272,7 +272,14 @@ export default class NeteaseSource
     this.priority = 45
     this.searchTerms = ['ntsearch']
     this.maxSearchResults = nodelink.options.search.maxResults || 10
+    this.streamCapabilities = {
+      protocols: ['https', 'http'],
+      formats: ['flac', 'mp3'],
+      codecs: ['flac', 'mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes Netease source.

@@ -175,7 +175,14 @@ export default class BandcampSource {
    */
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp3'],
+      codecs: ['mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Announces the Bandcamp source during worker initialization.

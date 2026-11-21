@@ -269,7 +269,10 @@ export default class AppleMusicSource implements SourceInstance {
       albumLoadLimit: 0,
       allowExplicit: true
     }) as AppleMusicSourceConfig
+    this.streamCapabilities = { isMirror: true }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the source by obtaining a valid Media API token.

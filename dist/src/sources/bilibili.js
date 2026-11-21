@@ -175,7 +175,14 @@ export default class BilibiliSource {
         this.buvid3 = this.generateBuvid3();
         this.buvid4 = this.generateBuvid4();
         this.cookie = this.config.sessdata ? `SESSDATA=${this.config.sessdata}` : '';
+        this.streamCapabilities = {
+            heavyByDefault: true,
+            protocols: ['https'],
+            formats: ['mp4', 'm4a', 'mp3'],
+            codecs: ['aac', 'mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Generates a random buvid3 identifier.
      * @returns A 32-character random string.

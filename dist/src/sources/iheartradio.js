@@ -106,7 +106,13 @@ export default class IheartradioSource {
                 options.search?.maxResults > 0
                 ? options.search.maxResults
                 : 10;
+        this.streamCapabilities = {
+            protocols: ['http', 'https'],
+            formats: ['aac', 'mp3'],
+            codecs: ['aac', 'mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Announces the source during worker initialization.
      *

@@ -318,7 +318,14 @@ export default class FlowerySource {
     this.priority = 50
     this.voiceMap = new Map<string, FloweryVoiceId>()
     this.defaultVoiceId = null
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp3'],
+      codecs: ['mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Reads and normalizes the Flowery configuration from the shared runtime.

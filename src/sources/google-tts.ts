@@ -196,7 +196,14 @@ export default class GoogleTTSSource {
     this.searchTerms = ['gtts', 'speak', 'tts']
     this.baseUrl = 'https://translate.google.com'
     this.priority = 50
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp3'],
+      codecs: ['mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Reads and normalizes the Google TTS configuration from the shared runtime.

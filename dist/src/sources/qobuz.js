@@ -135,7 +135,13 @@ export default class QobuzSource {
         this.appSecret = null;
         this.userToken = null;
         this.initialized = false;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['flac', 'mp3'],
+            codecs: ['flac', 'mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes Qobuz credentials.
      * @returns True when initialization succeeds.

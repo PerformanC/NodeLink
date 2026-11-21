@@ -38,7 +38,13 @@ export default class NewgroundsSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp3'],
+            codecs: ['mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes the Newgrounds source.
      * @returns Always `true`; this source requires no credentials.

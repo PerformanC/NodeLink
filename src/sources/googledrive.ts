@@ -94,7 +94,14 @@ export default class GoogleDriveSource implements SourceInstance {
 
   constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp4', 'mp3', 'flac', 'ogg', 'wav'],
+      codecs: ['aac', 'mpeg', 'flac', 'vorbis', 'wav']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   public async setup(): Promise<boolean> {
     logger('info', 'Sources', 'Google Drive source initialized')

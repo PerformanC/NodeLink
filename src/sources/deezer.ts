@@ -802,15 +802,19 @@ export default class DeezerSource implements SourceVariantHandler {
    */
   private setupPromise: Promise<boolean> | null = null
 
-  /**
-   * Creates a new Deezer source wrapper.
-   *
-   * @param nodelink Worker runtime used by the source implementation.
-   */
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
     this.config = nodelink.options as DeezerRuntimeOptions
+    this.streamCapabilities = {
+      encryptedStream: true,
+      heavyByDefault: true,
+      protocols: ['https'],
+      formats: ['mp3', 'flac'],
+      codecs: ['mpeg', 'flac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes Deezer gateway credentials and caches them for later use.

@@ -251,6 +251,8 @@ export type TaskType =
   | 'analyzePcm'
   | 'profilerCommand'
   | 'getTrackUrl'
+  | 'startStreamTransport'
+  | 'cancelStreamTransport'
 
 /**
  * Base task payload structure
@@ -401,6 +403,10 @@ export interface TrackUrlResult {
   protocol?: string
   /** Audio format */
   format?: string | { itag?: number; [key: string]: unknown }
+  /** Whether the resolved stream is a live broadcast */
+  isLive?: boolean
+  /** Whether the resolved stream requires continuous chunk decryption */
+  isEncrypted?: boolean
   /** Updated track information (if changed) */
   newTrack?: {
     /** Updated track info */
@@ -535,10 +541,31 @@ export type SourceResult =
 export type SourceResultWithData = Exclude<SourceResult, { loadType: 'error' }>
 
 /**
+ * Declarative stream identity and workload capabilities exposed by a source.
+ * @public
+ */
+export interface SourceStreamCapabilities {
+  /** Whether the source decrypts audio chunks continuously during streaming. */
+  encryptedStream?: boolean
+  /** Whether the source delegates playback to another target source. */
+  isMirror?: boolean
+  /** Whether the source commonly performs heavy segmented/cipher streaming. */
+  heavyByDefault?: boolean
+  /** Protocols this source can emit (e.g. `hls`, `sabr`, `https`). */
+  protocols?: string[]
+  /** Raw container/stream formats this source can emit (e.g. `mp4`, `m4a`). */
+  formats?: string[]
+  /** Normalized codec identifiers from `SupportedFormats`. */
+  codecs?: string[]
+}
+
+/**
  * Represents a loaded source instance (e.g. YouTube, SoundCloud, HTTP).
  * @public
  */
 export interface SourceInstance {
+  /** Declarative stream capabilities for transport routing. */
+  streamCapabilities?: SourceStreamCapabilities
   /** Called once during initialization; returns true if ready. */
   setup?: () => Promise<boolean>
   /** Search for tracks by query. */

@@ -218,7 +218,13 @@ export default class LocalSource implements SourceInstance {
     this.searchTerms = []
     this.priority = 20
     this.config = this.getConfig()
+    this.streamCapabilities = {
+      protocols: ['local'],
+      formats: ['arbitrary']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Reads and normalizes the local-source configuration from the shared

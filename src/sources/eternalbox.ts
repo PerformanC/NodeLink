@@ -167,6 +167,7 @@ export default class EternalboxSource implements SourceInstance {
    * @public
    */
   public readonly patterns: RegExp[]
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Constructs a new EternalboxSource instance.
@@ -181,6 +182,11 @@ export default class EternalboxSource implements SourceInstance {
 
     this.baseUrl = this.config.baseUrl || 'https://eternalbox.floriegl.tech'
     this.cacheMaxBytes = this.config.cacheMaxBytes ?? 20 * 1024 * 1024
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['m4a'],
+      codecs: ['aac']
+    }
 
     const mirrors = [
       'eternalboxmirror\\.xyz',

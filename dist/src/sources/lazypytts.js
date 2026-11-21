@@ -88,7 +88,13 @@ export default class LazyPyTtsSource {
         this.patterns = [/^lazypytts:/i, /^lazytts:/i];
         this.priority = 50;
         this.services = new Map();
+        this.streamCapabilities = {
+            protocols: ['lazypytts'],
+            formats: ['mp3'],
+            codecs: ['mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes source and loads voices metadata.
      * @returns False when source is disabled.

@@ -191,7 +191,15 @@ export default class TwitchSource
    */
   constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
+    this.streamCapabilities = {
+      heavyByDefault: true,
+      protocols: ['hls', 'https'],
+      formats: ['mpegts', 'mp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Performs source-level initialization.

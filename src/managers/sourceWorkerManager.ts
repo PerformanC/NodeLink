@@ -54,6 +54,8 @@ type SourceTaskType =
   | 'sourceHealthProbe'
   | 'profilerCommand'
   | 'getTrackUrl'
+  | 'startStreamTransport'
+  | 'cancelStreamTransport'
 
 /**
  * HTTP-like request shape accepted by delegate methods.
@@ -237,6 +239,12 @@ class SourceWorkerManager {
     | null
   private clientSockets: Set<net.Socket>
   private workerSockets: Map<number, net.Socket>
+  private pendingSocketFrames: Map<
+    number,
+    Array<{ id: string; type: number; payload: Buffer }>
+  >
+  private workerActiveTransports: Map<number, number>
+  private streamTransportOwners: Map<string, number>
 
   constructor(nodelink: SourceWorkerManagerContext) {
     this.nodelink = nodelink
@@ -262,6 +270,9 @@ class SourceWorkerManager {
     this._onClusterExit = null
     this.clientSockets = new Set()
     this.workerSockets = new Map()
+    this.pendingSocketFrames = new Map()
+    this.workerActiveTransports = new Map()
+    this.streamTransportOwners = new Map()
   }
 
   private _registerWorkerSocket(pid: number, socket: net.Socket): void {
@@ -275,6 +286,34 @@ class SourceWorkerManager {
     }
     ;(socket as unknown as { _workerId?: number })._workerId = worker.id
     this.workerSockets.set(worker.id, socket)
+    const queued = this.pendingSocketFrames.get(worker.id)
+    if (queued && queued.length > 0) {
+      this.pendingSocketFrames.delete(worker.id)
+      for (const frame of queued) {
+        if (!this.requests.has(frame.id)) continue
+        this._sendTaskFrame(socket, frame.id, frame.type, frame.payload)
+      }
+    }
+  }
+
+  private _dispatchTaskToWorkerSocket(
+    workerId: number,
+    id: string,
+    task: SourceTaskType | string,
+    payload: unknown
+  ): void {
+    const serialized = v8.serialize({ task, payload })
+    const socket = this.workerSockets.get(workerId)
+    if (socket && !socket.destroyed && socket.writable) {
+      this._sendTaskFrame(socket, id, 6, serialized)
+      return
+    }
+    let queue = this.pendingSocketFrames.get(workerId)
+    if (!queue) {
+      queue = []
+      this.pendingSocketFrames.set(workerId, queue)
+    }
+    queue.push({ id, type: 6, payload: serialized })
   }
 
   private _removeWorkerSocket(socket: net.Socket): void {
@@ -517,7 +556,7 @@ class SourceWorkerManager {
         logger('error', 'SourceCluster', `Server error: ${err.message}`)
         reject(err)
       })
-      server.listen(this.socketPath, () => {
+      server.listen({ path: this.socketPath, exclusive: true }, () => {
         logger(
           'info',
           'SourceCluster',
@@ -540,6 +579,7 @@ class SourceWorkerManager {
     this._onClusterExit = (worker, _code, _signal) => {
       if (worker.workerType !== 'source') return
       this.workerSockets.delete(worker.id)
+      this.pendingSocketFrames.delete(worker.id)
       if (this.isDestroying) return
 
       logger(
@@ -722,6 +762,7 @@ class SourceWorkerManager {
     }
     this.requests.clear()
     this.workerLoads.clear()
+    this.pendingSocketFrames.clear()
 
     for (const socket of this.clientSockets) {
       try {
@@ -753,16 +794,9 @@ class SourceWorkerManager {
     if (request.timeout) clearTimeout(request.timeout)
 
     if (request.task === 'loadLiveChat') {
-      const worker = this.workers.find((w) => w.id === request.workerId)
-      if (worker) {
-        worker.send({
-          type: 'sourceTask',
-          payload: {
-            task: 'cancelLiveChat',
-            payload: { id }
-          }
-        })
-      }
+      this._dispatchTaskToWorkerSocket(request.workerId, id, 'cancelLiveChat', {
+        id
+      })
     }
 
     this._decrementLoad(request.workerId)
@@ -827,21 +861,7 @@ class SourceWorkerManager {
       this._cleanupRequest(id, request)
     })
 
-    const socket = this.workerSockets.get(bestWorker.id)
-    if (socket && !socket.destroyed) {
-      const serialized = v8.serialize({ task, payload })
-      this._sendTaskFrame(socket, id, 6, serialized)
-    } else {
-      bestWorker.send({
-        type: 'sourceTask',
-        payload: {
-          id,
-          task,
-          payload,
-          socketPath: this.socketPath
-        }
-      })
-    }
+    this._dispatchTaskToWorkerSocket(bestWorker.id, id, task, payload)
 
     return true
   }
@@ -932,6 +952,15 @@ class SourceWorkerManager {
       request.timeout = setTimeout(() => {
         const activeRequest = this.requests.get(id)
         if (!activeRequest) return
+        const queued = this.pendingSocketFrames.get(worker.id)
+        if (queued) {
+          const filtered = queued.filter((frame) => frame.id !== id)
+          if (filtered.length > 0) {
+            this.pendingSocketFrames.set(worker.id, filtered)
+          } else {
+            this.pendingSocketFrames.delete(worker.id)
+          }
+        }
         this._cleanupRequest(id, activeRequest)
         reject(new Error(`Source worker task '${task}' timed out`))
       }, timeoutMs)
@@ -941,21 +970,7 @@ class SourceWorkerManager {
       this.workerLoads.set(worker.id, currentLoad + 1)
       this._tryScaleUp(false)
 
-      const socket = this.workerSockets.get(worker.id)
-      if (socket && !socket.destroyed) {
-        const serialized = v8.serialize({ task, payload })
-        this._sendTaskFrame(socket, id, 6, serialized)
-      } else {
-        worker.send({
-          type: 'sourceTask',
-          payload: {
-            id,
-            task,
-            payload,
-            socketPath: this.socketPath
-          }
-        })
-      }
+      this._dispatchTaskToWorkerSocket(worker.id, id, task, payload)
     })
   }
 
@@ -971,17 +986,65 @@ class SourceWorkerManager {
     let bestWorker: SourceClusterWorker | null = null
     let minLoad = Number.POSITIVE_INFINITY
 
-    for (const worker of this.workers) {
-      if (!worker?.isConnected?.()) continue
-      const load = this.workerLoads.get(worker.id) || 0
-      if (load < minLoad) {
-        minLoad = load
-        bestWorker = worker
+    const streamIdHex =
+      payload &&
+      typeof payload === 'object' &&
+      'streamIdHex' in payload &&
+      typeof (payload as { streamIdHex?: unknown }).streamIdHex === 'string'
+        ? (payload as { streamIdHex: string }).streamIdHex
+        : null
+
+    if (task === 'cancelStreamTransport' && streamIdHex) {
+      const ownerId = this.streamTransportOwners.get(streamIdHex)
+      if (ownerId !== undefined) {
+        this.streamTransportOwners.delete(streamIdHex)
+        const active = this.workerActiveTransports.get(ownerId) || 0
+        if (active > 1) {
+          this.workerActiveTransports.set(ownerId, active - 1)
+        } else {
+          this.workerActiveTransports.delete(ownerId)
+        }
+        const ownerWorker = this.workers.find(
+          (w) => w.id === ownerId && w?.isConnected?.()
+        )
+        if (ownerWorker) bestWorker = ownerWorker
+      }
+    }
+
+    if (!bestWorker) {
+      for (const worker of this.workers) {
+        if (!worker?.isConnected?.()) continue
+        const load =
+          (this.workerLoads.get(worker.id) || 0) +
+          (this.workerActiveTransports.get(worker.id) || 0)
+        if (load < minLoad) {
+          minLoad = load
+          bestWorker = worker
+        }
       }
     }
 
     if (!bestWorker) {
       return Promise.reject(new Error('No available source workers'))
+    }
+
+    let transportKey: string | null = null
+    if (
+      task === 'startStreamTransport' &&
+      payload &&
+      typeof payload === 'object' &&
+      'streamIdBytes' in payload &&
+      (payload as { streamIdBytes?: unknown }).streamIdBytes instanceof
+        Uint8Array
+    ) {
+      transportKey = Buffer.from(
+        (payload as { streamIdBytes: Uint8Array }).streamIdBytes
+      ).toString('hex')
+      this.streamTransportOwners.set(transportKey, bestWorker.id)
+      this.workerActiveTransports.set(
+        bestWorker.id,
+        (this.workerActiveTransports.get(bestWorker.id) || 0) + 1
+      )
     }
 
     logger(
@@ -990,12 +1053,29 @@ class SourceWorkerManager {
       `Dispatching task '${task}' to source worker ${bestWorker.id} (pid: ${bestWorker.process?.pid || 'unknown'}, current load: ${minLoad})`
     )
 
-    return this._executeOnWorker(
+    const promise = this._executeOnWorker(
       bestWorker,
       task,
       payload,
       options
     ) as Promise<T>
+
+    if (transportKey) {
+      const ownerWorkerId = bestWorker.id
+      return promise.catch((err) => {
+        if (this.streamTransportOwners.delete(transportKey)) {
+          const active = this.workerActiveTransports.get(ownerWorkerId) || 0
+          if (active > 1) {
+            this.workerActiveTransports.set(ownerWorkerId, active - 1)
+          } else {
+            this.workerActiveTransports.delete(ownerWorkerId)
+          }
+        }
+        throw err
+      })
+    }
+
+    return promise
   }
 
   async executeAll(

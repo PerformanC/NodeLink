@@ -202,7 +202,14 @@ class MonochromeSource implements SourceInstance, SourceVariantHandler {
       /^https?:\/\/(?:www\.)?(?:monochrome\.(?:st|tf)|tracks\.monochrome\.st)\/(track|tracks|releases?|album|playlist|artist|video)\/([\w-]+)/i,
       /^https?:\/\/(?:www\.)?tidal\.com\/(?:browse\/)?(track|album|playlist|artist|video)\/([\w-]+)/i
     ]
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['flac', 'm4a', 'mp4'],
+      codecs: ['flac', 'aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Performs provider-specific resource initialization.

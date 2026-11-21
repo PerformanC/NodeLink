@@ -453,7 +453,10 @@ export default class LetrasMusSource {
       options.search?.maxResults > 0
         ? options.search.maxResults
         : 10
+    this.streamCapabilities = { isMirror: true }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Announces the source during worker initialization.

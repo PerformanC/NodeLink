@@ -84,7 +84,13 @@ export default class FlowerySource {
         this.priority = 50;
         this.voiceMap = new Map();
         this.defaultVoiceId = null;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp3'],
+            codecs: ['mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Reads and normalizes the Flowery configuration from the shared runtime.
      *

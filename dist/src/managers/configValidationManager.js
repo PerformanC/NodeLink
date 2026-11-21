@@ -77,6 +77,37 @@ export default class ConfigValidationManager {
                             },
                             fastMs: { type: 'number', integer: true, min: 100, default: 4000 }
                         }
+                    },
+                    streamTransport: {
+                        type: 'object',
+                        optional: true,
+                        props: {
+                            enabled: { type: 'boolean', default: false },
+                            preset: {
+                                type: 'enum',
+                                values: [
+                                    'off',
+                                    'encrypted-only',
+                                    'balanced',
+                                    'full-offload',
+                                    'cpu-saver',
+                                    'custom'
+                                ],
+                                default: 'off'
+                            },
+                            sources: {
+                                type: 'array',
+                                items: 'string',
+                                optional: true,
+                                default: ['*']
+                            },
+                            excludeSources: {
+                                type: 'array',
+                                items: 'string',
+                                optional: true,
+                                default: ['local']
+                            }
+                        }
                     }
                 }
             },

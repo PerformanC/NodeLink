@@ -11,6 +11,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parentPort } from 'node:worker_threads';
+import { StreamTransportServer } from '../playback/streamTransport.js';
+import { resolveStreamTransportRoute } from '../playback/streamTransportRouter.js';
 import { getBestMatch, logger } from '../utils.js';
 /**
  * Central manager for audio source providers.
@@ -32,6 +34,9 @@ export default class SourcesManager {
     searchAliasMap;
     /** Prioritized list of URL patterns for routing. */
     patternMap;
+    transportServer = null;
+    transportServerPromise = null;
+    activeTransportCount = 0;
     /**
      * Constructs a new SourcesManager.
      * @param nodelink - The NodeLink server/worker context.
@@ -42,6 +47,32 @@ export default class SourcesManager {
         this.sourceMap = new Map();
         this.searchAliasMap = new Map();
         this.patternMap = [];
+    }
+    /**
+     * Returns the shared `StreamTransportServer` for this process, starting it
+     * on first use.
+     */
+    async getTransportServer(maxGlobalReserveBytes, handshakeTimeoutMs) {
+        if (this.transportServer?.isListening)
+            return this.transportServer;
+        if (this.transportServerPromise)
+            return this.transportServerPromise;
+        const init = (async () => {
+            const server = new StreamTransportServer({
+                globalReserveBudgetBytes: maxGlobalReserveBytes,
+                authTimeoutMs: handshakeTimeoutMs
+            });
+            await server.start();
+            this.transportServer = server;
+            return server;
+        })();
+        this.transportServerPromise = init;
+        try {
+            return await init;
+        }
+        finally {
+            this.transportServerPromise = null;
+        }
     }
     /**
      * Scans the sources directory and dynamically loads all enabled providers.
@@ -621,6 +652,98 @@ export default class SourcesManager {
         if (typeof normalizedAdditionalData.position === 'number' &&
             typeof normalizedAdditionalData.startTime !== 'number') {
             normalizedAdditionalData.startTime = normalizedAdditionalData.position;
+        }
+        const transportConfig = this.nodelink.options?.cluster?.streamTransport;
+        const swm = this.nodelink.sourceWorkerManager;
+        if (normalizedAdditionalData.__fromSourceWorkerTransport !== true &&
+            normalizedAdditionalData.__disableStreamTransport !== true &&
+            swm?.hasAvailableWorkers) {
+            const route = resolveStreamTransportRoute(transportConfig, {
+                track,
+                protocol,
+                additionalData: normalizedAdditionalData,
+                capabilities: instance.streamCapabilities
+            });
+            if (route.transport === 'direct' && transportConfig?.enabled) {
+                logger('debug', 'StreamTransport', `Direct stream for '${track.title}' (${track.sourceName}) [rule=${route.ruleName}, codec=${route.codec}, protocol=${protocol || 'unknown'}]`);
+            }
+            if (route.transport === 'worker') {
+                const maxConcurrent = transportConfig?.limits?.maxConcurrentTransports ?? 0;
+                const onUnavailable = transportConfig?.fallback?.onWorkerUnavailable ?? 'direct';
+                if (maxConcurrent > 0 && this.activeTransportCount >= maxConcurrent) {
+                    if (onUnavailable === 'error') {
+                        return {
+                            exception: {
+                                message: `StreamTransport concurrency limit reached (${maxConcurrent}).`
+                            }
+                        };
+                    }
+                    logger('warn', 'StreamTransport', `Concurrency limit (${maxConcurrent}) reached for '${track.title}', falling back to direct stream.`);
+                }
+                else {
+                    const server = await this.getTransportServer(transportConfig?.limits?.maxGlobalReserveBytes, transportConfig?.fallback?.handshakeTimeoutMs);
+                    const playerId = String(normalizedAdditionalData.guildId ??
+                        normalizedAdditionalData.playerId ??
+                        track.identifier);
+                    const session = server.createStreamSession({
+                        playerId,
+                        watermarks: {
+                            lowWatermark: route.watermarks.lowWatermarkBytes,
+                            targetWatermark: route.watermarks.targetWatermarkBytes,
+                            highWatermark: route.watermarks.highWatermarkBytes
+                        }
+                    });
+                    const tokenCopy = Buffer.from(session.securityTokenBytes);
+                    session.securityTokenBytes.fill(0);
+                    this.activeTransportCount++;
+                    session.stream.once('close', () => {
+                        this.activeTransportCount = Math.max(0, this.activeTransportCount - 1);
+                        void swm
+                            .execute('cancelStreamTransport', { streamIdHex: session.streamIdHex }, { timeoutMs: 3000 })
+                            .catch(() => { });
+                    });
+                    const serializableExtra = {};
+                    for (const [key, value] of Object.entries(normalizedAdditionalData)) {
+                        if (typeof value !== 'function')
+                            serializableExtra[key] = value;
+                    }
+                    serializableExtra.__fromSourceWorkerTransport = true;
+                    try {
+                        const workerRes = await swm.execute('startStreamTransport', {
+                            track,
+                            url,
+                            protocol,
+                            additionalData: serializableExtra,
+                            outputMode: route.output,
+                            transportSocketPath: session.socketPath,
+                            streamIdBytes: session.streamIdBytes,
+                            securityTokenBytes: tokenCopy,
+                            artificialDelayMs: typeof normalizedAdditionalData.artificialDelayMs === 'number'
+                                ? normalizedAdditionalData.artificialDelayMs
+                                : undefined
+                        }, { timeoutMs: 15000 });
+                        tokenCopy.fill(0);
+                        logger('debug', 'StreamTransport', `Routed '${track.title}' (${track.sourceName}) via rule '${route.ruleName}' [output=${route.output}, profile=${route.bufferProfile}, streamId=${session.streamIdHex}]`);
+                        return {
+                            stream: session.stream,
+                            type: workerRes?.type || protocol
+                        };
+                    }
+                    catch (err) {
+                        tokenCopy.fill(0);
+                        session.cancel();
+                        const errMsg = err instanceof Error ? err.message : String(err);
+                        if (onUnavailable === 'error') {
+                            return {
+                                exception: {
+                                    message: `Source Worker transport failed: ${errMsg}`
+                                }
+                            };
+                        }
+                        logger('warn', 'StreamTransport', `Source Worker transport failed for '${track.title}' [streamId=${session.streamIdHex}], falling back to direct stream: ${errMsg}`);
+                    }
+                }
+            }
         }
         return (await instance.loadStream(track, url, protocol, normalizedAdditionalData));
     }

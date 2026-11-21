@@ -400,7 +400,15 @@ export default class TwitterSource
     this.priority = 70
     this.guestToken = null
     this.tokenExpiry = 0
+    this.streamCapabilities = {
+      heavyByDefault: true,
+      protocols: ['hls', 'https'],
+      formats: ['m3u8', 'mp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the guest token required by the Twitter GraphQL endpoints.

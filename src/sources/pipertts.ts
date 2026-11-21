@@ -220,7 +220,14 @@ export default class PiperSource {
     this.searchTerms = ['pipertts']
     this.patterns = [/^pipertts:/]
     this.priority = 50
+    this.streamCapabilities = {
+      protocols: ['https', 'http'],
+      formats: ['wav'],
+      codecs: ['wav']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Reads and normalizes the Piper configuration from the shared runtime.

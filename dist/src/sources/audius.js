@@ -138,7 +138,13 @@ export default class AudiusSource {
             playlistLoadLimit: 100,
             albumLoadLimit: 100
         });
+        this.streamCapabilities = {
+            protocols: ['http', 'https'],
+            formats: ['mp3'],
+            codecs: ['mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Performs source-level initialization.
      * @returns A promise resolving to true if initialization succeeded.

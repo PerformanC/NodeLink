@@ -164,7 +164,13 @@ export default class ZingMp3Source {
         this.nodelink = nodelink;
         this.config = nodelink.options.sources?.zingmp3;
         this.vietnamIp = this.config?.vietnamIp || DEFAULT_VIETNAM_IP;
+        this.streamCapabilities = {
+            protocols: ['http', 'https'],
+            formats: ['mp3'],
+            codecs: ['mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes the Zing MP3 source and warms the session cache.
      * @returns Promise resolving to true.

@@ -172,7 +172,14 @@ export default class AudiusSource implements SourceInstance {
       playlistLoadLimit: 100,
       albumLoadLimit: 100
     }) as AudiusSourceConfig
+    this.streamCapabilities = {
+      protocols: ['http', 'https'],
+      formats: ['mp3'],
+      codecs: ['mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Performs source-level initialization.

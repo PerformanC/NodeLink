@@ -228,6 +228,8 @@ export default class GaanaSource {
      * Preferred direct stream quality.
      */
     streamQuality;
+    /** Declarative stream capabilities for transport routing. */
+    streamCapabilities;
     /**
      * Creates a Gaana source instance.
      * @param nodelink - Runtime NodeLink context.
@@ -241,6 +243,13 @@ export default class GaanaSource {
             /^@?(?:https?:\/\/)?(?:(?:www|m)\.)?gaana\.com\/(?:[a-z]{2,10}\/)?(?<type>song|album|playlist|artist)\/(?<seokey>[\w-]+)\/?(?:[?#].*)?$/i
         ];
         this.priority = 70;
+        this.streamCapabilities = {
+            encryptedStream: true,
+            heavyByDefault: true,
+            protocols: ['hls'],
+            formats: ['mp4', 'mpegts'],
+            codecs: ['aac']
+        };
         this.maxSearchResults =
             this.asNumber(this.nodelink.options.search.maxResults) ?? 10;
         const maxAlbumPlaylistLength = this.asNumber(this.nodelink.options.playback.maxPlaylistLength) ?? 100;
