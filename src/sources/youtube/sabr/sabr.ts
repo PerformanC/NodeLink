@@ -1169,7 +1169,8 @@ export class SabrStream extends PassThrough {
         const reportedPlayerTime = Math.floor(
           this.virtualPlayerTimeMs + baseTimeMs
         )
-        const requestCursorMs = Math.floor(this.totalDownloadedMs + baseTimeMs)
+        /* INFO: A seek response can start before the requested position. */
+        const requestCursorMs = Math.floor(this.cumulativeDownloadedMs)
 
         if (this.readableLength > MAX_BUFFER_BYTES) {
           await wait(250, signal)
@@ -1744,15 +1745,18 @@ export class SabrStream extends PassThrough {
             `Ignoring duplicate segment ${s.segmentNumber} for itag ${itag}`
           )
         } else if (segMap) {
-          let startMs = Number(s.mediaHeader.startMs ?? 0)
+          const timeRange = s.mediaHeader.timeRange
+          let startMs = Number(
+            s.mediaHeader.startMs ?? this.cumulativeDownloadedMs
+          )
           if (
-            startMs === 0 &&
-            s.mediaHeader.timeRange &&
-            s.mediaHeader.timeRange.timescale > 0
+            (s.mediaHeader.startMs === undefined || startMs === 0) &&
+            timeRange &&
+            timeRange.timescale > 0
           ) {
             startMs = Number(
-              (BigInt(s.mediaHeader.timeRange.startTicks ?? 0n) * 1000n) /
-                BigInt(s.mediaHeader.timeRange.timescale)
+              (BigInt(timeRange.startTicks ?? 0n) * 1000n) /
+                BigInt(timeRange.timescale)
             )
           }
           const endMs = startMs + segmentDuration
@@ -1769,9 +1773,16 @@ export class SabrStream extends PassThrough {
             endMs
           })
 
-          let maxEdge = this.cumulativeDownloadedMs ?? 0
-          if (endMs > maxEdge) maxEdge = endMs
-          this.cumulativeDownloadedMs = maxEdge
+          if (
+            !s.mediaHeader.isInitSeg &&
+            segmentDuration > 0 &&
+            s.loadedBytes
+          ) {
+            this.cumulativeDownloadedMs = Math.max(
+              this.cumulativeDownloadedMs,
+              endMs
+            )
+          }
 
           const endSegmentNumber = this.endSegmentNumbers.get(itag)
           if (
