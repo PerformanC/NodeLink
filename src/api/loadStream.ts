@@ -1,6 +1,5 @@
 import { Buffer } from 'node:buffer'
-import type { Readable, Writable } from 'node:stream'
-import { pipeline, Transform } from 'node:stream'
+import { Readable, pipeline, type Writable } from 'node:stream'
 import type {
   ApiNodelinkServer,
   ApiRequest,
@@ -27,42 +26,57 @@ import { decodeTrack, logger, sendErrorResponse } from '../utils.ts'
 let streamProcessorModulePromise: Promise<StreamProcessorModule> | null = null
 
 /**
+ * PCM output contract produced by StreamProcessor.
+ * 48 kHz * 2 channels * 16-bit samples = 192,000 bytes per second.
+ */
+const PCM_SAMPLE_RATE = 48000
+const PCM_CHANNELS = 2
+const PCM_BITS_PER_SAMPLE = 16
+const PCM_BLOCK_ALIGN = PCM_CHANNELS * (PCM_BITS_PER_SAMPLE / 8)
+const PCM_BYTES_PER_SECOND =
+  PCM_SAMPLE_RATE * PCM_CHANNELS * (PCM_BITS_PER_SAMPLE / 8)
+const PCM_BYTES_PER_MS = PCM_BYTES_PER_SECOND / 1000
+const WAV_HEADER_SIZE = 44
+
+/**
  * Default headers returned by the raw PCM stream endpoint.
+ * Transfer-Encoding and Connection are intentionally omitted: Node manages
+ * framing for HTTP/1.1 and HTTP/2 has no chunked transfer-encoding header.
  */
 const LOAD_STREAM_HEADERS = {
   'Content-Type': 'audio/l16;rate=48000;channels=2',
-  'Transfer-Encoding': 'chunked',
-  Connection: 'keep-alive'
+  'Accept-Ranges': 'bytes'
 } as const
 
 /**
- * Builds a 44-byte standard RIFF WAV header for 16-bit 48kHz stereo PCM.
- *
- * @param totalAudioBytes - Total PCM byte length (excluding the 44-byte header).
- * If 0 or unknown, uses 0x7ffffff0 for streaming.
- * @returns 44-byte WAV header Buffer.
+ * Builds a 44-byte RIFF/WAVE header for 16-bit 48 kHz stereo PCM.
+ * Pass null when the stream length is unknown (live streams).
  */
-function createWavHeader(totalAudioBytes: number): Buffer {
-  const buffer = Buffer.alloc(44)
-  const sampleRate = 48000
-  const channels = 2
-  const bitsPerSample = 16
-  const byteRate = sampleRate * channels * (bitsPerSample / 8)
-  const blockAlign = channels * (bitsPerSample / 8)
-  const dataSize = totalAudioBytes > 0 ? totalAudioBytes : 0x7ffffff0
-  const fileSize = dataSize + 36
+function createWavHeader(totalAudioBytes: number | null): Buffer {
+  const buffer = Buffer.alloc(WAV_HEADER_SIZE)
+  const byteRate = PCM_BYTES_PER_SECOND
+  const dataSize = totalAudioBytes ?? 0x7ffffff0
+  const maxRiffDataSize = 0xffffffff - 36
+
+  if (
+    !Number.isSafeInteger(dataSize) ||
+    dataSize < 0 ||
+    dataSize > maxRiffDataSize
+  ) {
+    throw new RangeError('WAV audio data exceeds the RIFF/WAVE size limit.')
+  }
 
   buffer.write('RIFF', 0, 'ascii')
-  buffer.writeUInt32LE(fileSize, 4)
+  buffer.writeUInt32LE(dataSize + 36, 4)
   buffer.write('WAVE', 8, 'ascii')
   buffer.write('fmt ', 12, 'ascii')
   buffer.writeUInt32LE(16, 16)
   buffer.writeUInt16LE(1, 20)
-  buffer.writeUInt16LE(channels, 22)
-  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt16LE(PCM_CHANNELS, 22)
+  buffer.writeUInt32LE(PCM_SAMPLE_RATE, 24)
   buffer.writeUInt32LE(byteRate, 28)
-  buffer.writeUInt16LE(blockAlign, 32)
-  buffer.writeUInt16LE(bitsPerSample, 34)
+  buffer.writeUInt16LE(PCM_BLOCK_ALIGN, 32)
+  buffer.writeUInt16LE(PCM_BITS_PER_SAMPLE, 34)
   buffer.write('data', 36, 'ascii')
   buffer.writeUInt32LE(dataSize, 40)
 
@@ -99,7 +113,7 @@ interface LoadStreamInput {
   filters: FiltersState
 
   /**
-   * Audio container format. 'raw' for raw PCM (default), 'wav' for RIFF WAV.
+   * Output representation. 'raw' for raw PCM (default), 'wav' for RIFF WAV.
    */
   format?: 'raw' | 'wav'
 }
@@ -581,11 +595,11 @@ function getLoadStreamInputFromBody(
     return null
   }
 
-  const format =
-    typeof (payload as { format?: unknown }).format === 'string' &&
-    (payload as { format?: string }).format?.toLowerCase() === 'wav'
-      ? 'wav'
-      : 'raw'
+  const formatValue = (payload as { format?: unknown }).format
+  const format = normalizeOutputFormat(formatValue)
+  if (!format) {
+    return null
+  }
 
   return {
     encodedTrack: payload.encodedTrack,
@@ -621,6 +635,151 @@ function getFiltersFromQuery(parsedUrl: URL): FiltersState | undefined {
 }
 
 /**
+ * Normalizes the requested representation. The format must stay identical
+ * across the initial request and every subsequent Range request.
+ */
+function normalizeOutputFormat(value: unknown): 'raw' | 'wav' | null {
+  if (value === undefined || value === null || value === '') {
+    return 'raw'
+  }
+
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  const format = value.trim().toLowerCase()
+  return format === 'raw' || format === 'wav' ? format : null
+}
+
+type ParsedByteRange =
+  | { kind: 'none' | 'ignore' }
+  | { kind: 'unsatisfiable' }
+  | { kind: 'range'; start: number; end: number }
+
+/**
+ * Parses one RFC 9110 byte range. Multi-range and malformed Range headers are
+ * ignored (the caller sends the complete representation with status 200).
+ */
+function parseSingleByteRange(
+  header: string | undefined,
+  totalSize: number
+): ParsedByteRange {
+  if (!header) {
+    return { kind: 'none' }
+  }
+
+  const value = header.trim()
+  if (!/^bytes=/i.test(value) || value.includes(',')) {
+    return { kind: 'ignore' }
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(value)
+  if (!match || (!match[1] && !match[2])) {
+    return { kind: 'ignore' }
+  }
+
+  if (!Number.isSafeInteger(totalSize) || totalSize <= 0) {
+    return { kind: 'unsatisfiable' }
+  }
+
+  const first = match[1]
+  const last = match[2]
+
+  // Suffix range: bytes=-N (the last N bytes).
+  if (!first) {
+    const suffixLength = Number(last)
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return { kind: 'unsatisfiable' }
+    }
+
+    return {
+      kind: 'range',
+      start: Math.max(totalSize - suffixLength, 0),
+      end: totalSize - 1
+    }
+  }
+
+  const start = Number(first)
+  const requestedEnd = last ? Number(last) : totalSize - 1
+
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    requestedEnd < 0
+  ) {
+    return { kind: 'ignore' }
+  }
+
+  if (start >= totalSize || requestedEnd < start) {
+    return { kind: 'unsatisfiable' }
+  }
+
+  return {
+    kind: 'range',
+    start,
+    end: Math.min(requestedEnd, totalSize - 1)
+  }
+}
+
+/**
+ * Creates a stream that skips an exact number of source bytes and emits no
+ * more than the requested byte count. It keeps backpressure through the
+ * Readable async iterator and destroys the source on early termination.
+ */
+function createPcmRangeStream(
+  source: DestroyableReadable,
+  bytesToSkip: number,
+  bytesToSend: number
+): Readable {
+  return Readable.from(
+    (async function* () {
+      let skipRemaining = bytesToSkip
+      let sendRemaining = bytesToSend
+
+      for await (const value of source) {
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value)
+        let offset = 0
+
+        if (skipRemaining > 0) {
+          const skipped = Math.min(skipRemaining, chunk.length)
+          skipRemaining -= skipped
+          offset += skipped
+        }
+
+        if (offset >= chunk.length || sendRemaining <= 0) {
+          if (sendRemaining <= 0) {
+            break
+          }
+          continue
+        }
+
+        const available = chunk.length - offset
+        const count = Math.min(available, sendRemaining)
+        if (count > 0) {
+          yield chunk.subarray(offset, offset + count)
+          sendRemaining -= count
+        }
+
+        if (sendRemaining <= 0) {
+          break
+        }
+      }
+
+      if (skipRemaining > 0 || sendRemaining > 0) {
+        throw new Error(
+          `PCM range ended early (skip remaining: ${skipRemaining}, bytes remaining: ${sendRemaining}).`
+        )
+      }
+    })(),
+    {
+      objectMode: false,
+      highWaterMark: 19200
+    }
+  )
+}
+
+/**
  * Extracts request data from the query string used by `GET /loadStream`.
  *
  * @param parsedUrl - Parsed request URL.
@@ -650,8 +809,11 @@ function getLoadStreamInputFromQuery(parsedUrl: URL): LoadStreamInput | null {
   }
 
   const filters = getFiltersFromQuery(parsedUrl) ?? {}
-  const formatParam = parsedUrl.searchParams.get('format')?.toLowerCase()
-  const format = formatParam === 'wav' ? 'wav' : 'raw'
+  const formatParam = parsedUrl.searchParams.get('format')
+  const format = normalizeOutputFormat(formatParam ?? undefined)
+  if (!format) {
+    return null
+  }
 
   return {
     encodedTrack,
@@ -679,14 +841,6 @@ function getLoadStreamInput(
       : getLoadStreamInputFromQuery(parsedUrl)
 
   if (!input) return null
-
-  if (
-    req.headers.range &&
-    !parsedUrl.searchParams.has('format') &&
-    input.format === 'raw'
-  ) {
-    input.format = 'wav'
-  }
 
   return input
 }
@@ -742,7 +896,7 @@ function destroyStream(stream: DestroyableReadable | null): void {
 }
 
 /**
- * Handles requests for the raw PCM stream endpoint.
+ * Handles requests for the PCM/WAV stream endpoint.
  *
  * @param nodelink - Router-facing NodeLink runtime.
  * @param req - Incoming HTTP request.
@@ -760,6 +914,8 @@ async function handler(
   _sendResponse: ApiSendResponse,
   parsedUrl: URL
 ): Promise<void> {
+  const streamResponse = res as StreamingApiResponse
+
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
@@ -805,116 +961,292 @@ async function handler(
       res,
       400,
       'Bad Request',
-      'Invalid parameters',
+      'Invalid parameters. `format` must be `raw` or `wav`.',
       parsedUrl.pathname
     )
     return
   }
 
   const encodedTrack = input.encodedTrack.replace(/ /g, '+')
-  const streamResponse = res as StreamingApiResponse
+  let pcmStream: DestroyableReadable | null = null
+  let fetchedStream: DestroyableReadable | null = null
+  let clientClosed = false
+
+  const cleanup = (): void => {
+    destroyStream(pcmStream)
+    destroyStream(fetchedStream)
+  }
+
+  const onResponseClose = (): void => {
+    if (!streamResponse.writableEnded) {
+      clientClosed = true
+      cleanup()
+    }
+  }
+
+  streamResponse.once('close', onResponseClose)
 
   try {
     const decodedTrack = decodeTrack(encodedTrack)
-
     const isWav = input.format === 'wav'
-    const trackDurationMs = decodedTrack.info.length
-    const isLiveStream = decodedTrack.info.isStream || trackDurationMs <= 0
-    const totalPcmBytes = isLiveStream
+    const trackDurationMs = Number(decodedTrack.info.length)
+    const isLiveStream =
+      Boolean(decodedTrack.info.isStream) ||
+      !Number.isFinite(trackDurationMs) ||
+      trackDurationMs <= 0
+
+    // A valid HTTP Range addresses the complete representation, starting at
+    // byte zero. The body/query `position` is only used when there is no valid
+    // Range header; adding it to the Range offset would seek twice.
+    let totalTrackFrames = isLiveStream
       ? 0
-      : Math.floor((trackDurationMs / 1000) * 48000) * 4
-    const totalWavSize = isLiveStream ? 0 : 44 + totalPcmBytes
-    const totalFileSize = isWav ? totalWavSize : totalPcmBytes
+      : Math.max(0, Math.floor(trackDurationMs * (PCM_SAMPLE_RATE / 1000)))
+    let fullTrackPcmBytes = totalTrackFrames * PCM_BLOCK_ALIGN
+    let fullTrackFileSize = isLiveStream
+      ? 0
+      : fullTrackPcmBytes + (isWav ? WAV_HEADER_SIZE : 0)
 
-    let isRangeRequest = false
-    let rangeStart = 0
-    let rangeEnd = totalFileSize > 0 ? totalFileSize - 1 : 0
-    let rangeHeaderBytesToSend: Buffer | null = null
-    let pcmSkipBytes = 0
-
-    const rangeHeader = req.headers.range
     if (
       !isLiveStream &&
-      totalFileSize > 0 &&
-      typeof rangeHeader === 'string' &&
-      rangeHeader.startsWith('bytes=')
+      (!Number.isSafeInteger(fullTrackPcmBytes) ||
+        fullTrackPcmBytes < 0 ||
+        (isWav && fullTrackPcmBytes > 0xffffffff - 36))
     ) {
-      const parts = rangeHeader.slice(6).trim().split('-')
-      let start = Number(parts[0])
-      let end = parts[1] ? Number(parts[1]) : totalFileSize - 1
-
-      if (Number.isNaN(start) || start < 0) start = 0
-      if (Number.isNaN(end) || end >= totalFileSize) end = totalFileSize - 1
-
-      if (start > end) {
-        streamResponse.writeHead(416, {
-          'Content-Range': `bytes */${totalFileSize}`,
-          'Content-Type': 'text/plain'
-        })
-        streamResponse.end('Requested range not satisfiable')
-        return
-      }
-
-      isRangeRequest = true
-      rangeStart = start
-      rangeEnd = end
-
-      let pcmByteOffset = start
-      if (isWav) {
-        const wavHeader = createWavHeader(totalPcmBytes)
-        if (start < 44) {
-          const headerEnd = Math.min(44, end + 1)
-          rangeHeaderBytesToSend = wavHeader.subarray(start, headerEnd)
-          pcmByteOffset = 0
-        } else {
-          pcmByteOffset = start - 44
-        }
-      }
-
-      const alignedPcmByteOffset = Math.floor(pcmByteOffset / 4) * 4
-      // If the requested range starts at a non-frame-aligned PCM byte, seek to the aligned
-      // position but skip the extra leading bytes so returned data matches Content-Range exactly.
-      pcmSkipBytes = pcmByteOffset - alignedPcmByteOffset
-      const seekPositionMs = Math.floor((alignedPcmByteOffset / 192000) * 1000)
-      input.position = seekPositionMs
+      sendErrorResponse(
+        req,
+        res,
+        413,
+        'Payload Too Large',
+        'The generated audio representation exceeds the supported size.',
+        parsedUrl.pathname
+      )
+      return
     }
 
-    const effectiveHeaders: Record<string, string> = isRangeRequest
-      ? {
-          'Content-Type': isWav
-            ? 'audio/wav'
-            : 'audio/l16;rate=48000;channels=2',
-          'Content-Range': `bytes ${rangeStart}-${rangeEnd}/${totalFileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': String(rangeEnd - rangeStart + 1),
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Expose-Headers':
-            'Content-Range, Accept-Ranges, Content-Length',
-          Connection: 'keep-alive'
+    const rangeHeader =
+      typeof req.headers.range === 'string' ? req.headers.range.trim() : ''
+    // `bytes=0-` requests the complete representation. Sending it as a normal
+    // 200 stream avoids claiming an exact Content-Length based only on track
+    // metadata; the decoder remains free to finish at its actual EOF.
+    const isFullOpenEndedRange =
+      !isLiveStream &&
+      fullTrackFileSize > 0 &&
+      /^bytes=0-$/i.test(rangeHeader)
+
+    let parsedRange = isLiveStream
+      ? { kind: 'ignore' as const }
+      : parseSingleByteRange(rangeHeader || undefined, fullTrackFileSize)
+
+    if (parsedRange.kind === 'unsatisfiable') {
+      streamResponse.writeHead(416, {
+        'Content-Range': `bytes */${fullTrackFileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Type': 'text/plain',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers':
+          'Content-Range, Accept-Ranges, Content-Length'
+      })
+      streamResponse.end('Requested range not satisfiable')
+      return
+    }
+
+    let isRangeRequest =
+      parsedRange.kind === 'range' && !isFullOpenEndedRange
+    const requestedStartFrame = Math.max(
+      0,
+      Math.floor(input.position * (PCM_SAMPLE_RATE / 1000))
+    )
+    let baseFrame = isLiveStream
+      ? requestedStartFrame
+      : isRangeRequest || isFullOpenEndedRange
+        ? 0
+        : Math.min(requestedStartFrame, totalTrackFrames)
+    let basePositionMs = isLiveStream
+      ? input.position
+      : baseFrame / (PCM_SAMPLE_RATE / 1000)
+    let totalPcmBytes = isLiveStream
+      ? 0
+      : fullTrackPcmBytes - baseFrame * PCM_BLOCK_ALIGN
+    let totalFileSize = isLiveStream
+      ? 0
+      : totalPcmBytes + (isWav ? WAV_HEADER_SIZE : 0)
+
+    const activeRange =
+      parsedRange.kind === 'range' && !isFullOpenEndedRange ? parsedRange : null
+    let rangeStart = activeRange ? activeRange.start : 0
+    let rangeEnd = activeRange
+      ? activeRange.end
+      : Math.max(totalFileSize - 1, 0)
+    let rangeLength = isRangeRequest
+      ? rangeEnd - rangeStart + 1
+      : totalFileSize
+
+    let rangeHeaderBytesToSend: Buffer | null = null
+    let pcmSkipBytes = 0
+    let pcmBytesToSend = rangeLength
+    let streamStartPositionMs = basePositionMs
+
+    if (isRangeRequest) {
+      let pcmByteOffset = rangeStart
+
+      if (isWav) {
+        const wavHeader = createWavHeader(fullTrackPcmBytes)
+        if (rangeStart < WAV_HEADER_SIZE) {
+          const headerEnd = Math.min(WAV_HEADER_SIZE, rangeEnd + 1)
+          rangeHeaderBytesToSend = wavHeader.subarray(rangeStart, headerEnd)
+          pcmBytesToSend -= rangeHeaderBytesToSend.length
+          pcmByteOffset = 0
+        } else {
+          pcmByteOffset = rangeStart - WAV_HEADER_SIZE
         }
-      : isWav
+      }
+
+      if (pcmBytesToSend > 0) {
+        // The PCM stream can seek only to millisecond boundaries. Seek to the
+        // preceding millisecond and discard the exact remaining byte offset.
+        // 48 kHz stereo S16LE produces exactly 192 PCM bytes per millisecond.
+        const seekPositionMs = Math.floor(
+          pcmByteOffset / PCM_BYTES_PER_MS
+        )
+        const seekByteOffset = seekPositionMs * PCM_BYTES_PER_MS
+        pcmSkipBytes = pcmByteOffset - seekByteOffset
+        streamStartPositionMs = seekPositionMs
+      }
+    }
+
+    const commonHeaders: Record<string, string> = {
+      'Content-Type': isWav
+        ? 'audio/wav'
+        : LOAD_STREAM_HEADERS['Content-Type'],
+      'Accept-Ranges': isLiveStream ? 'none' : 'bytes',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers':
+        'Content-Range, Accept-Ranges, Content-Length'
+    }
+
+    const buildEffectiveHeaders = (): Record<string, string> =>
+      isRangeRequest
         ? {
-            'Content-Type': 'audio/wav',
-            'Accept-Ranges': 'bytes',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Expose-Headers':
-              'Content-Range, Accept-Ranges, Content-Length',
-            Connection: 'keep-alive',
-            ...(totalWavSize > 0
-              ? { 'Content-Length': String(totalWavSize) }
-              : { 'Transfer-Encoding': 'chunked' })
+            ...commonHeaders,
+            'Content-Range': `bytes ${rangeStart}-${rangeEnd}/${totalFileSize}`,
+            'Content-Length': String(rangeLength)
           }
         : {
-            ...LOAD_STREAM_HEADERS,
-            'Accept-Ranges': 'bytes',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Expose-Headers':
-              'Content-Range, Accept-Ranges, Content-Length'
+            ...commonHeaders,
+            ...(!isLiveStream && !isFullOpenEndedRange
+              ? { 'Content-Length': String(totalFileSize) }
+              : {})
           }
+    let effectiveHeaders = buildEffectiveHeaders()
 
-    if (isRangeRequest && isWav && rangeEnd < 44 && rangeHeaderBytesToSend) {
+    const recalculateFiniteRepresentation = (durationMs: number): boolean => {
+      if (!Number.isFinite(durationMs) || durationMs <= 0 || isLiveStream) {
+        return true
+      }
+
+      totalTrackFrames = Math.max(
+        0,
+        Math.floor(durationMs * (PCM_SAMPLE_RATE / 1000))
+      )
+      fullTrackPcmBytes = totalTrackFrames * PCM_BLOCK_ALIGN
+      fullTrackFileSize = fullTrackPcmBytes + (isWav ? WAV_HEADER_SIZE : 0)
+
+      parsedRange = parseSingleByteRange(
+        rangeHeader || undefined,
+        fullTrackFileSize
+      )
+      if (parsedRange.kind === 'unsatisfiable') return false
+
+      isRangeRequest =
+        parsedRange.kind === 'range' && !isFullOpenEndedRange
+      baseFrame = isRangeRequest || isFullOpenEndedRange
+        ? 0
+        : Math.min(
+            requestedStartFrame,
+            totalTrackFrames
+          )
+      basePositionMs = baseFrame / (PCM_SAMPLE_RATE / 1000)
+      totalPcmBytes = fullTrackPcmBytes - baseFrame * PCM_BLOCK_ALIGN
+      totalFileSize = totalPcmBytes + (isWav ? WAV_HEADER_SIZE : 0)
+
+      const nextActiveRange =
+        parsedRange.kind === 'range' && !isFullOpenEndedRange
+          ? parsedRange
+          : null
+      rangeStart = nextActiveRange ? nextActiveRange.start : 0
+      rangeEnd = nextActiveRange
+        ? nextActiveRange.end
+        : Math.max(totalFileSize - 1, 0)
+      rangeLength = isRangeRequest
+        ? rangeEnd - rangeStart + 1
+        : totalFileSize
+
+      rangeHeaderBytesToSend = null
+      pcmSkipBytes = 0
+      pcmBytesToSend = rangeLength
+      streamStartPositionMs = basePositionMs
+
+      if (isRangeRequest) {
+        let pcmByteOffset = rangeStart
+        if (isWav) {
+          const wavHeader = createWavHeader(fullTrackPcmBytes)
+          if (rangeStart < WAV_HEADER_SIZE) {
+            const headerEnd = Math.min(WAV_HEADER_SIZE, rangeEnd + 1)
+            rangeHeaderBytesToSend = wavHeader.subarray(rangeStart, headerEnd)
+            pcmBytesToSend -= rangeHeaderBytesToSend.length
+            pcmByteOffset = 0
+          } else {
+            pcmByteOffset = rangeStart - WAV_HEADER_SIZE
+          }
+        }
+
+        if (pcmBytesToSend > 0) {
+          const seekPositionMs = Math.floor(
+            pcmByteOffset / PCM_BYTES_PER_MS
+          )
+          const seekByteOffset = seekPositionMs * PCM_BYTES_PER_MS
+          pcmSkipBytes = pcmByteOffset - seekByteOffset
+          streamStartPositionMs = seekPositionMs
+        }
+      }
+
+      effectiveHeaders = buildEffectiveHeaders()
+      return true
+    }
+
+    // HEAD must not resolve sources, open remote connections or instantiate a
+    // decoder. The same representation headers are returned without a body.
+    if (req.method === 'HEAD') {
+      streamResponse.writeHead(isRangeRequest ? 206 : 200, effectiveHeaders)
+      streamResponse.end()
+      return
+    }
+
+    // A request wholly contained in the WAV header needs no source connection.
+    if (
+      isRangeRequest &&
+      isWav &&
+      rangeEnd < WAV_HEADER_SIZE &&
+      rangeHeaderBytesToSend
+    ) {
       streamResponse.writeHead(206, effectiveHeaders)
       streamResponse.end(rangeHeaderBytesToSend)
+      return
+    }
+
+    // Empty finite representations can be completed without contacting a
+    // source.
+    if (!isLiveStream && totalPcmBytes === 0 && !isRangeRequest) {
+      streamResponse.writeHead(200, effectiveHeaders)
+      if (isWav) {
+        streamResponse.end(createWavHeader(0))
+      } else {
+        streamResponse.end()
+      }
+      return
+    }
+
+    if (clientClosed) {
       return
     }
 
@@ -926,7 +1258,7 @@ async function handler(
         {
           decodedTrackInfo: decodedTrack.info,
           volume: input.volume,
-          position: input.position,
+          position: streamStartPositionMs,
           filters: input.filters
         },
         {
@@ -946,7 +1278,7 @@ async function handler(
         {
           decodedTrackInfo: decodedTrack.info,
           volume: input.volume,
-          position: input.position,
+          position: streamStartPositionMs,
           filters: input.filters
         },
         {
@@ -982,6 +1314,10 @@ async function handler(
     }
 
     const urlResult = await getTrackUrlResult(runtime, decodedTrack)
+    if (clientClosed) {
+      return
+    }
+
     if (urlResult.exception) {
       sendErrorResponse(
         req,
@@ -996,20 +1332,21 @@ async function handler(
 
     const { createAudioResource, createSeekeableAudioResource } =
       await getStreamProcessorModule()
+    if (clientClosed) {
+      return
+    }
+
     const streamProcessorRuntime = getStreamProcessorRuntime(runtime)
     const sourceName = decodedTrack.info.sourceName
     const isHls = urlResult.protocol === 'hls'
     const isSabr = urlResult.protocol === 'sabr'
     const isLocal = sourceName === 'local'
 
-    let pcmStream: DestroyableReadable | null = null
-    let fetchedStream: DestroyableReadable | null = null
-
     if (urlResult.url && !isHls && !isLocal && !isSabr) {
       const resource = (await createSeekeableAudioResource(
         input.guildId || 'api-stream',
         urlResult.url,
-        input.position,
+        streamStartPositionMs,
         undefined,
         streamProcessorRuntime,
         input.filters,
@@ -1021,6 +1358,13 @@ async function handler(
         null,
         true
       )) as StreamingAudioResource | { exception: { message: string } }
+
+      if (clientClosed) {
+        if (!('exception' in resource)) {
+          destroyStream(resource.stream)
+        }
+        return
+      }
 
       if ('exception' in resource) {
         sendErrorResponse(
@@ -1035,6 +1379,34 @@ async function handler(
       }
 
       pcmStream = resource.stream
+
+      const sourceDurationMs = (
+        resource as StreamingAudioResource & {
+          sourceDurationMs?: number | null
+        }
+      ).sourceDurationMs
+      if (
+        !isLiveStream &&
+        typeof sourceDurationMs === 'number' &&
+        Number.isFinite(sourceDurationMs) &&
+        sourceDurationMs > 0 &&
+        sourceDurationMs < trackDurationMs - 1
+      ) {
+        if (!recalculateFiniteRepresentation(sourceDurationMs)) {
+          destroyStream(pcmStream)
+          pcmStream = null
+          streamResponse.writeHead(416, {
+            'Content-Range': `bytes */${fullTrackFileSize}`,
+            'Accept-Ranges': 'bytes',
+            'Content-Type': 'text/plain',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Expose-Headers':
+              'Content-Range, Accept-Ranges, Content-Length'
+          })
+          streamResponse.end('Requested range not satisfiable')
+          return
+        }
+      }
     } else {
       if (!runtime.sources || !urlResult.url) {
         throw new Error(
@@ -1044,7 +1416,7 @@ async function handler(
 
       const additionalData = {
         ...(urlResult.additionalData ?? {}),
-        startTime: input.position
+        startTime: streamStartPositionMs
       }
 
       const fetched = await runtime.sources.getTrackStream(
@@ -1053,6 +1425,13 @@ async function handler(
         urlResult.protocol,
         additionalData
       )
+
+      if (clientClosed) {
+        if (fetched.stream) {
+          destroyStream(fetched.stream as DestroyableReadable)
+        }
+        return
+      }
 
       if (fetched.exception || !fetched.stream) {
         sendErrorResponse(
@@ -1067,6 +1446,10 @@ async function handler(
       }
 
       fetchedStream = fetched.stream as DestroyableReadable
+      if (clientClosed) {
+        destroyStream(fetchedStream)
+        return
+      }
 
       const resource = createAudioResource(
         input.guildId || 'api-stream',
@@ -1084,7 +1467,22 @@ async function handler(
       pcmStream = resource.stream
     }
 
+    if (clientClosed) {
+      cleanup()
+      return
+    }
+
+    if (!pcmStream) {
+      throw new Error('The audio processor did not return a PCM stream.')
+    }
+
     pcmStream.on('error', (error: NodeJS.ErrnoException) => {
+      // A client closing its response is a normal cancellation path. Do not
+      // report the resulting premature-close as a playback/source failure.
+      if (clientClosed || error.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+        return
+      }
+
       logger(
         'error',
         'LoadStream',
@@ -1092,88 +1490,63 @@ async function handler(
       )
     })
 
-    const statusCode = isRangeRequest ? 206 : 200
-    streamResponse.writeHead(statusCode, effectiveHeaders)
-
-    if (req.method === 'HEAD') {
-      streamResponse.end()
-      destroyStream(pcmStream)
-      destroyStream(fetchedStream)
-      return
-    }
+    streamResponse.writeHead(isRangeRequest ? 206 : 200, effectiveHeaders)
 
     if (isRangeRequest) {
-      let bytesRemaining = rangeEnd - rangeStart + 1
+      const outputStreams: Readable[] = []
 
-      if (rangeHeaderBytesToSend && rangeHeaderBytesToSend.length > 0) {
-        streamResponse.write(rangeHeaderBytesToSend)
-        bytesRemaining -= rangeHeaderBytesToSend.length
+      if (rangeHeaderBytesToSend?.length) {
+        outputStreams.push(Readable.from([rangeHeaderBytesToSend]))
       }
 
-      if (bytesRemaining <= 0) {
-        streamResponse.end()
+      if (pcmBytesToSend > 0) {
+        outputStreams.push(
+          createPcmRangeStream(pcmStream, pcmSkipBytes, pcmBytesToSend)
+        )
+      } else {
         destroyStream(pcmStream)
-        destroyStream(fetchedStream)
-        return
       }
 
-      let skipRemaining = pcmSkipBytes
-      const limiter = new Transform({
-        transform(chunk: Buffer, _enc, cb) {
-          let buf = chunk
-          if (skipRemaining > 0) {
-            if (buf.length <= skipRemaining) {
-              skipRemaining -= buf.length
-              cb()
-              return
+      const responseBody = Readable.from(
+        (async function* () {
+          for (const output of outputStreams) {
+            for await (const chunk of output) {
+              yield chunk
             }
-            buf = buf.subarray(skipRemaining)
-            skipRemaining = 0
           }
-          if (bytesRemaining <= 0) {
-            cb()
-            return
-          }
-          if (buf.length <= bytesRemaining) {
-            bytesRemaining -= buf.length
-            cb(null, buf)
-            if (bytesRemaining <= 0) {
-              limiter.end()
-            }
-          } else {
-            const slice = buf.subarray(0, bytesRemaining)
-            bytesRemaining = 0
-            cb(null, slice)
-            limiter.end()
-          }
-        }
-      })
+        })(),
+        { objectMode: false, highWaterMark: 19200 }
+      )
 
       pipeline(
-        pcmStream,
-        limiter,
+        responseBody,
         streamResponse,
         (error: NodeJS.ErrnoException | null) => {
           if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
             logger(
               'error',
               'LoadStream',
-              `Pipeline output failed for ${decodedTrack.info.title}: ${error.message}`
+              `Range output failed for ${decodedTrack.info.title}: ${error.message}`
             )
           }
-
-          destroyStream(pcmStream)
-          destroyStream(fetchedStream)
+          cleanup()
         }
       )
     } else {
-      if (isWav) {
-        const wavHeader = createWavHeader(totalPcmBytes)
-        streamResponse.write(wavHeader)
-      }
+      const output = isWav
+        ? Readable.from(
+            (async function* () {
+              yield createWavHeader(isLiveStream ? null : totalPcmBytes)
+              for await (const chunk of pcmStream as DestroyableReadable) {
+                yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+              }
+            })(),
+            { objectMode: false, highWaterMark: 19200 }
+          )
+        : pcmStream
 
       pipeline(
-        pcmStream,
+        output,
         streamResponse,
         (error: NodeJS.ErrnoException | null) => {
           if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
@@ -1183,22 +1556,20 @@ async function handler(
               `Pipeline output failed for ${decodedTrack.info.title}: ${error.message}`
             )
           }
-
-          destroyStream(pcmStream)
-          destroyStream(fetchedStream)
+          cleanup()
         }
       )
     }
-
-    streamResponse.on('close', () => {
-      destroyStream(pcmStream)
-      destroyStream(fetchedStream)
-    })
   } catch (error) {
+    cleanup()
     const errorMessage =
       error instanceof Error ? error.message : 'Fatal loadStream error.'
     logger('error', 'LoadStream', 'Fatal handler error:', error)
-    if (!streamResponse.writableEnded) {
+    if (
+      !clientClosed &&
+      !streamResponse.writableEnded &&
+      !streamResponse.headersSent
+    ) {
       sendErrorResponse(
         req,
         res,
@@ -1206,6 +1577,10 @@ async function handler(
         'Internal Server Error',
         errorMessage,
         parsedUrl.pathname
+      )
+    } else if (!clientClosed && !streamResponse.writableEnded) {
+      streamResponse.destroy(
+        error instanceof Error ? error : new Error(errorMessage)
       )
     }
   }

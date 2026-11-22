@@ -46,7 +46,9 @@ import type {
 } from '../../typings/playback/streamProcessor.types.ts'
 import { http1makeRequest, logger } from '../../utils.ts'
 import FlvDemuxer from '../demuxers/Flv.ts'
-import WebmOpusDemuxer from '../demuxers/WebmOpus.ts'
+import WebmOpusDemuxer, {
+  type WebmOpusPacketTiming
+} from '../demuxers/WebmOpus.ts'
 import { Decoder as OpusDecoder, Encoder as OpusEncoder } from '../opus/Opus.ts'
 import { RingBuffer } from '../structs/RingBuffer.ts'
 import { FadeTransformer } from './FadeTransformer.ts'
@@ -2369,10 +2371,126 @@ class FLVToAACStream extends Transform {
   }
 }
 
+class WebmOpusSeekTrimTransform extends Transform {
+  private readonly targetSampleFrame: number
+  private readonly endSampleFrame: number | null
+  private timings: WebmOpusPacketTiming[]
+  private timingIndex: number
+  private nextOutputSampleFrame: number
+
+  constructor(targetTimeMs = 0, endTimeMs?: number | null) {
+    super({ readableObjectMode: false })
+    this.targetSampleFrame = Math.max(0, Math.round(targetTimeMs * 48))
+    this.endSampleFrame =
+      typeof endTimeMs === 'number' &&
+      Number.isFinite(endTimeMs) &&
+      endTimeMs > 0
+        ? Math.floor(endTimeMs * 48)
+        : null
+    this.timings = []
+    this.timingIndex = 0
+    this.nextOutputSampleFrame = this.targetSampleFrame
+  }
+
+  enqueueTiming(timing: WebmOpusPacketTiming): void {
+    this.timings.push(timing)
+  }
+
+  override _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: TransformCallback
+  ): void {
+    if (chunk.length % 4 !== 0) {
+      callback(
+        new Error(
+          `Invalid WebM Opus PCM chunk alignment (${chunk.length} bytes; expected stereo S16LE)`
+        )
+      )
+      return
+    }
+
+    const timing = this.timings[this.timingIndex]
+    if (!timing) {
+      callback(
+        new Error('Missing WebM packet timestamp for decoded Opus PCM')
+      )
+      return
+    }
+    if (!Number.isFinite(timing.timestampMs)) {
+      callback(new Error('Invalid WebM packet timestamp for decoded Opus PCM'))
+      return
+    }
+    this.timingIndex++
+
+    const packetStartSample = Math.round(timing.timestampMs * 48)
+    const packetEndSample = packetStartSample + chunk.length / 4
+    const clippedStartSample = Math.max(
+      packetStartSample,
+      this.targetSampleFrame
+    )
+    const clippedEndSample = this.endSampleFrame === null
+      ? packetEndSample
+      : Math.min(packetEndSample, this.endSampleFrame)
+
+    // Only fill gaps between packets. Never pad the tail: a missing final
+    // packet must remain visible as an early EOF instead of being hidden.
+    if (clippedEndSample > clippedStartSample) {
+      let gapFrames = Math.max(
+        0,
+        clippedStartSample - this.nextOutputSampleFrame
+      )
+      while (gapFrames > 0) {
+        const frames = Math.min(gapFrames, AUDIO_CONFIG.sampleRate)
+        this.push(Buffer.alloc(frames * 4))
+        this.nextOutputSampleFrame += frames
+        gapFrames -= frames
+      }
+
+      const outputStartSample = Math.max(
+        clippedStartSample,
+        this.nextOutputSampleFrame
+      )
+      const outputEndSample = Math.max(
+        outputStartSample,
+        clippedEndSample
+      )
+      const framesToKeep = outputEndSample - outputStartSample
+
+      if (framesToKeep > 0) {
+        const framesToSkip = outputStartSample - packetStartSample
+        const byteStart = framesToSkip * 4
+        const byteEnd = byteStart + framesToKeep * 4
+        this.push(chunk.subarray(byteStart, byteEnd))
+        this.nextOutputSampleFrame = outputEndSample
+      }
+    }
+
+    if (this.timingIndex > 2048) {
+      this.timings = this.timings.slice(this.timingIndex)
+      this.timingIndex = 0
+    }
+
+    callback()
+  }
+
+  override _destroy(
+    error: Error | null,
+    callback: (error?: Error | null) => void
+  ): void {
+    this.timings = []
+    this.timingIndex = 0
+    this.nextOutputSampleFrame = this.targetSampleFrame
+    callback(error)
+  }
+}
+
 class StreamAudioResource extends BaseAudioResource {
   private nodelink: NodeLink
   private frameCounter: PCMFrameCounter | null = null
   private protectedLimiterOutput: ProtectedLimiterOutput | null = null
+  private readonly webmSeekTimeMs: number | null
+  readonly sourceDurationMs: number | null
 
   constructor(
     guildId: string,
@@ -2387,11 +2505,25 @@ class StreamAudioResource extends BaseAudioResource {
     enableCrossfade = false,
     processingMode?: AudioProcessingMode | null,
     float32PCMOutput = false,
-    directHttpUrl?: string
+    directHttpUrl?: string,
+    webmSeekTimeMs?: number | null,
+    sourceDurationMs?: number | null
   ) {
     super(guildId)
 
     this.nodelink = nodelink
+    this.webmSeekTimeMs =
+      typeof webmSeekTimeMs === 'number' &&
+      Number.isFinite(webmSeekTimeMs) &&
+      webmSeekTimeMs > 0
+        ? webmSeekTimeMs
+        : null
+    this.sourceDurationMs =
+      typeof sourceDurationMs === 'number' &&
+      Number.isFinite(sourceDurationMs) &&
+      sourceDurationMs > 0
+        ? sourceDurationMs
+        : null
     const mode = resolveAudioProcessingMode(
       nodelink.options.playback.audio?.processingMode,
       processingMode
@@ -2432,7 +2564,9 @@ class StreamAudioResource extends BaseAudioResource {
       type,
       normalizedType,
       resamplingQuality,
-      directHttpUrl
+      directHttpUrl,
+      this.webmSeekTimeMs,
+      this.sourceDurationMs
     )
 
     if (returnPCM) {
@@ -2470,7 +2604,9 @@ class StreamAudioResource extends BaseAudioResource {
     type: string,
     normalizedType: string,
     resamplingQuality: string,
-    directHttpUrl?: string
+    directHttpUrl?: string,
+    webmSeekTimeMs?: number | null,
+    webmDurationMs?: number | null
   ): Transform {
     if (type === 'pcm') return stream as Transform
 
@@ -2494,7 +2630,12 @@ class StreamAudioResource extends BaseAudioResource {
         return this._createSymphoniaPipeline(stream, type)
 
       case SupportedFormats.OPUS:
-        return this._createOpusPipeline(stream, type)
+        return this._createOpusPipeline(
+          stream,
+          type,
+          webmSeekTimeMs,
+          webmDurationMs
+        )
 
       default:
         throw this._createUnsupportedFormatError(type)
@@ -2598,7 +2739,12 @@ class StreamAudioResource extends BaseAudioResource {
     return decoder
   }
 
-  _createOpusPipeline(stream: Readable, type: string): Transform {
+  _createOpusPipeline(
+    stream: Readable,
+    type: string,
+    seekTargetMs?: number | null,
+    endTimeMs?: number | null
+  ): Transform {
     if (!_isWebmFormat(type.toLowerCase())) {
       // Ogg Opus decodes natively in Symphonia (libopus adapter)
       // symphonia-adapter-libopus, only has the decoder.
@@ -2619,13 +2765,38 @@ class StreamAudioResource extends BaseAudioResource {
     streams.push(decoder)
     this.pipes?.push(decoder)
 
+    const normalizedSeekTarget =
+      typeof seekTargetMs === 'number' &&
+      Number.isFinite(seekTargetMs) &&
+      seekTargetMs > 0
+        ? seekTargetMs
+        : 0
+    const hasFiniteEndTime =
+      typeof endTimeMs === 'number' &&
+      Number.isFinite(endTimeMs) &&
+      endTimeMs > 0
+
+    let output: Transform = decoder
+    if (normalizedSeekTarget > 0 || hasFiniteEndTime) {
+      const seekTrimmer = new WebmOpusSeekTrimTransform(
+        normalizedSeekTarget,
+        hasFiniteEndTime ? endTimeMs : null
+      )
+      demuxer.on('packetTimestamp', (timing: WebmOpusPacketTiming) => {
+        seekTrimmer.enqueueTiming(timing)
+      })
+      streams.push(seekTrimmer)
+      this.pipes?.push(seekTrimmer)
+      output = seekTrimmer
+    }
+
     pipeline(streams as unknown as Readable[], (err: Error | null): void => {
       if (err && !this._destroyed) {
         emitResourceError(this.stream, err)
       }
     })
 
-    return decoder
+    return output
   }
 
   _createOutputPipeline(
@@ -2982,7 +3153,8 @@ export const createAudioResource = (
   enableCrossfade: boolean = false,
   processingMode?: AudioProcessingMode | null,
   float32PCMOutput = false,
-  directHttpUrl?: string
+  directHttpUrl?: string,
+  webmSeekTimeMs?: number | null
 ): StreamAudioResource =>
   new StreamAudioResource(
     guildId,
@@ -2997,7 +3169,8 @@ export const createAudioResource = (
     enableCrossfade,
     processingMode,
     float32PCMOutput,
-    directHttpUrl
+    directHttpUrl,
+    webmSeekTimeMs
   )
 
 export const createSeekeableAudioResource = async (
@@ -3091,6 +3264,17 @@ export const createSeekeableAudioResource = async (
         - @ecliptia/seekable-stream/src/index.js
     */
     const format = meta.codec?.container || hinted || meta.contentType
+    const durationMeta = meta as SeekableStreamMeta & {
+      audioDurationMs?: number
+      audioDurationSource?: string
+    }
+    const sourceDurationMs =
+      _isWebmFormat(format.toLowerCase()) &&
+      durationMeta.audioDurationSource === 'audio-packets' &&
+      Number.isFinite(durationMeta.audioDurationMs) &&
+      (durationMeta.audioDurationMs as number) > 0
+        ? (durationMeta.audioDurationMs as number)
+        : null
 
     return new StreamAudioResource(
       guildId,
@@ -3103,7 +3287,11 @@ export const createSeekeableAudioResource = async (
       returnPCM,
       player.loudnessNormalizer ?? enableAGC,
       enableCrossfade,
-      processingMode
+      processingMode,
+      false,
+      undefined,
+      _isWebmFormat(format.toLowerCase()) ? seekTime : null,
+      sourceDurationMs
     )
   } catch (err) {
     const cause = err instanceof SeekError ? err.code : 'UNKNOWN'
