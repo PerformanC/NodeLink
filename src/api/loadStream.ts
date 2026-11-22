@@ -17,8 +17,16 @@ import type {
   TrackStreamResult,
   TrackUrlResult
 } from '../typings/sources/source.types.ts'
-import type { EncodedTrackPayload } from '../typings/utils.types.ts'
-import { decodeTrack, logger, sendErrorResponse } from '../utils.ts'
+import type {
+  EncodedTrackPayload,
+  HttpProxyConfig
+} from '../typings/utils.types.ts'
+import {
+  decodeTrack,
+  logger,
+  makeRequest,
+  sendErrorResponse
+} from '../utils.ts'
 
 /**
  * Cached dynamic import for the stream processor module.
@@ -84,6 +92,11 @@ function createWavHeader(totalAudioBytes: number | null): Buffer {
 }
 
 /**
+ * Supported output representations for `/v4/loadstream`.
+ */
+type LoadStreamOutputFormat = 'raw' | 'wav' | 'passthrough' | 'formats'
+
+/**
  * Request payload accepted by the load stream endpoint.
  */
 interface LoadStreamInput {
@@ -113,9 +126,18 @@ interface LoadStreamInput {
   filters: FiltersState
 
   /**
-   * Output representation. 'raw' for raw PCM (default), 'wav' for RIFF WAV.
+   * Output representation:
+   * - `'raw'`: raw 48 kHz 16-bit stereo PCM (default)
+   * - `'wav'`: RIFF/WAVE PCM
+   * - `'passthrough'`: original source stream without PCM decoding
+   * - `'formats'`: JSON listing of available source formats
    */
-  format?: 'raw' | 'wav'
+  format?: LoadStreamOutputFormat
+
+  /**
+   * Optional format identifier (e.g. YouTube itag).
+   */
+  itag?: number
 }
 
 /**
@@ -143,9 +165,19 @@ interface LoadStreamBodyPayload {
   filters?: FiltersState
 
   /**
-   * Desired container format ('raw' or 'wav').
+   * Desired container/mode (`raw`, `wav`, `passthrough`/`original`/`source`, `formats`).
    */
   format?: string
+
+  /**
+   * Optional format identifier (e.g. YouTube itag).
+   */
+  itag?: number
+
+  /**
+   * When true, returns available formats metadata instead of streaming.
+   */
+  listFormats?: boolean
 }
 
 /**
@@ -186,6 +218,8 @@ interface LoadStreamSourceWorkerManager {
       volume: number
       position: number
       filters: FiltersState
+      itag?: number
+      passthrough?: boolean
     },
     options?: StreamDelegateOptions
   ) => boolean
@@ -201,7 +235,7 @@ type LoadStreamWorkerReference = object
  */
 interface LoadStreamWorkerManager {
   /**
-   * Delegates a raw PCM stream request to a playback worker.
+   * Delegates a stream request to a playback worker.
    *
    * @param req - Incoming HTTP request.
    * @param res - Outgoing HTTP response.
@@ -217,6 +251,8 @@ interface LoadStreamWorkerManager {
       volume: number
       position: number
       filters: FiltersState
+      itag?: number
+      passthrough?: boolean
     },
     options?: StreamDelegateOptions
   ) => boolean
@@ -241,6 +277,7 @@ interface LoadStreamWorkerManager {
     task: 'getTrackUrl',
     payload: {
       decodedTrackInfo: EncodedTrackPayload['info']
+      itag?: number
     }
   ) => Promise<TrackUrlResult>
 }
@@ -253,10 +290,12 @@ interface LoadStreamSourceManager {
    * Resolves the track URL for a decoded track.
    *
    * @param trackInfo - Decoded track information.
+   * @param itag - Optional format identifier.
    * @returns Promise resolving to the track URL response.
    */
   getTrackUrl: (
-    trackInfo: EncodedTrackPayload['info']
+    trackInfo: EncodedTrackPayload['info'],
+    itag?: number
   ) => Promise<TrackUrlResult>
 
   /**
@@ -595,7 +634,21 @@ function getLoadStreamInputFromBody(
     return null
   }
 
-  const formatValue = (payload as { format?: unknown }).format
+  let itag: number | undefined
+  if (payload.itag !== undefined) {
+    if (
+      !isFiniteNumber(payload.itag) ||
+      !Number.isInteger(payload.itag) ||
+      payload.itag <= 0
+    ) {
+      return null
+    }
+    itag = payload.itag
+  }
+
+  const formatValue = payload.listFormats
+    ? 'formats'
+    : (payload as { format?: unknown }).format
   const format = normalizeOutputFormat(formatValue)
   if (!format) {
     return null
@@ -606,7 +659,8 @@ function getLoadStreamInputFromBody(
     volume: payload.volume ?? 100,
     position: payload.position ?? 0,
     filters,
-    format
+    format,
+    itag
   }
 }
 
@@ -638,7 +692,9 @@ function getFiltersFromQuery(parsedUrl: URL): FiltersState | undefined {
  * Normalizes the requested representation. The format must stay identical
  * across the initial request and every subsequent Range request.
  */
-function normalizeOutputFormat(value: unknown): 'raw' | 'wav' | null {
+function normalizeOutputFormat(
+  value: unknown
+): LoadStreamOutputFormat | null {
   if (value === undefined || value === null || value === '') {
     return 'raw'
   }
@@ -648,7 +704,18 @@ function normalizeOutputFormat(value: unknown): 'raw' | 'wav' | null {
   }
 
   const format = value.trim().toLowerCase()
-  return format === 'raw' || format === 'wav' ? format : null
+  if (format === 'raw' || format === 'wav' || format === 'formats') {
+    return format
+  }
+  if (
+    format === 'passthrough' ||
+    format === 'original' ||
+    format === 'source'
+  ) {
+    return 'passthrough'
+  }
+
+  return null
 }
 
 type ParsedByteRange =
@@ -809,10 +876,25 @@ function getLoadStreamInputFromQuery(parsedUrl: URL): LoadStreamInput | null {
   }
 
   const filters = getFiltersFromQuery(parsedUrl) ?? {}
-  const formatParam = parsedUrl.searchParams.get('format')
+  const listFormatsFlag =
+    parsedUrl.searchParams.get('formats') === 'true' ||
+    parsedUrl.searchParams.get('listFormats') === 'true'
+  const formatParam = listFormatsFlag
+    ? 'formats'
+    : parsedUrl.searchParams.get('format')
   const format = normalizeOutputFormat(formatParam ?? undefined)
   if (!format) {
     return null
+  }
+
+  const itagParam = parsedUrl.searchParams.get('itag')
+  let itag: number | undefined
+  if (itagParam !== null && itagParam !== '') {
+    const parsedItag = Number(itagParam)
+    if (!Number.isInteger(parsedItag) || parsedItag <= 0) {
+      return null
+    }
+    itag = parsedItag
   }
 
   return {
@@ -820,7 +902,8 @@ function getLoadStreamInputFromQuery(parsedUrl: URL): LoadStreamInput | null {
     volume,
     position,
     filters,
-    format
+    format,
+    itag
   }
 }
 
@@ -867,12 +950,14 @@ function getStreamProcessorRuntime(
  */
 async function getTrackUrlResult(
   nodelink: LoadStreamRuntime,
-  decodedTrack: EncodedTrackPayload
+  decodedTrack: EncodedTrackPayload,
+  itag?: number
 ): Promise<TrackUrlResult> {
   if (nodelink.workerManager) {
     const worker = nodelink.workerManager.getBestWorker()
     return await nodelink.workerManager.execute(worker, 'getTrackUrl', {
-      decodedTrackInfo: decodedTrack.info
+      decodedTrackInfo: decodedTrack.info,
+      itag
     })
   }
 
@@ -880,7 +965,195 @@ async function getTrackUrlResult(
     throw new Error('Sources manager is not available for loadStream.')
   }
 
-  return await nodelink.sources.getTrackUrl(decodedTrack.info)
+  return await nodelink.sources.getTrackUrl(decodedTrack.info, itag)
+}
+
+const EXPOSED_STREAM_HEADERS =
+  'Content-Range, Accept-Ranges, Content-Length, X-NodeLink-Passthrough, X-NodeLink-Source, X-NodeLink-Format, X-NodeLink-Protocol, X-NodeLink-Seekable'
+
+/**
+ * Raw format descriptor returned by sources such as YouTube.
+ */
+interface RawSourceFormatEntry {
+  itag?: number
+  mimeType?: string
+  qualityLabel?: string
+  bitrate?: number
+  audioQuality?: string
+  contentLength?: string | number
+  width?: number
+  height?: number
+  fps?: number
+}
+
+/**
+ * Resolves the best HTTP Content-Type for a passthrough stream.
+ */
+function resolvePassthroughContentType(
+  formatStr: string | undefined,
+  mimeType: string | undefined,
+  upstreamContentType: string | undefined
+): string {
+  const cleanUpstream = upstreamContentType?.trim()
+  if (
+    cleanUpstream &&
+    !cleanUpstream.toLowerCase().startsWith('application/octet-stream')
+  ) {
+    return cleanUpstream
+  }
+
+  const cleanMime = mimeType?.trim()
+  if (cleanMime) {
+    return cleanMime
+  }
+
+  const lower = (formatStr || '').toLowerCase()
+  if (lower.includes('webm/opus')) return 'audio/webm; codecs="opus"'
+  if (lower.includes('webm')) return 'audio/webm'
+  if (lower.includes('flac')) return 'audio/flac'
+  if (lower.includes('mp3') || lower.includes('mpeg')) return 'audio/mpeg'
+  if (lower.includes('m4a') || lower.includes('mp4') || lower.includes('fmp4'))
+    return 'audio/mp4'
+  if (lower.includes('aac')) return 'audio/aac'
+  if (lower.includes('ogg') || lower.includes('opus')) return 'audio/ogg'
+  if (lower.includes('wav')) return 'audio/wav'
+  if (lower.includes('mpegts') || lower === 'ts') return 'video/mp2t'
+
+  return 'application/octet-stream'
+}
+
+/**
+ * Parses a MIME type string (e.g. `audio/webm; codecs="opus"`) into container,
+ * codec and stream kind.
+ */
+function parseMimeMetadata(mimeType: string | undefined): {
+  type: 'audio' | 'video' | 'muxed'
+  format: string | null
+  codec: string | null
+} {
+  if (!mimeType) {
+    return { type: 'audio', format: null, codec: null }
+  }
+
+  const [basePart = '', paramsPart = ''] = mimeType.split(';')
+  const [mediaKind = '', subType = ''] = basePart.trim().toLowerCase().split('/')
+  const codecMatch = /codecs="([^"]+)"/i.exec(paramsPart)
+  const codec = codecMatch?.[1] ?? null
+
+  let type: 'audio' | 'video' | 'muxed' = 'audio'
+  if (mediaKind === 'video') {
+    type = codec?.includes(',') ? 'muxed' : 'video'
+  }
+
+  const format = subType || null
+  return { type, format, codec }
+}
+
+/**
+ * Extracts a numeric content length from unknown metadata values.
+ */
+function parseOptionalPositiveInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+    return value
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number.parseInt(value, 10)
+    if (Number.isSafeInteger(parsed) && parsed > 0) {
+      return parsed
+    }
+  }
+  return null
+}
+
+/**
+ * Builds the normalized JSON response for `format=formats` / `formats=true`.
+ */
+function buildNormalizedFormatsPayload(
+  decodedTrack: EncodedTrackPayload,
+  urlResult: TrackUrlResult,
+  isLiveStream: boolean
+): Record<string, unknown> {
+  const extendedResult = urlResult as TrackUrlResult & {
+    itag?: number
+    mimeType?: string
+    formats?: RawSourceFormatEntry[]
+  }
+  const additionalData = (urlResult.additionalData ?? {}) as Record<
+    string,
+    unknown
+  >
+  const effectiveSource =
+    urlResult.newTrack?.info?.sourceName ?? decodedTrack.info.sourceName
+  const protocol = urlResult.protocol ?? 'http'
+  const formatStr =
+    typeof urlResult.format === 'string' ? urlResult.format : undefined
+  const isDirectHttp =
+    Boolean(urlResult.url) &&
+    protocol !== 'hls' &&
+    protocol !== 'sabr' &&
+    effectiveSource !== 'local' &&
+    effectiveSource !== 'deezer'
+
+  const rawFormats = Array.isArray(extendedResult.formats)
+    ? extendedResult.formats
+    : Array.isArray(additionalData.formats)
+      ? (additionalData.formats as RawSourceFormatEntry[])
+      : null
+
+  const defaultMime = resolvePassthroughContentType(
+    formatStr,
+    extendedResult.mimeType,
+    undefined
+  )
+
+  const formats = rawFormats
+    ? rawFormats
+        .filter((entry) => entry && typeof entry.itag === 'number')
+        .map((entry) => {
+          const parsed = parseMimeMetadata(entry.mimeType)
+          return {
+            itag: entry.itag,
+            type: parsed.type,
+            format: parsed.format,
+            codec: parsed.codec,
+            mimeType: entry.mimeType ?? null,
+            bitrate:
+              typeof entry.bitrate === 'number' ? entry.bitrate : null,
+            quality: entry.qualityLabel ?? entry.audioQuality ?? null,
+            width: typeof entry.width === 'number' ? entry.width : null,
+            height: typeof entry.height === 'number' ? entry.height : null,
+            fps: typeof entry.fps === 'number' ? entry.fps : null,
+            contentLength: parseOptionalPositiveInt(entry.contentLength)
+          }
+        })
+    : [
+        {
+          itag: extendedResult.itag ?? null,
+          type: 'audio',
+          format: formatStr ?? null,
+          codec: parseMimeMetadata(defaultMime).codec,
+          mimeType: defaultMime,
+          bitrate: null,
+          quality: null,
+          width: null,
+          height: null,
+          fps: null,
+          contentLength:
+            parseOptionalPositiveInt(additionalData.contentLength) ??
+            parseOptionalPositiveInt(additionalData.FILESIZE)
+        }
+      ]
+
+  return {
+    source: effectiveSource,
+    protocol,
+    format: formatStr ?? null,
+    mimeType: defaultMime,
+    itag: extendedResult.itag ?? null,
+    seekable: !isLiveStream,
+    byteRangeSupported: !isLiveStream && isDirectHttp,
+    formats
+  }
 }
 
 /**
@@ -921,8 +1194,7 @@ async function handler(
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
       'Access-Control-Allow-Headers': '*',
-      'Access-Control-Expose-Headers':
-        'Content-Range, Accept-Ranges, Content-Length'
+      'Access-Control-Expose-Headers': EXPOSED_STREAM_HEADERS
     })
     res.end()
     return
@@ -961,7 +1233,7 @@ async function handler(
       res,
       400,
       'Bad Request',
-      'Invalid parameters. `format` must be `raw` or `wav`.',
+      'Invalid parameters. `format` must be `raw`, `wav`, `passthrough` (`original`/`source`), or `formats`.',
       parsedUrl.pathname
     )
     return
@@ -988,12 +1260,388 @@ async function handler(
 
   try {
     const decodedTrack = decodeTrack(encodedTrack)
-    const isWav = input.format === 'wav'
     const trackDurationMs = Number(decodedTrack.info.length)
     const isLiveStream =
       Boolean(decodedTrack.info.isStream) ||
       !Number.isFinite(trackDurationMs) ||
       trackDurationMs <= 0
+
+    if (input.format === 'formats' || input.format === 'passthrough') {
+      if (!runtime.sources && !runtime.workerManager) {
+        sendErrorResponse(
+          req,
+          res,
+          503,
+          'Service Unavailable',
+          'Sources manager is not available for loadStream.',
+          parsedUrl.pathname
+        )
+        return
+      }
+
+      const urlResult = await getTrackUrlResult(
+        runtime,
+        decodedTrack,
+        input.itag
+      )
+      if (clientClosed) {
+        return
+      }
+
+      if (urlResult.exception) {
+        sendErrorResponse(
+          req,
+          res,
+          500,
+          'Internal Server Error',
+          urlResult.exception.message,
+          parsedUrl.pathname
+        )
+        return
+      }
+
+      if (input.format === 'formats') {
+        const payload = buildNormalizedFormatsPayload(
+          decodedTrack,
+          urlResult,
+          isLiveStream
+        )
+        const jsonBody = JSON.stringify(payload)
+        streamResponse.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': String(Buffer.byteLength(jsonBody)),
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Expose-Headers': EXPOSED_STREAM_HEADERS
+        })
+        streamResponse.end(req.method === 'HEAD' ? undefined : jsonBody)
+        return
+      }
+
+      const extendedResult = urlResult as TrackUrlResult & {
+        itag?: number
+        mimeType?: string
+        formats?: RawSourceFormatEntry[]
+      }
+      const additionalData = (urlResult.additionalData ?? {}) as Record<
+        string,
+        unknown
+      >
+      const effectiveSource =
+        urlResult.newTrack?.info?.sourceName ?? decodedTrack.info.sourceName
+      const protocol = urlResult.protocol ?? 'http'
+      const formatStr =
+        typeof urlResult.format === 'string' ? urlResult.format : 'unknown'
+      const matchedFormatEntry =
+        extendedResult.itag !== undefined
+          ? (
+              extendedResult.formats ??
+              (Array.isArray(additionalData.formats)
+                ? (additionalData.formats as RawSourceFormatEntry[])
+                : [])
+            ).find((entry) => entry.itag === extendedResult.itag)
+          : undefined
+      const resolvedMimeType =
+        extendedResult.mimeType ?? matchedFormatEntry?.mimeType
+      const isHls = protocol === 'hls'
+      const isSabr = protocol === 'sabr'
+      const isLocal = effectiveSource === 'local'
+      const isDeezer = effectiveSource === 'deezer'
+      const seekPositionMs = isLiveStream ? 0 : input.position
+
+      const passthroughMetaHeaders: Record<string, string> = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Expose-Headers': EXPOSED_STREAM_HEADERS,
+        'X-NodeLink-Passthrough': 'true',
+        'X-NodeLink-Source': effectiveSource,
+        'X-NodeLink-Format': formatStr,
+        'X-NodeLink-Protocol': protocol,
+        'X-NodeLink-Seekable': String(!isLiveStream)
+      }
+
+      // Direct HTTP(S) passthrough: proxy raw bytes directly from origin with
+      // native HTTP Range/Content-Length support and zero PCM decoding.
+      if (urlResult.url && !isHls && !isSabr && !isLocal && !isDeezer) {
+        const upstreamHeaders: Record<string, string> = {}
+        const sourceHeaders = additionalData.headers
+        if (
+          sourceHeaders &&
+          typeof sourceHeaders === 'object' &&
+          !Array.isArray(sourceHeaders)
+        ) {
+          for (const [key, value] of Object.entries(
+            sourceHeaders as Record<string, unknown>
+          )) {
+            if (typeof value === 'string') {
+              upstreamHeaders[key] = value
+            }
+          }
+        }
+
+        const clientRange =
+          typeof req.headers.range === 'string' ? req.headers.range.trim() : ''
+        if (clientRange && !isLiveStream) {
+          upstreamHeaders.Range = clientRange
+        }
+
+        const isHead = req.method === 'HEAD'
+        const upstreamResponse = await makeRequest(urlResult.url, {
+          method: isHead ? 'HEAD' : 'GET',
+          streamOnly: !isHead,
+          headers: upstreamHeaders,
+          proxy: additionalData.proxy as HttpProxyConfig | undefined
+        })
+
+        if (clientClosed) {
+          if (upstreamResponse.stream) {
+            destroyStream(upstreamResponse.stream as DestroyableReadable)
+          }
+          return
+        }
+
+        const upstreamStatus = upstreamResponse.statusCode ?? 502
+        const rawUpstreamHeaders = (upstreamResponse.headers ?? {}) as Record<
+          string,
+          string | string[] | undefined
+        >
+        const getHeader = (name: string): string | undefined => {
+          const val = rawUpstreamHeaders[name]
+          return Array.isArray(val) ? val[0] : val
+        }
+
+        if (upstreamStatus === 416) {
+          if (upstreamResponse.stream) {
+            destroyStream(upstreamResponse.stream as DestroyableReadable)
+          }
+          const contentRange = getHeader('content-range')
+          streamResponse.writeHead(416, {
+            ...(contentRange ? { 'Content-Range': contentRange } : {}),
+            'Accept-Ranges': 'bytes',
+            'Content-Type': 'text/plain',
+            ...passthroughMetaHeaders
+          })
+          streamResponse.end('Requested range not satisfiable')
+          return
+        }
+
+        if (
+          upstreamResponse.error ||
+          (upstreamStatus !== 200 && upstreamStatus !== 206) ||
+          (!isHead && !upstreamResponse.stream)
+        ) {
+          if (upstreamResponse.stream) {
+            destroyStream(upstreamResponse.stream as DestroyableReadable)
+          }
+          sendErrorResponse(
+            req,
+            res,
+            502,
+            'Bad Gateway',
+            upstreamResponse.error ||
+              `Upstream responded with status ${upstreamStatus}.`,
+            parsedUrl.pathname
+          )
+          return
+        }
+
+        const contentType = resolvePassthroughContentType(
+          formatStr,
+          resolvedMimeType,
+          getHeader('content-type')
+        )
+        const contentLength =
+          getHeader('content-length') ??
+          (upstreamStatus === 200
+            ? (parseOptionalPositiveInt(
+                additionalData.contentLength ??
+                  matchedFormatEntry?.contentLength
+              )?.toString() ?? undefined)
+            : undefined)
+        const contentRange = getHeader('content-range')
+        const acceptRanges = isLiveStream
+          ? 'none'
+          : getHeader('accept-ranges') || 'bytes'
+
+        const responseHeaders: Record<string, string> = {
+          'Content-Type': contentType,
+          'Accept-Ranges': acceptRanges,
+          ...(contentLength ? { 'Content-Length': contentLength } : {}),
+          ...(contentRange ? { 'Content-Range': contentRange } : {}),
+          ...passthroughMetaHeaders
+        }
+
+        if (isHead) {
+          streamResponse.writeHead(upstreamStatus, responseHeaders)
+          streamResponse.end()
+          return
+        }
+
+        fetchedStream = upstreamResponse.stream as DestroyableReadable
+        streamResponse.writeHead(upstreamStatus, responseHeaders)
+
+        pipeline(
+          fetchedStream,
+          streamResponse,
+          (error: NodeJS.ErrnoException | null) => {
+            if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+              logger(
+                'error',
+                'LoadStream',
+                `Passthrough output failed for ${decodedTrack.info.title}: ${error.message}`
+              )
+            }
+            cleanup()
+          }
+        )
+        return
+      }
+
+      // Source-managed passthrough (Deezer decrypted FLAC/MP3, HLS VOD with
+      // position seek, SABR, local files, etc.) without PCM decoding.
+      const fallbackContentLength =
+        seekPositionMs === 0 && !isLiveStream
+          ? (parseOptionalPositiveInt(
+              additionalData.contentLength ?? additionalData.FILESIZE
+            )?.toString() ?? undefined)
+          : undefined
+      const baseContentType = resolvePassthroughContentType(
+        formatStr,
+        resolvedMimeType,
+        undefined
+      )
+      const sourcePassthroughHeaders: Record<string, string> = {
+        'Content-Type': baseContentType,
+        'Accept-Ranges': 'none',
+        ...(fallbackContentLength
+          ? { 'Content-Length': fallbackContentLength }
+          : {}),
+        ...passthroughMetaHeaders
+      }
+
+      if (req.method === 'HEAD') {
+        streamResponse.writeHead(200, sourcePassthroughHeaders)
+        streamResponse.end()
+        return
+      }
+
+      if (runtime.sourceWorkerManager) {
+        const delegated = runtime.sourceWorkerManager.delegate(
+          req,
+          res,
+          'loadStream',
+          {
+            decodedTrackInfo: decodedTrack.info,
+            volume: 100,
+            position: seekPositionMs,
+            filters: {},
+            itag: input.itag,
+            passthrough: true
+          },
+          {
+            statusCode: 200,
+            headers: sourcePassthroughHeaders
+          }
+        )
+        if (delegated) {
+          return
+        }
+      }
+
+      if (!runtime.sources && runtime.workerManager) {
+        const delegated = runtime.workerManager.delegateStream(
+          req,
+          res,
+          {
+            decodedTrackInfo: decodedTrack.info,
+            volume: 100,
+            position: seekPositionMs,
+            filters: {},
+            itag: input.itag,
+            passthrough: true
+          },
+          {
+            statusCode: 200,
+            headers: sourcePassthroughHeaders
+          }
+        )
+        if (delegated) {
+          return
+        }
+
+        sendErrorResponse(
+          req,
+          res,
+          503,
+          'Service Unavailable',
+          'No available workers to stream audio.',
+          parsedUrl.pathname
+        )
+        return
+      }
+
+      if (!runtime.sources || !urlResult.url) {
+        throw new Error(
+          'Unable to fetch source stream for the requested track.'
+        )
+      }
+
+      const fetched = await runtime.sources.getTrackStream(
+        urlResult.newTrack?.info ?? decodedTrack.info,
+        urlResult.url,
+        urlResult.protocol,
+        {
+          ...additionalData,
+          startTime: seekPositionMs
+        }
+      )
+
+      if (clientClosed) {
+        if (fetched.stream) {
+          destroyStream(fetched.stream as DestroyableReadable)
+        }
+        return
+      }
+
+      if (fetched.exception || !fetched.stream) {
+        sendErrorResponse(
+          req,
+          res,
+          500,
+          'Internal Server Error',
+          fetched.exception?.message || 'Failed to fetch stream',
+          parsedUrl.pathname
+        )
+        return
+      }
+
+      fetchedStream = fetched.stream as DestroyableReadable
+      const finalHeaders: Record<string, string> = {
+        ...sourcePassthroughHeaders,
+        'Content-Type': resolvePassthroughContentType(
+          fetched.type ?? formatStr,
+          resolvedMimeType,
+          undefined
+        )
+      }
+
+      streamResponse.writeHead(200, finalHeaders)
+      pipeline(
+        fetchedStream,
+        streamResponse,
+        (error: NodeJS.ErrnoException | null) => {
+          if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            logger(
+              'error',
+              'LoadStream',
+              `Passthrough stream failed for ${decodedTrack.info.title}: ${error.message}`
+            )
+          }
+          cleanup()
+        }
+      )
+      return
+    }
+
+    const isWav = input.format === 'wav'
 
     // A valid HTTP Range addresses the complete representation, starting at
     // byte zero. The body/query `position` is only used when there is no valid

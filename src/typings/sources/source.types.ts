@@ -314,6 +314,10 @@ export interface LoadStreamPayload extends BaseTaskPayload {
   volume?: number
   /** Audio filter configuration */
   filters?: Record<string, unknown>
+  /** Optional format identifier (e.g. YouTube itag) */
+  itag?: number
+  /** When true, bypasses PCM decoding and streams the original source bytes */
+  passthrough?: boolean
 }
 
 /**

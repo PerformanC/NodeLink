@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { Readable, pipeline } from 'node:stream';
-import { decodeTrack, logger, sendErrorResponse } from '../utils.js';
+import { decodeTrack, logger, makeRequest, sendErrorResponse } from '../utils.js';
 /**
  * Cached dynamic import for the stream processor module.
  */
@@ -137,7 +137,18 @@ function getLoadStreamInputFromBody(body) {
     if (filters === false) {
         return null;
     }
-    const formatValue = payload.format;
+    let itag;
+    if (payload.itag !== undefined) {
+        if (!isFiniteNumber(payload.itag) ||
+            !Number.isInteger(payload.itag) ||
+            payload.itag <= 0) {
+            return null;
+        }
+        itag = payload.itag;
+    }
+    const formatValue = payload.listFormats
+        ? 'formats'
+        : payload.format;
     const format = normalizeOutputFormat(formatValue);
     if (!format) {
         return null;
@@ -147,7 +158,8 @@ function getLoadStreamInputFromBody(body) {
         volume: payload.volume ?? 100,
         position: payload.position ?? 0,
         filters,
-        format
+        format,
+        itag
     };
 }
 /**
@@ -185,7 +197,15 @@ function normalizeOutputFormat(value) {
         return null;
     }
     const format = value.trim().toLowerCase();
-    return format === 'raw' || format === 'wav' ? format : null;
+    if (format === 'raw' || format === 'wav' || format === 'formats') {
+        return format;
+    }
+    if (format === 'passthrough' ||
+        format === 'original' ||
+        format === 'source') {
+        return 'passthrough';
+    }
+    return null;
 }
 /**
  * Parses one RFC 9110 byte range. Multi-range and malformed Range headers are
@@ -300,17 +320,31 @@ function getLoadStreamInputFromQuery(parsedUrl) {
         return null;
     }
     const filters = getFiltersFromQuery(parsedUrl) ?? {};
-    const formatParam = parsedUrl.searchParams.get('format');
+    const listFormatsFlag = parsedUrl.searchParams.get('formats') === 'true' ||
+        parsedUrl.searchParams.get('listFormats') === 'true';
+    const formatParam = listFormatsFlag
+        ? 'formats'
+        : parsedUrl.searchParams.get('format');
     const format = normalizeOutputFormat(formatParam ?? undefined);
     if (!format) {
         return null;
+    }
+    const itagParam = parsedUrl.searchParams.get('itag');
+    let itag;
+    if (itagParam !== null && itagParam !== '') {
+        const parsedItag = Number(itagParam);
+        if (!Number.isInteger(parsedItag) || parsedItag <= 0) {
+            return null;
+        }
+        itag = parsedItag;
     }
     return {
         encodedTrack,
         volume,
         position,
         filters,
-        format
+        format,
+        itag
     };
 }
 /**
@@ -345,17 +379,153 @@ function getStreamProcessorRuntime(nodelink) {
  * @param decodedTrack - Decoded track payload.
  * @returns Promise resolving to the track URL response.
  */
-async function getTrackUrlResult(nodelink, decodedTrack) {
+async function getTrackUrlResult(nodelink, decodedTrack, itag) {
     if (nodelink.workerManager) {
         const worker = nodelink.workerManager.getBestWorker();
         return await nodelink.workerManager.execute(worker, 'getTrackUrl', {
-            decodedTrackInfo: decodedTrack.info
+            decodedTrackInfo: decodedTrack.info,
+            itag
         });
     }
     if (!nodelink.sources) {
         throw new Error('Sources manager is not available for loadStream.');
     }
-    return await nodelink.sources.getTrackUrl(decodedTrack.info);
+    return await nodelink.sources.getTrackUrl(decodedTrack.info, itag);
+}
+const EXPOSED_STREAM_HEADERS = 'Content-Range, Accept-Ranges, Content-Length, X-NodeLink-Passthrough, X-NodeLink-Source, X-NodeLink-Format, X-NodeLink-Protocol, X-NodeLink-Seekable';
+/**
+ * Resolves the best HTTP Content-Type for a passthrough stream.
+ */
+function resolvePassthroughContentType(formatStr, mimeType, upstreamContentType) {
+    const cleanUpstream = upstreamContentType?.trim();
+    if (cleanUpstream &&
+        !cleanUpstream.toLowerCase().startsWith('application/octet-stream')) {
+        return cleanUpstream;
+    }
+    const cleanMime = mimeType?.trim();
+    if (cleanMime) {
+        return cleanMime;
+    }
+    const lower = (formatStr || '').toLowerCase();
+    if (lower.includes('webm/opus'))
+        return 'audio/webm; codecs="opus"';
+    if (lower.includes('webm'))
+        return 'audio/webm';
+    if (lower.includes('flac'))
+        return 'audio/flac';
+    if (lower.includes('mp3') || lower.includes('mpeg'))
+        return 'audio/mpeg';
+    if (lower.includes('m4a') || lower.includes('mp4') || lower.includes('fmp4'))
+        return 'audio/mp4';
+    if (lower.includes('aac'))
+        return 'audio/aac';
+    if (lower.includes('ogg') || lower.includes('opus'))
+        return 'audio/ogg';
+    if (lower.includes('wav'))
+        return 'audio/wav';
+    if (lower.includes('mpegts') || lower === 'ts')
+        return 'video/mp2t';
+    return 'application/octet-stream';
+}
+/**
+ * Parses a MIME type string (e.g. `audio/webm; codecs="opus"`) into container,
+ * codec and stream kind.
+ */
+function parseMimeMetadata(mimeType) {
+    if (!mimeType) {
+        return { type: 'audio', format: null, codec: null };
+    }
+    const [basePart = '', paramsPart = ''] = mimeType.split(';');
+    const [mediaKind = '', subType = ''] = basePart.trim().toLowerCase().split('/');
+    const codecMatch = /codecs="([^"]+)"/i.exec(paramsPart);
+    const codec = codecMatch?.[1] ?? null;
+    let type = 'audio';
+    if (mediaKind === 'video') {
+        type = codec?.includes(',') ? 'muxed' : 'video';
+    }
+    const format = subType || null;
+    return { type, format, codec };
+}
+/**
+ * Extracts a numeric content length from unknown metadata values.
+ */
+function parseOptionalPositiveInt(value) {
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
+        return value;
+    }
+    if (typeof value === 'string' && value.trim() !== '') {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isSafeInteger(parsed) && parsed > 0) {
+            return parsed;
+        }
+    }
+    return null;
+}
+/**
+ * Builds the normalized JSON response for `format=formats` / `formats=true`.
+ */
+function buildNormalizedFormatsPayload(decodedTrack, urlResult, isLiveStream) {
+    const extendedResult = urlResult;
+    const additionalData = (urlResult.additionalData ?? {});
+    const effectiveSource = urlResult.newTrack?.info?.sourceName ?? decodedTrack.info.sourceName;
+    const protocol = urlResult.protocol ?? 'http';
+    const formatStr = typeof urlResult.format === 'string' ? urlResult.format : undefined;
+    const isDirectHttp = Boolean(urlResult.url) &&
+        protocol !== 'hls' &&
+        protocol !== 'sabr' &&
+        effectiveSource !== 'local' &&
+        effectiveSource !== 'deezer';
+    const rawFormats = Array.isArray(extendedResult.formats)
+        ? extendedResult.formats
+        : Array.isArray(additionalData.formats)
+            ? additionalData.formats
+            : null;
+    const defaultMime = resolvePassthroughContentType(formatStr, extendedResult.mimeType, undefined);
+    const formats = rawFormats
+        ? rawFormats
+            .filter((entry) => entry && typeof entry.itag === 'number')
+            .map((entry) => {
+            const parsed = parseMimeMetadata(entry.mimeType);
+            return {
+                itag: entry.itag,
+                type: parsed.type,
+                format: parsed.format,
+                codec: parsed.codec,
+                mimeType: entry.mimeType ?? null,
+                bitrate: typeof entry.bitrate === 'number' ? entry.bitrate : null,
+                quality: entry.qualityLabel ?? entry.audioQuality ?? null,
+                width: typeof entry.width === 'number' ? entry.width : null,
+                height: typeof entry.height === 'number' ? entry.height : null,
+                fps: typeof entry.fps === 'number' ? entry.fps : null,
+                contentLength: parseOptionalPositiveInt(entry.contentLength)
+            };
+        })
+        : [
+            {
+                itag: extendedResult.itag ?? null,
+                type: 'audio',
+                format: formatStr ?? null,
+                codec: parseMimeMetadata(defaultMime).codec,
+                mimeType: defaultMime,
+                bitrate: null,
+                quality: null,
+                width: null,
+                height: null,
+                fps: null,
+                contentLength: parseOptionalPositiveInt(additionalData.contentLength) ??
+                    parseOptionalPositiveInt(additionalData.FILESIZE)
+            }
+        ];
+    return {
+        source: effectiveSource,
+        protocol,
+        format: formatStr ?? null,
+        mimeType: defaultMime,
+        itag: extendedResult.itag ?? null,
+        seekable: !isLiveStream,
+        byteRangeSupported: !isLiveStream && isDirectHttp,
+        formats
+    };
 }
 /**
  * Destroys a readable stream when it is still active.
@@ -387,7 +557,7 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
             'Access-Control-Allow-Headers': '*',
-            'Access-Control-Expose-Headers': 'Content-Range, Accept-Ranges, Content-Length'
+            'Access-Control-Expose-Headers': EXPOSED_STREAM_HEADERS
         });
         res.end();
         return;
@@ -403,7 +573,7 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
     }
     const input = getLoadStreamInput(req, parsedUrl);
     if (!input) {
-        sendErrorResponse(req, res, 400, 'Bad Request', 'Invalid parameters. `format` must be `raw` or `wav`.', parsedUrl.pathname);
+        sendErrorResponse(req, res, 400, 'Bad Request', 'Invalid parameters. `format` must be `raw`, `wav`, `passthrough` (`original`/`source`), or `formats`.', parsedUrl.pathname);
         return;
     }
     const encodedTrack = input.encodedTrack.replace(/ /g, '+');
@@ -423,11 +593,239 @@ async function handler(nodelink, req, res, _sendResponse, parsedUrl) {
     streamResponse.once('close', onResponseClose);
     try {
         const decodedTrack = decodeTrack(encodedTrack);
-        const isWav = input.format === 'wav';
         const trackDurationMs = Number(decodedTrack.info.length);
         const isLiveStream = Boolean(decodedTrack.info.isStream) ||
             !Number.isFinite(trackDurationMs) ||
             trackDurationMs <= 0;
+        if (input.format === 'formats' || input.format === 'passthrough') {
+            if (!runtime.sources && !runtime.workerManager) {
+                sendErrorResponse(req, res, 503, 'Service Unavailable', 'Sources manager is not available for loadStream.', parsedUrl.pathname);
+                return;
+            }
+            const urlResult = await getTrackUrlResult(runtime, decodedTrack, input.itag);
+            if (clientClosed) {
+                return;
+            }
+            if (urlResult.exception) {
+                sendErrorResponse(req, res, 500, 'Internal Server Error', urlResult.exception.message, parsedUrl.pathname);
+                return;
+            }
+            if (input.format === 'formats') {
+                const payload = buildNormalizedFormatsPayload(decodedTrack, urlResult, isLiveStream);
+                const jsonBody = JSON.stringify(payload);
+                streamResponse.writeHead(200, {
+                    'Content-Type': 'application/json; charset=utf-8',
+                    'Content-Length': String(Buffer.byteLength(jsonBody)),
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Expose-Headers': EXPOSED_STREAM_HEADERS
+                });
+                streamResponse.end(req.method === 'HEAD' ? undefined : jsonBody);
+                return;
+            }
+            const extendedResult = urlResult;
+            const additionalData = (urlResult.additionalData ?? {});
+            const effectiveSource = urlResult.newTrack?.info?.sourceName ?? decodedTrack.info.sourceName;
+            const protocol = urlResult.protocol ?? 'http';
+            const formatStr = typeof urlResult.format === 'string' ? urlResult.format : 'unknown';
+            const matchedFormatEntry = extendedResult.itag !== undefined
+                ? (extendedResult.formats ??
+                    (Array.isArray(additionalData.formats)
+                        ? additionalData.formats
+                        : [])).find((entry) => entry.itag === extendedResult.itag)
+                : undefined;
+            const resolvedMimeType = extendedResult.mimeType ?? matchedFormatEntry?.mimeType;
+            const isHls = protocol === 'hls';
+            const isSabr = protocol === 'sabr';
+            const isLocal = effectiveSource === 'local';
+            const isDeezer = effectiveSource === 'deezer';
+            const seekPositionMs = isLiveStream ? 0 : input.position;
+            const passthroughMetaHeaders = {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Expose-Headers': EXPOSED_STREAM_HEADERS,
+                'X-NodeLink-Passthrough': 'true',
+                'X-NodeLink-Source': effectiveSource,
+                'X-NodeLink-Format': formatStr,
+                'X-NodeLink-Protocol': protocol,
+                'X-NodeLink-Seekable': String(!isLiveStream)
+            };
+            // Direct HTTP(S) passthrough: proxy raw bytes directly from origin with
+            // native HTTP Range/Content-Length support and zero PCM decoding.
+            if (urlResult.url && !isHls && !isSabr && !isLocal && !isDeezer) {
+                const upstreamHeaders = {};
+                const sourceHeaders = additionalData.headers;
+                if (sourceHeaders &&
+                    typeof sourceHeaders === 'object' &&
+                    !Array.isArray(sourceHeaders)) {
+                    for (const [key, value] of Object.entries(sourceHeaders)) {
+                        if (typeof value === 'string') {
+                            upstreamHeaders[key] = value;
+                        }
+                    }
+                }
+                const clientRange = typeof req.headers.range === 'string' ? req.headers.range.trim() : '';
+                if (clientRange && !isLiveStream) {
+                    upstreamHeaders.Range = clientRange;
+                }
+                const isHead = req.method === 'HEAD';
+                const upstreamResponse = await makeRequest(urlResult.url, {
+                    method: isHead ? 'HEAD' : 'GET',
+                    streamOnly: !isHead,
+                    headers: upstreamHeaders,
+                    proxy: additionalData.proxy
+                });
+                if (clientClosed) {
+                    if (upstreamResponse.stream) {
+                        destroyStream(upstreamResponse.stream);
+                    }
+                    return;
+                }
+                const upstreamStatus = upstreamResponse.statusCode ?? 502;
+                const rawUpstreamHeaders = (upstreamResponse.headers ?? {});
+                const getHeader = (name) => {
+                    const val = rawUpstreamHeaders[name];
+                    return Array.isArray(val) ? val[0] : val;
+                };
+                if (upstreamStatus === 416) {
+                    if (upstreamResponse.stream) {
+                        destroyStream(upstreamResponse.stream);
+                    }
+                    const contentRange = getHeader('content-range');
+                    streamResponse.writeHead(416, {
+                        ...(contentRange ? { 'Content-Range': contentRange } : {}),
+                        'Accept-Ranges': 'bytes',
+                        'Content-Type': 'text/plain',
+                        ...passthroughMetaHeaders
+                    });
+                    streamResponse.end('Requested range not satisfiable');
+                    return;
+                }
+                if (upstreamResponse.error ||
+                    (upstreamStatus !== 200 && upstreamStatus !== 206) ||
+                    (!isHead && !upstreamResponse.stream)) {
+                    if (upstreamResponse.stream) {
+                        destroyStream(upstreamResponse.stream);
+                    }
+                    sendErrorResponse(req, res, 502, 'Bad Gateway', upstreamResponse.error ||
+                        `Upstream responded with status ${upstreamStatus}.`, parsedUrl.pathname);
+                    return;
+                }
+                const contentType = resolvePassthroughContentType(formatStr, resolvedMimeType, getHeader('content-type'));
+                const contentLength = getHeader('content-length') ??
+                    (upstreamStatus === 200
+                        ? (parseOptionalPositiveInt(additionalData.contentLength ??
+                            matchedFormatEntry?.contentLength)?.toString() ?? undefined)
+                        : undefined);
+                const contentRange = getHeader('content-range');
+                const acceptRanges = isLiveStream
+                    ? 'none'
+                    : getHeader('accept-ranges') || 'bytes';
+                const responseHeaders = {
+                    'Content-Type': contentType,
+                    'Accept-Ranges': acceptRanges,
+                    ...(contentLength ? { 'Content-Length': contentLength } : {}),
+                    ...(contentRange ? { 'Content-Range': contentRange } : {}),
+                    ...passthroughMetaHeaders
+                };
+                if (isHead) {
+                    streamResponse.writeHead(upstreamStatus, responseHeaders);
+                    streamResponse.end();
+                    return;
+                }
+                fetchedStream = upstreamResponse.stream;
+                streamResponse.writeHead(upstreamStatus, responseHeaders);
+                pipeline(fetchedStream, streamResponse, (error) => {
+                    if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                        logger('error', 'LoadStream', `Passthrough output failed for ${decodedTrack.info.title}: ${error.message}`);
+                    }
+                    cleanup();
+                });
+                return;
+            }
+            // Source-managed passthrough (Deezer decrypted FLAC/MP3, HLS VOD with
+            // position seek, SABR, local files, etc.) without PCM decoding.
+            const fallbackContentLength = seekPositionMs === 0 && !isLiveStream
+                ? (parseOptionalPositiveInt(additionalData.contentLength ?? additionalData.FILESIZE)?.toString() ?? undefined)
+                : undefined;
+            const baseContentType = resolvePassthroughContentType(formatStr, resolvedMimeType, undefined);
+            const sourcePassthroughHeaders = {
+                'Content-Type': baseContentType,
+                'Accept-Ranges': 'none',
+                ...(fallbackContentLength
+                    ? { 'Content-Length': fallbackContentLength }
+                    : {}),
+                ...passthroughMetaHeaders
+            };
+            if (req.method === 'HEAD') {
+                streamResponse.writeHead(200, sourcePassthroughHeaders);
+                streamResponse.end();
+                return;
+            }
+            if (runtime.sourceWorkerManager) {
+                const delegated = runtime.sourceWorkerManager.delegate(req, res, 'loadStream', {
+                    decodedTrackInfo: decodedTrack.info,
+                    volume: 100,
+                    position: seekPositionMs,
+                    filters: {},
+                    itag: input.itag,
+                    passthrough: true
+                }, {
+                    statusCode: 200,
+                    headers: sourcePassthroughHeaders
+                });
+                if (delegated) {
+                    return;
+                }
+            }
+            if (!runtime.sources && runtime.workerManager) {
+                const delegated = runtime.workerManager.delegateStream(req, res, {
+                    decodedTrackInfo: decodedTrack.info,
+                    volume: 100,
+                    position: seekPositionMs,
+                    filters: {},
+                    itag: input.itag,
+                    passthrough: true
+                }, {
+                    statusCode: 200,
+                    headers: sourcePassthroughHeaders
+                });
+                if (delegated) {
+                    return;
+                }
+                sendErrorResponse(req, res, 503, 'Service Unavailable', 'No available workers to stream audio.', parsedUrl.pathname);
+                return;
+            }
+            if (!runtime.sources || !urlResult.url) {
+                throw new Error('Unable to fetch source stream for the requested track.');
+            }
+            const fetched = await runtime.sources.getTrackStream(urlResult.newTrack?.info ?? decodedTrack.info, urlResult.url, urlResult.protocol, {
+                ...additionalData,
+                startTime: seekPositionMs
+            });
+            if (clientClosed) {
+                if (fetched.stream) {
+                    destroyStream(fetched.stream);
+                }
+                return;
+            }
+            if (fetched.exception || !fetched.stream) {
+                sendErrorResponse(req, res, 500, 'Internal Server Error', fetched.exception?.message || 'Failed to fetch stream', parsedUrl.pathname);
+                return;
+            }
+            fetchedStream = fetched.stream;
+            const finalHeaders = {
+                ...sourcePassthroughHeaders,
+                'Content-Type': resolvePassthroughContentType(fetched.type ?? formatStr, resolvedMimeType, undefined)
+            };
+            streamResponse.writeHead(200, finalHeaders);
+            pipeline(fetchedStream, streamResponse, (error) => {
+                if (error && error.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+                    logger('error', 'LoadStream', `Passthrough stream failed for ${decodedTrack.info.title}: ${error.message}`);
+                }
+                cleanup();
+            });
+            return;
+        }
+        const isWav = input.format === 'wav';
         // A valid HTTP Range addresses the complete representation, starting at
         // byte zero. The body/query `position` is only used when there is no valid
         // Range header; adding it to the Range offset would seek twice.

@@ -3117,11 +3117,17 @@ export abstract class BaseClient {
         qualityLabel: f.qualityLabel as string | undefined,
         bitrate: f.bitrate as number | undefined,
         audioQuality: f.audioQuality as string | undefined,
+        contentLength: f.contentLength as string | undefined,
+        width: f.width as number | undefined,
+        height: f.height as number | undefined,
+        fps: f.fps as number | undefined,
         url: f.url as string | undefined,
         signatureCipher: f.signatureCipher as string | undefined,
         audioTrack: f.audioTrack as Record<string, unknown> | undefined
       }
     })
+    const allMappedFormats = formats
+    const explicitItagRequested = Boolean(itag || targetItag)
 
     const dt = decodedTrack as unknown as Record<string, unknown>
     if (dt.audioTrackId) {
@@ -3154,7 +3160,10 @@ export abstract class BaseClient {
           }
         }
       }
-    } else {
+    } else if (
+      !explicitItagRequested ||
+      formats.some((f) => targetItags.includes(f.itag) && f.audioTrack)
+    ) {
       const defaultFormats = formats.filter((f) => f.audioTrack?.audioIsDefault)
 
       if (defaultFormats.length > 0) {
@@ -3259,7 +3268,8 @@ export abstract class BaseClient {
       .filter(
         (format) =>
           targetItags.includes(format.itag) &&
-          (format.mimeType as string | undefined)?.startsWith('audio/')
+          (explicitItagRequested ||
+            (format.mimeType as string | undefined)?.startsWith('audio/'))
       )
       .sort((a, b) => targetItags.indexOf(a.itag) - targetItags.indexOf(b.itag))
 
@@ -3396,6 +3406,10 @@ export abstract class BaseClient {
         return 'webm/opus'
       }
 
+      if (lowerMime.includes('webm')) {
+        return 'webm'
+      }
+
       if (lowerMime.includes('mp4')) {
         return 'mp4'
       }
@@ -3422,11 +3436,13 @@ export abstract class BaseClient {
 
       format: resolveFormatStr(resolvedFormat?.mimeType as string | undefined),
 
+      mimeType: (resolvedFormat?.mimeType as string | undefined) || undefined,
+
       itag: resolvedFormat?.itag,
 
       hlsUrl: (streamingData.hlsManifestUrl as string | undefined) || null,
 
-      formats
+      formats: allMappedFormats
     }
   }
 

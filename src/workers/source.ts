@@ -1490,7 +1490,10 @@ if (isMainThread) {
         throw new Error('Invalid encoded track')
       }
 
-      const urlResult = await nodelink.sources?.getTrackUrl(trackInfo)
+      const urlResult = await nodelink.sources?.getTrackUrl(
+        trackInfo,
+        payload?.itag
+      )
       if (!urlResult || urlResult.exception) {
         throw new Error(
           urlResult?.exception?.message || 'Failed to get track URL'
@@ -1503,7 +1506,29 @@ if (isMainThread) {
       const isSabr = urlResult.protocol === 'sabr'
       const isLocal = sourceName === 'local'
 
-      if (urlResult.url && !isHls && !isLocal && !isSabr) {
+      if (payload?.passthrough) {
+        const additionalData = {
+          ...(urlResult.additionalData || {}),
+          startTime: payload?.position || 0,
+          position: payload?.position || 0
+        }
+
+        fetched =
+          (await nodelink.sources?.getTrackStream(
+            urlResult.newTrack?.info || trackInfo,
+            urlResult.url as string,
+            urlResult.protocol as string,
+            additionalData
+          )) || null
+
+        if (!fetched || fetched.exception || !fetched.stream) {
+          throw new Error(
+            fetched?.exception?.message || 'Failed to load stream'
+          )
+        }
+
+        pcmStream = fetched.stream as unknown as PCMStream
+      } else if (urlResult.url && !isHls && !isLocal && !isSabr) {
         const resource = await createSeekeableAudioResource(
           id,
           urlResult.url,
