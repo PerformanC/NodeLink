@@ -12,6 +12,7 @@ import type {
 import type { ClientInfo, ReqShim } from '../typings/shared.types.ts'
 import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { logger, parseClient, verifyDiscordID } from '../utils.ts'
+import { BunResponseShim } from './bunResponse.ts'
 
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/
@@ -507,60 +508,21 @@ export function createBunServer(
           }
         }
 
-        const resShim: ResponseShim = {
-          _status: 200,
-          _headers: {},
-          _body: [],
-          writeHead(
-            status: number,
-            headers?: Record<string, string | string[]>
-          ) {
-            this._status = status
-            if (headers) Object.assign(this._headers, headers)
-          },
-          setHeader(name: string, value: string | string[]) {
-            this._headers[name] = value
-          },
-          getHeader(name: string) {
-            return this._headers[name] as string | string[] | undefined
-          },
-          end(data?: string | Buffer) {
-            if (data) this._body.push(data)
-            let finalBody: Buffer | string
-            if (this._body.length === 0) {
-              finalBody = ''
-            } else if (
-              this._body.length === 1 &&
-              Buffer.isBuffer(this._body[0])
-            ) {
-              finalBody = this._body[0] as Buffer
-            } else {
-              finalBody = Buffer.concat(
-                this._body.map((chunk) =>
-                  Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-                )
-              )
-            }
+        const resShim = new BunResponseShim({
+          resolve,
+          // Long-lived audio streams must not be cut by Bun's idle timeout.
+          onStreamStart: () => server.timeout(req, 0)
+        })
 
-            const headers = new Headers()
-            for (const [key, value] of Object.entries(this._headers)) {
-              if (Array.isArray(value)) {
-                for (const v of value) headers.append(key, v)
-              } else if (value !== undefined) {
-                headers.set(key, String(value))
-              }
-            }
-
-            const response = new Response(finalBody, {
-              status: this._status,
-              headers
-            })
-            resolve(response)
+        // Mirror http.ServerResponse: a client disconnect emits 'close' on the
+        // response so handlers can release upstream resources.
+        req.signal.addEventListener(
+          'abort',
+          () => {
+            if (!resShim.writableEnded && !resShim.destroyed) resShim.destroy()
           },
-          write(data: string | Buffer) {
-            if (data) this._body.push(data)
-          }
-        }
+          { once: true }
+        )
 
         void getRequestHandler()
           .then((handler) => handler(context, reqShim, resShim))

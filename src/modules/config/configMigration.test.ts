@@ -3,7 +3,11 @@ import test from 'node:test'
 
 import defaultConfig from '../../../config.default.ts'
 import type { NodelinkConfig } from '../../typings/config/config.types.ts'
-import { migrateConfig, toTsLiteral } from './configMigration.ts'
+import {
+  findMissingConfigKeys,
+  migrateConfig,
+  toTsLiteral
+} from './configMigration.ts'
 
 test('migrateConfig maps legacy flat config to hierarchical structure', () => {
   const legacy = {
@@ -159,6 +163,34 @@ test('migrateConfig keeps vanilla default config valid', () => {
     defaultConfig.api.enableTrackStreamEndpoint
   )
   assert.equal(migrated.server.password, defaultConfig.server.password)
+})
+
+test('vanilla default config never reports its own keys as missing after migration', () => {
+  const defaults = defaultConfig as unknown as Record<string, unknown>
+  const migrated = migrateConfig(defaults)
+
+  assert.deepEqual(findMissingConfigKeys(defaults, migrated), [])
+})
+
+test('legacy root mix is folded into playback.mix and not re-reported as missing', () => {
+  const defaults = defaultConfig as unknown as Record<string, unknown>
+  const legacy = JSON.parse(JSON.stringify(defaults)) as {
+    playback: Record<string, unknown>
+  } & Record<string, unknown>
+  legacy.playback.mix = undefined
+  legacy.mix = {
+    enabled: false,
+    defaultVolume: 0.5,
+    maxLayersMix: 2,
+    autoCleanup: false
+  }
+
+  const migrated = migrateConfig(legacy)
+  const playback = migrated.playback as { mix: { enabled: boolean } }
+
+  assert.equal(playback.mix.enabled, false)
+  assert.equal('mix' in migrated, false)
+  assert.equal(findMissingConfigKeys(defaults, migrated).includes('mix'), false)
 })
 
 test('toTsLiteral generates idiomatic TypeScript formatting', () => {
