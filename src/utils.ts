@@ -3164,8 +3164,14 @@ export function getBestMatch<T extends BestMatchCandidate>(
     'slowed',
     'reverb'
   ]
+  // Word boundaries avoid false positives such as "live" inside "alive" or
+  // "deliver". This still relies on English keywords for known version tags,
+  // but languages are no longer needed to reject unknown extra tags.
+  const specPatterns = specKeywords.map(
+    (k) => new RegExp(`(^|[^\\p{L}\\p{N}])${k}([^\\p{L}\\p{N}]|$)`, 'iu')
+  )
   const findSpec = (str: string): string[] =>
-    specKeywords.filter((k) => str.toLowerCase().includes(k))
+    specKeywords.filter((_, i) => specPatterns[i]?.test(str) ?? false)
 
   const originalTitle = original.title.toLowerCase()
   const originalSpec = findSpec(originalTitle)
@@ -3202,6 +3208,68 @@ export function getBestMatch<T extends BestMatchCandidate>(
         .map((a) => normalize(a))
         .filter((a) => a.length > 0)
     : []
+
+  // Language-agnostic quality signals. Extra words or bracketed tags left in a
+  // candidate after the usual upload-tag cleanup almost always describe a
+  // different version ("ao vivo", "en direct", "ライブ", ...) regardless of the
+  // language used by the uploader.
+  const standardTagWords = new Set([
+    'official',
+    'video',
+    'audio',
+    'mv',
+    'visualizer',
+    'color',
+    'coded',
+    'hd',
+    '4k',
+    'prod',
+    'lyric',
+    'lyrics',
+    'topic',
+    'explicit',
+    'clean',
+    'scrapped',
+    'unreleased',
+    'demo',
+    'leak',
+    'loop',
+    'bonus',
+    'remastered'
+  ])
+  const standardTagPattern =
+    /\(\s*[^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)|\[\s*[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi
+
+  const extraBracketTags = (str: string): string[] => {
+    const tags: string[] = []
+    for (const match of str
+      .replace(standardTagPattern, '')
+      .matchAll(/[\(\[]([^\)\]]+)[\)\]]/g)) {
+      const tag = normalize(match[1] ?? '')
+      if (!tag) continue
+      // Brackets around an artist name (common in Vocaloid/J-pop uploads) are
+      // not a version tag when they refer to the original artist.
+      if (
+        originalArtists.some(
+          (artist) => tag.includes(artist) || artist.includes(tag)
+        )
+      )
+        continue
+      tags.push(tag)
+    }
+    return tags
+  }
+
+  const expectedWords = new Set(originalWords)
+  for (const word of normOriginalAuthor.split(/\s+/)) {
+    if (word) expectedWords.add(word)
+  }
+  for (const artist of originalArtists) {
+    for (const word of artist.split(/\s+/)) {
+      if (word) expectedWords.add(word)
+    }
+  }
+  const originalExtraTags = extraBracketTags(original.title.toLowerCase())
 
   const scored = list.map((item) => {
     const itemTitle = item.info.title.toLowerCase()
@@ -3270,6 +3338,26 @@ export function getBestMatch<T extends BestMatchCandidate>(
         : overallRatio
 
     score += effectiveRatio * 300
+
+    // Precision: words left in the candidate that are not in the original
+    // title (or its artists) describe a different edition in any language.
+    const extraWords = itemWords.filter(
+      (word) =>
+        word.length > 1 &&
+        !expectedWords.has(word) &&
+        !standardTagWords.has(word)
+    )
+    const precision = itemWords.length
+      ? (itemWords.length - extraWords.length) / itemWords.length
+      : 1
+    score += precision * 80
+    score -= extraWords.length * 45
+
+    if (
+      originalExtraTags.length === 0 &&
+      extraBracketTags(itemTitle).length > 0
+    )
+      score -= 120
 
     for (const spec of specKeywords) {
       const inOriginal = originalSpec.includes(spec)
@@ -3360,6 +3448,9 @@ export function getBestMatch<T extends BestMatchCandidate>(
       const diff = Math.abs(item.info.length - targetDuration)
       if (diff <= allowedDiff) {
         score += (1 - diff / allowedDiff) * 100
+        // Studio versions are usually within a few seconds of the source,
+        // while live versions drift with applause, intros and outros.
+        if (diff <= 3) score += 40
       } else if (!isEpisode) {
         score -= 100
       }
