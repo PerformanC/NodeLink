@@ -1105,7 +1105,7 @@ else {
             if (!trackInfo) {
                 throw new Error('Invalid encoded track');
             }
-            const urlResult = await nodelink.sources?.getTrackUrl(trackInfo);
+            const urlResult = await nodelink.sources?.getTrackUrl(trackInfo, payload?.itag);
             if (!urlResult || urlResult.exception) {
                 throw new Error(urlResult?.exception?.message || 'Failed to get track URL');
             }
@@ -1113,7 +1113,20 @@ else {
             const isHls = urlResult.protocol === 'hls';
             const isSabr = urlResult.protocol === 'sabr';
             const isLocal = sourceName === 'local';
-            if (urlResult.url && !isHls && !isLocal && !isSabr) {
+            if (payload?.passthrough) {
+                const additionalData = {
+                    ...(urlResult.additionalData || {}),
+                    startTime: payload?.position || 0,
+                    position: payload?.position || 0
+                };
+                fetched =
+                    (await nodelink.sources?.getTrackStream(urlResult.newTrack?.info || trackInfo, urlResult.url, urlResult.protocol, additionalData)) || null;
+                if (!fetched || fetched.exception || !fetched.stream) {
+                    throw new Error(fetched?.exception?.message || 'Failed to load stream');
+                }
+                pcmStream = fetched.stream;
+            }
+            else if (urlResult.url && !isHls && !isLocal && !isSabr) {
                 const resource = await createSeekeableAudioResource(id, urlResult.url, payload?.position || 0, undefined, nodelink, {}, {
                     streamInfo: urlResult,
                     loudnessNormalizer: nodelink.options.playback?.audio?.loudnessNormalizer ?? false

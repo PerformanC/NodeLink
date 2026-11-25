@@ -2029,7 +2029,8 @@ async function startLoadStream(
   }
 
   const urlResult = (await nodelink.sources.getTrackUrl(
-    trackInfo
+    trackInfo,
+    payload?.itag
   )) as TrackUrlResult
   if (urlResult.exception) {
     throw new Error(urlResult.exception.message || 'Failed to get track URL')
@@ -2048,23 +2049,28 @@ async function startLoadStream(
     additionalData
   )) as TrackStreamResult & { type?: string }
 
-  if (fetched.exception) {
-    throw new Error(fetched.exception.message || 'Failed to load stream')
+  if (fetched.exception || !fetched.stream) {
+    throw new Error(fetched.exception?.message || 'Failed to load stream')
   }
 
-  const createPCMStream = await getCreatePCMStream()
-  const pcmStream = createPCMStream(
-    payload?.guildId ?? 'worker-stream',
-    fetched.stream as NonNullable<typeof fetched.stream>,
-    fetched.type || (urlResult.format as string) || 'unknown',
-    nodelink as unknown as NodeLink,
-    (payload?.volume ?? 100) / 100,
-    payload?.filters || {},
-    nodelink.options.playback?.audio?.loudnessNormalizer ?? false,
-    (urlResult.newTrack?.info || trackInfo).sourceName === 'http'
-      ? urlResult.url
-      : undefined
-  ) as unknown as PCMStream
+  let pcmStream: PCMStream
+  if (payload?.passthrough) {
+    pcmStream = fetched.stream as unknown as PCMStream
+  } else {
+    const createPCMStream = await getCreatePCMStream()
+    pcmStream = createPCMStream(
+      payload?.guildId ?? 'worker-stream',
+      fetched.stream as NonNullable<typeof fetched.stream>,
+      fetched.type || (urlResult.format as string) || 'unknown',
+      nodelink as unknown as NodeLink,
+      (payload?.volume ?? 100) / 100,
+      payload?.filters || {},
+      nodelink.options.playback?.audio?.loudnessNormalizer ?? false,
+      (urlResult.newTrack?.info || trackInfo).sourceName === 'http'
+        ? urlResult.url
+        : undefined
+    ) as unknown as PCMStream
+  }
 
   const entry: ActiveStreamEntry = {
     pcmStream,

@@ -1723,8 +1723,11 @@ export default class YouTubeSource {
                 logger('warn', 'YouTube', `Failed to mirror OLAK track ${decodedTrack.identifier}: ${e.message}`);
             }
         }
+        const cacheKey = itag
+            ? `${decodedTrack.identifier}:itag:${itag}`
+            : decodedTrack.identifier;
         if (!forceRefresh) {
-            const cached = this.nodelink.trackCacheManager?.get('youtube', decodedTrack.identifier);
+            const cached = this.nodelink.trackCacheManager?.get('youtube', cacheKey);
             if (cached) {
                 const cachedProxyUrl = cached.additionalData?.proxy?.url;
                 const currentProxies = this.config.proxies || [];
@@ -1857,7 +1860,7 @@ export default class YouTubeSource {
                                 client: clientName
                             }
                         };
-                        this.nodelink.trackCacheManager?.set('youtube', decodedTrack.identifier, result, 1000 * 60 * 60 * 5);
+                        this.nodelink.trackCacheManager?.set('youtube', cacheKey, result, 1000 * 60 * 60 * 5);
                         return result;
                     }
                     const errorMessage = `URL pre-flight failed. Status: ${check.statusCode}, Error: ${check.error}`;
@@ -1921,7 +1924,7 @@ export default class YouTubeSource {
                                 proxy: proxyToUse
                             }
                         };
-                        this.nodelink.trackCacheManager?.set('youtube', decodedTrack.identifier, result, 1000 * 60 * 60 * 5);
+                        this.nodelink.trackCacheManager?.set('youtube', cacheKey, result, 1000 * 60 * 60 * 5);
                         return result;
                     }
                     const hlsError = `HLS-only check failed. Status: ${hlsCheck.statusCode}, Error: ${hlsCheck.error}`;

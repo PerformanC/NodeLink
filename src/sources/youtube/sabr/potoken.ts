@@ -298,12 +298,8 @@ class WebPoMinter {
 
   public static async create(
     integrityToken: string,
-    webPoSignalOutput: unknown[]
+    getMinter: (token: Uint8Array) => Promise<unknown>
   ): Promise<WebPoMinter> {
-    const getMinter = webPoSignalOutput[0] as
-      | ((token: Uint8Array) => Promise<unknown>)
-      | undefined
-    if (!getMinter) throw new Error('PMD:Undefined')
     if (!integrityToken) throw new Error('No integrity token provided')
 
     const mintCallback = await getMinter(base64ToU8(integrityToken))
@@ -531,12 +527,24 @@ export class PoTokenManager {
           const win = (globalThis as unknown as Record<string, unknown>)
             .window as Record<string, unknown> | undefined
           if (win) win.yt = ytObj
-          if (
-            ytcfg.VISITOR_DATA &&
-            typeof ytcfg.VISITOR_DATA === 'string' &&
-            !this.visitorData
-          ) {
-            this.visitorData = ytcfg.VISITOR_DATA
+          if (!this.visitorData) {
+            const topLevel = ytcfg.VISITOR_DATA
+            if (typeof topLevel === 'string' && topLevel) {
+              this.visitorData = topLevel
+            } else {
+              const context = ytcfg.INNERTUBE_CONTEXT
+              const client =
+                context && typeof context === 'object' && 'client' in context
+                  ? context.client
+                  : undefined
+              const visitorData =
+                client && typeof client === 'object' && 'visitorData' in client
+                  ? client.visitorData
+                  : undefined
+              if (typeof visitorData === 'string' && visitorData) {
+                this.visitorData = visitorData
+              }
+            }
           }
         } catch {}
       } else {
@@ -690,13 +698,25 @@ export class PoTokenManager {
       `VisitorData: ${this.visitorData?.slice(0, 20) ?? '(none, will extract from homepage)'}...`
     )
 
-    const initializationGeneration = this.initializationGeneration
-    this.initializationPromise = this._initializeWithDom()
+    this.initializationPromise = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const initializationGeneration = this.initializationGeneration
+        const initialized = await this._initializeWithDom()
+        if (initializationGeneration !== this.initializationGeneration) {
+          throw new Error('BotGuard initialization was reset')
+        }
+        if (initialized) return
+
+        /* INFO: A snapshot without a minter cannot be reused for attestation. */
+        if (attempt === 0) {
+          this.reset()
+          this.visitorData = existingVisitorData || null
+        }
+      }
+      throw new Error('PMD:Undefined')
+    })()
     try {
       await this.initializationPromise
-      if (initializationGeneration !== this.initializationGeneration) {
-        throw new Error('BotGuard initialization was reset')
-      }
     } catch (error) {
       this.reset()
       throw error
@@ -712,9 +732,10 @@ export class PoTokenManager {
 
   /**
    * Internal helper to perform BotGuard initialization with NativeDOM.
+   * @returns False when the snapshot does not provide a minter callback.
    * @internal
    */
-  private async _initializeWithDom(): Promise<void> {
+  private async _initializeWithDom(): Promise<boolean> {
     this._cleanupDom()
 
     const { NativeDOM } = await import('./nativeDOM.ts')
@@ -780,6 +801,10 @@ export class PoTokenManager {
     logger('debug', 'PoToken', 'Generating snapshot and creating minter...')
     const webPoSignalOutput: unknown[] = []
     const botguardResponse = await this.botguard.snapshot({ webPoSignalOutput })
+    const getMinter = webPoSignalOutput[0] as
+      | ((token: Uint8Array) => Promise<unknown>)
+      | undefined
+    if (typeof getMinter !== 'function') return false
 
     const requestKey = 'O43z0dpjhgX20SCx4KAo'
     const integrityTokenResponse = await fetch(buildURL('GenerateIT', true), {
@@ -810,11 +835,9 @@ export class PoTokenManager {
       `IntegrityToken retrieved. Length: ${this.integrityToken.length}`
     )
 
-    this.minter = await WebPoMinter.create(
-      this.integrityToken,
-      webPoSignalOutput
-    )
+    this.minter = await WebPoMinter.create(this.integrityToken, getMinter)
     logger('debug', 'PoToken', 'Initialization complete')
+    return true
   }
 
   /**

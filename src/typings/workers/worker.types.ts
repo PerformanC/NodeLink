@@ -210,4 +210,6 @@ export interface LoadStreamPayload {
   position?: number
   volume?: number
   filters?: Record<string, unknown>
+  itag?: number
+  passthrough?: boolean
 }

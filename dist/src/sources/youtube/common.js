@@ -2176,11 +2176,17 @@ export class BaseClient {
                 qualityLabel: f.qualityLabel,
                 bitrate: f.bitrate,
                 audioQuality: f.audioQuality,
+                contentLength: f.contentLength,
+                width: f.width,
+                height: f.height,
+                fps: f.fps,
                 url: f.url,
                 signatureCipher: f.signatureCipher,
                 audioTrack: f.audioTrack
             };
         });
+        const allMappedFormats = formats;
+        const explicitItagRequested = Boolean(itag || targetItag);
         const dt = decodedTrack;
         if (dt.audioTrackId) {
             const requestedFormats = formats.filter((f) => f.audioTrack && f.audioTrack.id === dt.audioTrackId);
@@ -2203,7 +2209,8 @@ export class BaseClient {
                 }
             }
         }
-        else {
+        else if (!explicitItagRequested ||
+            formats.some((f) => targetItags.includes(f.itag) && f.audioTrack)) {
             const defaultFormats = formats.filter((f) => f.audioTrack?.audioIsDefault);
             if (defaultFormats.length > 0) {
                 logger('debug', `youtube-${this.name}`, 'Using default audio track.');
@@ -2262,7 +2269,8 @@ export class BaseClient {
         logger('debug', `youtube-${this.name}`, `Initial target itags (from config/quality priority): ${targetItags.join(', ')}`);
         const opusAudioCandidates = formats
             .filter((format) => targetItags.includes(format.itag) &&
-            format.mimeType?.startsWith('audio/'))
+            (explicitItagRequested ||
+                format.mimeType?.startsWith('audio/')))
             .sort((a, b) => targetItags.indexOf(a.itag) - targetItags.indexOf(b.itag));
         logger('debug', `youtube-${this.name}`, `Opus audio-only candidates: ${opusAudioCandidates.map((f) => f.itag).join(', ')}`);
         for (const formatRaw of opusAudioCandidates) {
@@ -2330,6 +2338,9 @@ export class BaseClient {
             if (lowerMime.includes('opus')) {
                 return 'webm/opus';
             }
+            if (lowerMime.includes('webm')) {
+                return 'webm';
+            }
             if (lowerMime.includes('mp4')) {
                 return 'mp4';
             }
@@ -2348,9 +2359,10 @@ export class BaseClient {
             url: directUrl,
             protocol: directUrl ? 'http' : null,
             format: resolveFormatStr(resolvedFormat?.mimeType),
+            mimeType: resolvedFormat?.mimeType || undefined,
             itag: resolvedFormat?.itag,
             hlsUrl: streamingData.hlsManifestUrl || null,
-            formats
+            formats: allMappedFormats
         };
     }
     /**

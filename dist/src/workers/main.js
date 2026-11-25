@@ -1475,7 +1475,7 @@ async function startLoadStream(streamId, payload) {
     if (!trackInfo) {
         throw new Error('Invalid encoded track');
     }
-    const urlResult = (await nodelink.sources.getTrackUrl(trackInfo));
+    const urlResult = (await nodelink.sources.getTrackUrl(trackInfo, payload?.itag));
     if (urlResult.exception) {
         throw new Error(urlResult.exception.message || 'Failed to get track URL');
     }
@@ -1485,13 +1485,19 @@ async function startLoadStream(streamId, payload) {
         position: payload?.position || 0
     };
     const fetched = (await nodelink.sources.getTrackStream(urlResult.newTrack?.info || trackInfo, urlResult.url, urlResult.protocol, additionalData));
-    if (fetched.exception) {
-        throw new Error(fetched.exception.message || 'Failed to load stream');
+    if (fetched.exception || !fetched.stream) {
+        throw new Error(fetched.exception?.message || 'Failed to load stream');
     }
-    const createPCMStream = await getCreatePCMStream();
-    const pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {}, nodelink.options.playback?.audio?.loudnessNormalizer ?? false, (urlResult.newTrack?.info || trackInfo).sourceName === 'http'
-        ? urlResult.url
-        : undefined);
+    let pcmStream;
+    if (payload?.passthrough) {
+        pcmStream = fetched.stream;
+    }
+    else {
+        const createPCMStream = await getCreatePCMStream();
+        pcmStream = createPCMStream(payload?.guildId ?? 'worker-stream', fetched.stream, fetched.type || urlResult.format || 'unknown', nodelink, (payload?.volume ?? 100) / 100, payload?.filters || {}, nodelink.options.playback?.audio?.loudnessNormalizer ?? false, (urlResult.newTrack?.info || trackInfo).sourceName === 'http'
+            ? urlResult.url
+            : undefined);
+    }
     const entry = {
         pcmStream,
         fetched,

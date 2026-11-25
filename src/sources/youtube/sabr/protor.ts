@@ -541,7 +541,7 @@ export interface MediaHeaderMsg {
   xtags?: string
   isInitSeg: boolean
   sequenceNumber: number
-  startMs: string
+  startMs?: string
   durationMs: string
   formatId?: FormatIdMsg
   contentLength?: string
@@ -559,8 +559,7 @@ export const MediaHeader = {
       itag: 0,
       sequenceNumber: 0,
       isInitSeg: false,
-      durationMs: '0',
-      startMs: '0'
+      durationMs: '0'
     }
     while (reader.pos < end) {
       const tag = Number(reader.readVarint())

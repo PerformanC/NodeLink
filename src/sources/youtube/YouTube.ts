@@ -2217,10 +2217,13 @@ export default class YouTubeSource implements SourceVariantHandler {
         )
       }
     }
+    const cacheKey = itag
+      ? `${decodedTrack.identifier}:itag:${itag}`
+      : decodedTrack.identifier
     if (!forceRefresh) {
       const cached = this.nodelink.trackCacheManager?.get<TrackUrlData>(
         'youtube',
-        decodedTrack.identifier
+        cacheKey
       )
       if (cached) {
         const cachedProxyUrl = (
@@ -2430,7 +2433,7 @@ export default class YouTubeSource implements SourceVariantHandler {
             }
             this.nodelink.trackCacheManager?.set(
               'youtube',
-              decodedTrack.identifier,
+              cacheKey,
               result,
               1000 * 60 * 60 * 5
             )
@@ -2550,7 +2553,7 @@ export default class YouTubeSource implements SourceVariantHandler {
             }
             this.nodelink.trackCacheManager?.set(
               'youtube',
-              decodedTrack.identifier,
+              cacheKey,
               result,
               1000 * 60 * 60 * 5
             )
