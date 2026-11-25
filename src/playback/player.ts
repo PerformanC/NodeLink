@@ -2348,13 +2348,13 @@ export class Player {
     )
       return false
 
-    if (
+    const token = ++this._seekFadeToken
+    const fadedOut =
       !forceLegacy &&
       !this._isRecovering &&
       !this.isPaused &&
       this._fading('seekOut')
-    ) {
-      const token = ++this._seekFadeToken
+    if (fadedOut) {
       await sleep((this.fading?.seek?.duration ?? 0) + 750)
       if (
         token !== this._seekFadeToken ||

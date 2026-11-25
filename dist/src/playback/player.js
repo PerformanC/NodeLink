@@ -1596,11 +1596,12 @@ export class Player {
         if (seekPosition < 0 ||
             (this.track.info.length > 0 && seekPosition > this.track.info.length))
             return false;
-        if (!forceLegacy &&
+        const token = ++this._seekFadeToken;
+        const fadedOut = !forceLegacy &&
             !this._isRecovering &&
             !this.isPaused &&
-            this._fading('seekOut')) {
-            const token = ++this._seekFadeToken;
+            this._fading('seekOut');
+        if (fadedOut) {
             await sleep((this.fading?.seek?.duration ?? 0) + 750);
             if (token !== this._seekFadeToken ||
                 this.destroying ||
