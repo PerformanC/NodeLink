@@ -5,6 +5,7 @@ import discordVoice from '@performanc/voice';
 import { EndReasons, GatewayEvents } from '../constants.js';
 import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.js';
 import { logger } from '../utils.js';
+import { normalizeFactor } from './filters/timescale.js';
 import { AutoMixRegistry } from './processing/AutoMixRegistry.js';
 import { resolveAudioProcessingMode } from './processing/audioContract.js';
 import { DuckingController } from './processing/DuckingController.js';
@@ -927,7 +928,7 @@ export class Player {
     _getTimescaleSpeed() {
         const settings = (this.filters.filters ?? this.filters);
         const timescale = settings.timescale || {};
-        return (timescale.speed ?? 1.0) * (timescale.rate ?? 1.0);
+        return normalizeFactor(timescale.speed) * normalizeFactor(timescale.rate);
     }
     /**
      * Captures current position and packet count as a new baseline.

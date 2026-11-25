@@ -18,7 +18,7 @@ const EMPTY_BUFFER = Buffer.alloc(0)
     cannot turn one chunk into unbounded synchronous work. Nonpositive
     values still mean silence; nonfinite values use the neutral factor.
 */
-const normalizeFactor = (value = 1): number => {
+export const normalizeFactor = (value = 1): number => {
   if (!Number.isFinite(value)) return 1
   return value <= 0 ? value : Math.max(0.25, Math.min(4, value))
 }

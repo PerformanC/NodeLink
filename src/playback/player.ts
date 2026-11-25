@@ -42,6 +42,7 @@ import type {
 } from '../typings/playback/player.types.ts'
 import type { TrackUrlResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'
+import { normalizeFactor } from './filters/timescale.ts'
 import {
   type AnalysisJobPriority,
   AutoMixRegistry
@@ -1340,7 +1341,7 @@ export class Player {
       timescale?: { speed?: number; rate?: number }
     }
     const timescale = settings.timescale || {}
-    return (timescale.speed ?? 1.0) * (timescale.rate ?? 1.0)
+    return normalizeFactor(timescale.speed) * normalizeFactor(timescale.rate)
   }
 
   /**
