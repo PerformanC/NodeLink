@@ -3257,13 +3257,14 @@ export class Player {
       this._fading('resume')
       const stillPlaying = this.connection?.playerState?.status === 'playing'
       if (audioStream && !stillPlaying) this.connection?.unpause?.('requested')
-      this._rescheduleCrossfade(this._pausedAtPosition)
+      const resumePosition = stillPlaying
+        ? this._realPosition()
+        : this._pausedAtPosition
+      this._rescheduleCrossfade(resumePosition)
       if (audioStream && stillPlaying) {
         this._isResuming = false
         this._pausedAtPosition = undefined
-        this._fading('trackEndSchedule', {
-          startPosition: this._realPosition()
-        })
+        this._fading('trackEndSchedule', { startPosition: resumePosition })
       }
     }
 
