@@ -157,7 +157,14 @@ export default class TwitchSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
+        this.streamCapabilities = {
+            heavyByDefault: true,
+            protocols: ['hls', 'https'],
+            formats: ['mpegts', 'mp4'],
+            codecs: ['aac']
+        };
     }
+    streamCapabilities;
     /**
      * Performs source-level initialization.
      * Attempts to load cached IDs or extract them from the Twitch landing page.

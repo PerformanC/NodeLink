@@ -168,15 +168,18 @@ export default class DeezerSource {
      * In-flight setup promise used to serialize initialization work.
      */
     setupPromise = null;
-    /**
-     * Creates a new Deezer source wrapper.
-     *
-     * @param nodelink Worker runtime used by the source implementation.
-     */
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.config = nodelink.options;
+        this.streamCapabilities = {
+            encryptedStream: true,
+            heavyByDefault: true,
+            protocols: ['https'],
+            formats: ['mp3', 'flac'],
+            codecs: ['mpeg', 'flac']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes Deezer gateway credentials and caches them for later use.
      *

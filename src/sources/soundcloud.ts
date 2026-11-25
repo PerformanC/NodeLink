@@ -97,7 +97,17 @@ export default class SoundCloudSource
     ]
     this.priority = DEFAULT_PRIORITY
     this.clientId = nodelink.options?.sources?.soundcloud?.clientId ?? null
+    this.streamCapabilities = {
+      encryptedStream: false,
+      isMirror: false,
+      heavyByDefault: false,
+      protocols: ['hls', 'https', 'http'],
+      formats: ['mp3', 'm4a', 'aac_hls', 'opus'],
+      codecs: ['mpeg', 'aac', 'opus']
+    }
   }
+
+  readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   async setup(): Promise<boolean> {
     if (this.clientId) {

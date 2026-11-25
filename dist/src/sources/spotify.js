@@ -200,7 +200,11 @@ export default class SpotifySource {
             allowLocalFiles: false
         });
         this.market = this.config.market || 'US';
+        this.streamCapabilities = {
+            isMirror: true
+        };
     }
+    streamCapabilities;
     /**
      * Initializes the Spotify source by validating credentials and priming tokens.
      * Supports incremental tier activation based on available config.

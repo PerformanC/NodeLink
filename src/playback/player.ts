@@ -1411,6 +1411,24 @@ export class Player {
       }
     )
 
+    const extraData = additionalData as Record<string, unknown>
+    if (
+      resolvedUrlData.format &&
+      typeof resolvedUrlData.format === 'string' &&
+      !extraData.__resolvedFormat
+    ) {
+      extraData.__resolvedFormat = resolvedUrlData.format
+    }
+    if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+      extraData.isLive = resolvedUrlData.isLive
+    }
+    if (
+      resolvedUrlData.isEncrypted !== undefined &&
+      extraData.isEncrypted === undefined
+    ) {
+      extraData.isEncrypted = resolvedUrlData.isEncrypted
+    }
+
     const fetched = await this.nodelink.sources.getTrackStream(
       track,
       resolvedUrlData.url as string,
@@ -3876,11 +3894,27 @@ export class Player {
       throw new Error('Failed to get stream URL for mix track')
     }
 
+    const mixAdditionalData: Record<string, unknown> = {
+      ...(urlData.additionalData ?? {})
+    }
+    if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+      mixAdditionalData.__resolvedFormat = urlData.format
+    }
+    if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+      mixAdditionalData.isLive = urlData.isLive
+    }
+    if (
+      urlData.isEncrypted !== undefined &&
+      mixAdditionalData.isEncrypted === undefined
+    ) {
+      mixAdditionalData.isEncrypted = urlData.isEncrypted
+    }
+
     const fetched = await this.nodelink.sources.getTrackStream(
       (urlData.newTrack?.info as TrackInfoExtended) || trackPayload.info,
       urlData.url as string,
       urlData.protocol as string,
-      urlData.additionalData
+      mixAdditionalData
     )
 
     if (fetched.exception) {
@@ -4300,6 +4334,39 @@ export class Player {
             : 0
       },
       voice: structuredClone(this.voice)
+    }
+  }
+
+  /**
+   * Exports exact live playback, stream, and voice state for worker failover or gradual handoff.
+   */
+  public exportHandoffState(): {
+    guildId: string
+    sessionId: string
+    userId: string
+    track: PlayerTrack | null
+    position: number
+    capturedAt: number
+    isPaused: boolean
+    volume: number
+    filters: FiltersState
+    voice: PlayerVoiceState
+    contentLength: number | null
+    downloadedBytes: number
+  } {
+    return {
+      guildId: this.guildId,
+      sessionId: this.session.id,
+      userId: this.session.userId,
+      track: this.track ? structuredClone(this.track) : null,
+      position: this._realPosition(),
+      capturedAt: Date.now(),
+      isPaused: this.isPaused,
+      volume: this.volumePercent,
+      filters: structuredClone(this.filters),
+      voice: structuredClone(this.voice),
+      contentLength: this.profilerStreamStats.totalBytes,
+      downloadedBytes: this.profilerStreamStats.downloadedBytes
     }
   }
 

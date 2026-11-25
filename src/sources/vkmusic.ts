@@ -193,7 +193,14 @@ export default class VKMusicSource implements SourceInstance {
     }) as VKMusicSourceConfig
     this.accessToken = this.config.userToken || null
     this.cookie = this.config.userCookie || ''
+    this.streamCapabilities = {
+      protocols: ['hls', 'https'],
+      formats: ['mpegts', 'mp3'],
+      codecs: ['aac', 'mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Performs source-level initialization.

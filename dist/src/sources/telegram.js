@@ -121,7 +121,13 @@ export default class TelegramSource {
         ];
         this.searchTerms = [];
         this.priority = 80;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp4'],
+            codecs: ['aac']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes the source.
      *

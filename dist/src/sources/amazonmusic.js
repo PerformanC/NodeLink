@@ -145,7 +145,9 @@ export default class AmazonMusicSource {
             playlistLoadLimit: 0,
             albumLoadLimit: 0
         });
+        this.streamCapabilities = { isMirror: true };
     }
+    streamCapabilities;
     /**
      * Performs source-level initialization.
      * @returns A promise resolving to true.

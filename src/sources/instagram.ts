@@ -305,7 +305,14 @@ export default class InstagramSource
       fbLsd: null,
       jazoest: '2957'
     }
+    this.streamCapabilities = {
+      protocols: ['https', 'http'],
+      formats: ['mp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the Instagram source by fetching API parameters.

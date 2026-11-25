@@ -206,7 +206,13 @@ export default class YandexMusicSource {
         this.playlistLoadLimit = this.config.playlistLoadLimit ?? 1;
         this.allowUnavailable = this.config.allowUnavailable ?? false;
         this.allowExplicit = this.config.allowExplicit ?? true;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp3', 'flac'],
+            codecs: ['mpeg', 'flac']
+        };
     }
+    streamCapabilities;
     /**
      * Performs source-level initialization.
      * Loads cached tokens or registers provided configuration.

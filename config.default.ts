@@ -41,6 +41,43 @@ export const config: NodelinkConfig = {
       tasksPerWorker: 32,
       silentLogs: true
     },
+    streamTransport: {
+      enabled: false,
+      preset: 'off',
+      sources: ['*'],
+      excludeSources: ['local'],
+      defaultAction: {
+        transport: 'direct',
+        output: 'raw',
+        bufferProfile: 'standard'
+      },
+      rules: [],
+      bufferProfiles: {
+        compact: {
+          lowWatermarkBytes: 32 * 1024,
+          targetWatermarkBytes: 96 * 1024,
+          highWatermarkBytes: 192 * 1024
+        },
+        standard: {
+          lowWatermarkBytes: 64 * 1024,
+          targetWatermarkBytes: 192 * 1024,
+          highWatermarkBytes: 384 * 1024
+        },
+        large: {
+          lowWatermarkBytes: 128 * 1024,
+          targetWatermarkBytes: 512 * 1024,
+          highWatermarkBytes: 1024 * 1024
+        }
+      },
+      limits: {
+        maxGlobalReserveBytes: 64 * 1024 * 1024,
+        maxConcurrentTransports: 0
+      },
+      fallback: {
+        onWorkerUnavailable: 'direct',
+        handshakeTimeoutMs: 5000
+      }
+    },
     timeouts: {
       heavyMs: 6000,
       fastMs: 4000

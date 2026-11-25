@@ -168,7 +168,14 @@ export default class RssSource implements SourceInstance {
     this.nodelink = nodelink
     this.patterns = [RSS_PATTERN, PODCAST_RSS_PATTERN]
     this.priority = 50
+    this.streamCapabilities = {
+      protocols: ['http', 'https'],
+      formats: ['mp3', 'm4a', 'ogg'],
+      codecs: ['mpeg', 'aac', 'vorbis']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the source.

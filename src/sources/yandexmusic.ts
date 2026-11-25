@@ -259,7 +259,14 @@ export default class YandexMusicSource implements SourceInstance {
     this.playlistLoadLimit = this.config.playlistLoadLimit ?? 1
     this.allowUnavailable = this.config.allowUnavailable ?? false
     this.allowExplicit = this.config.allowExplicit ?? true
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp3', 'flac'],
+      codecs: ['mpeg', 'flac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Performs source-level initialization.

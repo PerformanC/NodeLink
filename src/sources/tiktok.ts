@@ -148,7 +148,14 @@ export default class TiktokSource
       /^https?:\/\/(?:www\.)?m\.tiktok\.com\/([\w-]+)/i
     ]
     this.priority = 60
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes source resources. No async setup required.

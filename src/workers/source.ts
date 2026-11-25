@@ -18,10 +18,16 @@ import {
 import type PluginManager from '../managers/pluginManager.ts'
 import type { PluginManagerContext } from '../managers/pluginManager.ts'
 import { migrateConfig } from '../modules/config/configMigration.ts'
+import {
+  createDecodedPCMStream,
+  createDemuxedStream
+} from '../playback/processing/streamProcessor.ts'
+import { StreamTransportClient } from '../playback/streamTransport.ts'
 
 import type {
   JsonValue,
-  NodelinkConfig
+  NodelinkConfig,
+  StreamOutputMode
 } from '../typings/config/config.types.ts'
 import type { NodeLink } from '../typings/playback/player.types.ts'
 import type {
@@ -856,6 +862,7 @@ if (isMainThread) {
    * @internal
    */
   const activeChats = new Map<string, boolean>()
+  const activeTransports = new Map<string, StreamTransportClient>()
   const profilerBaseDir = process.env.NODELINK_PROFILER_DIR || '.profiles'
   let activeCpuSession: {
     session: inspector.Session
@@ -1739,8 +1746,121 @@ if (isMainThread) {
           }
           break
         }
+        case 'startStreamTransport': {
+          const {
+            track,
+            url,
+            protocol,
+            additionalData,
+            outputMode,
+            transportSocketPath,
+            streamIdBytes,
+            securityTokenBytes,
+            maxRecordPayloadBytes,
+            artificialDelayMs
+          } = payload as {
+            track: TrackInfo
+            url: string
+            protocol?: string
+            additionalData?: Record<string, unknown>
+            outputMode?: StreamOutputMode
+            transportSocketPath: string
+            streamIdBytes: Uint8Array
+            securityTokenBytes: Uint8Array
+            maxRecordPayloadBytes?: number
+            artificialDelayMs?: number
+          }
+
+          const idBuf = Buffer.from(streamIdBytes)
+          const tokenBuf = Buffer.from(securityTokenBytes)
+          securityTokenBytes.fill(0)
+
+          const fetched = await nodelink.sources?.getTrackStream(
+            track,
+            url,
+            protocol,
+            {
+              ...(additionalData || {}),
+              __fromSourceWorkerTransport: true
+            }
+          )
+
+          if (
+            !fetched ||
+            ('exception' in fetched && fetched.exception) ||
+            !('stream' in fetched) ||
+            !fetched.stream
+          ) {
+            tokenBuf.fill(0)
+            const errMsg =
+              fetched && 'exception' in fetched && fetched.exception
+                ? fetched.exception.message
+                : 'Failed to open source stream in Source Worker'
+            throw new Error(errMsg)
+          }
+
+          let producedStream = fetched.stream
+          let producedType = fetched.type || 'audio/mpeg'
+          if (outputMode === 'pcm') {
+            producedStream = createDecodedPCMStream(
+              fetched.stream,
+              producedType,
+              nodelink as unknown as NodeLink,
+              url
+            )
+            producedType = 'pcm'
+          } else if (outputMode === 'demuxed') {
+            const demuxed = createDemuxedStream(fetched.stream, producedType)
+            producedStream = demuxed.stream
+            producedType = demuxed.type
+          }
+
+          const streamIdHex = idBuf.toString('hex')
+          const transportKind =
+            process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket'
+          utils.logger(
+            'info',
+            'SourceWorker',
+            `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}]`
+          )
+          const client = new StreamTransportClient({
+            socketPath: transportSocketPath,
+            streamIdBytes: idBuf,
+            securityTokenBytes: tokenBuf,
+            sourceStream: producedStream,
+            maxRecordPayloadBytes,
+            artificialDelayMs
+          })
+          activeTransports.set(streamIdHex, client)
+          void client
+            .run()
+            .catch(() => {})
+            .finally(() => {
+              activeTransports.delete(streamIdHex)
+            })
+
+          result = {
+            started: true,
+            type: producedType
+          }
+          break
+        }
+        case 'cancelStreamTransport': {
+          const { streamIdHex } = payload as { streamIdHex: string }
+          const active = activeTransports.get(streamIdHex)
+          if (active) {
+            active.cancel()
+            activeTransports.delete(streamIdHex)
+          }
+          result = { cancelled: true }
+          break
+        }
       }
-      if (task === 'getTrackUrl') {
+      if (
+        task === 'getTrackUrl' ||
+        task === 'startStreamTransport' ||
+        task === 'cancelStreamTransport'
+      ) {
         const bin = v8.serialize(result)
         const ab = bin.buffer.slice(
           bin.byteOffset,

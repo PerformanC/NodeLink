@@ -209,7 +209,13 @@ export default class QQMusicSource {
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.config = nodelink.options.sources?.qqmusic;
+        this.streamCapabilities = {
+            protocols: ['http', 'https'],
+            formats: ['m4a', 'flac', 'mp3'],
+            codecs: ['aac', 'flac', 'mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes QQ Music source dependencies and verifies configuration.
      * @returns Resolves to true when initialization succeeds.

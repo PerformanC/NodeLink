@@ -3299,18 +3299,12 @@ export const createSeekeableAudioResource = async (
   }
 }
 
-export const createPCMStream = (
-  _guildId: string,
+function buildDecodeStageStreams(
   stream: Readable,
   type: string,
-  nodelink: NodeLink,
-  volume: number = 1.0,
-  filters: FiltersState = {},
-  enableAGC: boolean = false,
+  resamplingQuality: string,
   directHttpUrl?: string
-): Transform => {
-  const resamplingQuality =
-    nodelink.options.playback.audio?.resamplingQuality || 'fastest'
+): (Readable | Transform)[] {
   /* INFO: Keep MP4 codec selection in the demuxer, as in playback. */
   const normalizedType = _isMp4Format(type.toLowerCase())
     ? SupportedFormats.AAC
@@ -3397,6 +3391,126 @@ export const createPCMStream = (
     default:
       throw new Error(`Unsupported audio format: '${type}'`)
   }
+
+  return streams
+}
+
+/**
+ * Strips container framing (`fmp4`, `mpegts`, `flv`) into an elementary audio
+ * stream when supported, leaving elementary formats untouched.
+ */
+export const createDemuxedStream = (
+  stream: Readable,
+  type: string
+): { stream: Readable; type: string } => {
+  const lowerType = type.toLowerCase()
+  let demuxer: Transform | null = null
+  let outputType = type
+
+  if (_isFmp4Format(lowerType)) {
+    demuxer = new FMP4ToAACStream({
+      bufferMode: lowerType.includes('fmp4-buffered')
+    })
+    outputType = 'aac'
+  } else if (_isMpegtsFormat(lowerType)) {
+    demuxer = new MPEGTSDemuxer()
+    outputType =
+      lowerType.includes('mp3') || lowerType.includes('mpeg') ? 'mpeg' : 'aac'
+  } else if (normalizeFormat(type) === SupportedFormats.FLV) {
+    demuxer = new FLVToAACStream()
+    outputType = 'aac'
+  }
+
+  if (!demuxer) {
+    return { stream, type }
+  }
+
+  demuxer.on('error', (err: Error & { code?: string }) =>
+    logger(
+      'error',
+      'DemuxedStream',
+      `Component error (${demuxer.constructor.name}): ${err.message} (${err.code})`
+    )
+  )
+
+  pipeline([stream, demuxer], (err: NodeJS.ErrnoException | null) => {
+    if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+      logger(
+        'error',
+        'DemuxedStream',
+        `Internal demux pipeline failed: ${err.message}`
+      )
+    }
+  })
+
+  return { stream: demuxer, type: outputType }
+}
+
+/**
+ * Decodes an audio stream directly to 48kHz stereo PCM without applying
+ * player-side volume or DSP filters.
+ */
+export const createDecodedPCMStream = (
+  stream: Readable,
+  type: string,
+  nodelink: NodeLink,
+  directHttpUrl?: string
+): Readable => {
+  const resamplingQuality =
+    nodelink.options?.playback?.audio?.resamplingQuality || 'fastest'
+  const streams = buildDecodeStageStreams(
+    stream,
+    type,
+    resamplingQuality,
+    directHttpUrl
+  )
+  if (streams.length === 1) {
+    return streams[0] as Readable
+  }
+
+  for (const s of streams) {
+    if (s !== stream) {
+      ;(s as Transform).on('error', (err: Error & { code?: string }) =>
+        logger(
+          'error',
+          'DecodedPCMStream',
+          `Component error (${s.constructor.name}): ${err.message} (${err.code})`
+        )
+      )
+    }
+  }
+
+  pipeline(streams, (err: NodeJS.ErrnoException | null) => {
+    if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+      logger(
+        'error',
+        'DecodedPCMStream',
+        `Internal decode pipeline failed: ${err.message}`
+      )
+    }
+  })
+
+  return streams[streams.length - 1] as Transform
+}
+
+export const createPCMStream = (
+  _guildId: string,
+  stream: Readable,
+  type: string,
+  nodelink: NodeLink,
+  volume: number = 1.0,
+  filters: FiltersState = {},
+  enableAGC: boolean = false,
+  directHttpUrl?: string
+): Transform => {
+  const resamplingQuality =
+    nodelink.options.playback.audio?.resamplingQuality || 'fastest'
+  const streams = buildDecodeStageStreams(
+    stream,
+    type,
+    resamplingQuality,
+    directHttpUrl
+  )
 
   streams.push(
     new VolumeTransformer({

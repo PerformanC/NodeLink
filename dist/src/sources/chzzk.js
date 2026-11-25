@@ -110,7 +110,14 @@ export default class ChzzkSource {
      */
     constructor(nodelink) {
         this.nodelink = nodelink;
+        this.streamCapabilities = {
+            heavyByDefault: true,
+            protocols: ['hls', 'https'],
+            formats: ['aac', 'mp4'],
+            codecs: ['aac']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes the Chzzk source.
      * @returns Promise resolving to true when setup is complete.

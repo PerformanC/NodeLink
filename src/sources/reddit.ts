@@ -149,7 +149,15 @@ export default class RedditSource
     this.nodelink = nodelink
     this.patterns = REDDIT_PATTERNS
     this.priority = 65
+    this.streamCapabilities = {
+      heavyByDefault: true,
+      protocols: ['hls'],
+      formats: ['fmp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the source.

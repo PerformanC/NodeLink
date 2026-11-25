@@ -202,7 +202,10 @@ export default class SongLinkSource {
     this.cacheTtlMs = DEFAULT_CACHE_TTL_MS
     this.useScrapeFallback = true
     this.useApi = true
+    this.streamCapabilities = { isMirror: true }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes Song.link source options.

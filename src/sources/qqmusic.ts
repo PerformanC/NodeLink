@@ -258,7 +258,14 @@ export default class QQMusicSource
   public constructor(nodelink: WorkerNodeLink) {
     this.nodelink = nodelink
     this.config = nodelink.options.sources?.qqmusic as QQMusicConfig | undefined
+    this.streamCapabilities = {
+      protocols: ['http', 'https'],
+      formats: ['m4a', 'flac', 'mp3'],
+      codecs: ['aac', 'flac', 'mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes QQ Music source dependencies and verifies configuration.

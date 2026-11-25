@@ -53,7 +53,13 @@ export default class TumblrSource {
             /^https?:\/\/(?:www\.)?tumblr\.com\/([^/?#&]+)\/(\d+)(?:\/|[?#].*)?$/i
         ];
         this.priority = 60;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp3', 'mp4'],
+            codecs: ['mpeg', 'aac']
+        };
     }
+    streamCapabilities;
     async setup() {
         logger('info', 'Sources', 'Loaded Tumblr source.');
         return true;

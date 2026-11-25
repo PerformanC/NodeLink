@@ -979,6 +979,19 @@ export class Player {
             source: track.sourceName,
             url: resolvedUrlData.url
         });
+        const extraData = additionalData;
+        if (resolvedUrlData.format &&
+            typeof resolvedUrlData.format === 'string' &&
+            !extraData.__resolvedFormat) {
+            extraData.__resolvedFormat = resolvedUrlData.format;
+        }
+        if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+            extraData.isLive = resolvedUrlData.isLive;
+        }
+        if (resolvedUrlData.isEncrypted !== undefined &&
+            extraData.isEncrypted === undefined) {
+            extraData.isEncrypted = resolvedUrlData.isEncrypted;
+        }
         const fetched = await this.nodelink.sources.getTrackStream(track, resolvedUrlData.url, resolvedUrlData.protocol, additionalData);
         if (fetched.exception) {
             logger('error', 'Player', `Stream resource fetch failed for guild ${this.guildId}`, fetched.exception);
@@ -2665,7 +2678,20 @@ export class Player {
         if (!urlData?.url) {
             throw new Error('Failed to get stream URL for mix track');
         }
-        const fetched = await this.nodelink.sources.getTrackStream(urlData.newTrack?.info || trackPayload.info, urlData.url, urlData.protocol, urlData.additionalData);
+        const mixAdditionalData = {
+            ...(urlData.additionalData ?? {})
+        };
+        if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+            mixAdditionalData.__resolvedFormat = urlData.format;
+        }
+        if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+            mixAdditionalData.isLive = urlData.isLive;
+        }
+        if (urlData.isEncrypted !== undefined &&
+            mixAdditionalData.isEncrypted === undefined) {
+            mixAdditionalData.isEncrypted = urlData.isEncrypted;
+        }
+        const fetched = await this.nodelink.sources.getTrackStream(urlData.newTrack?.info || trackPayload.info, urlData.url, urlData.protocol, mixAdditionalData);
         if (fetched.exception) {
             throw new Error(fetched.exception.message);
         }
@@ -2974,6 +3000,25 @@ export class Player {
                     : 0
             },
             voice: structuredClone(this.voice)
+        };
+    }
+    /**
+     * Exports exact live playback, stream, and voice state for worker failover or gradual handoff.
+     */
+    exportHandoffState() {
+        return {
+            guildId: this.guildId,
+            sessionId: this.session.id,
+            userId: this.session.userId,
+            track: this.track ? structuredClone(this.track) : null,
+            position: this._realPosition(),
+            capturedAt: Date.now(),
+            isPaused: this.isPaused,
+            volume: this.volumePercent,
+            filters: structuredClone(this.filters),
+            voice: structuredClone(this.voice),
+            contentLength: this.profilerStreamStats.totalBytes,
+            downloadedBytes: this.profilerStreamStats.downloadedBytes
         };
     }
     /**

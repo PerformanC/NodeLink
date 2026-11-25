@@ -161,7 +161,9 @@ export default class LastFMSource {
         this.searchTerms = ['lfsearch', 'lastfm'];
         this.maxSearchResults = this.getMaxSearchResults();
         this.apiKey = this.config.apiKey ?? DEFAULT_LASTFM_API_KEY;
+        this.streamCapabilities = { isMirror: true };
     }
+    streamCapabilities;
     getConfig() {
         const options = this.nodelink?.options;
         const config = options?.sources?.lastfm;
