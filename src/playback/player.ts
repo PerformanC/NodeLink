@@ -2512,6 +2512,7 @@ export class Player {
       return result
     } catch (e) {
       if (this.destroying || this.track !== seekTrack) return false
+      if (fadedOut && token === this._seekFadeToken) this._fading('seek')
       logger('error', 'Player', `Seek failed for guild ${this.guildId}`, e)
       this._onError(e as Error)
       return false
