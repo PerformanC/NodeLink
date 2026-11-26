@@ -1,5 +1,6 @@
 import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
+import { fetchPathfinderCanvas } from '../modules/spotifyPathfinderCanvas.ts'
 import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
@@ -1226,11 +1227,15 @@ export default class SpotifySource implements SourceInstance {
 
           const tasks: Promise<void>[] = []
 
-          if (this.mobileToken) {
+          const experimentalCanvas = process.env.NODELINK_SPOTIFY_CANVAS_MODE === 'pathfinder'
+          if (experimentalCanvas || this.mobileToken) {
+            const trackUri = `spotify:track:${id}`
+            const diagnose = (event: unknown) =>
+              logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
             tasks.push(
-              fetchCanvas(`spotify:track:${id}`, this.mobileToken, (event) => {
-                logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
-              })
+              (experimentalCanvas
+                ? fetchPathfinderCanvas(trackUri, this.anonymousToken, diagnose, process.env.NODELINK_SPOTIFY_CANVAS_CLIENT_TOKEN?.trim())
+                : this.mobileToken ? fetchCanvas(trackUri, this.mobileToken, diagnose) : Promise.resolve(null))
                 .then((cv) => {
                   const selected = selectSpotifyCanvas(cv?.data?.canvasesList, `spotify:track:${id}`)
                   if (selected) {
