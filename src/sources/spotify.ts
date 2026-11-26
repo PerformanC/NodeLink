@@ -1,4 +1,5 @@
 import { getLocalToken } from '../modules/spotifyAuth.ts'
+import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
 import { fetchPathfinderCanvas } from '../modules/spotifyPathfinderCanvas.ts'
 import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
@@ -229,6 +230,9 @@ export default class SpotifySource implements SourceInstance {
    */
   private mobileTokenExpiry: number | null = null
 
+  /** Stop retrying a rejected mobile authorization until this source is restarted. */
+  private mobileAuthRejected = false
+
   /**
    * Prevents concurrent token refreshes using a per-tier promise map.
    * @internal
@@ -343,6 +347,7 @@ export default class SpotifySource implements SourceInstance {
    * @internal
    */
   private async _ensureToken(type: SpotifyTokenType): Promise<boolean> {
+    if (type === 'mobile' && this.mobileAuthRejected) return false
     const now = Date.now()
     let token: string | null = null
     let expiry: number | null = null
@@ -408,6 +413,7 @@ export default class SpotifySource implements SourceInstance {
    * @internal
    */
   private async _refreshToken(type: SpotifyTokenType): Promise<boolean> {
+    if (type === 'mobile' && this.mobileAuthRejected) return false
     const cm = this.nodelink.credentialManager
     if (!cm) return false
 
@@ -479,9 +485,23 @@ export default class SpotifySource implements SourceInstance {
             'Spotify',
             `${type} token request failed: ${e instanceof Error ? e.message : String(e)}`
           )
+          if (isSpotifyAuthRejection(e)) {
+            if (type === 'mobile') {
+              this.mobileAuthRejected = true
+              this.mobileToken = null
+              this.mobileTokenExpiry = null
+              const timer = this.tokenRefreshTimers.get('mobile')
+              if (timer) clearTimeout(timer)
+              this.tokenRefreshTimers.delete('mobile')
+              cm.delete('spotify_mobile_token')
+              logger('debug', 'SpotifyCanvas', 'Mobile authorization rejected; Canvas disabled until source restart.')
+            }
+            return false
+          }
         }
 
-        if (this.config.externalAuthUrl) {
+        // The external auth response populates only the anonymous tier.
+        if (type === 'anonymous' && this.config.externalAuthUrl) {
           try {
             const res = await http1makeRequest(this.config.externalAuthUrl, {
               disableBodyCompression: true
@@ -1297,7 +1317,9 @@ export default class SpotifySource implements SourceInstance {
     const pathfinder = process.env.NODELINK_SPOTIFY_CANVAS_MODE === 'pathfinder'
     const token = pathfinder ? this.anonymousToken : this.mobileToken
     const expiry = pathfinder ? this.anonymousTokenExpiry : this.mobileTokenExpiry
-    const state = spotifyCanvasSessionState(token, expiry)
+    const state = !pathfinder && this.mobileAuthRejected
+      ? 'authorization-rejected'
+      : spotifyCanvasSessionState(token, expiry)
     const diagnose = (event: unknown) =>
       logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
     diagnose({
@@ -1305,7 +1327,7 @@ export default class SpotifySource implements SourceInstance {
       mode: pathfinder ? 'pathfinder' : 'native',
       state
     })
-    if (!token || state === 'missing' || state === 'expired') return
+    if (!token || state === 'missing' || state === 'expired' || state === 'authorization-rejected') return
 
     try {
       const trackUri = `spotify:track:${id}`
