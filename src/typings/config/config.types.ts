@@ -294,6 +294,9 @@ export interface DeezerSourceConfig {
  * Configuration for the Tidal high-fidelity music provider.
  */
 export interface TidalSourceConfig {
+  /** Opt-in detailed recording credits for explicit single-track resolution. */
+  enrichCredits?: boolean
+
   /** Enables the Tidal source plugin. */
   enabled: boolean
 

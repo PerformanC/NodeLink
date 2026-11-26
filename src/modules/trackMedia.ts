@@ -52,8 +52,32 @@ export interface TrackMediaMetadata {
     id?: string
     artwork?: MediaImage[]
     banners?: MediaImage[]
+    url?: string
   }>
-  album?: { name?: string; id?: string; artwork?: MediaImage[] }
+  album?: {
+    name?: string
+    id?: string
+    artwork?: MediaImage[]
+    url?: string
+    releaseDate?: string
+    copyright?: string
+    label?: string
+    type?: string
+    trackCount?: number
+    discCount?: number
+  }
+  catalog?: {
+    url?: string
+    trackNumber?: number
+    discNumber?: number
+    version?: string
+    copyright?: string
+    explicit?: boolean
+    popularity?: number
+    audioQuality?: string
+    audioModes?: string[]
+    mediaTags?: string[]
+  }
   canvas?: {
     url: string
     id?: string

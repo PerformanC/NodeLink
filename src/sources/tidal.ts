@@ -606,7 +606,12 @@ export default class TidalSource {
     const data = await this.getJson(`tracks/${id}`)
     if (!data) return { loadType: 'empty', data: {} }
 
-    const track = this.buildTrack(data)
+    let credits: unknown
+    if (this.config.enrichCredits === true && /^\d+$/.test(id) && String(data.id) === id) {
+      // Optional endpoint; failure must not make the track unavailable.
+      credits = await this.getJsonPayload(`tracks/${id}/credits`, {}, 5000).catch(() => undefined)
+    }
+    const track = this.buildTrack(data, undefined, credits)
     if (!track) return { loadType: 'empty', data: {} }
     return { loadType: 'track', data: track }
   }
@@ -822,6 +827,14 @@ export default class TidalSource {
     endpoint: string,
     params: Record<string, string | number> = {}
   ): Promise<Record<string, unknown> | null> {
+    return this.asRecord(await this.getJsonPayload(endpoint, params))
+  }
+
+  private async getJsonPayload(
+    endpoint: string,
+    params: Record<string, string | number>,
+    timeout?: number
+  ): Promise<unknown> {
     const url = new URL(`${API_BASE}${endpoint}`)
     const queryParams = { ...params, countryCode: this.countryCode }
 
@@ -830,6 +843,7 @@ export default class TidalSource {
     }
 
     const { body, error, statusCode } = await http1makeRequest(url.toString(), {
+      ...(timeout !== undefined ? { timeout } : {}),
       headers: {
         'x-tidal-token': this.token || '',
         'User-Agent': 'TIDAL/3704 CFNetwork/1220.1 Darwin/20.3.0'
@@ -844,13 +858,13 @@ export default class TidalSource {
 
     if (typeof body === 'string') {
       try {
-        return this.asRecord(JSON.parse(body))
+        return JSON.parse(body)
       } catch {
         return null
       }
     }
 
-    return this.asRecord(body)
+    return body
   }
 
   /**
@@ -886,7 +900,8 @@ export default class TidalSource {
    */
   private buildTrack(
     item: Record<string, unknown>,
-    parentAlbum?: Record<string, unknown>
+    parentAlbum?: Record<string, unknown>,
+    credits?: unknown
   ): {
     encoded: string
     info: TrackInfo
@@ -925,7 +940,7 @@ export default class TidalSource {
       encoded: encodeTrack(encodedInput),
       info: trackInfo,
       pluginInfo: {
-        media: buildTidalMedia(item, parentAlbum)
+        media: buildTidalMedia(item, parentAlbum, credits)
       }
     }
   }

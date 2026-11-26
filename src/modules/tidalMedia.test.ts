@@ -73,10 +73,53 @@ test('omits malformed resources, unknown roles and missing fields', () => {
       vibrantColor: 'unknown'
     }
   })
-  assert.deepEqual(media.artists, [{ id: '1', name: 'A' }])
-  assert.deepEqual(media.album, { id: '2' })
+  assert.deepEqual(media.artists, [{ id: '1', name: 'A', url: 'https://tidal.com/browse/artist/1' }])
+  assert.deepEqual(media.album, { id: '2', url: 'https://tidal.com/browse/album/2' })
   assert.equal(media.credits, undefined)
   assert.equal(media.colors, undefined)
   assert.equal(media.motionArtwork, undefined)
   assert.deepEqual(buildTidalMedia({}), { provider: 'tidal', artists: [] })
+})
+
+test('preserves catalog metadata and grouped track credits without conflating album credits', () => {
+  const media = buildTidalMedia({
+    id: 10, trackNumber: 2, volumeNumber: 1, explicit: false, popularity: 0,
+    copyright: 'Recording rights', version: 'Live', audioQuality: 'LOSSLESS',
+    audioModes: ['STEREO', 'STEREO'], mediaMetadata: { tags: ['LOSSLESS'] },
+    credits: [{ type: 'Composer', contributors: [{ name: 'Writer' }] }],
+    album: { id: 3 }
+  }, {
+    id: 3, releaseDate: '2024-02-29', copyright: 'Album rights', type: 'ALBUM',
+    numberOfTracks: 10, numberOfVolumes: 1, label: 'Label',
+    credits: [{ type: 'Producer', contributors: [{ name: 'Album producer' }] }]
+  }, [
+    { type: 'Composer', contributors: [{ name: 'Writer' }] },
+    { type: 'Producer', contributors: [{ name: 'Track producer' }] }
+  ])
+  assert.equal(media.catalog?.url, 'https://tidal.com/browse/track/10')
+  assert.equal(media.catalog?.trackNumber, 2)
+  assert.equal(media.catalog?.discNumber, 1)
+  assert.equal(media.catalog?.explicit, false)
+  assert.equal(media.catalog?.popularity, 0)
+  assert.deepEqual(media.catalog?.audioModes, ['STEREO'])
+  assert.deepEqual(media.catalog?.mediaTags, ['LOSSLESS'])
+  assert.equal(media.album?.releaseDate, '2024-02-29')
+  assert.equal(media.album?.label, 'Label')
+  assert.equal(media.album?.trackCount, 10)
+  assert.equal(media.album?.discCount, 1)
+  assert.deepEqual(media.credits, [
+    { name: 'Writer', role: 'Composer' },
+    { name: 'Track producer', role: 'Producer' }
+  ])
+})
+
+test('rejects invalid catalog fields and malformed credits', () => {
+  const media = buildTidalMedia({
+    trackNumber: -1, volumeNumber: 1.5, explicit: 'false', popularity: 200,
+    audioModes: [null, 1, ' '], album: { releaseDate: '2025-02-30' },
+    credits: [null, { type: 'Composer', contributors: [{ name: '' }] }]
+  })
+  assert.equal(media.catalog, undefined)
+  assert.equal(media.album, undefined)
+  assert.equal(media.credits, undefined)
 })
