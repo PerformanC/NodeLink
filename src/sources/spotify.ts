@@ -581,8 +581,7 @@ export default class SpotifySource implements SourceInstance {
     tier: SpotifyTokenType = 'official',
     options: Record<string, unknown> = {},
     retry = 0,
-    singleAttempt = false,
-    onAttempt?: (event: { outcome: 'missing-token' | 'http' | 'request-error'; status?: number }) => void
+    singleAttempt = false
   ): Promise<T | null> {
     const ok = await this._ensureToken(tier)
     const token =
@@ -593,10 +592,7 @@ export default class SpotifySource implements SourceInstance {
           : this.mobileToken
 
     if (!ok || !token) {
-      if (singleAttempt) {
-        onAttempt?.({ outcome: 'missing-token' })
-        return null
-      }
+      if (singleAttempt) return null
       const next =
         tier === 'official'
           ? 'anonymous'
@@ -630,7 +626,6 @@ export default class SpotifySource implements SourceInstance {
       const res = await http1makeRequest(url, { ...options, headers })
 
       if (singleAttempt) {
-        onAttempt?.({ outcome: 'http', status: res.statusCode })
         return res.statusCode === 200 || res.statusCode === 201 ? res.body as T : null
       }
 
@@ -705,10 +700,7 @@ export default class SpotifySource implements SourceInstance {
 
       return res.body as T
     } catch (e) {
-      if (singleAttempt && onAttempt) {
-        onAttempt({ outcome: 'request-error' })
-        return null
-      }
+      if (singleAttempt) return null
       logger(
         'error',
         'Spotify',
@@ -770,41 +762,28 @@ export default class SpotifySource implements SourceInstance {
   /** Resolve an ISRC with existing authorized catalog access, without credential switching. */
   private async _fetchTrackIsrc(id: string): Promise<string | undefined> {
     if (!/^[A-Za-z0-9]{22}$/.test(id)) return undefined
-    const diagnose = (event: Record<string, unknown>) =>
-      logger('debug', 'SpotifyISRC', `Track ${id}: ${JSON.stringify(event)}`)
     if (this.config.clientId && this.config.clientSecret) {
       const track = await this._apiRequest<SpotifyTrack>(
-        `/tracks/${id}?market=${this.market}`, 'official', {}, 0, true,
-        event => diagnose({ source: 'official', ...event })
+        `/tracks/${id}?market=${this.market}`, 'official', {}, 0, true
       )
-      const isrc = readOfficialSpotifyIsrc(track, id)
-      if (track) diagnose({ source: 'official', outcome: isrc ? 'found' : 'missing-or-mismatched-isrc' })
-      return isrc
+      return readOfficialSpotifyIsrc(track, id)
     }
-    diagnose({ source: 'official', outcome: 'not-configured' })
-    if (this.mobileAuthRejected) {
-      diagnose({ source: 'mobile', outcome: 'authorization-rejected' })
-      return undefined
-    }
+    if (this.mobileAuthRejected) return undefined
     const hex = this._base62ToHex(id)
     if (!hex) return undefined
     const body = await this._apiRequest<unknown>(
       `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`,
-      'mobile', { responseType: 'buffer' }, 0, true,
-      event => diagnose({ source: 'mobile', ...event })
+      'mobile', { responseType: 'buffer' }, 0, true
     )
     if (!body) return undefined
     let metadata: unknown = body
     if (Buffer.isBuffer(body)) {
       try { metadata = JSON.parse(body.toString('utf8')) }
       catch {
-        diagnose({ source: 'mobile', outcome: 'unsupported-binary-metadata' })
         return undefined
       }
     }
-    const isrc = readSpotifyMetadataIsrc(metadata)
-    diagnose({ source: 'mobile', outcome: isrc ? 'found' : 'missing-or-ambiguous-isrc' })
-    return isrc
+    return readSpotifyMetadataIsrc(metadata)
   }
 
   /**
@@ -3011,9 +2990,8 @@ export default class SpotifySource implements SourceInstance {
     if (!match?.[1]) return null
 
     try {
-      // Optional experimental palette transport, only with existing authorized access.
-      // Do not retry or switch authentication tiers when this operation is rejected.
-      if (process.env.NODELINK_SPOTIFY_COLOR_MODE === 'dynamic') {
+      // The optional dynamic palette uses one request with existing authorized access.
+      if (this.config.colorMode === 'dynamic') {
         const data = await this._internalApiRequest<unknown>(QUERIES.getDynamicColorsByUris, {
           imageUris: [`https://i.scdn.co/image/${match[1]}`]
         }, 'anonymous', 0, true)

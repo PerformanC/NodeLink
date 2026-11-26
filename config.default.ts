@@ -562,6 +562,8 @@ export const config: NodelinkConfig = {
       albumPageLoadConcurrency: 5,
       allowExplicit: true,
       allowLocalFiles: false,
+      extractColors: false,
+      colorMode: 'legacy',
       sp_dc: ''
     },
 

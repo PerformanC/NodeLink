@@ -217,6 +217,9 @@ export interface SpotifySourceConfig {
 
   /** If true, extracts cover art color palettes for single tracks. Default: false. */
   extractColors?: boolean
+
+  /** Cover art palette format. Default: legacy; dynamic requires authorized access. */
+  colorMode?: 'legacy' | 'dynamic'
 }
 
 /**

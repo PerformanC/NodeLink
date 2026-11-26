@@ -451,7 +451,7 @@ export default class SpotifySource {
      * @returns Resolves to body T, or null on terminal failure.
      * @internal
      */
-    async _apiRequest(path, tier = 'official', options = {}, retry = 0, singleAttempt = false, onAttempt) {
+    async _apiRequest(path, tier = 'official', options = {}, retry = 0, singleAttempt = false) {
         const ok = await this._ensureToken(tier);
         const token = tier === 'official'
             ? this.accessToken
@@ -459,10 +459,8 @@ export default class SpotifySource {
                 ? this.anonymousToken
                 : this.mobileToken;
         if (!ok || !token) {
-            if (singleAttempt) {
-                onAttempt?.({ outcome: 'missing-token' });
+            if (singleAttempt)
                 return null;
-            }
             const next = tier === 'official'
                 ? 'anonymous'
                 : tier === 'anonymous'
@@ -491,7 +489,6 @@ export default class SpotifySource {
         try {
             const res = await http1makeRequest(url, { ...options, headers });
             if (singleAttempt) {
-                onAttempt?.({ outcome: 'http', status: res.statusCode });
                 return res.statusCode === 200 || res.statusCode === 201 ? res.body : null;
             }
             if (res.statusCode === 429) {
@@ -548,10 +545,8 @@ export default class SpotifySource {
             return res.body;
         }
         catch (e) {
-            if (singleAttempt && onAttempt) {
-                onAttempt({ outcome: 'request-error' });
+            if (singleAttempt)
                 return null;
-            }
             logger('error', 'Spotify', `API Request failed for ${path}: ${e instanceof Error ? e.message : String(e)}`);
             return null;
         }
@@ -591,23 +586,16 @@ export default class SpotifySource {
     async _fetchTrackIsrc(id) {
         if (!/^[A-Za-z0-9]{22}$/.test(id))
             return undefined;
-        const diagnose = (event) => logger('debug', 'SpotifyISRC', `Track ${id}: ${JSON.stringify(event)}`);
         if (this.config.clientId && this.config.clientSecret) {
-            const track = await this._apiRequest(`/tracks/${id}?market=${this.market}`, 'official', {}, 0, true, event => diagnose({ source: 'official', ...event }));
-            const isrc = readOfficialSpotifyIsrc(track, id);
-            if (track)
-                diagnose({ source: 'official', outcome: isrc ? 'found' : 'missing-or-mismatched-isrc' });
-            return isrc;
+            const track = await this._apiRequest(`/tracks/${id}?market=${this.market}`, 'official', {}, 0, true);
+            return readOfficialSpotifyIsrc(track, id);
         }
-        diagnose({ source: 'official', outcome: 'not-configured' });
-        if (this.mobileAuthRejected) {
-            diagnose({ source: 'mobile', outcome: 'authorization-rejected' });
+        if (this.mobileAuthRejected)
             return undefined;
-        }
         const hex = this._base62ToHex(id);
         if (!hex)
             return undefined;
-        const body = await this._apiRequest(`${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`, 'mobile', { responseType: 'buffer' }, 0, true, event => diagnose({ source: 'mobile', ...event }));
+        const body = await this._apiRequest(`${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`, 'mobile', { responseType: 'buffer' }, 0, true);
         if (!body)
             return undefined;
         let metadata = body;
@@ -616,13 +604,10 @@ export default class SpotifySource {
                 metadata = JSON.parse(body.toString('utf8'));
             }
             catch {
-                diagnose({ source: 'mobile', outcome: 'unsupported-binary-metadata' });
                 return undefined;
             }
         }
-        const isrc = readSpotifyMetadataIsrc(metadata);
-        diagnose({ source: 'mobile', outcome: isrc ? 'found' : 'missing-or-ambiguous-isrc' });
-        return isrc;
+        return readSpotifyMetadataIsrc(metadata);
     }
     /**
      * Transforms a Spotify Base62 identifier into a 32-character hex string.
@@ -2418,9 +2403,8 @@ export default class SpotifySource {
         if (!match?.[1])
             return null;
         try {
-            // Optional experimental palette transport, only with existing authorized access.
-            // Do not retry or switch authentication tiers when this operation is rejected.
-            if (process.env.NODELINK_SPOTIFY_COLOR_MODE === 'dynamic') {
+            // The optional dynamic palette uses one request with existing authorized access.
+            if (this.config.colorMode === 'dynamic') {
                 const data = await this._internalApiRequest(QUERIES.getDynamicColorsByUris, {
                     imageUris: [`https://i.scdn.co/image/${match[1]}`]
                 }, 'anonymous', 0, true);
