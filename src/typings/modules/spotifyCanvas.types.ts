@@ -64,6 +64,9 @@ export interface SpotifyCanvasEntry {
    * Canvas Spotify URI.
    */
   canvasUri: string
+
+  /** Optional additional identifier (protobuf field 9). */
+  otherId?: string
 }
 
 /**

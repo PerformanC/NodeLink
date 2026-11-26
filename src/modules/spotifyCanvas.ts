@@ -17,19 +17,15 @@ import type {
  */
 function readVarint(buffer: Buffer, offset: number): SpotifyCanvasVarintResult {
   let val = 0
-  let shift = 0
-  let byte = 0
   let current = offset
-
-  do {
+  for (let shift = 0; shift <= 28; shift += 7) {
     if (current >= buffer.length) throw new Error('Varint out of bounds')
-    byte = buffer[current] ?? 0
-    current += 1
-    val |= (byte & 127) << shift
-    shift += 7
-  } while (byte & 128)
-
-  return { val, next: current }
+    const byte = buffer[current++] ?? 0
+    if (shift === 28 && byte > 15) throw new Error('Varint exceeds uint32')
+    val += (byte & 127) * 2 ** shift
+    if (!(byte & 128)) return { val, next: current }
+  }
+  throw new Error('Invalid varint')
 }
 
 /**
@@ -42,14 +38,24 @@ function readVarint(buffer: Buffer, offset: number): SpotifyCanvasVarintResult {
  * @internal
  */
 function skipField(buffer: Buffer, offset: number, wireType: number): number {
-  if (wireType === 0) return readVarint(buffer, offset).next
-  if (wireType === 1) return offset + 8
-  if (wireType === 2) {
-    const len = readVarint(buffer, offset)
-    return len.next + len.val
+  if (wireType === 0) {
+    for (let i = 0; i < 10; i++) {
+      if (offset >= buffer.length) throw new Error('Varint out of bounds')
+      const byte = buffer[offset++] ?? 0
+      if (i === 9 && byte > 1) throw new Error('Varint exceeds uint64')
+      if (!(byte & 128)) return offset
+    }
+    throw new Error('Invalid varint')
   }
-  if (wireType === 5) return offset + 4
-  throw new Error(`Unsupported wire type: ${wireType}`)
+  let end: number
+  if (wireType === 1) end = offset + 8
+  else if (wireType === 2) {
+    const len = readVarint(buffer, offset)
+    end = len.next + len.val
+  } else if (wireType === 5) end = offset + 4
+  else throw new Error(`Unsupported wire type: ${wireType}`)
+  if (end > buffer.length) throw new Error('Truncated field')
+  return end
 }
 
 /**
@@ -80,6 +86,7 @@ function decodeArtist(buffer: Buffer): SpotifyCanvasArtist {
 
       const len = readVarint(buffer, offset)
       offset = len.next
+      if (len.val > buffer.length - offset) throw new Error('Truncated field')
       const valBuf = buffer.subarray(offset, offset + len.val)
       offset += len.val
 
@@ -95,7 +102,7 @@ function decodeArtist(buffer: Buffer): SpotifyCanvasArtist {
           break
       }
     } catch {
-      break
+      throw new Error('Malformed artist message')
     }
   }
 
@@ -136,6 +143,7 @@ function decodeCanvas(buffer: Buffer): SpotifyCanvasEntry {
 
       const len = readVarint(buffer, offset)
       offset = len.next
+      if (len.val > buffer.length - offset) throw new Error('Truncated field')
       const valBuf = buffer.subarray(offset, offset + len.val)
       offset += len.val
 
@@ -152,12 +160,15 @@ function decodeCanvas(buffer: Buffer): SpotifyCanvasEntry {
         case 6:
           canvas.artist = decodeArtist(valBuf)
           break
+        case 9:
+          canvas.otherId = valBuf.toString('utf8')
+          break
         case 11:
           canvas.canvasUri = valBuf.toString('utf8')
           break
       }
     } catch {
-      break
+      throw new Error('Malformed Canvas message')
     }
   }
 
@@ -184,6 +195,7 @@ function decodeCanvasResponse(buffer: Buffer): SpotifyCanvasDecodedResponse {
       if (fieldNumber === 1 && wireType === 2) {
         const len = readVarint(buffer, offset)
         offset = len.next
+        if (len.val > buffer.length - offset) throw new Error('Truncated Canvas')
         const canvasBuf = buffer.subarray(offset, offset + len.val)
         offset += len.val
         canvases.push(decodeCanvas(canvasBuf))

@@ -142,3 +142,38 @@ test('never caches errors or malformed, zero or missing TTL responses', async (t
   await fetchCanvas(trackUri, 'invalid-ttl-fixture')
   assert.equal(request.mock.callCount(), fixtures.length * 2 + 2)
 })
+
+test('decodes multi-byte lengths and the optional field 9 in a representative Canvas response', async (t) => {
+  const varint = (value: number): Buffer => {
+    const bytes: number[] = []
+    while (value >= 128) {
+      bytes.push((value % 128) | 128)
+      value = Math.floor(value / 128)
+    }
+    return Buffer.from([...bytes, value])
+  }
+  const field = (number: number, content: string | Buffer) => {
+    const data = Buffer.isBuffer(content) ? content : Buffer.from(content)
+    return Buffer.concat([varint(number * 8 + 2), varint(data.length), data])
+  }
+  const uri = 'spotify:track:72Xn6x8xqegX64AKeJDsZt'
+  const url = 'https://canvaz.scdn.co/upload/licensor/example/video/214143e4759b49bf8fa43cd8710f3d9a.cnvs.mp4'
+  const artist = Buffer.concat([field(1, 'spotify:artist:1ILD1NHBNPbPjN0wKExuOM'), field(2, 'Zynyx'), field(3, 'https://i.scdn.co/image/example')])
+  const entry = Buffer.concat([field(1, '214143e4759b49bf8fa43cd8710f3d9a'), field(2, url), field(5, uri), field(6, artist), field(9, 'additional-id'), field(11, 'spotify:canvas:10KzwTdOfZoREFiIm79yvE')])
+  assert.ok(entry.length > 127)
+  t.mock.method(globalThis, 'fetch', async () => new Response(new Uint8Array(field(1, entry))))
+  const result = await fetchCanvas(uri, 'representative-fixture')
+  assert.deepEqual(result?.data.canvasesList[0], {
+    id: '214143e4759b49bf8fa43cd8710f3d9a', canvasUrl: url, trackUri: uri,
+    artist: { artistUri: 'spotify:artist:1ILD1NHBNPbPjN0wKExuOM', artistName: 'Zynyx', artistImgUrl: 'https://i.scdn.co/image/example' },
+    otherId: 'additional-id', canvasUri: 'spotify:canvas:10KzwTdOfZoREFiIm79yvE'
+  })
+})
+
+test('does not expose a partial Canvas when an embedded field is truncated', async (t) => {
+  const field = (tag: number, value: string) => Buffer.concat([Buffer.from([tag, Buffer.byteLength(value)]), Buffer.from(value)])
+  const entry = Buffer.concat([field(18, 'https://canvaz.scdn.co/example.mp4'), field(42, trackUri), Buffer.from([90, 12, 1])])
+  const body = Buffer.concat([Buffer.from([10, entry.length]), entry])
+  t.mock.method(globalThis, 'fetch', async () => new Response(new Uint8Array(body)))
+  assert.deepEqual(await fetchCanvas(trackUri, 'malformed-entry-fixture'), { data: { canvasesList: [] } })
+})
