@@ -29,7 +29,7 @@ type MediaEntityInput = {
 }
 
 export function mediaUrl(value?: string | null): string | undefined {
-  if (!value) return undefined
+  if (typeof value !== 'string' || !value) return undefined
   try {
     const url = new URL(value)
     if (url.protocol === 'https:' && !url.username && !url.password) return value
@@ -40,6 +40,7 @@ export function mediaUrl(value?: string | null): string | undefined {
 export function normalizeMediaImages(
   input: MediaImageInput[] = []
 ): MediaImage[] {
+  if (!Array.isArray(input)) return []
   const result = new Map<string, MediaImage>()
   for (const item of input) {
     const url = mediaUrl(item?.url)
@@ -61,8 +62,10 @@ export function normalizeMediaImages(
 }
 
 function normalizeEntity(input: MediaEntityInput) {
-  const name = input.name?.trim()
-  const id = input.id == null ? undefined : String(input.id).trim()
+  const name = typeof input.name === 'string' ? input.name.trim() : undefined
+  const id = typeof input.id === 'string' || typeof input.id === 'number'
+    ? String(input.id).trim()
+    : undefined
   const artwork = normalizeMediaImages(input.artwork)
   return {
     ...(name ? { name } : {}),
@@ -83,7 +86,8 @@ export function buildTrackMedia(
   }
 ): TrackMediaMetadata {
   const artists: TrackMediaMetadata['artists'] = []
-  for (const raw of input.artists ?? []) {
+  for (const raw of Array.isArray(input.artists) ? input.artists : []) {
+    if (!raw || typeof raw !== 'object') continue
     const artist = normalizeEntity(raw)
     if (artist.name) artists.push({ ...artist, name: artist.name })
   }

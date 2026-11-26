@@ -29,19 +29,23 @@ type SpotifyMediaInput = {
 }
 
 function providerId(item: { id?: string; uri?: string }, kind: 'artist' | 'album'): string | undefined {
-  if (item.id) return item.id
-  const match = item.uri?.match(new RegExp(`^spotify:${kind}:([A-Za-z0-9]+)$`))
+  if (typeof item.id === 'string' && item.id) return item.id
+  const match = typeof item.uri === 'string' ? item.uri.match(new RegExp(`^spotify:${kind}:([A-Za-z0-9]+)$`)) : undefined
   return match?.[1]
 }
 
 /** Normalizes only metadata already present in Spotify track responses. */
 export function buildSpotifyMedia(item: SpotifyMediaInput, fallbackArtwork?: string | null): TrackMediaMetadata {
   const listed = Array.isArray(item.artists) ? item.artists : item.artists?.items
-  const rawArtists = listed?.length ? listed : [...(item.firstArtist?.items ?? []), ...(item.otherArtists?.items ?? [])]
+  const rawArtists = Array.isArray(listed) && listed.length ? listed : [
+    ...(Array.isArray(item.firstArtist?.items) ? item.firstArtist.items : []),
+    ...(Array.isArray(item.otherArtists?.items) ? item.otherArtists.items : [])
+  ]
   const artists: TrackMediaMetadata['artists'] = []
   for (const artist of rawArtists) {
-    const name = artist?.profile?.name || artist?.name
-    if (!name?.trim()) continue
+    const rawName = artist?.profile?.name || artist?.name
+    if (typeof rawName !== 'string' || !rawName.trim()) continue
+    const name = rawName.trim()
     const id = providerId(artist, 'artist')
     const artwork = images(artist.images ?? artist.visuals?.avatarImage?.sources)
     artists.push({ name, ...(id ? { id } : {}), ...(artwork.length ? { artwork } : {}) })
@@ -51,7 +55,7 @@ export function buildSpotifyMedia(item: SpotifyMediaInput, fallbackArtwork?: str
   const fallback = webUrl(fallbackArtwork)
   if (artwork.length === 0 && fallback) artwork.push({ url: fallback })
   const id = album ? providerId(album, 'album') : undefined
-  const name = album?.name
+  const name = typeof album?.name === 'string' ? album.name.trim() : undefined
   return {
     provider: 'spotify',
     artists,
@@ -61,7 +65,7 @@ export function buildSpotifyMedia(item: SpotifyMediaInput, fallbackArtwork?: str
 
 /** Normalizes an existing Canvas response without fetching or proxying media. */
 export function spotifyCanvasMedia(entry: { id?: string; canvasUrl?: string; trackUri?: string }, trackUri: string): TrackMediaMetadata['canvas'] {
-  if (entry.trackUri && entry.trackUri !== trackUri) return undefined
+  if (!entry.trackUri || entry.trackUri !== trackUri) return undefined
   const url = webUrl(entry.canvasUrl)
   return url ? { url, ...(entry.id ? { id: entry.id } : {}) } : undefined
 }
