@@ -5,7 +5,7 @@
 
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { buildTrackMedia } from '../modules/trackMedia.ts'
+import { buildTidalMedia } from '../modules/tidalMedia.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -623,7 +623,7 @@ export default class TidalSource {
     if (!albumData || items.length === 0) return { loadType: 'empty', data: {} }
 
     const tracks = items
-      .map((item) => this.buildTrack(item))
+      .map((item) => this.buildTrack(item, albumData))
       .filter(
         (
           item
@@ -884,7 +884,7 @@ export default class TidalSource {
    * @param item - Raw Tidal track object.
    * @returns Encoded track payload.
    */
-  private buildTrack(item: Record<string, unknown>): {
+  private buildTrack(item: Record<string, unknown>, parentAlbum?: Record<string, unknown>): {
     encoded: string
     info: TrackInfo
     pluginInfo: Record<string, unknown>
@@ -922,24 +922,7 @@ export default class TidalSource {
       encoded: encodeTrack(encodedInput),
       info: trackInfo,
       pluginInfo: {
-        media: buildTrackMedia('tidal', {
-          identifiers: { isrc: trackInfo.isrc },
-          artists: rawArtists.map((artist) => ({
-            name: this.asString(artist.name),
-            id:
-              typeof artist.id === 'number'
-                ? artist.id
-                : this.asString(artist.id)
-          })),
-          album: {
-            name: this.asString(album?.title),
-            id:
-              typeof album?.id === 'number'
-                ? album.id
-                : this.asString(album?.id),
-            artwork: [{ url: trackInfo.artworkUrl }]
-          }
-        })
+        media: buildTidalMedia(item, parentAlbum)
       }
     }
   }
