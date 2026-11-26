@@ -88,10 +88,10 @@ function fanartImages(value: unknown): MediaImage[] {
 }
 export function fanartArtist(payload: unknown, id: string) {
   const root = record(payload)
-  if (mbid(root.mbid) !== id) return null
+  if (mbid(root.mbid_id) !== id) return null
   return { provider: 'fanart.tv', mbid: id, name: name(root.name),
     artwork: fanartImages(root.artistthumb),
     banners: fanartImages(root.musicbanner),
-    backgrounds: fanartImages(root.artistbackground),
+    backgrounds: normalizeMediaImages([...fanartImages(root.artist4kbackground), ...fanartImages(root.artistbackground)]),
     logos: fanartImages(root.hdmusiclogo).concat(fanartImages(root.musiclogo)) }
 }

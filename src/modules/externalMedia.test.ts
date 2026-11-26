@@ -17,10 +17,10 @@ test('retains verified recording candidates and credits', () => {
 })
 
 test('preserves artwork types and rejects foreign asset hosts', () => {
-  const result = fanartArtist({ mbid: id, musicbanner: [{ url: 'http://assets.fanart.tv/banner.jpg', width: '1000', height: '185' }], artistbackground: [{ url: 'https://example.com/fake.jpg' }] }, id)
+  const result = fanartArtist({ mbid_id: id, musicbanner: [{ url: 'http://assets.fanart.tv/banner.jpg', width: '1000', height: '185' }], artistbackground: [{ url: 'https://example.com/fake.jpg' }] }, id)
   assert.deepEqual(result?.banners, [{ url: 'https://assets.fanart.tv/banner.jpg', width: 1000, height: 185 }])
   assert.deepEqual(result?.backgrounds, [])
-  assert.equal(fanartArtist({ mbid: artist }, id), null)
+  assert.equal(fanartArtist({ mbid_id: artist }, id), null)
 })
 
 test('caches successful lookups and bounds request rate', async () => {
@@ -57,4 +57,21 @@ test('distinguishes unexpected provider payloads from invalid JSON', async () =>
   const unexpected = new MediaLookupClient(async () => new Response('{}'))
   assert.equal((await invalid.lookup('one', 'https://example.com', {}, value => value)).reason, 'invalid-json')
   assert.equal((await unexpected.lookup('one', 'https://example.com', {}, () => null)).reason, 'unexpected-provider-payload')
+})
+
+test('accepts the official Fanart v3.2 artist identity and 4K backgrounds', () => {
+  const result = fanartArtist({
+    name: 'Example artist',
+    mbid_id: id,
+    image_count: 2,
+    artist4kbackground: [{ url: 'https://assets.fanart.tv/4k.jpg', width: '3840', height: '2160' }],
+    artistbackground: [{ url: 'https://assets.fanart.tv/hd.jpg', width: '1920', height: '1080' }]
+  }, id)
+  assert.equal(result?.mbid, id)
+  assert.deepEqual(result?.backgrounds, [
+    { url: 'https://assets.fanart.tv/4k.jpg', width: 3840, height: 2160 },
+    { url: 'https://assets.fanart.tv/hd.jpg', width: 1920, height: 1080 }
+  ])
+  assert.equal(fanartArtist({ mbid: id }, id), null)
+  assert.equal(fanartArtist({ mbid_id: artist, mbid: id }, id), null)
 })

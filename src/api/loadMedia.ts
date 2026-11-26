@@ -19,7 +19,7 @@ const handler: ApiRouteHandler = async (_nodelink, req, res, sendResponse, parse
   if (key === 'artistMbid') {
     const projectKey = process.env.NODELINK_FANART_PROJECT_KEY?.trim()
     if (!projectKey) return sendResponse(req, res, { error: 'Fanart.tv disabled' }, 503)
-    const result = await fanart.lookup(id, `https://webservice.fanart.tv/v3.2/music/${id}`,
+    const result = await fanart.lookup(id, `https://webservice.fanart.tv/v3.2/music/${id}?source=musicbrainz`,
       { 'api-key': projectKey, Accept: 'application/json' }, data => fanartArtist(data, id))
     return sendResponse(req, res, result.data ?? { error: 'Fanart.tv lookup unavailable', reason: result.reason, upstreamStatus: result.upstreamStatus }, result.status)
   }
