@@ -1,0 +1,97 @@
+import { normalizeMediaImages, type MediaImage } from './trackMedia.ts'
+
+type RecordValue = Record<string, unknown>
+function record(value: unknown): RecordValue {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as RecordValue : {}
+}
+function list(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+function name(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 512) : undefined
+}
+export function mbid(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? value.toLowerCase() : undefined
+}
+export function mediaIsrc(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const code = value.trim().toUpperCase().replace(/-/g, '')
+  return /^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$/.test(code) ? code : undefined
+}
+
+function relations(value: unknown) {
+  const credits: Array<{ name: string; role: string; mbid: string }> = []
+  const works = new Set<string>()
+  for (const raw of list(value).slice(0, 250)) {
+    const rel = record(raw)
+    const artist = record(rel.artist)
+    const id = mbid(artist.id)
+    const artistName = name(artist.name)
+    const role = name(rel.type)
+    if (id && artistName && role && !credits.some(c => c.mbid === id && c.role === role)) {
+      credits.push({ name: artistName, role, mbid: id })
+    }
+    const work = mbid(record(rel.work).id)
+    if (work && rel.type === 'performance') works.add(work)
+  }
+  return { credits, workMbids: [...works] }
+}
+
+/** Return distinct recording candidates rather than guessing which version is correct. */
+export function musicBrainzRecordings(payload: unknown, isrc: string) {
+  const root = record(payload)
+  if (mediaIsrc(root.isrc) !== isrc || !Array.isArray(root.recordings)) return null
+  const seen = new Set<string>()
+  const recordings = []
+  for (const raw of root.recordings.slice(0, 100)) {
+    const item = record(raw)
+    const id = mbid(item.id)
+    const title = name(item.title)
+    if (!id || !title || seen.has(id)) continue
+    if (Array.isArray(item.isrcs) && !item.isrcs.some(code => mediaIsrc(code) === isrc)) continue
+    seen.add(id)
+    const artists = list(item['artist-credit']).slice(0, 50).flatMap(rawCredit => {
+      const credit = record(rawCredit)
+      const artist = record(credit.artist)
+      const artistId = mbid(artist.id)
+      const artistName = name(credit.name) ?? name(artist.name)
+      return artistId && artistName ? [{ mbid: artistId, name: artistName }] : []
+    })
+    recordings.push({ mbid: id, title, artists,
+      ...(typeof item.length === 'number' && Number.isSafeInteger(item.length) && item.length >= 0 ? { durationMs: item.length } : {}),
+      ...relations(item.relations) })
+  }
+  return { provider: 'musicbrainz', isrc, recordings }
+}
+export function musicBrainzWork(payload: unknown, id: string) {
+  const root = record(payload)
+  if (mbid(root.id) !== id) return null
+  return { provider: 'musicbrainz', mbid: id, title: name(root.title), ...relations(root.relations) }
+}
+
+function fanartImages(value: unknown): MediaImage[] {
+  return normalizeMediaImages(list(value).slice(0, 50).flatMap(raw => {
+    const image = record(raw)
+    if (typeof image.url !== 'string') return []
+    try {
+      const url = new URL(image.url)
+      if (url.hostname !== 'assets.fanart.tv' || url.username || url.password || !['http:', 'https:'].includes(url.protocol)) return []
+      // The provider's legacy URLs may use HTTP; expose its HTTPS asset host only.
+      url.protocol = 'https:'
+      const width = Number(image.width)
+      const height = Number(image.height)
+      return [{ url: url.href, width, height }]
+    } catch { return [] }
+  }))
+}
+export function fanartArtist(payload: unknown, id: string) {
+  const root = record(payload)
+  if (mbid(root.mbid) !== id) return null
+  return { provider: 'fanart.tv', mbid: id, name: name(root.name),
+    artwork: fanartImages(root.artistthumb),
+    banners: fanartImages(root.musicbanner),
+    backgrounds: fanartImages(root.artistbackground),
+    logos: fanartImages(root.hdmusiclogo).concat(fanartImages(root.musiclogo)) }
+}
