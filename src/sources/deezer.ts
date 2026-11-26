@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { PassThrough, type Readable } from 'node:stream'
 import BlowfishCBC from '../decrypters/blowfish-cbc.ts'
+import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -2030,7 +2031,28 @@ export default class DeezerSource implements SourceVariantHandler {
       details: []
     }
 
-    const pluginInfo: DeezerTrackPluginInfo = {}
+    const pluginInfo: DeezerTrackPluginInfo = {
+      media: buildTrackMedia('deezer', {
+        artists: [{
+          id: item.artist?.id,
+          name: item.artist?.name,
+          artwork: [
+            { url: item.artist?.picture_xl },
+            { url: item.artist?.picture_big },
+            { url: item.artist?.picture_medium }
+          ]
+        }],
+        album: {
+          id: item.album?.id,
+          name: item.album?.title,
+          artwork: [
+            { url: item.album?.cover_xl },
+            { url: item.album?.cover_big },
+            { url: item.album?.cover_medium }
+          ]
+        }
+      })
+    }
     if (item.album?.title?.trim())
       pluginInfo.albumName = item.album.title.trim()
     if (
@@ -2086,7 +2108,12 @@ export default class DeezerSource implements SourceVariantHandler {
     return {
       encoded: encodeTrack(info),
       info,
-      pluginInfo: {} as Record<string, unknown>
+      pluginInfo: {
+        media: buildTrackMedia('deezer', {
+          artists: [{ name: item.ART_NAME }],
+          album: { artwork: [{ url: info.artworkUrl }] }
+        })
+      }
     }
   }
 

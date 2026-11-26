@@ -5,6 +5,7 @@
  * @packageDocumentation
  * @module YouTubeSourceCommon
  */
+import { buildTrackMedia } from '../../modules/trackMedia.ts'
 import type {
   SourceResult,
   TrackData,
@@ -1677,7 +1678,10 @@ export async function buildTrack(
         )
       ),
       audioFormats: JSON.stringify(audioFormats),
-      audioTracks: JSON.stringify(audioTracks)
+      audioTracks: JSON.stringify(audioTracks),
+      media: buildTrackMedia(trackInfo.sourceName, {
+        artwork: [{ url: trackInfo.artworkUrl }]
+      })
     }
   }
 
@@ -1997,7 +2001,19 @@ export async function buildHoloTrack(
       audioFormats: JSON.stringify(audioFormats),
       audioTracks: JSON.stringify(audioTracks),
       captions: JSON.stringify(captions),
-      channel: JSON.stringify(channelData)
+      channel: JSON.stringify(channelData),
+      media: buildTrackMedia(trackInfo.sourceName, {
+        artwork: [
+          { url: trackInfo.artworkUrl },
+          { url: thumbnails.default },
+          { url: thumbnails.medium },
+          { url: thumbnails.high }
+        ],
+        channel: {
+          name: typeof channelData.name === 'string' ? channelData.name : undefined,
+          id: typeof channelData.id === 'string' ? channelData.id : undefined
+        }
+      })
     }
   }
 

@@ -1,3 +1,4 @@
+import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type { AppleMusicSourceConfig } from '../typings/config/config.types.ts'
 import type {
   SourceInstance,
@@ -749,6 +750,8 @@ export default class AppleMusicSource implements SourceInstance {
     if (!attr) return null
 
     const artwork = artworkOverride || this.parseArtwork(attr.artwork)
+    const album = item.relationships?.albums?.data?.[0]
+    const albumArtwork = this.parseArtwork(album?.attributes?.artwork)
     const isExplicit = attr.contentRating === 'explicit'
     const trackUri = attr.url
       ? `${attr.url}${attr.url.includes('?') ? '&' : '?'}explicit=${isExplicit}`
@@ -774,7 +777,30 @@ export default class AppleMusicSource implements SourceInstance {
       pluginInfo: {
         albumName: attr.albumName,
         previewUrl: attr.previews?.[0]?.url,
-        hlsVideoUrl: videoOverride || this.extractVideoUrl(attr)
+        hlsVideoUrl: videoOverride || this.extractVideoUrl(attr),
+        media: buildTrackMedia('applemusic', {
+          artists: [{ name: attr.artistName }],
+          album: {
+            id: album?.id,
+            name: album?.attributes?.name || attr.albumName,
+            artwork: [
+              {
+                url: albumArtwork,
+                width: album?.attributes?.artwork?.width,
+                height: album?.attributes?.artwork?.height
+              },
+              {
+                url: this.parseArtwork(attr.artwork),
+                width: attr.artwork?.width,
+                height: attr.artwork?.height
+              },
+              { url: artworkOverride }
+            ]
+          },
+          motionArtworkUrl:
+            this.extractVideoUrl(attr) ||
+            this.extractVideoUrl(album?.attributes)
+        })
       }
     }
   }

@@ -5,6 +5,7 @@
 
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
+import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -892,7 +893,8 @@ export default class TidalSource {
     if (idRaw === undefined || idRaw === null) return null
     const identifier = String(idRaw)
 
-    const artists = this.asArrayRecords(item.artists)
+    const rawArtists = this.asArrayRecords(item.artists)
+    const artists = rawArtists
       .map((artist) => this.asString(artist.name))
       .filter((name): name is string => Boolean(name))
 
@@ -919,7 +921,19 @@ export default class TidalSource {
     return {
       encoded: encodeTrack(encodedInput),
       info: trackInfo,
-      pluginInfo: {} as Record<string, unknown> as Record<string, unknown>
+      pluginInfo: {
+        media: buildTrackMedia('tidal', {
+          artists: rawArtists.map((artist) => ({
+            name: this.asString(artist.name),
+            id: typeof artist.id === 'number' ? artist.id : this.asString(artist.id)
+          })),
+          album: {
+            name: this.asString(album?.title),
+            id: typeof album?.id === 'number' ? album.id : this.asString(album?.id),
+            artwork: [{ url: trackInfo.artworkUrl }]
+          }
+        })
+      }
     }
   }
 

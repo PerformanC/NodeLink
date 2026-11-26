@@ -1,19 +1,10 @@
-/** Image metadata supplied by a music provider. */
-export interface MediaImage {
-  url: string
-  width?: number
-  height?: number
-}
+import {
+  mediaUrl as webUrl,
+  normalizeMediaImages as images,
+  type MediaImageInput as ImageInput,
+  type TrackMediaMetadata
+} from './trackMedia.ts'
 
-/** Provider-neutral media metadata carried in track.pluginInfo.media. */
-export interface TrackMediaMetadata {
-  provider: string
-  artists: Array<{ name: string; id?: string; artwork?: MediaImage[] }>
-  album?: { name?: string; id?: string; artwork?: MediaImage[] }
-  canvas?: { url: string; id?: string }
-}
-
-type ImageInput = { url?: string; width?: number | null; height?: number | null }
 type ArtistInput = {
   name?: string
   id?: string
@@ -35,28 +26,6 @@ type SpotifyMediaInput = {
   otherArtists?: { items: ArtistInput[] }
   album?: AlbumInput
   albumOfTrack?: AlbumInput
-}
-
-function webUrl(value?: string | null): string | undefined {
-  if (!value) return undefined
-  try {
-    const url = new URL(value)
-    if (url.protocol === 'https:' && !url.username && !url.password) return value
-  } catch {}
-  return undefined
-}
-
-function images(input: ImageInput[] = []): MediaImage[] {
-  const result = new Map<string, MediaImage>()
-  for (const item of input) {
-    const url = webUrl(item?.url)
-    if (!url) continue
-    const image: MediaImage = { ...result.get(url), url }
-    if (typeof item.width === 'number' && Number.isSafeInteger(item.width) && item.width > 0) image.width = item.width
-    if (typeof item.height === 'number' && Number.isSafeInteger(item.height) && item.height > 0) image.height = item.height
-    result.set(url, image)
-  }
-  return [...result.values()]
 }
 
 function providerId(item: { id?: string; uri?: string }, kind: 'artist' | 'album'): string | undefined {
