@@ -21,7 +21,8 @@ test('only a verified near-end silent tail may shorten an untrimmed track',()=>{
  assert.equal(safeAutoMixEnd(100000,profile,false),98000)
  assert.equal(safeAutoMixEnd(100000,profile,true),100000)
  assert.equal(safeAutoMixEnd(100000,{...profile,analysisVersion:2},false),100000)
- const outro=profile.outroProfile!
+ const outro=profile.outroProfile
+ assert.ok(outro)
  assert.equal(safeAutoMixEnd(100000,{...profile,outroProfile:{...outro,analyzedWindowEndMs:95000}},false),100000)
  assert.equal(safeAutoMixEnd(100000,{...profile,outroProfile:{...outro,naturalOutroPointMs:50000}},false),100000)
 })
