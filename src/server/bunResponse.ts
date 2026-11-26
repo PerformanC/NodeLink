@@ -19,6 +19,16 @@ export interface BunResponseShimOptions {
   onStreamStart?: () => void
 }
 
+/**
+ * Error used to settle writes interrupted by a client disconnect. It carries
+ * Node's own code so callers that already ignore premature closes keep quiet.
+ */
+function prematureClose(): NodeJS.ErrnoException {
+  const error: NodeJS.ErrnoException = new Error('Premature close')
+  error.code = 'ERR_STREAM_PREMATURE_CLOSE'
+  return error
+}
+
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304])
 
 /**
@@ -47,7 +57,7 @@ export class BunResponseShim extends Writable implements ResponseShim {
   private readonly resolveResponse: (response: Response) => void
   private readonly onStreamStart: (() => void) | undefined
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null
-  private pendingWriteCallback: (() => void) | null = null
+  private pendingWriteCallback: ((error?: Error | null) => void) | null = null
   private streaming = false
   private responded = false
 
@@ -161,7 +171,7 @@ export class BunResponseShim extends Writable implements ResponseShim {
     if ((controller.desiredSize ?? 1) > 0) {
       callback()
     } else {
-      this.pendingWriteCallback = () => callback()
+      this.pendingWriteCallback = callback
     }
   }
 
@@ -174,7 +184,13 @@ export class BunResponseShim extends Writable implements ResponseShim {
     error: Error | null,
     callback: (error?: Error | null) => void
   ): void {
+    // A write parked on backpressure will never be pulled now. Settle it with
+    // the teardown outcome so the Writable does not retain its pending state.
+    const pending = this.pendingWriteCallback
     this.pendingWriteCallback = null
+    if (pending) {
+      pending(error ?? prematureClose())
+    }
 
     if (this.controller) {
       // Destroyed before a clean end: abort the HTTP response so the client
@@ -208,9 +224,9 @@ export class BunResponseShim extends Writable implements ResponseShim {
           pending?.()
         },
         cancel: () => {
-          // Client disconnected mid-stream.
+          // Client disconnected mid-stream. Any write still waiting for the
+          // reader is settled by _destroy().
           this.controller = null
-          this.pendingWriteCallback = null
           if (!this.destroyed) this.destroy()
         }
       },

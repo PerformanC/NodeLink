@@ -1,4 +1,13 @@
 import { Writable } from 'node:stream';
+/**
+ * Error used to settle writes interrupted by a client disconnect. It carries
+ * Node's own code so callers that already ignore premature closes keep quiet.
+ */
+function prematureClose() {
+    const error = new Error('Premature close');
+    error.code = 'ERR_STREAM_PREMATURE_CLOSE';
+    return error;
+}
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 /**
  * Node-style response object backed by a Web `Response`.
@@ -114,7 +123,7 @@ export class BunResponseShim extends Writable {
             callback();
         }
         else {
-            this.pendingWriteCallback = () => callback();
+            this.pendingWriteCallback = callback;
         }
     }
     _final(callback) {
@@ -122,7 +131,13 @@ export class BunResponseShim extends Writable {
         callback();
     }
     _destroy(error, callback) {
+        // A write parked on backpressure will never be pulled now. Settle it with
+        // the teardown outcome so the Writable does not retain its pending state.
+        const pending = this.pendingWriteCallback;
         this.pendingWriteCallback = null;
+        if (pending) {
+            pending(error ?? prematureClose());
+        }
         if (this.controller) {
             // Destroyed before a clean end: abort the HTTP response so the client
             // sees a truncated transfer instead of a "successful" short body.
@@ -153,9 +168,9 @@ export class BunResponseShim extends Writable {
                 pending?.();
             },
             cancel: () => {
-                // Client disconnected mid-stream.
+                // Client disconnected mid-stream. Any write still waiting for the
+                // reader is settled by _destroy().
                 this.controller = null;
-                this.pendingWriteCallback = null;
                 if (!this.destroyed)
                     this.destroy();
             }
