@@ -11,10 +11,32 @@ export interface MediaIdentifiers {
   ean?: string
 }
 
+export interface MediaColorSet {
+  backgroundBase?: string
+  backgroundTintedBase?: string
+  textBase?: string
+  textBrightAccent?: string
+  textSubdued?: string
+}
+
+export interface MediaColorTheme {
+  encoreBaseSetTextColor?: string
+  minContrast?: MediaColorSet
+  highContrast?: MediaColorSet
+  higherContrast?: MediaColorSet
+}
+
+export interface MediaPalette {
+  bestFit?: 'dark' | 'light'
+  dark?: MediaColorTheme
+  light?: MediaColorTheme
+}
+
 export interface MediaColors {
   dark?: string
   light?: string
   raw?: string
+  palette?: MediaPalette
 }
 
 export interface MediaCredit {
@@ -101,6 +123,42 @@ function normalizeEntity(input: MediaEntityInput) {
   }
 }
 
+function colorHex(value: unknown): string | undefined {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : undefined
+}
+
+function colorRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+}
+
+/** Validate provider palette values without inventing missing colors or contrast ratios. */
+export function normalizeMediaPalette(value: unknown): MediaPalette | undefined {
+  const source = colorRecord(value)
+  if (!source) return undefined
+  const palette: MediaPalette = {}
+  for (const mode of ['dark', 'light'] as const) {
+    const raw = colorRecord(source[mode])
+    if (!raw) continue
+    const theme: MediaColorTheme = {}
+    const base = colorHex(raw.encoreBaseSetTextColor)
+    if (base) theme.encoreBaseSetTextColor = base
+    for (const level of ['minContrast', 'highContrast', 'higherContrast'] as const) {
+      const input = colorRecord(raw[level])
+      if (!input) continue
+      const colors: MediaColorSet = {}
+      for (const key of ['backgroundBase', 'backgroundTintedBase', 'textBase', 'textBrightAccent', 'textSubdued'] as const) {
+        const hex = colorHex(input[key])
+        if (hex) colors[key] = hex
+      }
+      if (Object.keys(colors).length) theme[level] = colors
+    }
+    if (Object.keys(theme).length) palette[mode] = theme
+  }
+  if (!palette.dark && !palette.light) return undefined
+  if ((source.bestFit === 'dark' || source.bestFit === 'light') && palette[source.bestFit]) palette.bestFit = source.bestFit
+  return palette
+}
+
 /** Adds only valid, provider-supplied identifiers, colors and credits. */
 export function mediaDetails(input: {
   identifiers?: { isrc?: unknown; upc?: unknown; ean?: unknown }
@@ -124,6 +182,8 @@ export function mediaDetails(input: {
       const value = source[key]
       if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) colors[key] = value.toUpperCase()
     }
+    const palette = normalizeMediaPalette(source.palette)
+    if (palette) colors.palette = palette
   }
   const credits: MediaCredit[] = []
   for (const credit of Array.isArray(input.credits) ? input.credits : []) {

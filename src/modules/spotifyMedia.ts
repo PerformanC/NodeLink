@@ -1,6 +1,8 @@
 import {
   mediaUrl as webUrl,
   mediaDetails,
+  normalizeMediaPalette,
+  type MediaColors,
   normalizeMediaImages as images,
   type MediaImageInput as ImageInput,
   type TrackMediaMetadata
@@ -135,4 +137,41 @@ export function readOfficialSpotifyIsrc(input: unknown, expectedId: string): str
   const ids = track.external_ids
   if (!ids || typeof ids !== 'object' || Array.isArray(ids)) return undefined
   return mediaDetails({ identifiers: { isrc: (ids as Record<string, unknown>).isrc } }).identifiers?.isrc
+}
+
+/** Normalize a single-image response; the provider does not include an image ID in each result. */
+export function normalizeSpotifyDynamicColors(input: unknown): MediaColors | undefined {
+  function object(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+  }
+  function rgb(value: unknown): string | undefined {
+    const color = object(value)
+    if (!color || color.alpha !== 255) return undefined
+    const channels = [color.red, color.green, color.blue]
+    if (!channels.every((v) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255)) return undefined
+    return '#' + channels.map((v) => (v as number).toString(16).padStart(2, '0')).join('').toUpperCase()
+  }
+  const items = object(input)?.dynamicColors
+  if (!Array.isArray(items) || items.length !== 1) return undefined
+  const source = object(items[0])
+  if (!source || source.status !== 'OK') return undefined
+  const converted: Record<string, unknown> = {
+    bestFit: source.bestFit === 'DARK' ? 'dark' : source.bestFit === 'LIGHT' ? 'light' : undefined
+  }
+  for (const mode of ['dark', 'light'] as const) {
+    const raw = object(source[mode])
+    if (!raw) continue
+    const theme: Record<string, unknown> = { encoreBaseSetTextColor: rgb(raw.encoreBaseSetTextColor) }
+    for (const level of ['minContrast', 'highContrast', 'higherContrast'] as const) {
+      const group = object(raw[level])
+      if (!group) continue
+      theme[level] = Object.fromEntries(['backgroundBase', 'backgroundTintedBase', 'textBase', 'textBrightAccent', 'textSubdued'].map(key => [key, rgb(group[key])]))
+    }
+    converted[mode] = theme
+  }
+  const palette = normalizeMediaPalette(converted)
+  if (!palette) return undefined
+  const dark = palette.dark?.highContrast?.backgroundBase
+  const light = palette.light?.highContrast?.backgroundBase
+  return { ...(dark ? { dark } : {}), ...(light ? { light } : {}), palette }
 }

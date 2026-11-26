@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readOfficialSpotifyIsrc, buildSpotifyArtistMedia, buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
+import { normalizeSpotifyDynamicColors, readOfficialSpotifyIsrc, buildSpotifyArtistMedia, buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
 
 test('normalizes official artist and album metadata with image dimensions', () => {
   assert.deepEqual(buildSpotifyMedia({ artists: [{ id: 'a', name: 'Artist' }], album: { id: 'b', name: 'Album', images: [{ url: 'https://example.com/cover', width: 640, height: 640 }] } }), {
@@ -78,4 +78,27 @@ test('reads and validates ISRC from the exact official catalog track', () => {
   assert.equal(readOfficialSpotifyIsrc({ id: 'abc', external_ids: { isrc: 'invalid' } }, 'abc'), undefined)
   assert.equal(readOfficialSpotifyIsrc({ id: 'abc', external_ids: null }, 'abc'), undefined)
   assert.equal(readOfficialSpotifyIsrc(null, 'abc'), undefined)
+})
+
+import { mediaDetails } from './trackMedia.ts'
+
+test('normalizes single-image dynamic palettes with all contrast modes', () => {
+  const rgb = (red: number, green: number, blue: number) => ({ red, green, blue, alpha: 255 })
+  const result = normalizeSpotifyDynamicColors({ dynamicColors: [{ status: 'OK', bestFit: 'DARK',
+    dark: { encoreBaseSetTextColor: rgb(151, 192, 222), highContrast: { backgroundBase: rgb(8, 48, 72), textBase: rgb(255, 255, 255) }, higherContrast: { textBrightAccent: rgb(30, 215, 96) }, minContrast: { textSubdued: rgb(255, 255, 255) } },
+    light: { highContrast: { backgroundBase: rgb(196, 238, 255), textBase: rgb(0, 0, 0) } }
+  }] })
+  assert.deepEqual(result, { dark: '#083048', light: '#C4EEFF', palette: { bestFit: 'dark',
+    dark: { encoreBaseSetTextColor: '#97C0DE', highContrast: { backgroundBase: '#083048', textBase: '#FFFFFF' }, higherContrast: { textBrightAccent: '#1ED760' }, minContrast: { textSubdued: '#FFFFFF' } },
+    light: { highContrast: { backgroundBase: '#C4EEFF', textBase: '#000000' } } } })
+  assert.deepEqual(mediaDetails({ colors: result }).colors, result)
+})
+
+test('rejects ambiguous, failed and malformed dynamic palettes', () => {
+  const invalid = { status: 'OK', dark: { highContrast: { backgroundBase: { red: 256, green: 0, blue: 0, alpha: 255 }, textBase: { red: 0, green: 0, blue: 0, alpha: 128 } } } }
+  assert.equal(normalizeSpotifyDynamicColors({ dynamicColors: [invalid] }), undefined)
+  assert.equal(normalizeSpotifyDynamicColors({ dynamicColors: [invalid, invalid] }), undefined)
+  assert.equal(normalizeSpotifyDynamicColors({ dynamicColors: [{ status: 'ERROR' }] }), undefined)
+  assert.equal(normalizeSpotifyDynamicColors(null), undefined)
+  assert.deepEqual(mediaDetails({ colors: { dark: '#ffffff', palette: { bestFit: 'dark', dark: { highContrast: { textBase: 'bad' } } } } }), { colors: { dark: '#FFFFFF' } })
 })

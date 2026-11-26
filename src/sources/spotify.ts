@@ -2,11 +2,12 @@ import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
 import { fetchPathfinderCanvas } from '../modules/spotifyPathfinderCanvas.ts'
-import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
+import { mediaDetails, type MediaColors, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
   buildSpotifyArtistMedia,
   readOfficialSpotifyIsrc,
+  normalizeSpotifyDynamicColors,
   selectSpotifyCanvas,
   spotifyCanvasSessionState
 } from '../modules/spotifyMedia.ts'
@@ -109,6 +110,10 @@ const QUERIES = {
   queryBookChapters: {
     name: 'queryBookChapters',
     hash: '8f342d1c624755901657fa65cbb80dd3bacbcca2f6d802f570ae3269d59a403e'
+  },
+  getDynamicColorsByUris: {
+    name: 'getDynamicColorsByUris',
+    hash: 'f0f112945d6d745bd8ff790317bbf8d310036da75df33130490e9d6dc96c59d9'
   },
   fetchExtractedColors: {
     name: 'fetchExtractedColors',
@@ -719,7 +724,8 @@ export default class SpotifySource implements SourceInstance {
     operation: SpotifyGraphQLOperation,
     variables: Record<string, unknown>,
     tier: SpotifyTokenType = 'anonymous',
-    retry = 0
+    retry = 0,
+    singleAttempt = false
   ): Promise<T | null> {
     const res = await this._apiRequest<{ data?: T; errors?: Array<unknown> }>(
       SPOTIFY_INTERNAL_API_URL,
@@ -736,10 +742,12 @@ export default class SpotifySource implements SourceInstance {
         },
         disableBodyCompression: true
       },
-      retry
+      retry,
+      singleAttempt
     )
 
     if (res?.errors) {
+      if (singleAttempt) return null
       logger(
         'error',
         'Spotify',
@@ -2997,7 +3005,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _fetchArtworkColors(
     artworkUrl: string | null
-  ): Promise<{ dark?: string; light?: string; raw?: string } | null> {
+  ): Promise<MediaColors | null> {
     if (!artworkUrl) return null
     const match =
       artworkUrl.match(/\/image\/([a-f0-9]{32,40})/i) ||
@@ -3005,6 +3013,14 @@ export default class SpotifySource implements SourceInstance {
     if (!match?.[1]) return null
 
     try {
+      // Optional experimental palette transport, only with existing authorized access.
+      // Do not retry or switch authentication tiers when this operation is rejected.
+      if (process.env.NODELINK_SPOTIFY_COLOR_MODE === 'dynamic') {
+        const data = await this._internalApiRequest<unknown>(QUERIES.getDynamicColorsByUris, {
+          imageUris: [`https://i.scdn.co/image/${match[1]}`]
+        }, 'anonymous', 0, true)
+        return normalizeSpotifyDynamicColors(data) ?? null
+      }
       const data = await this._internalApiRequest<{
         extractedColors?: Array<{
           colorDark?: { hex?: string }
