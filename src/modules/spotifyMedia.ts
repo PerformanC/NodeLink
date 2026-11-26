@@ -85,3 +85,10 @@ export function selectSpotifyCanvas<T extends { id?: string; canvasUrl?: string;
   }
   return undefined
 }
+
+/** Report only the validity of an existing session, never its token or expiry. */
+export function spotifyCanvasSessionState(token: string | null, expiry: number | null, now = Date.now()): 'missing' | 'expired' | 'unknown-expiry' | 'ready' {
+  if (!token || !token.trim()) return 'missing'
+  if (expiry === null || !Number.isFinite(expiry)) return 'unknown-expiry'
+  return expiry <= now ? 'expired' : 'ready'
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas } from './spotifyMedia.ts'
+import { buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
 
 test('normalizes official artist and album metadata with image dimensions', () => {
   assert.deepEqual(buildSpotifyMedia({ artists: [{ id: 'a', name: 'Artist' }], album: { id: 'b', name: 'Album', images: [{ url: 'https://example.com/cover', width: 640, height: 640 }] } }), {
@@ -38,4 +38,14 @@ test('selects a valid matching Canvas even after unrelated or unusable entries',
   })
   assert.equal(selectSpotifyCanvas([unrelated, unsafe], target), undefined)
   assert.equal(selectSpotifyCanvas(undefined, target), undefined)
+})
+
+test('classifies Canvas session availability without exposing credentials', () => {
+  assert.equal(spotifyCanvasSessionState(null, 2000, 1000), 'missing')
+  assert.equal(spotifyCanvasSessionState('  ', 2000, 1000), 'missing')
+  assert.equal(spotifyCanvasSessionState('fixture', 1000, 1000), 'expired')
+  assert.equal(spotifyCanvasSessionState('fixture', 999, 1000), 'expired')
+  assert.equal(spotifyCanvasSessionState('fixture', null, 1000), 'unknown-expiry')
+  assert.equal(spotifyCanvasSessionState('fixture', Number.NaN, 1000), 'unknown-expiry')
+  assert.equal(spotifyCanvasSessionState('fixture', 1001, 1000), 'ready')
 })

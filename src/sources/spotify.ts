@@ -4,7 +4,8 @@ import { fetchPathfinderCanvas } from '../modules/spotifyPathfinderCanvas.ts'
 import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
-  selectSpotifyCanvas
+  selectSpotifyCanvas,
+  spotifyCanvasSessionState
 } from '../modules/spotifyMedia.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
@@ -1227,28 +1228,7 @@ export default class SpotifySource implements SourceInstance {
 
           const tasks: Promise<void>[] = []
 
-          const experimentalCanvas = process.env.NODELINK_SPOTIFY_CANVAS_MODE === 'pathfinder'
-          if (experimentalCanvas || this.mobileToken) {
-            const trackUri = `spotify:track:${id}`
-            const diagnose = (event: unknown) =>
-              logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
-            tasks.push(
-              (experimentalCanvas
-                ? fetchPathfinderCanvas(trackUri, this.anonymousToken, diagnose, process.env.NODELINK_SPOTIFY_CANVAS_CLIENT_TOKEN?.trim())
-                : this.mobileToken ? fetchCanvas(trackUri, this.mobileToken, diagnose) : Promise.resolve(null))
-                .then((cv) => {
-                  const selected = selectSpotifyCanvas(cv?.data?.canvasesList, `spotify:track:${id}`)
-                  if (selected) {
-                    track.pluginInfo.canvas = { canvasesList: [selected.entry] }
-                    track.pluginInfo.media = {
-                      ...buildSpotifyMedia(data.trackUnion, track.info.artworkUrl),
-                      canvas: selected.canvas
-                    }
-                  }
-                })
-                .catch(() => {})
-            )
-          }
+          tasks.push(this._attachCanvas(track, id))
 
           if (!track.info.isrc) {
             tasks.push(
@@ -1299,10 +1279,50 @@ export default class SpotifySource implements SourceInstance {
       )
       if (data) {
         const track = this._buildTrack(data)
-        if (track) return { loadType: 'track', data: track }
+        if (track) {
+          await this._attachCanvas(track, id)
+          return { loadType: 'track', data: track }
+        }
       }
     }
     return { loadType: 'empty', data: {} }
+  }
+
+  /**
+   * Enriches a resolved track using only the selected, existing Canvas session.
+   * Never switches credentials or retries a rejected Canvas request.
+   * @internal
+   */
+  private async _attachCanvas(track: TrackData, id: string): Promise<void> {
+    const pathfinder = process.env.NODELINK_SPOTIFY_CANVAS_MODE === 'pathfinder'
+    const token = pathfinder ? this.anonymousToken : this.mobileToken
+    const expiry = pathfinder ? this.anonymousTokenExpiry : this.mobileTokenExpiry
+    const state = spotifyCanvasSessionState(token, expiry)
+    const diagnose = (event: unknown) =>
+      logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
+    diagnose({
+      kind: 'session',
+      mode: pathfinder ? 'pathfinder' : 'native',
+      state
+    })
+    if (!token || state === 'missing' || state === 'expired') return
+
+    try {
+      const trackUri = `spotify:track:${id}`
+      const result = pathfinder
+        ? await fetchPathfinderCanvas(trackUri, token, diagnose, process.env.NODELINK_SPOTIFY_CANVAS_CLIENT_TOKEN?.trim())
+        : await fetchCanvas(trackUri, token, diagnose)
+      const selected = selectSpotifyCanvas(result?.data.canvasesList, trackUri)
+      if (!selected) return
+      const media = track.pluginInfo.media as TrackMediaMetadata | undefined
+      track.pluginInfo.canvas = { canvasesList: [selected.entry] }
+      track.pluginInfo.media = {
+        ...(media ?? buildSpotifyMedia({}, track.info.artworkUrl)),
+        canvas: selected.canvas
+      }
+    } catch {
+      diagnose({ kind: 'enrichment-error' })
+    }
   }
 
   /**
