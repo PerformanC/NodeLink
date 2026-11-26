@@ -2011,7 +2011,9 @@ export async function buildHoloTrack(
         ],
         channel: {
           name: typeof channelData.name === 'string' ? channelData.name : undefined,
-          id: typeof channelData.id === 'string' ? channelData.id : undefined
+          id: typeof channelData.id === 'string' ? channelData.id : undefined,
+          artwork: [{ url: typeof channelData.icon === 'string' ? channelData.icon : undefined }],
+          banners: [{ url: typeof channelData.banner === 'string' ? channelData.banner : undefined }]
         }
       })
     }

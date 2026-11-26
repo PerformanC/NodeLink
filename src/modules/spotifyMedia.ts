@@ -1,5 +1,6 @@
 import {
   mediaUrl as webUrl,
+  mediaDetails,
   normalizeMediaImages as images,
   type MediaImageInput as ImageInput,
   type TrackMediaMetadata
@@ -26,6 +27,8 @@ type SpotifyMediaInput = {
   otherArtists?: { items: ArtistInput[] }
   album?: AlbumInput
   albumOfTrack?: AlbumInput
+  externalIds?: { isrc?: string; upc?: string; ean?: string }
+  external_ids?: { isrc?: string; upc?: string; ean?: string }
 }
 
 function providerId(item: { id?: string; uri?: string }, kind: 'artist' | 'album'): string | undefined {
@@ -59,6 +62,7 @@ export function buildSpotifyMedia(item: SpotifyMediaInput, fallbackArtwork?: str
   return {
     provider: 'spotify',
     artists,
+    ...mediaDetails({ identifiers: item.externalIds ?? item.external_ids }),
     ...(name || id || artwork.length ? { album: { ...(name ? { name } : {}), ...(id ? { id } : {}), ...(artwork.length ? { artwork } : {}) } } : {})
   }
 }

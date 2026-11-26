@@ -836,6 +836,7 @@ export default class QobuzSource {
       info: trackInfo,
       pluginInfo: {
         media: buildTrackMedia('qobuz', {
+          identifiers: { isrc: trackInfo.isrc },
           artists: [artist, performer]
             .filter((entry, index, all) => entry && all.findIndex((other) =>
               other && (entry.id != null && other.id != null

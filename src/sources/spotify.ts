@@ -1,5 +1,6 @@
 import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
+import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
   spotifyCanvasMedia
@@ -910,6 +911,11 @@ export default class SpotifySource implements SourceInstance {
               const isrc = meta?.external_id?.find((e) => e.type === 'isrc')?.id
               if (isrc) {
                 first.info.isrc = isrc
+                const media = first.pluginInfo.media as TrackMediaMetadata | undefined
+                if (media) first.pluginInfo.media = {
+                  ...media,
+                  ...mediaDetails({ identifiers: { ...media.identifiers, isrc } })
+                }
                 first.encoded = encodeTrack({ ...first.info, details: [] })
               }
             }
@@ -1246,8 +1252,9 @@ export default class SpotifySource implements SourceInstance {
             tasks.push(
               this._fetchTrackMetadata(id)
                 .then((meta) => {
-                  if (meta?.external_id?.[0]?.id) {
-                    track.info.isrc = meta.external_id[0].id
+                  const isrc = meta?.external_id?.find((entry) => entry.type === 'isrc')?.id
+                  if (isrc) {
+                    track.info.isrc = isrc
                     track.encoded = encodeTrack({ ...track.info, details: [] })
                   }
                 })
@@ -1271,6 +1278,14 @@ export default class SpotifySource implements SourceInstance {
             await Promise.all(tasks)
           }
 
+          const media = track.pluginInfo.media as TrackMediaMetadata | undefined
+          if (media) track.pluginInfo.media = {
+            ...media,
+            ...mediaDetails({
+              identifiers: { ...media.identifiers, isrc: track.info.isrc },
+              colors: track.pluginInfo.colors
+            })
+          }
           return { loadType: 'track', data: track }
         }
       }

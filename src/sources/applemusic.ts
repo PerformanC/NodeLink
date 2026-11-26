@@ -48,6 +48,8 @@ interface AppleMusicAttributes {
   isrc?: string
   /** The name of the album associated with the track. */
   albumName?: string
+  composerName?: string
+  upc?: string
   /** The number of tracks in a collection. */
   trackCount?: number
   /** Audio preview variants. */
@@ -788,6 +790,8 @@ export default class AppleMusicSource implements SourceInstance {
         hlsVideoUrl: videoOverride || this.extractVideoUrl(attr),
         media: buildTrackMedia('applemusic', {
           artists: appleMusicArtists(item.relationships?.artists?.data, attr.artistName),
+          identifiers: { isrc: attr.isrc, upc: album?.attributes?.upc },
+          credits: [{ name: attr.composerName, role: 'composer' }],
           album: {
             id: album?.id,
             name: album?.attributes?.name || attr.albumName,

@@ -923,6 +923,7 @@ export default class TidalSource {
       info: trackInfo,
       pluginInfo: {
         media: buildTrackMedia('tidal', {
+          identifiers: { isrc: trackInfo.isrc },
           artists: rawArtists.map((artist) => ({
             name: this.asString(artist.name),
             id: typeof artist.id === 'number' ? artist.id : this.asString(artist.id)

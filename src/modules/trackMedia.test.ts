@@ -52,3 +52,31 @@ test('keeps video thumbnails and channels separate from album metadata', () => {
     channel: { id: 'channel', name: 'Uploader' }
   })
 })
+
+test('normalizes identifiers, palette and explicit composer credits without guessing names', () => {
+  assert.deepEqual(buildTrackMedia('applemusic', {
+    identifiers: { isrc: 'us-ug1-19-04206', upc: '00602445545803', ean: 'bad' },
+    colors: { dark: '#701010', light: '#e82121', raw: 'invalid' },
+    credits: [{ name: ' A & B ', role: 'composer' }, { name: 'A & B', role: 'composer' }]
+  }), {
+    provider: 'applemusic', artists: [],
+    identifiers: { isrc: 'USUG11904206', upc: '00602445545803' },
+    colors: { dark: '#701010', light: '#E82121' },
+    credits: [{ name: 'A & B', role: 'composer' }]
+  })
+})
+
+test('keeps Holo channel banners and avatars separate from track artwork', () => {
+  assert.deepEqual(buildTrackMedia('youtube', {
+    artwork: [{ url: 'https://example.com/video.jpg' }],
+    channel: {
+      name: 'Channel', id: 'abc',
+      artwork: [{ url: 'https://example.com/icon.jpg' }],
+      banners: [{ url: 'https://example.com/banner.jpg' }, { url: 'http://example.com/no.jpg' }]
+    }
+  }), {
+    provider: 'youtube', artists: [],
+    artwork: [{ url: 'https://example.com/video.jpg' }],
+    channel: { name: 'Channel', id: 'abc', artwork: [{ url: 'https://example.com/icon.jpg' }], banners: [{ url: 'https://example.com/banner.jpg' }] }
+  })
+})
