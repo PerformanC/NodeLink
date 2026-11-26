@@ -121,3 +121,13 @@ test('rejects non-provider Canvas domains, credentials and custom ports', () => 
     'http://canvaz.scdn.co/a.mp4'
   ]) assert.equal(spotifyCanvasMedia({ trackUri, canvasUrl }, trackUri), undefined)
 })
+
+test('skips declared non-video entries while preserving legacy video metadata', () => {
+  const trackUri = 'spotify:track:a'
+  const base = { trackUri, canvasUrl: 'https://canvaz.scdn.co/example.mp4' }
+  const image = { ...base, type: 'IMAGE' }
+  const video = { ...base, type: 'VIDEO_LOOPING_RANDOM' }
+  assert.equal(spotifyCanvasMedia(image, trackUri), undefined)
+  assert.equal(selectSpotifyCanvas([image, video], trackUri)?.entry, video)
+  assert.equal(spotifyCanvasMedia(base, trackUri)?.url, base.canvasUrl)
+})

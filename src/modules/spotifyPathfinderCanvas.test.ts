@@ -75,3 +75,11 @@ test('omits malformed optional Canvas identifiers and playback types', () => {
   assert.equal(entry?.type, undefined)
   assert.equal(entry?.canvasUri, '')
 })
+
+test('distinguishes declared non-video Canvas from missing media', () => {
+  for (const type of ['IMAGE', 'GIF']) {
+    const value = normalizePathfinderCanvas({ data: { trackUnion: { uri: trackUri, canvas: { url, type } } } }, trackUri)
+    assert.deepEqual(value, { outcome: 'non-video-canvas', result: null })
+  }
+  assert.equal(normalizePathfinderCanvas({ data: { trackUnion: { uri: trackUri, canvas: { url, type: 'VIDEO_LOOPING' } } } }, trackUri).outcome, 'found')
+})

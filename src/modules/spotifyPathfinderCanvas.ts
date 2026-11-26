@@ -1,9 +1,9 @@
-import { readCanvasResponse, spotifyCanvasUrl } from './spotifyCanvasResponse.ts'
+import { readCanvasResponse, spotifyCanvasType, spotifyCanvasUrl } from './spotifyCanvasResponse.ts'
 import type { SpotifyCanvasFetchResult } from '../typings/modules/spotifyCanvas.types.ts'
 
 type Diagnostic = {
   kind: 'pathfinder'
-  outcome: 'http-error' | 'graphql-error' | 'missing-canvas' | 'canvas-without-url' | 'unexpected-payload' | 'found' | 'request-error' | 'missing-token'
+  outcome: 'http-error' | 'graphql-error' | 'missing-canvas' | 'canvas-without-url' | 'non-video-canvas' | 'unexpected-payload' | 'found' | 'request-error' | 'missing-token'
   status?: number
   canvasState?: 'null' | 'uri-only' | 'no-url'
 }
@@ -27,6 +27,8 @@ export function normalizePathfinderCanvas(payload: unknown, trackUri: string): {
   if (track.canvas === null) return { outcome: 'missing-canvas', canvasState: 'null', result: null }
   const canvas = record(track.canvas)
   if (!canvas) return { outcome: 'unexpected-payload', result: null }
+  const type = spotifyCanvasType(canvas.type)
+  if (type && type !== 'UNKNOWN' && type !== 'UNRECOGNIZED' && !type.startsWith('VIDEO')) return { outcome: 'non-video-canvas', result: null }
   if (typeof canvas.url !== 'string' || !canvas.url.trim()) {
     const hasUri = typeof canvas.uri === 'string' && canvas.uri.trim().length > 0
     return {
@@ -47,7 +49,7 @@ export function normalizePathfinderCanvas(payload: unknown, trackUri: string): {
         trackUri,
         canvasUri,
         ...(typeof canvas.fileId === 'string' && /^[a-f0-9]{32}$/i.test(canvas.fileId) ? { fileId: canvas.fileId } : {}),
-        ...(typeof canvas.type === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(canvas.type) ? { type: canvas.type } : {}),
+        ...(type ? { type } : {}),
         artist: { artistUri: '', artistName: '', artistImgUrl: '' }
       }] } }
     }

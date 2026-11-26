@@ -1,4 +1,4 @@
-import { spotifyCanvasUrl } from './spotifyCanvasResponse.ts'
+import { spotifyCanvasType, spotifyCanvasUrl } from './spotifyCanvasResponse.ts'
 import {
   mediaUrl as webUrl,
   mediaDetails,
@@ -75,13 +75,15 @@ type CanvasMediaInput = { id?: string; canvasUrl?: string; trackUri?: string; ca
 /** Normalizes an existing Canvas response without fetching or proxying media. */
 export function spotifyCanvasMedia(entry: CanvasMediaInput, trackUri: string): TrackMediaMetadata['canvas'] {
   if (!entry.trackUri || entry.trackUri !== trackUri) return undefined
+  const type = spotifyCanvasType(entry.type)
+  if (type && type !== 'UNKNOWN' && type !== 'UNRECOGNIZED' && !type.startsWith('VIDEO')) return undefined
   const url = spotifyCanvasUrl(entry.canvasUrl)
   return url ? {
     url,
     ...(entry.id ? { id: entry.id } : {}),
     ...(typeof entry.canvasUri === 'string' && /^spotify:canvas:[A-Za-z0-9]+$/.test(entry.canvasUri) ? { uri: entry.canvasUri } : {}),
     ...(typeof entry.fileId === 'string' && /^[a-f0-9]{32}$/i.test(entry.fileId) ? { fileId: entry.fileId } : {}),
-    ...(typeof entry.type === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(entry.type) ? { type: entry.type } : {})
+    ...(type ? { type } : {})
   } : undefined
 }
 

@@ -34,3 +34,8 @@ export async function readCanvasResponse(response: Response, limit: number): Pro
     return Buffer.concat(chunks, bytes)
   } finally { reader.releaseLock() }
 }
+
+/** A missing or malformed optional type is unknown, not evidence of non-video media. */
+export function spotifyCanvasType(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? value : undefined
+}
