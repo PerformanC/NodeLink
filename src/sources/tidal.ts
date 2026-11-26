@@ -5,6 +5,7 @@
 
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
+import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.ts'
 import { buildTidalMedia } from '../modules/tidalMedia.ts'
 import type {
   SourceResult,
@@ -619,9 +620,64 @@ export default class TidalSource {
         5000
       ).catch(() => undefined)
     }
-    const track = this.buildTrack(data, undefined, credits)
+    const extras = /^\d+$/.test(id) && String(data.id) === id ? await this.fetchCatalogExtras(id) : undefined
+    const track = this.buildTrack(data, undefined, credits, extras)
     if (!track) return { loadType: 'empty', data: {} }
     return { loadType: 'track', data: track }
+  }
+
+  /** Optional, independent metadata requests. Never use a v1 token on another API. */
+  private async fetchCatalogExtras(id: string): Promise<{ catalog?: unknown; preview?: unknown }> {
+    const token = process.env.NODELINK_TIDAL_METADATA_ACCESS_TOKEN?.trim()
+    const get = async (url: URL, init: RequestInit): Promise<unknown> => {
+      try {
+        const response = await fetch(url, {
+          ...init,
+          redirect: 'error',
+          signal: AbortSignal.timeout(5000)
+        })
+        if (!response.ok) return undefined
+        if (!response.body) return undefined
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let size = 0
+        let body = ''
+        try {
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            size += value.byteLength
+            if (size > 1024 * 1024) return undefined
+            body += decoder.decode(value, { stream: true })
+          }
+          return JSON.parse(body + decoder.decode())
+        } finally {
+          await reader.cancel().catch(() => undefined)
+          reader.releaseLock()
+        }
+      } catch {
+        return undefined
+      }
+    }
+    const catalogUrl = new URL(`https://openapi.tidal.com/v2/tracks/${id}`)
+    catalogUrl.searchParams.set('countryCode', this.countryCode)
+    catalogUrl.searchParams.set('include', 'genres,artists.biography')
+    const [catalog, preview] = await Promise.all([
+      token && this.config.enrichCatalog === true
+        ? get(catalogUrl, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.api+json' } })
+        : undefined,
+      this.config.extractPreview === true
+        ? get(new URL('https://gqlapi.tidal.com'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: 'query ($id: BigInt!, $countryCode: String) { trackPreviewUrl(id: $id, countryCode: $countryCode) }',
+            variables: { id, countryCode: this.countryCode }
+          })
+        })
+        : undefined
+    ])
+    return { catalog, preview }
   }
 
   /**
@@ -909,7 +965,8 @@ export default class TidalSource {
   private buildTrack(
     item: Record<string, unknown>,
     parentAlbum?: Record<string, unknown>,
-    credits?: unknown
+    credits?: unknown,
+    extras?: { catalog?: unknown; preview?: unknown }
   ): {
     encoded: string
     info: TrackInfo
@@ -943,12 +1000,18 @@ export default class TidalSource {
       sourceName: 'tidal'
     }
 
+    const media = buildTidalMedia(item, parentAlbum, credits)
+    if (extras) {
+      applyTidalCatalog(media, identifier, extras.catalog)
+      const preview = tidalPreview(extras.preview)
+      if (preview) media.catalog = { ...media.catalog, previewUrl: preview }
+    }
     const encodedInput: TrackEncodeInput = { ...trackInfo, details: [] }
     return {
       encoded: encodeTrack(encodedInput),
       info: trackInfo,
       pluginInfo: {
-        media: buildTidalMedia(item, parentAlbum, credits)
+        media
       }
     }
   }

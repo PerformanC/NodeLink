@@ -605,6 +605,8 @@ export const config: NodelinkConfig = {
 
     tidal: {
       enrichCredits: false,
+      enrichCatalog: false,
+      extractPreview: false,
       enabled: true,
       token: 'token_here',
       countryCode: 'US',

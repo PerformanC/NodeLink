@@ -297,6 +297,12 @@ export interface TidalSourceConfig {
   /** Opt-in detailed recording credits for explicit single-track resolution. */
   enrichCredits?: boolean
 
+  /** Opt-in official v2 metadata with a separately supplied OAuth access token. */
+  enrichCatalog?: boolean
+
+  /** Opt-in public GraphQL preview lookup. */
+  extractPreview?: boolean
+
   /** Enables the Tidal source plugin. */
   enabled: boolean
 

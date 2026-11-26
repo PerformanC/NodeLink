@@ -53,6 +53,7 @@ export interface TrackMediaMetadata {
     artwork?: MediaImage[]
     banners?: MediaImage[]
     url?: string
+    biography?: { text: string; source?: string; summary?: string }
   }>
   album?: {
     name?: string
@@ -77,6 +78,8 @@ export interface TrackMediaMetadata {
     audioQuality?: string
     audioModes?: string[]
     mediaTags?: string[]
+    genres?: string[]
+    previewUrl?: string
   }
   canvas?: {
     url: string
