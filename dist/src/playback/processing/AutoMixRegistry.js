@@ -26,6 +26,7 @@ import { performance } from 'node:perf_hooks';
 import { framesToMediaMs, mediaMsToFrames } from '../../typings/playback/progressiveAnalysis.types.js';
 import { logger } from '../../utils.js';
 import { AutoMixCacheManager } from './AutoMixCacheManager.js';
+import { autoMixTrackKey, trailingSilenceStart } from './autoMixSafety.js';
 import { IncrementalAnalysisEngine } from './IncrementalAnalysisEngine.js';
 import { MusicalAnalyzer, TransitionProfileCache } from './MusicalAnalyzer.js';
 const PRIORITY_ORDER = {
@@ -126,10 +127,17 @@ export class AutoMixRegistry {
      * budget enforcement.
      */
     async requestOutroAnalysis(options) {
-        const trackId = options.track.info.identifier;
-        const windowDurationMs = Math.max(1, options.windowDurationMs ?? 25000);
+        const trackId = autoMixTrackKey(options.track);
+        if (options.signal?.aborted)
+            return null;
+        const requestedWindow = options.windowDurationMs ?? 25000;
+        if (!Number.isFinite(requestedWindow) || requestedWindow <= 0)
+            return null;
+        const windowDurationMs = Math.min(60000, Math.max(1, requestedWindow));
         const trackLength = options.track.info.length || 0;
         const windowStartMs = options.windowStartMs ?? Math.max(0, trackLength - windowDurationMs);
+        if (!Number.isFinite(windowStartMs) || windowStartMs < 0)
+            return null;
         const deduplicationKey = [
             trackId,
             Math.round(windowStartMs),
@@ -240,7 +248,7 @@ export class AutoMixRegistry {
         this.queuedJobs.set(deduplicationKey, queuedJob);
         this._enqueueJob(queuedJob);
         this._processQueue();
-        return promise;
+        return attachCompletion(promise);
     }
     _enqueueJob(job) {
         const index = this.queue.findIndex((j) => PRIORITY_ORDER[j.priority] > PRIORITY_ORDER[job.priority]);
@@ -413,6 +421,9 @@ export class AutoMixRegistry {
                     const musicalProfile = musicalAnalyzer.getProfile();
                     const actualWindowEndMs = windowStartMs + framesToMediaMs(Math.floor(bytesRead / 4), 48000);
                     const points = featureMap.points;
+                    const confirmedTail = trackLength > 0 && actualWindowEndMs >= trackLength - 1000
+                        ? trailingSilenceStart(points)
+                        : null;
                     let avgEnergy = musicalProfile.energy;
                     let energyProfileType = 'sustained';
                     if (points.length > 0) {
@@ -461,16 +472,12 @@ export class AutoMixRegistry {
                                 lastPhraseEndMs = p.timestampMs;
                             }
                         }
-                        if (finalBeatMs === 0)
-                            finalBeatMs = Math.round(naturalPoint);
-                        if (lastPhraseEndMs === 0)
-                            lastPhraseEndMs = Math.round(naturalPoint);
                     }
                     const profileConfidence = Math.max(musicalProfile.confidence, featureMap.confidence);
                     const profile = {
                         trackId,
                         timestamp: Date.now(),
-                        analysisVersion: 2,
+                        analysisVersion: 3,
                         confidence: profileConfidence,
                         bpm: musicalProfile.bpm,
                         bpmConfidence: musicalProfile.confidence,
@@ -486,7 +493,8 @@ export class AutoMixRegistry {
                             analyzedWindowEndMs: Math.round(actualWindowEndMs),
                             analysisConfidence: profileConfidence,
                             energyDecayStartMs: Math.round(featureMap.energyDecayStartMs ?? windowStartMs),
-                            naturalOutroPointMs: Math.round(featureMap.naturalOutroPointMs ?? actualWindowEndMs),
+                            naturalOutroPointMs: Math.round(confirmedTail ??
+                                (trackLength > 0 ? trackLength : actualWindowEndMs)),
                             vocalEndMs: Math.round(vocalEndMs),
                             lastPhraseEndMs: Math.round(lastPhraseEndMs),
                             finalBeatMs: Math.round(finalBeatMs),

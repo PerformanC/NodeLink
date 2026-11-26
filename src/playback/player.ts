@@ -48,9 +48,9 @@ import {
 } from './processing/AutoMixRegistry.ts'
 import type { AudioProcessingMode } from './processing/audioContract.ts'
 import { resolveAudioProcessingMode } from './processing/audioContract.ts'
+import { autoMixTrackKey, safeAutoMixEnd } from './processing/autoMixSafety.ts'
 import { DuckingController } from './processing/DuckingController.ts'
 import { TransitionProfileCache } from './processing/MusicalAnalyzer.ts'
-import { autoMixTrackKey, safeAutoMixEnd } from './processing/autoMixSafety.ts'
 
 export type GatewayEventName =
   (typeof GatewayEvents)[keyof typeof GatewayEvents]
@@ -1420,7 +1420,10 @@ export class Player {
     ) {
       extraData.__resolvedFormat = resolvedUrlData.format
     }
-    if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+    if (
+      resolvedUrlData.isLive !== undefined &&
+      extraData.isLive === undefined
+    ) {
       extraData.isLive = resolvedUrlData.isLive
     }
     if (
@@ -3894,10 +3897,16 @@ export class Player {
     const mixAdditionalData: Record<string, unknown> = {
       ...(urlData.additionalData ?? {})
     }
-    if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+    if (
+      typeof urlData.format === 'string' &&
+      !mixAdditionalData.__resolvedFormat
+    ) {
       mixAdditionalData.__resolvedFormat = urlData.format
     }
-    if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+    if (
+      urlData.isLive !== undefined &&
+      mixAdditionalData.isLive === undefined
+    ) {
       mixAdditionalData.isLive = urlData.isLive
     }
     if (
@@ -4881,8 +4890,14 @@ export class Player {
         : this.track.info.length
     if (!Number.isFinite(total) || total <= 0) return false
 
-    const cachedProfile = TransitionProfileCache.get(autoMixTrackKey(this.track))
-    total = safeAutoMixEnd(total,cachedProfile,Boolean(this.track.endTime && this.track.endTime > 0))
+    const cachedProfile = TransitionProfileCache.get(
+      autoMixTrackKey(this.track)
+    )
+    total = safeAutoMixEnd(
+      total,
+      cachedProfile,
+      Boolean(this.track.endTime && this.track.endTime > 0)
+    )
 
     const currentPosition = _startPosition ?? this._realPosition()
     const remainingMs = Math.max(0, total - currentPosition)
@@ -4976,7 +4991,12 @@ export class Player {
             this._fetchResource(info, uData, wStart, returnPcm, false, true)
         })
         .then((profile) => {
-          if (this.track !== currentTrack || this._crossfadeToken !== token || this.nextTrack !== payload) return
+          if (
+            this.track !== currentTrack ||
+            this._crossfadeToken !== token ||
+            this.nextTrack !== payload
+          )
+            return
           outgoingTailRms = profile?.outroProfile?.sourceEndRms
           if (profile?.outroProfile?.naturalOutroPointMs && this.nextResource) {
             this._scheduleCrossfade()
@@ -5027,8 +5047,8 @@ export class Player {
         outgoingTrackId: autoMixTrackKey(currentTrack),
         incomingTrackId: autoMixTrackKey(payload),
         getOutgoingTailRms: () =>
-          TransitionProfileCache.get(autoMixTrackKey(currentTrack))?.outroProfile
-            ?.sourceEndRms ?? outgoingTailRms,
+          TransitionProfileCache.get(autoMixTrackKey(currentTrack))
+            ?.outroProfile?.sourceEndRms ?? outgoingTailRms,
         getOutgoingProfile: () =>
           TransitionProfileCache.get(autoMixTrackKey(currentTrack)) ?? null,
         getIncomingProfile: () =>
@@ -5084,8 +5104,14 @@ export class Player {
         : this.track.info.length
     if (!Number.isFinite(total) || total <= 0) return false
 
-    const cachedProfile = TransitionProfileCache.get(autoMixTrackKey(this.track))
-    total = safeAutoMixEnd(total,cachedProfile,Boolean(this.track.endTime && this.track.endTime > 0))
+    const cachedProfile = TransitionProfileCache.get(
+      autoMixTrackKey(this.track)
+    )
+    total = safeAutoMixEnd(
+      total,
+      cachedProfile,
+      Boolean(this.track.endTime && this.track.endTime > 0)
+    )
 
     const position = startPosition ?? this._realPosition()
     const duration = Math.min(config.duration, Math.max(1, total - position))

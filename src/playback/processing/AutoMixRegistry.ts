@@ -219,7 +219,7 @@ export class AutoMixRegistry {
     if (options.signal?.aborted) return null
     const requestedWindow = options.windowDurationMs ?? 25000
     if (!Number.isFinite(requestedWindow) || requestedWindow <= 0) return null
-    const windowDurationMs = Math.min(60000, Math.max(1,requestedWindow))
+    const windowDurationMs = Math.min(60000, Math.max(1, requestedWindow))
     const trackLength = options.track.info.length || 0
     const windowStartMs =
       options.windowStartMs ?? Math.max(0, trackLength - windowDurationMs)
@@ -614,7 +614,10 @@ export class AutoMixRegistry {
               windowStartMs + framesToMediaMs(Math.floor(bytesRead / 4), 48000)
 
             const points = featureMap.points
-            const confirmedTail = trackLength > 0 && actualWindowEndMs >= trackLength - 1000 ? trailingSilenceStart(points) : null
+            const confirmedTail =
+              trackLength > 0 && actualWindowEndMs >= trackLength - 1000
+                ? trailingSilenceStart(points)
+                : null
             let avgEnergy = musicalProfile.energy
             let energyProfileType: 'sustained' | 'decay' | 'cliff' | 'fade' =
               'sustained'
@@ -670,8 +673,6 @@ export class AutoMixRegistry {
                   lastPhraseEndMs = p.timestampMs
                 }
               }
-
-
             }
 
             const profileConfidence = Math.max(
@@ -701,7 +702,8 @@ export class AutoMixRegistry {
                   featureMap.energyDecayStartMs ?? windowStartMs
                 ),
                 naturalOutroPointMs: Math.round(
-                  confirmedTail ?? (trackLength > 0 ? trackLength : actualWindowEndMs)
+                  confirmedTail ??
+                    (trackLength > 0 ? trackLength : actualWindowEndMs)
                 ),
                 vocalEndMs: Math.round(vocalEndMs),
                 lastPhraseEndMs: Math.round(lastPhraseEndMs),

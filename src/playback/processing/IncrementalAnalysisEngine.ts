@@ -135,7 +135,11 @@ export class IncrementalAnalysisEngine implements IncrementalAnalyzer {
     const incomingFrames = Math.floor(data.length / this.format.bytesPerFrame)
 
     // A backward discontinuity (seek/restart) invalidates the old analysis timeline.
-    if (this.currentTimelineFrame !== null && chunkStartFrame < this.currentTimelineFrame) this.reset()
+    if (
+      this.currentTimelineFrame !== null &&
+      chunkStartFrame < this.currentTimelineFrame
+    )
+      this.reset()
 
     // Discontinuity detection: true timeline gap between end of previous ingested audio and incoming chunk
     if (

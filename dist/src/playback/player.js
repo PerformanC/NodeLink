@@ -7,6 +7,7 @@ import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.js';
 import { logger } from '../utils.js';
 import { AutoMixRegistry } from './processing/AutoMixRegistry.js';
 import { resolveAudioProcessingMode } from './processing/audioContract.js';
+import { autoMixTrackKey, safeAutoMixEnd } from './processing/autoMixSafety.js';
 import { DuckingController } from './processing/DuckingController.js';
 import { TransitionProfileCache } from './processing/MusicalAnalyzer.js';
 let createAudioResource = null;
@@ -985,7 +986,8 @@ export class Player {
             !extraData.__resolvedFormat) {
             extraData.__resolvedFormat = resolvedUrlData.format;
         }
-        if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+        if (resolvedUrlData.isLive !== undefined &&
+            extraData.isLive === undefined) {
             extraData.isLive = resolvedUrlData.isLive;
         }
         if (resolvedUrlData.isEncrypted !== undefined &&
@@ -2147,9 +2149,7 @@ export class Player {
         logger('debug', 'Player', `[Action: clearNextTrack] Method invoked for guild ${this.guildId}`);
         if (this.destroying)
             return false;
-        if (this.nextTrack?.info.identifier) {
-            AutoMixRegistry.getInstance().cancelTrackAnalysis(this.nextTrack.info.identifier);
-        }
+        // Analysis jobs are shared across players; clearing one queue must not abort another player's job.
         if (this.nextResourceIsCrossfade) {
             this._crossfadeToken += 1;
             this._clearCrossfadeTimer();
@@ -2681,10 +2681,12 @@ export class Player {
         const mixAdditionalData = {
             ...(urlData.additionalData ?? {})
         };
-        if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+        if (typeof urlData.format === 'string' &&
+            !mixAdditionalData.__resolvedFormat) {
             mixAdditionalData.__resolvedFormat = urlData.format;
         }
-        if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+        if (urlData.isLive !== undefined &&
+            mixAdditionalData.isLive === undefined) {
             mixAdditionalData.isLive = urlData.isLive;
         }
         if (urlData.isEncrypted !== undefined &&
@@ -3448,13 +3450,8 @@ export class Player {
             : this.track.info.length;
         if (!Number.isFinite(total) || total <= 0)
             return false;
-        const cachedProfile = TransitionProfileCache.get(this.track.info.identifier);
-        if (cachedProfile?.outroProfile?.naturalOutroPointMs &&
-            cachedProfile.outroProfile.naturalOutroPointMs > 0 &&
-            cachedProfile.outroProfile.naturalOutroPointMs < total &&
-            !(this.track.endTime && this.track.endTime > 0)) {
-            total = cachedProfile.outroProfile.naturalOutroPointMs;
-        }
+        const cachedProfile = TransitionProfileCache.get(autoMixTrackKey(this.track));
+        total = safeAutoMixEnd(total, cachedProfile, Boolean(this.track.endTime && this.track.endTime > 0));
         const currentPosition = _startPosition ?? this._realPosition();
         const remainingMs = Math.max(0, total - currentPosition);
         const crossfadeDurationMs = config.duration || 6000;
@@ -3513,6 +3510,10 @@ export class Player {
                 fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
             })
                 .then((profile) => {
+                if (this.track !== currentTrack ||
+                    this._crossfadeToken !== token ||
+                    this.nextTrack !== payload)
+                    return;
                 outgoingTailRms = profile?.outroProfile?.sourceEndRms;
                 if (profile?.outroProfile?.naturalOutroPointMs && this.nextResource) {
                     this._scheduleCrossfade();
@@ -3542,12 +3543,12 @@ export class Player {
         }
         const prepared = audioStream.prepareCrossfade(fetched.stream.stream, {
             durationMs: config.duration,
-            outgoingTrackId: currentTrack.info.identifier,
-            incomingTrackId: payload.info.identifier,
-            getOutgoingTailRms: () => TransitionProfileCache.get(currentTrack.info.identifier)?.outroProfile
-                ?.sourceEndRms ?? outgoingTailRms,
-            getOutgoingProfile: () => TransitionProfileCache.get(currentTrack.info.identifier) ?? null,
-            getIncomingProfile: () => TransitionProfileCache.get(payload.info.identifier) ?? null,
+            outgoingTrackId: autoMixTrackKey(currentTrack),
+            incomingTrackId: autoMixTrackKey(payload),
+            getOutgoingTailRms: () => TransitionProfileCache.get(autoMixTrackKey(currentTrack))
+                ?.outroProfile?.sourceEndRms ?? outgoingTailRms,
+            getOutgoingProfile: () => TransitionProfileCache.get(autoMixTrackKey(currentTrack)) ?? null,
+            getIncomingProfile: () => TransitionProfileCache.get(autoMixTrackKey(payload)) ?? null,
             minBufferMs: config.minBufferMs,
             bufferMs: Math.min(30000, Math.max(config.bufferMs, Math.min(16000, config.duration * 2 + 4000), this._crossfadePreparationSafetyMs + config.minBufferMs))
         }, (consumedMs) => this._completeCrossfade(token, consumedMs));
@@ -3581,13 +3582,8 @@ export class Player {
             : this.track.info.length;
         if (!Number.isFinite(total) || total <= 0)
             return false;
-        const cachedProfile = TransitionProfileCache.get(this.track.info.identifier);
-        if (cachedProfile?.outroProfile?.naturalOutroPointMs &&
-            cachedProfile.outroProfile.naturalOutroPointMs > 0 &&
-            cachedProfile.outroProfile.naturalOutroPointMs < total &&
-            !(this.track.endTime && this.track.endTime > 0)) {
-            total = cachedProfile.outroProfile.naturalOutroPointMs;
-        }
+        const cachedProfile = TransitionProfileCache.get(autoMixTrackKey(this.track));
+        total = safeAutoMixEnd(total, cachedProfile, Boolean(this.track.endTime && this.track.endTime > 0));
         const position = startPosition ?? this._realPosition();
         const duration = Math.min(config.duration, Math.max(1, total - position));
         const selectionWindow = getCrossfadeSelectionWindowMs(duration);
@@ -3681,9 +3677,7 @@ export class Player {
         this._fading('trackEndSchedule', { startPosition: consumedMs });
     }
     _destroyCrossfadeResources(preserveQueuedTrack = false) {
-        if (this.nextTrack?.info.identifier) {
-            AutoMixRegistry.getInstance().cancelTrackAnalysis(this.nextTrack.info.identifier);
-        }
+        // Analysis jobs are shared across players; clearing one queue must not abort another player's job.
         const keepQueuedTrack = preserveQueuedTrack &&
             this.nextResourceIsCrossfade &&
             this.nextTrack !== null;
