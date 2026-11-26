@@ -605,6 +605,8 @@ export const config: NodelinkConfig = {
 
     tidal: {
       embedFallback: false,
+      enrichAlbum: false,
+      alternateTrackSearch: false,
       enrichCredits: false,
       enrichCatalog: false,
       metadataAccessToken: '',

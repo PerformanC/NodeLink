@@ -294,6 +294,12 @@ export interface DeezerSourceConfig {
  * Configuration for the Tidal high-fidelity music provider.
  */
 export interface TidalSourceConfig {
+  /** Opt-in single-track album details from the matching v1 album. */
+  enrichAlbum?: boolean
+
+  /** Opt-in track-specific legacy search after general search HTTP 401. */
+  alternateTrackSearch?: boolean
+
   /** Opt-in public embed metadata fallback for direct track/album HTTP 401 failures. */
   embedFallback?: boolean
 

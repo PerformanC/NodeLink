@@ -96,3 +96,18 @@ test('rejects malformed payloads and never sends credentials', async () => {
     undefined
   )
 })
+
+test('parses the 13-track observed album, preserving ordering and full durations', () => {
+  const titles = ['Give Life Back to Music', 'The Game of Love', 'Giorgio by Moroder', 'Within', 'Instant Crush', 'Lose Yourself to Dance', 'Touch', 'Get Lucky', 'Beyond', 'Motherboard', 'Fragments of Time', "Doin' it Right", 'Contact']
+  const durations = ['4:35', '5:22', '9:05', '3:49', '5:38', '5:54', '8:19', '6:10', '4:50', '5:42', '4:40', '4:11', '6:24']
+  const payload = Object.fromEntries(titles.map((title, i) => [String(20115557 + i), { title, artist: 'Daft Punk', album: 'Random Access Memories', artwork }]))
+  Object.assign(payload, data)
+  const rows = titles.map((_, i) => '<list-item product-id="' + (20115557+i) + '" product-type="track"><span slot="artist">' + (i === 7 ? guests : '') + '</span><time slot="duration">' + durations[i] + '</time></list-item>').join('')
+  const html = album.replace(script, '<script>\nwindow.tidalMediaSessionMetadata=' + JSON.stringify(payload) + ';\n</script>').replace(/<list-item[\s\S]*$/, rows)
+  const result = parseTidalEmbed(html, 'album', '20115556')
+  assert.equal(result?.tracks.length, 13)
+  assert.equal(result?.tracks[7]?.id, '20115564')
+  assert.equal(result?.tracks[7]?.durationMs, 370000)
+  assert.equal(result?.tracks[12]?.title, 'Contact')
+  assert.equal(result?.tracks[12]?.durationMs, 384000)
+})
