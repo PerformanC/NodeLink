@@ -1,3 +1,4 @@
+import { appleMusicArtists } from '../modules/appleMusicMedia.ts'
 import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type { AppleMusicSourceConfig } from '../typings/config/config.types.ts'
 import type {
@@ -92,6 +93,10 @@ interface AppleMusicResource {
       data?: AppleMusicResource[]
       /** Metadata including total counts. */
       meta?: { total?: number }
+    }
+    /** Linked artists connection. */
+    artists?: {
+      data?: AppleMusicResource[]
     }
     /** Linked albums connection. */
     albums?: {
@@ -536,7 +541,7 @@ export default class AppleMusicSource implements SourceInstance {
     country: string
   ): Promise<SourceResult> {
     const data = await this.apiRequest<{ data: AppleMusicResource[] }>(
-      `/catalog/${country}/songs/${id}?extend=artistUrl,editorialVideo&include=albums`
+      `/catalog/${country}/songs/${id}?extend=artistUrl,editorialVideo&include=albums,artists`
     )
     const song = data?.data?.[0]
     if (!song) return { loadType: 'empty', data: {} }
@@ -712,9 +717,10 @@ export default class AppleMusicSource implements SourceInstance {
         ? this.parseArtwork(parent.attributes?.artwork)
         : null
     const editorialVideo = this.extractVideoUrl(parent.attributes)
+    const albumParent = parent.type === 'albums' ? parent : undefined
 
     const results = baseTracks
-      .map((t) => this.buildTrack(t, artwork, editorialVideo))
+      .map((t) => this.buildTrack(t, artwork, editorialVideo, albumParent))
       .filter((t): t is TrackData => !!t)
 
     for (let i = 1; i < allowed; i++) {
@@ -724,7 +730,7 @@ export default class AppleMusicSource implements SourceInstance {
       if (pageData?.data) {
         results.push(
           ...pageData.data
-            .map((t) => this.buildTrack(t, artwork, editorialVideo))
+            .map((t) => this.buildTrack(t, artwork, editorialVideo, albumParent))
             .filter((t): t is TrackData => !!t)
         )
       }
@@ -738,19 +744,21 @@ export default class AppleMusicSource implements SourceInstance {
    * @param item - The track resource from the API.
    * @param artworkOverride - Optional artwork URL to override the resource's own.
    * @param videoOverride - Optional video URL to override the resource's own.
+   * @param albumParent - Known album resource when expanding an album.
    * @returns The normalized TrackData or null if attributes are missing.
    * @internal
    */
   private buildTrack(
     item: AppleMusicResource,
     artworkOverride?: string | null,
-    videoOverride?: string | null
+    videoOverride?: string | null,
+    albumParent?: AppleMusicResource
   ): TrackData | null {
     const attr = item.attributes
     if (!attr) return null
 
     const artwork = artworkOverride || this.parseArtwork(attr.artwork)
-    const album = item.relationships?.albums?.data?.[0]
+    const album = albumParent ?? item.relationships?.albums?.data?.[0]
     const albumArtwork = this.parseArtwork(album?.attributes?.artwork)
     const isExplicit = attr.contentRating === 'explicit'
     const trackUri = attr.url
@@ -779,7 +787,7 @@ export default class AppleMusicSource implements SourceInstance {
         previewUrl: attr.previews?.[0]?.url,
         hlsVideoUrl: videoOverride || this.extractVideoUrl(attr),
         media: buildTrackMedia('applemusic', {
-          artists: [{ name: attr.artistName }],
+          artists: appleMusicArtists(item.relationships?.artists?.data, attr.artistName),
           album: {
             id: album?.id,
             name: album?.attributes?.name || attr.albumName,
@@ -850,6 +858,10 @@ export default class AppleMusicSource implements SourceInstance {
     height: number
   }): string | null {
     if (!artwork?.url) return null
+    if (
+      !Number.isSafeInteger(artwork.width) || artwork.width <= 0 ||
+      !Number.isSafeInteger(artwork.height) || artwork.height <= 0
+    ) return /\{[wh]\}/.test(artwork.url) ? null : artwork.url
     return artwork.url
       .replace('{w}', artwork.width.toString())
       .replace('{h}', artwork.height.toString())
