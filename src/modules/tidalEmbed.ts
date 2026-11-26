@@ -104,7 +104,7 @@ export function parseTidalEmbed(html: string, kind: TidalEmbedKind, id: string):
 }
 
 /** One bounded, credential-free request to the official public embed host. */
-export async function fetchTidalEmbed(kind: TidalEmbedKind, id: string, request: typeof fetch = fetch) {
+export async function fetchTidalEmbed(kind: TidalEmbedKind, id: string, request: (url: string, init: RequestInit) => Promise<Response> = fetch) {
   if (!/^\d{1,20}$/.test(id)) return undefined
   try {
     const response = await request('https://embed.tidal.com/' + kind + 's/' + id, {
