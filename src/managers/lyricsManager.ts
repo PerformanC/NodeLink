@@ -68,6 +68,8 @@ export interface LyricsLine {
   section?: string
   /** Whether the line represents background/harmony vocals. */
   isBackground?: boolean
+  /** Provider-supplied vocal agent identifier. */
+  agent?: string
 }
 
 /**
