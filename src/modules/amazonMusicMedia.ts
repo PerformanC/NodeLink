@@ -17,26 +17,7 @@ function resourceId(value: string | undefined, kind: 'artists' | 'albums'): stri
     const url = new URL(value)
     if (url.protocol !== 'https:' || !/^music\.amazon\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$/i.test(url.hostname)) return undefined
     if (url.username || url.password) return undefined
-    return url.pathname.match(new RegExp(`^/${kind}/([A-Z0-9]{10})/?import { buildTrackMedia } from './trackMedia.ts'
-
-type Artist = { name?: string; url?: string }
-type Album = { name?: string; title?: string; url?: string; image?: string; '@id'?: string }
-type Resource = {
-  '@type'?: string
-  byArtist?: Artist | Artist[]
-  author?: Artist
-  inAlbum?: Album
-  image?: string
-}
-
-/** Only extract IDs from canonical Amazon Music resource URLs. */
-function resourceId(value: string | undefined, kind: 'artists' | 'albums'): string | undefined {
-  if (typeof value !== 'string') return undefined
-  try {
-    const url = new URL(value)
-    if (url.protocol !== 'https:' || !/^music\.amazon\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$/i.test(url.hostname)) return undefined
-    if (url.username || url.password) return undefined
-    return url.pathname.match(, 'i'))?.[1]
+    return url.pathname.match(new RegExp(`^/${kind}/([A-Z0-9]{10})/?$`, 'i'))?.[1]
   } catch {
     return undefined
   }
