@@ -1,5 +1,9 @@
 import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
+import {
+  buildSpotifyMedia,
+  spotifyCanvasMedia
+} from '../modules/spotifyMedia.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
   PlaylistPluginInfo,
@@ -808,7 +812,7 @@ export default class SpotifySource implements SourceInstance {
     return {
       encoded: encodeTrack({ ...info, details: [] }),
       info,
-      pluginInfo: {}
+      pluginInfo: { media: buildSpotifyMedia(item, info.artworkUrl) }
     }
   }
 
@@ -845,7 +849,7 @@ export default class SpotifySource implements SourceInstance {
     return {
       encoded: encodeTrack({ ...info, details: [] }),
       info,
-      pluginInfo: {}
+      pluginInfo: { media: buildSpotifyMedia(item, info.artworkUrl) }
     }
   }
 
@@ -1220,10 +1224,17 @@ export default class SpotifySource implements SourceInstance {
             tasks.push(
               fetchCanvas(`spotify:track:${id}`, this.mobileToken)
                 .then((cv) => {
-                  if (cv?.data?.canvasesList?.[0])
-                    track.pluginInfo.canvas = {
-                      canvasesList: [cv.data.canvasesList[0]]
+                  const entry = cv?.data?.canvasesList?.[0]
+                  if (entry) {
+                    track.pluginInfo.canvas = { canvasesList: [entry] }
+                    const canvas = spotifyCanvasMedia(entry, `spotify:track:${id}`)
+                    if (canvas) {
+                      track.pluginInfo.media = {
+                        ...buildSpotifyMedia(data.trackUnion, track.info.artworkUrl),
+                        canvas
+                      }
                     }
+                  }
                 })
                 .catch(() => {})
             )
