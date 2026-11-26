@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
+import { buildSpotifyArtistMedia, buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
 
 test('normalizes official artist and album metadata with image dimensions', () => {
   assert.deepEqual(buildSpotifyMedia({ artists: [{ id: 'a', name: 'Artist' }], album: { id: 'b', name: 'Album', images: [{ url: 'https://example.com/cover', width: 640, height: 640 }] } }), {
@@ -54,4 +54,19 @@ test('preserves optional Canvas playback metadata in the public media contract',
   const entry = { id: 'abc', trackUri: 'spotify:track:a', canvasUrl: 'https://canvaz.scdn.co/example.mp4', canvasUri: 'spotify:canvas:abc', fileId: '0123456789abcdef0123456789abcdef', type: 'VIDEO_LOOPING_RANDOM' }
   assert.deepEqual(selectSpotifyCanvas([entry], entry.trackUri)?.canvas, { url: entry.canvasUrl, id: entry.id, uri: entry.canvasUri, fileId: entry.fileId, type: entry.type })
   assert.deepEqual(spotifyCanvasMedia({ ...entry, canvasUri: 'invalid', fileId: 'bad', type: 'bad type' }, entry.trackUri), { url: entry.canvasUrl, id: entry.id })
+})
+
+test('normalizes artist overview avatar, gallery and header without mixing their roles', () => {
+  const image = { url: 'https://i.scdn.co/image/avatar', width: 640, height: 640 }
+  const gallery = { url: 'https://i.scdn.co/image/gallery', width: 1000, height: 1000 }
+  const header = { url: 'https://i.scdn.co/image/header', width: 2000, height: 800 }
+  const input = { id: 'abc', uri: 'spotify:artist:abc', profile: { name: 'Artist' }, visuals: { avatarImage: { sources: [image] }, gallery: { items: [{ sources: [gallery, image] }, null] } }, headerImage: { data: { sources: [header] } } }
+  assert.deepEqual(buildSpotifyArtistMedia(input, 'abc'), { provider: 'spotify', artists: [{ id: 'abc', name: 'Artist', artwork: [image, gallery], banners: [header] }] })
+  assert.equal(buildSpotifyArtistMedia(input, 'other'), undefined)
+})
+
+test('supports official artist images and omits invalid or unavailable optional fields', () => {
+  assert.deepEqual(buildSpotifyArtistMedia({ id: 'abc', name: ' Artist ', images: [{ url: 'https://example.com/a' }, { url: 'http://example.com/b' }] }, 'abc'), { provider: 'spotify', artists: [{ id: 'abc', name: 'Artist', artwork: [{ url: 'https://example.com/a' }] }] })
+  assert.equal(buildSpotifyArtistMedia({ profile: { name: 12 } }, 'abc'), undefined)
+  assert.deepEqual(buildSpotifyArtistMedia({ name: 'Artist', visuals: { gallery: { items: 12 } }, headerImage: { data: { sources: false } } }, 'abc'), { provider: 'spotify', artists: [{ id: 'abc', name: 'Artist' }] })
 })

@@ -317,6 +317,8 @@ NodeLink also contains components for layered mixing, ducking, fades and transit
 
 ### Rich media metadata
 
+Explicit Spotify artist resolution can also include `data.pluginInfo.media` on its playlist response: artist avatar and gallery images are listed in `artists[0].artwork` and header images in `artists[0].banners`, when present in the existing provider response. No extra requests are made for each track.
+
 Supported track responses can include `pluginInfo.media`, with a provider name and artist list. Optional fields include album, artwork, artist banners, channel artwork and banners, Canvas, motion artwork, colors, identifiers (ISRC/UPC/EAN), and credits. Fields are omitted when the source cannot provide them. Existing track fields and provider-specific metadata remain available. Artwork and motion URLs are references, not downloaded assets; clients must respect provider permissions and fall back to static artwork.
 
 Apple Music motion artwork, when available through the existing editorial metadata integration, includes a primary URL, a track/album scope, and square or tall variants. Explicit single-track resolution requests extended album metadata and can make one additional album lookup when motion is absent. Search and playlist expansion do not fetch an album per track. The editorialVideo field is not a documented guarantee of the public Apple Music API; absent motion must not be treated as a track failure. Motion artwork is distinct from Spotify Canvas.

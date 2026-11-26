@@ -5,6 +5,7 @@ import { fetchPathfinderCanvas } from '../modules/spotifyPathfinderCanvas.ts'
 import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
+  buildSpotifyArtistMedia,
   selectSpotifyCanvas,
   spotifyCanvasSessionState
 } from '../modules/spotifyMedia.ts'
@@ -1639,7 +1640,8 @@ export default class SpotifySource implements SourceInstance {
               identifier: id,
               url: `https://open.spotify.com/artist/${id}`,
               author: data.artistUnion.profile.name,
-              totalTracks: tracks.length
+              totalTracks: tracks.length,
+              media: buildSpotifyArtistMedia(data.artistUnion, id)
             }
           }
         }
@@ -1676,7 +1678,8 @@ export default class SpotifySource implements SourceInstance {
                 identifier: id,
                 url: `https://open.spotify.com/artist/${id}`,
                 author: artistName,
-                totalTracks: tracks.length
+                totalTracks: tracks.length,
+                media: buildSpotifyArtistMedia(meta, id)
               }
             }
           }

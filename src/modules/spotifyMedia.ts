@@ -100,3 +100,29 @@ export function spotifyCanvasSessionState(token: string | null, expiry: number |
   if (expiry === null || !Number.isFinite(expiry)) return 'unknown-expiry'
   return expiry <= now ? 'expired' : 'ready'
 }
+
+/** Preserve the imagery of an explicitly resolved artist, not the artist of every track. */
+export function buildSpotifyArtistMedia(input: unknown, expectedId: string): TrackMediaMetadata | undefined {
+  function object(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+  }
+  const artist = object(input)
+  if (!artist || (artist.id !== undefined && artist.id !== expectedId) ||
+      (artist.uri !== undefined && artist.uri !== `spotify:artist:${expectedId}`)) return undefined
+  const name = object(artist.profile)?.name ?? artist.name
+  if (typeof name !== 'string' || !name.trim()) return undefined
+  const visuals = object(artist.visuals)
+  const gallery = object(visuals?.gallery)?.items
+  const artworkInputs: ImageInput[] = []
+  const append = (value: unknown) => {
+    if (Array.isArray(value)) artworkInputs.push(...value.slice(0, 100))
+  }
+  append(object(visuals?.avatarImage)?.sources)
+  append(artist.images)
+  for (const item of Array.isArray(gallery) ? gallery.slice(0, 50) : []) append(object(item)?.sources)
+  const artwork = images(artworkInputs)
+  const header = object(object(artist.headerImage)?.data)
+  const banners = images(Array.isArray(header?.sources) ? header.sources.slice(0, 100) : [])
+  return { provider: 'spotify', artists: [{ id: expectedId, name: name.trim(),
+    ...(artwork.length ? { artwork } : {}), ...(banners.length ? { banners } : {}) }] }
+}
