@@ -564,6 +564,7 @@ export const config: NodelinkConfig = {
       allowLocalFiles: false,
       extractColors: false,
       colorMode: 'legacy',
+      enrichArtists: false,
       sp_dc: ''
     },
 

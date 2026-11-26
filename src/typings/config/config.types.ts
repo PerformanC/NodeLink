@@ -220,6 +220,9 @@ export interface SpotifySourceConfig {
 
   /** Cover art palette format. Default: legacy; dynamic requires authorized access. */
   colorMode?: 'legacy' | 'dynamic'
+
+  /** Include artist gallery and banners in explicit track resolution. Default: false. */
+  enrichArtists?: boolean
 }
 
 /**

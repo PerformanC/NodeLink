@@ -1,3 +1,4 @@
+import { SpotifyArtistMediaCache } from '../modules/spotifyArtistMediaCache.ts'
 import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
@@ -263,6 +264,18 @@ export default class SpotifySource implements SourceInstance {
    * @internal
    */
   private inFlightResolves = new Map<string, Promise<SourceResult>>()
+
+  private readonly artistMediaCache = new SpotifyArtistMediaCache(async (id) => {
+    const data = await this._internalApiRequest<SpotifyGraphQLArtistResponse>(
+      QUERIES.getArtist,
+      { uri: `spotify:artist:${id}`, locale: 'en', includePrerelease: false },
+      'anonymous',
+      0,
+      true
+    )
+    if (!data?.artistUnion || data.artistUnion.__typename === 'NotFound') return undefined
+    return buildSpotifyArtistMedia(data.artistUnion, id)?.artists[0]
+  })
 
   /**
    * Prevents duplicate in-flight track delegation lookups.
@@ -1281,6 +1294,7 @@ export default class SpotifySource implements SourceInstance {
           const tasks: Promise<void>[] = []
 
           tasks.push(this._attachCanvas(track, id))
+          tasks.push(this._attachArtistMedia(track))
 
           if (!track.info.isrc) {
             tasks.push(
@@ -1332,12 +1346,22 @@ export default class SpotifySource implements SourceInstance {
       if (data) {
         const track = this._buildTrack(data)
         if (track) {
-          await this._attachCanvas(track, id)
+          await Promise.all([this._attachCanvas(track, id), this._attachArtistMedia(track)])
           return { loadType: 'track', data: track }
         }
       }
     }
     return { loadType: 'empty', data: {} }
+  }
+
+  /** Optional artist artwork enrichment for explicit single-track resolutions. */
+  private async _attachArtistMedia(track: TrackData): Promise<void> {
+    if (this.config.enrichArtists !== true || !this.anonymousToken) return
+    const media = track.pluginInfo.media as TrackMediaMetadata | undefined
+    if (!media?.artists.length) return
+    const artists = await this.artistMediaCache.enrich(media.artists)
+    const current = track.pluginInfo.media as TrackMediaMetadata | undefined
+    if (current) track.pluginInfo.media = { ...current, artists }
   }
 
   /**

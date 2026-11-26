@@ -1,0 +1,70 @@
+name: Validate rich media metadata
+
+on:
+  push:
+    branches:
+      - feat/rich-media-metadata
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.repository == 'SebasLoadJs/NodeLink' && github.ref_name == 'feat/rich-media-metadata'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+        env:
+          HUSKY: '0'
+      - name: Format and check contribution
+        shell: bash
+        run: |
+          git fetch origin dev --depth=1
+          git diff --name-only -z --diff-filter=ACM origin/dev HEAD -- '*.ts' '*.json' > /tmp/media-files
+          mapfile -d '' -t files < /tmp/media-files
+          if (( ${#files[@]} )); then
+            npx --no-install biome check --write --max-diagnostics=200 "${files[@]}"
+            npx --no-install biome check --error-on-warnings --max-diagnostics=200 "${files[@]}"
+          fi
+      - name: Type check
+        run: npm run type-check
+      - name: Unit tests
+        run: find src -name '*.test.ts' -print0 | xargs -0 node --experimental-strip-types --test
+      - name: Rebuild compiled files
+        run: |
+          rm -rf dist
+          npm run build
+          node --check dist/src/sources/spotify.js
+          test -f dist/src/modules/spotifyMedia.js
+          test -f dist/src/modules/spotifyCanvasResponse.js
+          test -f dist/src/api/loadMedia.js
+      - name: Publish verified formatting and phase-specific compiled output
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' -t files < /tmp/media-files
+          for file in "${files[@]}"; do
+            git add -- "$file"
+            if [[ "$file" == *.ts ]]; then
+              output="dist/${file%.ts}.js"
+              if [[ -f "$output" ]] && { [[ "$file" != *.test.ts && "$file" != scripts/* ]] || git ls-files --error-unmatch "$output" >/dev/null 2>&1; }; then
+                git add -f -- "$output"
+              fi
+            fi
+          done
+          if git diff --cached --quiet; then exit 0; fi
+          git diff --cached --stat
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'chore(media): format and rebuild rich media contribution'
+          gh auth setup-git
+          git push origin HEAD:refs/heads/feat/rich-media-metadata
