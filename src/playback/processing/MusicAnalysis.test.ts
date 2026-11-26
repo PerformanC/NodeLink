@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { once } from 'node:events'
 import { MusicAnalysis } from './MusicAnalysis.ts'
 test('silent output reports coverage without inventing tempo or key',()=>{
  const tap=new MusicAnalysis()
@@ -16,11 +17,14 @@ test('silent output reports coverage without inventing tempo or key',()=>{
  assert.equal(result.key,null)
  assert.deepEqual(result.beatPositionsMs,[])
 })
-test('analysis rolls over bounded windows without resetting the output clock',()=>{
+test('analysis rolls over bounded windows without resetting the output clock',async()=>{
  const tap=new MusicAnalysis()
  tap.resume()
+ const done=once(tap,'end')
  const frame=Buffer.alloc(3840)
  for(let i=0;i<800;i++)tap.write(frame)
+ tap.end()
+ await done
  const result=tap.snapshot()
  assert.equal(result?.outputWindowStartMs,12000)
  assert.equal(result?.outputWindowEndMs,16000)
