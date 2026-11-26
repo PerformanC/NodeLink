@@ -3,7 +3,7 @@ import { fetchCanvas } from '../modules/spotifyCanvas.ts'
 import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
-  spotifyCanvasMedia
+  selectSpotifyCanvas
 } from '../modules/spotifyMedia.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
@@ -1232,15 +1232,12 @@ export default class SpotifySource implements SourceInstance {
                 logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
               })
                 .then((cv) => {
-                  const entry = cv?.data?.canvasesList?.[0]
-                  if (entry) {
-                    track.pluginInfo.canvas = { canvasesList: [entry] }
-                    const canvas = spotifyCanvasMedia(entry, `spotify:track:${id}`)
-                    if (canvas) {
-                      track.pluginInfo.media = {
-                        ...buildSpotifyMedia(data.trackUnion, track.info.artworkUrl),
-                        canvas
-                      }
+                  const selected = selectSpotifyCanvas(cv?.data?.canvasesList, `spotify:track:${id}`)
+                  if (selected) {
+                    track.pluginInfo.canvas = { canvasesList: [selected.entry] }
+                    track.pluginInfo.media = {
+                      ...buildSpotifyMedia(data.trackUnion, track.info.artworkUrl),
+                      canvas: selected.canvas
                     }
                   }
                 })

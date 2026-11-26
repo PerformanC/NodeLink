@@ -73,3 +73,15 @@ export function spotifyCanvasMedia(entry: { id?: string; canvasUrl?: string; tra
   const url = webUrl(entry.canvasUrl)
   return url ? { url, ...(entry.id ? { id: entry.id } : {}) } : undefined
 }
+
+/** Select a matching, playable Canvas rather than trusting response order. */
+export function selectSpotifyCanvas<T extends { id?: string; canvasUrl?: string; trackUri?: string }>(
+  entries: readonly T[] | undefined,
+  trackUri: string
+): { entry: T; canvas: NonNullable<TrackMediaMetadata['canvas']> } | undefined {
+  for (const entry of entries ?? []) {
+    const canvas = spotifyCanvasMedia(entry, trackUri)
+    if (canvas) return { entry, canvas }
+  }
+  return undefined
+}

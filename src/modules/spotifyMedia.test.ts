@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSpotifyMedia, spotifyCanvasMedia } from './spotifyMedia.ts'
+import { buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas } from './spotifyMedia.ts'
 
 test('normalizes official artist and album metadata with image dimensions', () => {
   assert.deepEqual(buildSpotifyMedia({ artists: [{ id: 'a', name: 'Artist' }], album: { id: 'b', name: 'Album', images: [{ url: 'https://example.com/cover', width: 640, height: 640 }] } }), {
@@ -26,4 +26,16 @@ test('normalizes Canvas only for the matching track and a safe URL', () => {
   assert.deepEqual(spotifyCanvasMedia(entry, 'spotify:track:a'), { id: 'c', url: entry.canvasUrl })
   assert.equal(spotifyCanvasMedia(entry, 'spotify:track:b'), undefined)
   assert.equal(spotifyCanvasMedia({ canvasUrl: 'file:///tmp/c.mp4' }, 'spotify:track:a'), undefined)
+})
+
+test('selects a valid matching Canvas even after unrelated or unusable entries', () => {
+  const target = 'spotify:track:target'
+  const valid = { id: 'correct', trackUri: target, canvasUrl: 'https://example.com/loop.mp4' }
+  const unrelated = { id: 'wrong', trackUri: 'spotify:track:other', canvasUrl: valid.canvasUrl }
+  const unsafe = { id: 'unsafe', trackUri: target, canvasUrl: 'file:///tmp/loop.mp4' }
+  assert.deepEqual(selectSpotifyCanvas([unrelated, unsafe, valid], target), {
+    entry: valid, canvas: { id: valid.id, url: valid.canvasUrl }
+  })
+  assert.equal(selectSpotifyCanvas([unrelated, unsafe], target), undefined)
+  assert.equal(selectSpotifyCanvas(undefined, target), undefined)
 })

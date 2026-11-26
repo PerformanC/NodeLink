@@ -305,6 +305,8 @@ export async function fetchCanvas(
       'https://spclient.wg.spotify.com/canvaz-cache/v0/canvases',
       {
         method: 'POST',
+        redirect: 'error',
+        signal: AbortSignal.timeout(8000),
         body: requestBuf,
         headers: {
           Accept: 'application/protobuf',

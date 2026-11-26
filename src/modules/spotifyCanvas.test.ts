@@ -57,6 +57,8 @@ test('sends the existing binary request with a protobuf content type', async (t)
   assert.equal(headers.get('content-type'), 'application/protobuf')
   assert.equal(headers.get('accept'), 'application/protobuf')
   assert.equal(request?.method, 'POST')
+  assert.equal(request?.redirect, 'error')
+  assert.ok(request?.signal instanceof AbortSignal)
   assert.deepEqual(request?.body, Buffer.concat([
     Buffer.from([10, 19, 10, 17]),
     Buffer.from(trackUri)
