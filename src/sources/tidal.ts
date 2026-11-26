@@ -884,7 +884,10 @@ export default class TidalSource {
    * @param item - Raw Tidal track object.
    * @returns Encoded track payload.
    */
-  private buildTrack(item: Record<string, unknown>, parentAlbum?: Record<string, unknown>): {
+  private buildTrack(
+    item: Record<string, unknown>,
+    parentAlbum?: Record<string, unknown>
+  ): {
     encoded: string
     info: TrackInfo
     pluginInfo: Record<string, unknown>

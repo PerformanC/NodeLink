@@ -19,8 +19,13 @@ function id(value: unknown): string | undefined {
 
 /** Tidal CDN resources are identified by UUIDs, not arbitrary paths. */
 function resourcePath(value: unknown): string | undefined {
-  if (typeof value !== 'string' ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return undefined
+  if (
+    typeof value !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value
+    )
+  )
+    return undefined
   return value.replace(/-/g, '/')
 }
 
@@ -40,9 +45,15 @@ export function buildTidalMedia(item: RecordData, parentAlbum?: RecordData) {
   // Reuse a fetched parent only for its own album tracks; never mix editions.
   const parentId = id(parentAlbum?.id)
   const nestedId = id(nested?.id)
-  const album = parentId && (!nestedId || nestedId === parentId)
-    ? { ...parentAlbum, ...Object.fromEntries(Object.entries(nested ?? {}).filter(([, value]) => value != null)) }
-    : nested
+  const album =
+    parentId && (!nestedId || nestedId === parentId)
+      ? {
+          ...parentAlbum,
+          ...Object.fromEntries(
+            Object.entries(nested ?? {}).filter(([, value]) => value != null)
+          )
+        }
+      : nested
 
   const artists = new Map<string, RecordData>()
   const rawArtists = Array.isArray(item.artists) ? item.artists : []
@@ -54,10 +65,15 @@ export function buildTidalMedia(item: RecordData, parentAlbum?: RecordData) {
     const key = artistId ? `id:${artistId}` : `name:${name}`
     const previous = artists.get(key)
     if (!previous) artists.set(key, artist)
-    else artists.set(key, {
-      ...artist,
-      ...Object.fromEntries(Object.entries(previous).filter(([, value]) => value != null && value !== ''))
-    })
+    else
+      artists.set(key, {
+        ...artist,
+        ...Object.fromEntries(
+          Object.entries(previous).filter(
+            ([, value]) => value != null && value !== ''
+          )
+        )
+      })
   }
   const entries = [...artists.values()]
   const media = buildTrackMedia('tidal', {
@@ -69,7 +85,10 @@ export function buildTidalMedia(item: RecordData, parentAlbum?: RecordData) {
     })),
     credits: entries.map((artist) => ({
       name: text(artist.name),
-      role: artist.type === 'MAIN' || artist.type === 'FEATURED' ? artist.type : undefined
+      role:
+        artist.type === 'MAIN' || artist.type === 'FEATURED'
+          ? artist.type
+          : undefined
     })),
     album: {
       id: id(album?.id),
@@ -87,7 +106,8 @@ export function buildTidalMedia(item: RecordData, parentAlbum?: RecordData) {
       height: size
     }))
     const first = variants[0]
-    if (first) media.motionArtwork = { url: first.url, scope: 'album', variants }
+    if (first)
+      media.motionArtwork = { url: first.url, scope: 'album', variants }
   }
   return media
 }
