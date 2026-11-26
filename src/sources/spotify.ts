@@ -1222,7 +1222,9 @@ export default class SpotifySource implements SourceInstance {
 
           if (this.mobileToken) {
             tasks.push(
-              fetchCanvas(`spotify:track:${id}`, this.mobileToken)
+              fetchCanvas(`spotify:track:${id}`, this.mobileToken, (event) => {
+                logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
+              })
                 .then((cv) => {
                   const entry = cv?.data?.canvasesList?.[0]
                   if (entry) {

@@ -197,16 +197,24 @@ function decodeCanvasResponse(buffer: Buffer): SpotifyCanvasDecodedResponse {
   return { canvasesList: canvases }
 }
 
+/** Non-sensitive Canvas request diagnostics. */
+export type CanvasDiagnostic =
+  | { kind: 'http'; status: number }
+  | { kind: 'decoded'; bytes: number; entries: number; matching: number; withUrl: number }
+  | { kind: 'request-error' }
+
 /**
  * Fetches Spotify canvas metadata for a track URI.
  * @param trackUri - Spotify track URI (`spotify:track:...`).
  * @param token - Spotify bearer token.
+ * @param onDiagnostic - Optional callback for non-sensitive request diagnostics.
  * @returns Decoded canvas payload or null when unavailable.
  * @public
  */
 export async function fetchCanvas(
   trackUri: string,
-  token: string
+  token: string,
+  onDiagnostic?: (event: CanvasDiagnostic) => void
 ): Promise<SpotifyCanvasFetchResult | null> {
   try {
     const trackUriBuf = Buffer.from(trackUri)
@@ -233,12 +241,22 @@ export async function fetchCanvas(
       }
     )
 
+    onDiagnostic?.({ kind: 'http', status: res.status })
     if (!res.ok) return null
 
     const arrayBuffer = await res.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
-    return { data: decodeCanvasResponse(buffer) }
+    const data = decodeCanvasResponse(buffer)
+    onDiagnostic?.({
+      kind: 'decoded',
+      bytes: buffer.length,
+      entries: data.canvasesList.length,
+      matching: data.canvasesList.filter((entry) => entry.trackUri === trackUri).length,
+      withUrl: data.canvasesList.filter((entry) => Boolean(entry.canvasUrl)).length
+    })
+    return { data }
   } catch {
+    onDiagnostic?.({ kind: 'request-error' })
     return null
   }
 }
