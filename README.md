@@ -487,3 +487,7 @@ NodeLink is open-source software released under the **GNU General Public License
 <p align="center">
   <sub>GIFs by Pudgy Penguins, embedded from Tenor. Click a GIF to visit its source.</sub>
 </p>
+
+### Music analysis (experimental)
+
+`playback.audio.musicAnalysis: true` enables `musicAnalysis` in player JSON when a recent snapshot exists. It uses the existing MusicalAnalyzer and IncrementalAnalysisEngine on processed output PCM. Estimates are refreshed every four seconds within bounded 12-second windows, and include tempo/key confidence, estimated loudness, frequency-band energy, peak, acoustic vocal-band activity, silence ratio, beat and onset positions. The clock is relative to the output pipeline, not an individual track; crossfades and mixed layers contribute to the estimate. This is not a voice classifier, full-track analysis, or standards-certified loudness meter. No raw audio is returned. Disabled by default; real-time Discord playback and production performance remain unverified.
