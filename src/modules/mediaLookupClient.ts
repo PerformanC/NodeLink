@@ -4,7 +4,11 @@ export class MediaLookupClient {
   private busy = false
   private nextRequest = 0
 
-  constructor(private readonly request: typeof fetch = fetch) {}
+  private readonly request: typeof fetch
+
+  constructor(request: typeof fetch = fetch) {
+    this.request = request
+  }
 
   async lookup<T>(key: string, url: string, headers: Record<string, string>,
     normalize: (data: unknown) => T | null): Promise<{ status: number; data: T | null }> {
