@@ -5,7 +5,6 @@
 
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { resolveMediaCredential } from '../modules/mediaProviderConfig.ts'
 import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.ts'
 import {
   fetchTidalEmbed,
@@ -13,6 +12,7 @@ import {
   type TidalEmbedTrack
 } from '../modules/tidalEmbed.ts'
 import { buildTidalMedia } from '../modules/tidalMedia.ts'
+import { TidalOfficialClient } from '../modules/tidalOfficial.ts'
 import { matchingTidalAlbum, tidalSearch } from '../modules/tidalSearch.ts'
 import type {
   SourceResult,
@@ -276,6 +276,8 @@ export default class TidalSource {
    * @param sourceTerm - Source alias.
    * @returns Search result payload.
    */
+  private readonly officialClient = new TidalOfficialClient()
+
   public async search(
     query: string,
     sourceTerm?: string
@@ -286,6 +288,11 @@ export default class TidalSource {
 
     try {
       const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10
+      if (this.config.officialSearch === true) {
+        const results = await this.officialClient.search(query, this.countryCode, limit, this.config)
+        if (!results.length) return { loadType: 'empty', data: {} }
+        return { loadType: 'search', data: results.map(item => this.buildEmbedTrack(item, 'tidal-v2')) }
+      }
       const items = await tidalSearch(
         query,
         limit,
@@ -413,7 +420,7 @@ export default class TidalSource {
     }
   }
 
-  private buildEmbedTrack(item: TidalEmbedTrack) {
+  private buildEmbedTrack(item: TidalEmbedTrack, metadataSource = 'tidal-embed') {
     const info: TrackInfo = {
       identifier: item.id,
       title: item.title,
@@ -424,13 +431,13 @@ export default class TidalSource {
       position: 0,
       uri: `https://tidal.com/browse/track/${item.id}`,
       artworkUrl: item.artworkUrl,
-      isrc: null,
+      isrc: item.media.identifiers?.isrc ?? null,
       sourceName: 'tidal'
     }
     return {
       encoded: encodeTrack({ ...info, details: [] }),
       info,
-      pluginInfo: { media: item.media, metadataSource: 'tidal-embed' }
+      pluginInfo: { media: item.media, metadataSource }
     }
   }
 
@@ -735,11 +742,9 @@ export default class TidalSource {
   private async fetchCatalogExtras(
     id: string
   ): Promise<{ catalog?: unknown; preview?: unknown }> {
-    const token = resolveMediaCredential(
-      this.config.enrichCatalog === true,
-      process.env.NODELINK_TIDAL_METADATA_ACCESS_TOKEN,
-      this.config.metadataAccessToken
-    )
+    const token = this.config.enrichCatalog === true
+      ? await this.officialClient.accessToken(this.config).catch(() => undefined)
+      : undefined
     const get = async (url: URL, init: RequestInit): Promise<unknown> => {
       try {
         const response = await fetch(url, {

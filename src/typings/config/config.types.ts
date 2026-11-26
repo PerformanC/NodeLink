@@ -294,6 +294,12 @@ export interface DeezerSourceConfig {
  * Configuration for the Tidal high-fidelity music provider.
  */
 export interface TidalSourceConfig {
+  /** Opt-in official OAuth v2 text search. */
+  officialSearch?: boolean
+  /** Application credentials (prefer environment variables). */
+  clientId?: string
+  clientSecret?: string
+
   /** Opt-in single-track album details from the matching v1 album. */
   enrichAlbum?: boolean
 
