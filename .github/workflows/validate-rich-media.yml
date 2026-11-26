@@ -1,0 +1,49 @@
+name: Validate rich media metadata
+
+on:
+  push:
+    branches:
+      - feat/rich-media-metadata
+    paths-ignore:
+      - 'dist/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.repository == 'SebasLoadJs/NodeLink' && github.ref_name == 'feat/rich-media-metadata'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+        env:
+          HUSKY: '0'
+      - name: Type check
+        run: npm run type-check
+      - name: Unit tests
+        run: find src -name '*.test.ts' -print0 | xargs -0 node --experimental-strip-types --test
+      - name: Rebuild compiled files
+        run: |
+          rm -rf dist
+          npm run build
+          node --check dist/src/sources/spotify.js
+      - name: Upload compiled output
+        uses: actions/upload-artifact@v4
+        with:
+          name: rich-media-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Check formatting
+        run: |
+          git fetch origin dev --depth=1
+          git diff --name-only --diff-filter=ACM origin/dev HEAD -- '*.ts' '*.json' | grep -v '^dist/' | tr '\n' '\0' | xargs -0 -r npx --no-install biome check
