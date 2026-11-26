@@ -4,6 +4,7 @@ import {
   fanartAlbum,
   fanartArtist,
   musicBrainzRecordings,
+  musicBrainzRecording,
   musicBrainzWork
 } from './externalMedia.ts'
 import { MediaLookupClient } from './mediaLookupClient.ts'
@@ -268,4 +269,12 @@ test('Fanart album artwork matches only the requested release group in both resp
     fanartAlbum({ albums: { [id]: { release_group_id: artist } } }, id),
     null
   )
+})
+
+test('recording lookup preserves nested release-group relationships and validates identity',()=>{
+  const group={id:artist,title:'Album','primary-type':'Album'}
+  const result=musicBrainzRecording({id,title:'Song',isrcs:[isrc,isrc,'invalid'],releases:[{'release-group':group},{'release-group':group}]},id)
+  assert.deepEqual(result?.releaseGroups,[{mbid:artist,title:'Album',type:'Album',firstReleaseDate:undefined}])
+  assert.deepEqual(result?.isrcs,[isrc])
+  assert.equal(musicBrainzRecording({id:artist,title:'Wrong'},id),null)
 })

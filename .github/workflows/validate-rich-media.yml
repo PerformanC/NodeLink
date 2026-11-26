@@ -44,14 +44,23 @@ jobs:
         run: |
           node --experimental-strip-types --input-type=module <<'NODE'
           import { MediaLookupClient } from './src/modules/mediaLookupClient.ts'
-          import { musicBrainzRecordings, musicBrainzWork } from './src/modules/externalMedia.ts'
+          import { musicBrainzRecordings, musicBrainzRecording, musicBrainzWork } from './src/modules/externalMedia.ts'
           const client = new MediaLookupClient()
           const headers = { 'User-Agent': 'NodeLink-MetadataValidation/3.10.0 (https://github.com/SebasLoadJs/NodeLink)', Accept: 'application/json' }
           const id = 'USQX91300108'
-          const result = await client.lookup(id, 'https://musicbrainz.org/ws/2/isrc/'+id+'?inc=artist-credits+artist-rels+work-rels+isrcs+release-groups&fmt=json', headers, data => musicBrainzRecordings(data,id))
+          const result = await client.lookup(id, 'https://musicbrainz.org/ws/2/isrc/'+id+'?inc=artist-credits+artist-rels+work-rels+isrcs&fmt=json', headers, data => musicBrainzRecordings(data,id))
           console.log(JSON.stringify({status:result.status,reason:result.reason,upstreamStatus:result.upstreamStatus,recordings:result.data?.recordings}))
           if(result.status !== 200 || !result.data?.recordings.length) process.exitCode=1
-          const work = result.data?.recordings.flatMap(r=>r.workMbids)[0]
+          const recording = result.data?.recordings[0]?.mbid
+          let details
+          if(recording){
+            await new Promise(resolve=>setTimeout(resolve,1200))
+            const r=await client.lookup(recording,'https://musicbrainz.org/ws/2/recording/'+recording+'?inc=artist-credits+artist-rels+work-rels+isrcs+releases+release-groups&fmt=json',headers,data=>musicBrainzRecording(data,recording))
+            details=r.data
+            console.log(JSON.stringify({status:r.status,reason:r.reason,upstreamStatus:r.upstreamStatus,recording:r.data}))
+            if(r.status !== 200) process.exitCode=1
+          }
+          const work = details?.workMbids[0] ?? result.data?.recordings.flatMap(r=>r.workMbids)[0]
           if(work){
             await new Promise(resolve=>setTimeout(resolve,1200))
             const r=await client.lookup(work,'https://musicbrainz.org/ws/2/work/'+work+'?inc=artist-rels&fmt=json',headers,data=>musicBrainzWork(data,work))

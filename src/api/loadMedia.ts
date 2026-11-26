@@ -4,6 +4,7 @@ import {
   mbid,
   mediaIsrc,
   musicBrainzRecordings,
+  musicBrainzRecording,
   musicBrainzWork
 } from '../modules/externalMedia.ts'
 import { MediaLookupClient } from '../modules/mediaLookupClient.ts'
@@ -23,7 +24,7 @@ const handler: ApiRouteHandler = async (
   sendResponse,
   parsedUrl
 ) => {
-  const keys = ['isrc', 'workMbid', 'artistMbid', 'releaseGroupMbid'] as const
+  const keys = ['isrc', 'recordingMbid', 'workMbid', 'artistMbid', 'releaseGroupMbid'] as const
   const selected = keys.filter((key) => parsedUrl.searchParams.has(key))
   const key = selected[0]
   if (
@@ -36,7 +37,7 @@ const handler: ApiRouteHandler = async (
       res,
       {
         error:
-          'Specify exactly one of isrc, workMbid, artistMbid or releaseGroupMbid'
+          'Specify exactly one of isrc, recordingMbid, workMbid, artistMbid or releaseGroupMbid'
       },
       400
     )
@@ -85,8 +86,10 @@ const handler: ApiRouteHandler = async (
     return sendResponse(req, res, { error: 'MusicBrainz disabled' }, 503)
   const url =
     key === 'isrc'
-      ? `https://musicbrainz.org/ws/2/isrc/${id}?inc=artist-credits+artist-rels+work-rels+isrcs+release-groups&fmt=json`
-      : `https://musicbrainz.org/ws/2/work/${id}?inc=artist-rels&fmt=json`
+      ? `https://musicbrainz.org/ws/2/isrc/${id}?inc=artist-credits+artist-rels+work-rels+isrcs&fmt=json`
+      : key === 'recordingMbid'
+        ? `https://musicbrainz.org/ws/2/recording/${id}?inc=artist-credits+artist-rels+work-rels+isrcs+releases+release-groups&fmt=json`
+        : `https://musicbrainz.org/ws/2/work/${id}?inc=artist-rels&fmt=json`
   const result = await musicBrainz.lookup<unknown>(
     `${key}:${id}`,
     url,
@@ -94,7 +97,7 @@ const handler: ApiRouteHandler = async (
     (data) =>
       key === 'isrc'
         ? musicBrainzRecordings(data, id)
-        : musicBrainzWork(data, id)
+        : key === 'recordingMbid' ? musicBrainzRecording(data,id) : musicBrainzWork(data, id)
   )
   return sendResponse(
     req,
