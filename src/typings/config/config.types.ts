@@ -1459,6 +1459,11 @@ export interface NodelinkConfig {
     enableTrackStreamEndpoint: boolean
     enableLoadStreamEndpoint: boolean
     enableHlsEndpoint: boolean
+    /** Optional external metadata providers; credentials opt in. */
+    media?: {
+      musicbrainz?: { enabled?: boolean; userAgent?: string }
+      fanart?: { enabled?: boolean; projectKey?: string }
+    }
     metrics: {
       enabled: boolean
       authorization: {

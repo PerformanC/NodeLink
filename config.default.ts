@@ -434,6 +434,16 @@ export const config: NodelinkConfig = {
     enableTrackStreamEndpoint: false,
     enableLoadStreamEndpoint: false,
     enableHlsEndpoint: false,
+    media: {
+      musicbrainz: {
+        enabled: true,
+        userAgent: '' // Application/version and real contact; env override supported.
+      },
+      fanart: {
+        enabled: true,
+        projectKey: '' // Prefer NODELINK_FANART_PROJECT_KEY for secrets.
+      }
+    },
     metrics: {
       enabled: true,
       authorization: {

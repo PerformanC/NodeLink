@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { fanartArtist, musicBrainzRecordings, musicBrainzWork } from './externalMedia.ts'
 import { MediaLookupClient } from './mediaLookupClient.ts'
+import { resolveMediaCredential } from './mediaProviderConfig.ts'
 
 const id = '12345678-1234-1234-1234-123456789abc'
 const artist = '12345678-1234-1234-1234-123456789abd'
@@ -74,4 +75,27 @@ test('accepts the official Fanart v3.2 artist identity and 4K backgrounds', () =
   ])
   assert.equal(fanartArtist({ mbid: id }, id), null)
   assert.equal(fanartArtist({ mbid_id: artist, mbid: id }, id), null)
+})
+
+test('omits placeholder dimensions and deduplicates legacy and HD logos', () => {
+  const url = 'https://assets.fanart.tv/logo.png'
+  const result = fanartArtist({
+    mbid_id: id,
+    hdmusiclogo: [{ url, width: '800', height: '310' }],
+    musiclogo: [{ url, width: '1', height: '1' },
+      { url: 'https://assets.fanart.tv/legacy.png', width: true, height: '1' },
+      { url: 'https://assets.fanart.tv:8443/foreign.png' }]
+  }, id)
+  assert.deepEqual(result?.logos, [
+    { url, width: 800, height: 310 },
+    { url: 'https://assets.fanart.tv/legacy.png' }
+  ])
+})
+
+test('preserves environment compatibility and honors explicit provider disable', () => {
+  assert.equal(resolveMediaCredential(undefined, ' env ', 'config'), 'env')
+  assert.equal(resolveMediaCredential(true, '', ' config '), 'config')
+  assert.equal(resolveMediaCredential(false, 'env', 'config'), undefined)
+  assert.equal(resolveMediaCredential(true, 'bad\nheader', ''), undefined)
+  assert.equal(resolveMediaCredential(undefined, undefined, undefined), undefined)
 })

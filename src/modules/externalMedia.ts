@@ -77,12 +77,18 @@ function fanartImages(value: unknown): MediaImage[] {
     if (typeof image.url !== 'string') return []
     try {
       const url = new URL(image.url)
-      if (url.hostname !== 'assets.fanart.tv' || url.username || url.password || !['http:', 'https:'].includes(url.protocol)) return []
+      if (url.hostname !== 'assets.fanart.tv' || url.username || url.password || url.port || !['http:', 'https:'].includes(url.protocol)) return []
       // The provider's legacy URLs may use HTTP; expose its HTTPS asset host only.
       url.protocol = 'https:'
-      const width = Number(image.width)
-      const height = Number(image.height)
-      return [{ url: url.href, width, height }]
+      const dimension = (value: unknown): number | undefined => {
+        const number = typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value))
+          ? Number(value) : NaN
+        return Number.isSafeInteger(number) && number > 1 ? number : undefined
+      }
+      const width = dimension(image.width)
+      const height = dimension(image.height)
+      // Legacy logos may declare 1x1; retain the URL without claiming dimensions.
+      return [{ url: url.href, ...(width && height ? { width, height } : {}) }]
     } catch { return [] }
   }))
 }
@@ -93,5 +99,5 @@ export function fanartArtist(payload: unknown, id: string) {
     artwork: fanartImages(root.artistthumb),
     banners: fanartImages(root.musicbanner),
     backgrounds: normalizeMediaImages([...fanartImages(root.artist4kbackground), ...fanartImages(root.artistbackground)]),
-    logos: fanartImages(root.hdmusiclogo).concat(fanartImages(root.musiclogo)) }
+    logos: normalizeMediaImages([...fanartImages(root.hdmusiclogo), ...fanartImages(root.musiclogo)]) }
 }
