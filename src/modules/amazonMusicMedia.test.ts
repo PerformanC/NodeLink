@@ -30,3 +30,12 @@ test('does not attribute playlist cover or curator to the track', () => {
     '@type': 'Playlist', name: 'Playlist'
   }), { provider: 'amazonmusic', artists: [] })
 })
+
+test('does not use playlist cover when a track has an album relationship', () => {
+  assert.deepEqual(buildAmazonMedia({ artworkUrl: 'https://example.com/playlist.jpg' }, {
+    inAlbum: { name: 'Actual album', image: 'https://example.com/album.jpg' }
+  }, { '@type': 'Playlist' }), {
+    provider: 'amazonmusic', artists: [],
+    album: { name: 'Actual album', artwork: [{ url: 'https://example.com/album.jpg' }] }
+  })
+})

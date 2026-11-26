@@ -34,7 +34,8 @@ export function buildAmazonMedia(
     : resource?.byArtist ? [resource.byArtist] : resource?.author ? [resource.author] : []
   const album = resource?.inAlbum ?? (collection?.['@type'] === 'MusicAlbum' ? collection : undefined)
   // A playlist or artist page cover is not necessarily a track's cover.
-  const image = resource?.image ?? (!collection || album ? info.artworkUrl : undefined)
+  const image = resource?.image ??
+    (!collection || collection['@type'] === 'MusicAlbum' ? info.artworkUrl : undefined)
   const fallbackName = !collection && info.author !== 'Unknown Artist' ? info.author : undefined
   return buildTrackMedia('amazonmusic', {
     artists: artists.length

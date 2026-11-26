@@ -321,6 +321,8 @@ Supported track responses can include `pluginInfo.media`, with a provider name a
 
 Apple Music search uses `amsearch:` or `applemusic:`. Amazon Music search uses `azsearch:` or `amazonmusic:`. The previously conflicting Amazon alias `amsearch:` is no longer registered by Amazon Music; clients relying on that alias for Amazon must migrate to `azsearch:`.
 
+To measure local normalization and worker serialization with synthetic fixtures (no provider requests or media downloads), run `node --experimental-strip-types scripts/benchmark-media.ts 100000`. The p95 column is a percentile of per-batch mean timings, not individual request latency. This benchmark does not measure upstream response times, playback, or end-to-end REST latency.
+
 ### Sources are not all the same
 
 The source modules cover music services, video platforms, live streams, local files, HTTP URLs, podcasts and text-to-speech providers.

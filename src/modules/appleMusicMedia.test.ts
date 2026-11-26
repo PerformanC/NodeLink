@@ -22,3 +22,14 @@ test('does not guess identities when relationships contain only IDs', () => {
 test('does not misattribute partially populated relationships', () => {
   assert.deepEqual(appleMusicArtists([{ id: '1', attributes: { name: 'A' } }, { id: '2' }], 'A & B'), [{ name: 'A & B' }])
 })
+
+test('malformed artist attributes do not throw or invent media', () => {
+  const malformed = [
+    { id: '1', attributes: { name: 123, artwork: { url: 42, width: 640, height: 640 } } }
+  ] as unknown as Parameters<typeof appleMusicArtists>[0]
+  assert.deepEqual(appleMusicArtists(malformed, 'Known artist'), [{ name: 'Known artist', id: '1' }])
+  const malformedArtwork = [
+    { id: '2', attributes: { name: 'Artist', artwork: { url: 42, width: 640, height: 640 } } }
+  ] as unknown as Parameters<typeof appleMusicArtists>[0]
+  assert.deepEqual(appleMusicArtists(malformedArtwork), [{ name: 'Artist', id: '2' }])
+})

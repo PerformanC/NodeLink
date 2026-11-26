@@ -16,12 +16,13 @@ export function appleMusicArtists(
   const items = Array.isArray(resources) ? resources : []
   const artists: Array<{ name?: string; id?: string; artwork?: MediaImageInput[] }> = []
   for (const item of items) {
-    const name = item?.attributes?.name?.trim()
-    if (!name) continue
+    const rawName = item?.attributes?.name
+    if (typeof rawName !== 'string' || !rawName.trim()) continue
+    const name = rawName.trim()
     const art = item.attributes?.artwork
     const validDimensions = art && Number.isSafeInteger(art.width) && art.width > 0 &&
       Number.isSafeInteger(art.height) && art.height > 0
-    const url = art && validDimensions
+    const url = art && validDimensions && typeof art.url === 'string'
       ? mediaUrl(art.url?.replace('{w}', String(art.width)).replace('{h}', String(art.height)))
       : undefined
     artists.push({
