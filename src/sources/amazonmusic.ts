@@ -1,3 +1,4 @@
+import { buildAmazonMedia } from '../modules/amazonMusicMedia.ts'
 import type { AmazonMusicSourceConfig } from '../typings/config/config.types.ts'
 import type {
   SourceInstance,
@@ -112,12 +113,12 @@ export default class AmazonMusicSource implements SourceInstance {
       }
     },
     {
-      id: 'amazonmusic.search.amsearch',
-      name: 'Amazon Music catalog search (amsearch:)',
+      id: 'amazonmusic.search.amazonmusic',
+      name: 'Amazon Music catalog search (amazonmusic:)',
       input: {
         type: 'search',
         value: 'Radiohead Creep',
-        searchType: 'amsearch'
+        searchType: 'amazonmusic'
       },
       expect: {
         result: { type: 'search' },
@@ -165,7 +166,7 @@ export default class AmazonMusicSource implements SourceInstance {
    * Prefixes used to identify search queries targeting this source.
    * @public
    */
-  public readonly searchTerms = ['amazonmusic', 'azsearch', 'amsearch']
+  public readonly searchTerms = ['amazonmusic', 'azsearch']
 
   /**
    * Regular expression patterns used to match Amazon Music and Retail URLs.
@@ -454,7 +455,13 @@ export default class AmazonMusicSource implements SourceInstance {
                 data: {
                   encoded: encodeTrack({ ...selected, details: [] }),
                   info: selected,
-                  pluginInfo: {} as Record<string, unknown>
+                  pluginInfo: {
+                    media: buildAmazonMedia(
+                      selected,
+                      collection.track[tracks.indexOf(selected)],
+                      collection
+                    )
+                  }
                 }
               }
             }
@@ -465,10 +472,10 @@ export default class AmazonMusicSource implements SourceInstance {
               loadType: 'playlist',
               data: {
                 info: { name: collectionName, selectedTrack: 0 },
-                tracks: tracks.map((t) => ({
+                tracks: tracks.map((t, index) => ({
                   encoded: encodeTrack({ ...t, details: [] }),
                   info: t,
-                  pluginInfo: {} as Record<string, unknown>
+                  pluginInfo: { media: buildAmazonMedia(t, collection.track?.[index], collection) }
                 })),
                 pluginInfo: {} as Record<string, unknown>
               }
@@ -499,7 +506,8 @@ export default class AmazonMusicSource implements SourceInstance {
           trackImage,
           trackId,
           this.parseISO8601Duration(trackData.duration),
-          trackData.isrcCode || null
+          trackData.isrcCode || null,
+          trackData
         )
       }
     } catch (e) {
@@ -543,6 +551,7 @@ export default class AmazonMusicSource implements SourceInstance {
    * @param id - Stable track identifier.
    * @param length - Track duration in milliseconds.
    * @param isrc - Optional ISRC code.
+   * @param resource - Structured metadata, when available.
    * @returns A SourceResult representing the resolved track.
    * @internal
    */
@@ -553,7 +562,8 @@ export default class AmazonMusicSource implements SourceInstance {
     image: string | null,
     id: string,
     length = 0,
-    isrc: string | null = null
+    isrc: string | null = null,
+    resource?: AmazonJsonLdEntity
   ): SourceResult {
     const info: TrackInfo = {
       identifier: id,
@@ -573,7 +583,7 @@ export default class AmazonMusicSource implements SourceInstance {
       data: {
         encoded: encodeTrack({ ...info, details: [] }),
         info,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: { media: buildAmazonMedia(info, resource) }
       }
     }
   }
@@ -666,7 +676,7 @@ export default class AmazonMusicSource implements SourceInstance {
         data: tracks.map((t) => ({
           encoded: encodeTrack({ ...t, details: [] }),
           info: t,
-          pluginInfo: {} as Record<string, unknown>
+          pluginInfo: { media: buildAmazonMedia(t) }
         }))
       }
     } catch (e) {

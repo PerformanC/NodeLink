@@ -315,6 +315,12 @@ The filter registry and the default configuration are not the same list. Some im
 
 NodeLink also contains components for layered mixing, ducking, fades and transitions. Features such as Audio Mixer, Voice Receive and SponsorBlock have their own configuration and client-side requirements; they are not automatically available to every client.
 
+### Rich media metadata
+
+Supported track responses can include `pluginInfo.media`, with a provider name and artist list. Optional fields include album, artwork, artist banners, channel artwork and banners, Canvas, motion artwork, colors, identifiers (ISRC/UPC/EAN), and credits. Fields are omitted when the source cannot provide them. Existing track fields and provider-specific metadata remain available. Artwork and motion URLs are references, not downloaded assets; clients must respect provider permissions and fall back to static artwork.
+
+Apple Music search uses `amsearch:` or `applemusic:`. Amazon Music search uses `azsearch:` or `amazonmusic:`. The previously conflicting Amazon alias `amsearch:` is no longer registered by Amazon Music; clients relying on that alias for Amazon must migrate to `azsearch:`.
+
 ### Sources are not all the same
 
 The source modules cover music services, video platforms, live streams, local files, HTTP URLs, podcasts and text-to-speech providers.
