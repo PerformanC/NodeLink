@@ -1,4 +1,4 @@
-import { buildAmazonMedia } from '../modules/amazonMusicMedia.js';
+import { amazonTrackIdentity, buildAmazonMedia } from '../modules/amazonMusicMedia.js';
 import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * User agent string used for web scraping operations to trigger SSR JSON-LD output.
@@ -407,11 +407,10 @@ export default class AmazonMusicSource {
                     'Unknown Artist';
                 const trackTitle = trackData.name || trackData.title || 'Unknown Track';
                 const trackImage = trackData.image || artworkUrl;
-                const trackId = targetId ||
-                    this.extractIdentifier(trackData.url || trackData['@id'] || url) ||
-                    url.split('/').pop() ||
-                    'am-unknown';
-                return this.buildTrackResult(trackTitle, artist, trackData.url || url, trackImage, trackId, this.parseISO8601Duration(trackData.duration), trackData.isrcCode || null, trackData);
+                const identity = amazonTrackIdentity(trackData, targetId ?? this.extractIdentifier(url) ?? undefined);
+                if (!identity)
+                    return null;
+                return this.buildTrackResult(trackTitle, artist, identity.uri, trackImage, identity.id, this.parseISO8601Duration(trackData.duration), trackData.isrcCode || null, trackData);
             }
         }
         catch (e) {

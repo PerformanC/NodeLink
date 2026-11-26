@@ -89,16 +89,30 @@ test('prefers the canonical recording identity returned by Amazon', () => {
 
 test('accepts canonical JSON-LD id and rejects untrusted or non-track URLs', () => {
   const uri = 'https://music.amazon.com/tracks/B07N7PRLYZ'
-  assert.deepEqual(amazonTrackIdentity({
-    url: 'https://music.amazon.com.evil.example/tracks/B07N7VNZLY',
-    '@id': uri
-  }), { id: 'B07N7PRLYZ', uri })
-  assert.deepEqual(amazonTrackIdentity({
-    url: 'https://music.amazon.com/albums/B07N7PBZGF'
-  }, 'B07N7VNZLY'), {
-    id: 'B07N7VNZLY',
-    uri: 'https://music.amazon.com/tracks/B07N7VNZLY'
-  })
-  assert.equal(amazonTrackIdentity({ url: 'https://music.amazon.com:8443/tracks/B07N7PRLYZ' }), undefined)
+  assert.deepEqual(
+    amazonTrackIdentity({
+      url: 'https://music.amazon.com.evil.example/tracks/B07N7VNZLY',
+      '@id': uri
+    }),
+    { id: 'B07N7PRLYZ', uri }
+  )
+  assert.deepEqual(
+    amazonTrackIdentity(
+      {
+        url: 'https://music.amazon.com/albums/B07N7PBZGF'
+      },
+      'B07N7VNZLY'
+    ),
+    {
+      id: 'B07N7VNZLY',
+      uri: 'https://music.amazon.com/tracks/B07N7VNZLY'
+    }
+  )
+  assert.equal(
+    amazonTrackIdentity({
+      url: 'https://music.amazon.com:8443/tracks/B07N7PRLYZ'
+    }),
+    undefined
+  )
   assert.equal(amazonTrackIdentity({}, 'invalid'), undefined)
 })

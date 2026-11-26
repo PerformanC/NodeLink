@@ -8,13 +8,26 @@ function resourceId(value, kind) {
         if (url.protocol !== 'https:' ||
             !/^music\.amazon\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$/i.test(url.hostname))
             return undefined;
-        if (url.username || url.password)
+        if (url.username || url.password || url.port)
             return undefined;
         return url.pathname.match(new RegExp(`^/${kind}/([A-Z0-9]{10})/?$`, 'i'))?.[1];
     }
     catch {
         return undefined;
     }
+}
+/** Keep the recording identifier and URI tied to the same trusted resource. */
+export function amazonTrackIdentity(resource, requestedId) {
+    for (const candidate of [resource.url, resource['@id']]) {
+        const id = resourceId(candidate, 'tracks');
+        if (id && candidate)
+            return { id: id.toUpperCase(), uri: candidate };
+    }
+    if (typeof requestedId === 'string' && /^[A-Z0-9]{10}$/i.test(requestedId)) {
+        const id = requestedId.toUpperCase();
+        return { id, uri: `https://music.amazon.com/tracks/${id}` };
+    }
+    return undefined;
 }
 /** Normalizes only existing Amazon Music metadata, with no additional requests. */
 export function buildAmazonMedia(info, resource, collection) {

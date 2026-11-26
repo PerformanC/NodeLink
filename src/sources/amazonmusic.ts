@@ -1,4 +1,7 @@
-import { amazonTrackIdentity, buildAmazonMedia } from '../modules/amazonMusicMedia.ts'
+import {
+  amazonTrackIdentity,
+  buildAmazonMedia
+} from '../modules/amazonMusicMedia.ts'
 import type { AmazonMusicSourceConfig } from '../typings/config/config.types.ts'
 import type {
   SourceInstance,
