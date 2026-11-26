@@ -414,8 +414,10 @@ export default class AmazonMusicSource implements SourceInstance {
         const collectionImage = collection.image || artworkUrl
 
         if (Array.isArray(collection.track) && collection.track.length > 0) {
+          const collectionResource = collection
+          const rawTracks = collection.track
           const tracks: TrackInfo[] = []
-          for (const t of collection.track) {
+          for (const t of rawTracks) {
             const rawUri = t.url || t['@id'] || url
             const tId =
               this.extractIdentifier(rawUri) ||
@@ -458,8 +460,8 @@ export default class AmazonMusicSource implements SourceInstance {
                   pluginInfo: {
                     media: buildAmazonMedia(
                       selected,
-                      collection.track[tracks.indexOf(selected)],
-                      collection
+                      rawTracks[tracks.indexOf(selected)],
+                      collectionResource
                     )
                   }
                 }
@@ -475,7 +477,9 @@ export default class AmazonMusicSource implements SourceInstance {
                 tracks: tracks.map((t, index) => ({
                   encoded: encodeTrack({ ...t, details: [] }),
                   info: t,
-                  pluginInfo: { media: buildAmazonMedia(t, collection.track?.[index], collection) }
+                  pluginInfo: {
+                    media: buildAmazonMedia(t, rawTracks[index], collectionResource)
+                  }
                 })),
                 pluginInfo: {} as Record<string, unknown>
               }
