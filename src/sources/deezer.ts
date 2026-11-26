@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { PassThrough, type Readable } from 'node:stream'
 import BlowfishCBC from '../decrypters/blowfish-cbc.ts'
+import { buildDeezerMedia } from '../modules/deezerMedia.ts'
 import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type {
   SourceResult,
@@ -145,6 +146,8 @@ interface DeezerParsedContentRange {
  * Minimal Deezer artist payload used by search, resolve, and track builders.
  */
 interface DeezerArtistSummary {
+  role?: string
+  picture_small?: string | null
   /**
    * Stable Deezer artist identifier.
    */
@@ -175,6 +178,7 @@ interface DeezerArtistSummary {
  * Minimal Deezer album payload used by track and collection builders.
  */
 interface DeezerAlbumSummary {
+  cover_small?: string | null
   /**
    * Stable Deezer album identifier.
    */
@@ -309,6 +313,9 @@ interface DeezerEntity {
    * Nested artist metadata for track responses.
    */
   artist?: DeezerArtistSummary | null
+
+  /** Explicit recording contributors, when exposed by the public API. */
+  contributors?: DeezerArtistSummary[] | null
 
   /**
    * Playlist owner metadata returned by some responses.
@@ -2032,29 +2039,7 @@ export default class DeezerSource implements SourceVariantHandler {
     }
 
     const pluginInfo: DeezerTrackPluginInfo = {
-      media: buildTrackMedia('deezer', {
-        identifiers: { isrc: trackInfo.isrc },
-        artists: [
-          {
-            id: item.artist?.id,
-            name: item.artist?.name,
-            artwork: [
-              { url: item.artist?.picture_xl },
-              { url: item.artist?.picture_big },
-              { url: item.artist?.picture_medium }
-            ]
-          }
-        ],
-        album: {
-          id: item.album?.id,
-          name: item.album?.title,
-          artwork: [
-            { url: item.album?.cover_xl },
-            { url: item.album?.cover_big },
-            { url: item.album?.cover_medium }
-          ]
-        }
-      })
+      media: buildDeezerMedia(item, trackInfo.isrc)
     }
     if (item.album?.title?.trim())
       pluginInfo.albumName = item.album.title.trim()
