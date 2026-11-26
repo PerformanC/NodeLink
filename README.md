@@ -317,6 +317,8 @@ NodeLink also contains components for layered mixing, ducking, fades and transit
 
 ### Rich media metadata
 
+YouTube and YouTube Music normalize existing player and renderer thumbnail variants with their original URLs and dimensions. Music artist and album identities are derived only from explicit typed navigation links; ordinary video uploaders are represented as channels, not assumed to be recording artists. Existing Holo channel lookups supply avatar and banner variants without additional requests. Legacy metadata is preserved. No live YouTube validation has been performed for these changes yet.
+
 Explicit Spotify artist resolution can also include `data.pluginInfo.media` on its playlist response: artist avatar and gallery images are listed in `artists[0].artwork` and header images in `artists[0].banners`, when present in the existing provider response. No extra requests are made for each track.
 
 When a Spotify track lacks an ISRC, the existing official Client Credentials configuration is preferred for a single catalog lookup. Only the exact returned track ID and a valid ISRC are accepted. Arbitrary strings from binary payloads are not treated as ISRCs. Without official credentials, the existing mobile metadata path may be used if authorized; this enrichment does not retry or switch authentication tiers after an HTTP failure.

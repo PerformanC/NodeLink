@@ -723,6 +723,10 @@ export interface PublishedAtInfo {
  * @public
  */
 export interface YouTubeChannelInfo {
+  /** Original avatar and banner variants with provider-supplied dimensions. */
+  artwork?: YouTubeThumbnail[]
+  banners?: YouTubeThumbnail[]
+
   /** URL to the channel's icon/avatar */
   icon: string | null
 
