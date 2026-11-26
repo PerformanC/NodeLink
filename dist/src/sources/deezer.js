@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { PassThrough } from 'node:stream';
 import BlowfishCBC from '../decrypters/blowfish-cbc.js';
+import { buildDeezerMedia } from '../modules/deezerMedia.js';
 import { buildTrackMedia } from '../modules/trackMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, logger, makeRequest } from '../utils.js';
 /**
@@ -1104,29 +1105,7 @@ export default class DeezerSource {
             details: []
         };
         const pluginInfo = {
-            media: buildTrackMedia('deezer', {
-                identifiers: { isrc: trackInfo.isrc },
-                artists: [
-                    {
-                        id: item.artist?.id,
-                        name: item.artist?.name,
-                        artwork: [
-                            { url: item.artist?.picture_xl },
-                            { url: item.artist?.picture_big },
-                            { url: item.artist?.picture_medium }
-                        ]
-                    }
-                ],
-                album: {
-                    id: item.album?.id,
-                    name: item.album?.title,
-                    artwork: [
-                        { url: item.album?.cover_xl },
-                        { url: item.album?.cover_big },
-                        { url: item.album?.cover_medium }
-                    ]
-                }
-            })
+            media: buildDeezerMedia(item, trackInfo.isrc)
         };
         if (item.album?.title?.trim())
             pluginInfo.albumName = item.album.title.trim();

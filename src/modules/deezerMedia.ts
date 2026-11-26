@@ -32,7 +32,11 @@ function deezerImage(url?: string | null): MediaImageInput {
       /^(?:[a-z0-9-]+\.)?dzcdn\.net$/i.test(parsed.hostname) &&
       dimensions
     ) {
-      return { url, width: Number(dimensions[1]), height: Number(dimensions[2]) }
+      return {
+        url,
+        width: Number(dimensions[1]),
+        height: Number(dimensions[2])
+      }
     }
   } catch {}
   return { url }
@@ -47,19 +51,24 @@ export function buildDeezerMedia(
   },
   isrc?: string | null
 ) {
-  const artists = new Map<string, {
-    id?: number | string
-    name: string
-    artwork: MediaImageInput[]
-  }>()
+  const artists = new Map<
+    string,
+    {
+      id?: number | string
+      name: string
+      artwork: MediaImageInput[]
+    }
+  >()
   const contributors = Array.isArray(item.contributors) ? item.contributors : []
   for (const artist of [item.artist, ...contributors]) {
-    if (!artist || typeof artist.name !== 'string' || !artist.name.trim()) continue
+    if (!artist || typeof artist.name !== 'string' || !artist.name.trim())
+      continue
     const name = artist.name.trim()
     const id = artist.id
-    const key = id !== undefined && id !== null && String(id).trim()
-      ? `id:${id}`
-      : `name:${name}`
+    const key =
+      id !== undefined && id !== null && String(id).trim()
+        ? `id:${id}`
+        : `name:${name}`
     const previous = artists.get(key)
     const artwork = [
       artist.picture_xl,
