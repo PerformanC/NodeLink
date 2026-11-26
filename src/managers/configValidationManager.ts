@@ -449,7 +449,6 @@ export default class ConfigValidationManager {
       lyrics: { type: 'object' },
       meanings: { type: 'object' },
       metrics: { type: 'object' },
-      mix: { type: 'object' },
       plugins: { type: 'array', items: 'object', optional: true },
       pluginConfig: { type: 'object', optional: true }
     }
