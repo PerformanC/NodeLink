@@ -491,3 +491,5 @@ NodeLink is open-source software released under the **GNU General Public License
 ### Advanced lyrics timing
 
 Lyric payloads preserve explicit word/token timing, voice agents, background vocals, sections and alternate translation/romanization text supplied by the provider. Player lyric events retain annotations in the existing `plugin` field and expose `activeLineIndices` for simultaneous vocals. Unsynced lyrics are returned without timed line events. Stale responses after track changes or unsubscribe are ignored. The TTML parser covers a bounded absolute-time subset used by Unison, not the complete TTML standard. Live Discord playback, provider-specific translations and romanization availability remain unverified.
+
+Validation (2026-11-26): TypeScript checking, build and automated tests passed (35 passed, 3 skipped, 0 failed). TTML and playback event normalization were covered by synthetic fixtures. Live provider availability and synchronized Discord playback were not tested.
