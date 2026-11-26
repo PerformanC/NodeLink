@@ -143,7 +143,9 @@ export interface AudioResource {
   checkScratchEffectCompleted?(): boolean
   getEffectiveRate?: () => number
   getRMS?: () => number
-  getAudioVisualization?: () => import('../../playback/processing/AudioVisualization.ts').AudioVisualizationSnapshot | null
+  getAudioVisualization?: () =>
+    | import('../../playback/processing/AudioVisualization.ts').AudioVisualizationSnapshot
+    | null
   isSilent?: () => boolean
   setLoudnessNormalizer?(enabled: boolean): void
   getAudioProcessingTelemetry?():

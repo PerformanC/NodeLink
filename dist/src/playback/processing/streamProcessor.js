@@ -17,6 +17,7 @@ import { FiltersManager } from './filtersManager.js';
 import { VolumeTransformer } from './VolumeTransformer.js';
 import { CrossfadeController } from './CrossfadeController.js';
 import { SilenceDetector } from './SilenceDetector.js';
+import { AudioVisualization } from './AudioVisualization.js';
 import { assertAudioCapabilities, resolveAudioProcessingMode } from './audioContract.js';
 import { ProtectedLimiterOutput, ProtectedPcmInput } from './ProtectedAudioTransforms.js';
 import { createAudioRangeReader } from './mp4Ranges.js';
@@ -588,6 +589,7 @@ class BaseAudioResource {
         voiceStream.checkScratchEffectCompleted = () => this.checkScratchEffectCompleted();
         voiceStream.getEffectiveRate = () => this.getEffectiveRate();
         voiceStream.getRMS = () => this.getRMS();
+        voiceStream.getAudioVisualization = () => this.getAudioVisualization();
         voiceStream.isSilent = () => this.isSilent();
         voiceStream.setFadeVolume = (volume) => this.setFadeVolume(volume);
         voiceStream.fadeTo = (volume, durationMs, curve) => this.fadeTo(volume, durationMs, curve);
@@ -664,6 +666,10 @@ class BaseAudioResource {
     }
     getEffectiveRate() {
         return 1.0;
+    }
+    getAudioVisualization() {
+        const observer = this.pipes?.find((pipe) => pipe instanceof AudioVisualization);
+        return observer instanceof AudioVisualization ? observer.snapshot() : null;
     }
     getRMS() {
         if (!this.pipes)
@@ -2241,9 +2247,14 @@ class StreamAudioResource extends BaseAudioResource {
             this.protectedLimiterOutput = protectedOutput;
             streams.push(protectedOutput);
         }
-        streams.push(opusEncoder);
         if (protectedOutput)
             this.pipes?.push(protectedOutput);
+        if (nodelink.options.playback.audio?.visualization === true) {
+            const observer = new AudioVisualization();
+            streams.push(observer);
+            this.pipes?.push(observer);
+        }
+        streams.push(opusEncoder);
         this.pipes?.push(opusEncoder);
         pipeline(streams, (err) => {
             if (err && !this._destroyed) {

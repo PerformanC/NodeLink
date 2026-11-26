@@ -800,7 +800,9 @@ class BaseAudioResource {
         checkScratchEffectCompleted?: () => boolean
         getEffectiveRate?: () => number
         getRMS?: () => number
-        getAudioVisualization?: () => import('./AudioVisualization.ts').AudioVisualizationSnapshot | null
+        getAudioVisualization?: () =>
+          | import('./AudioVisualization.ts').AudioVisualizationSnapshot
+          | null
         isSilent?: () => boolean
         setFadeVolume?: (volume: number) => void
         fadeTo?: (volume: number, durationMs: number, curve?: string) => void
@@ -938,8 +940,12 @@ class BaseAudioResource {
     return 1.0
   }
 
-  getAudioVisualization(): import('./AudioVisualization.ts').AudioVisualizationSnapshot | null {
-    const observer = this.pipes?.find(pipe => pipe instanceof AudioVisualization)
+  getAudioVisualization():
+    | import('./AudioVisualization.ts').AudioVisualizationSnapshot
+    | null {
+    const observer = this.pipes?.find(
+      (pipe) => pipe instanceof AudioVisualization
+    )
     return observer instanceof AudioVisualization ? observer.snapshot() : null
   }
 
@@ -2420,9 +2426,7 @@ class WebmOpusSeekTrimTransform extends Transform {
 
     const timing = this.timings[this.timingIndex]
     if (!timing) {
-      callback(
-        new Error('Missing WebM packet timestamp for decoded Opus PCM')
-      )
+      callback(new Error('Missing WebM packet timestamp for decoded Opus PCM'))
       return
     }
     if (!Number.isFinite(timing.timestampMs)) {
@@ -2437,9 +2441,10 @@ class WebmOpusSeekTrimTransform extends Transform {
       packetStartSample,
       this.targetSampleFrame
     )
-    const clippedEndSample = this.endSampleFrame === null
-      ? packetEndSample
-      : Math.min(packetEndSample, this.endSampleFrame)
+    const clippedEndSample =
+      this.endSampleFrame === null
+        ? packetEndSample
+        : Math.min(packetEndSample, this.endSampleFrame)
 
     // Only fill gaps between packets. Never pad the tail: a missing final
     // packet must remain visible as an early EOF instead of being hidden.
@@ -2459,10 +2464,7 @@ class WebmOpusSeekTrimTransform extends Transform {
         clippedStartSample,
         this.nextOutputSampleFrame
       )
-      const outputEndSample = Math.max(
-        outputStartSample,
-        clippedEndSample
-      )
+      const outputEndSample = Math.max(outputStartSample, clippedEndSample)
       const framesToKeep = outputEndSample - outputStartSample
 
       if (framesToKeep > 0) {
