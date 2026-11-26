@@ -143,6 +143,7 @@ export interface AudioResource {
   checkScratchEffectCompleted?(): boolean
   getEffectiveRate?: () => number
   getRMS?: () => number
+  getAudioVisualization?: () => import('../../playback/processing/AudioVisualization.ts').AudioVisualizationSnapshot | null
   isSilent?: () => boolean
   setLoudnessNormalizer?(enabled: boolean): void
   getAudioProcessingTelemetry?():
@@ -552,6 +553,7 @@ export interface PlayPayload {
  * JSON-safe representation of a player used in gateway events.
  */
 export interface PlayerStateJSON {
+  visualization?: import('../../playback/processing/AudioVisualization.ts').AudioVisualizationSnapshot
   guildId: string
   track: PlayerTrack | null
   volume: number

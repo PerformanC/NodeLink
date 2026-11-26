@@ -62,6 +62,7 @@ import {
   type CrossfadePrepareOptions
 } from './CrossfadeController.ts'
 import { SilenceDetector } from './SilenceDetector.ts'
+import { AudioVisualization } from './AudioVisualization.ts'
 import {
   assertAudioCapabilities,
   resolveAudioProcessingMode,
@@ -799,6 +800,7 @@ class BaseAudioResource {
         checkScratchEffectCompleted?: () => boolean
         getEffectiveRate?: () => number
         getRMS?: () => number
+        getAudioVisualization?: () => import('./AudioVisualization.ts').AudioVisualizationSnapshot | null
         isSilent?: () => boolean
         setFadeVolume?: (volume: number) => void
         fadeTo?: (volume: number, durationMs: number, curve?: string) => void
@@ -824,6 +826,7 @@ class BaseAudioResource {
       this.checkScratchEffectCompleted()
     voiceStream.getEffectiveRate = () => this.getEffectiveRate()
     voiceStream.getRMS = () => this.getRMS()
+    voiceStream.getAudioVisualization = () => this.getAudioVisualization()
     voiceStream.isSilent = () => this.isSilent()
     voiceStream.setFadeVolume = (volume: number) => this.setFadeVolume(volume)
     voiceStream.fadeTo = (volume: number, durationMs: number, curve?: string) =>
@@ -933,6 +936,11 @@ class BaseAudioResource {
 
   getEffectiveRate(): number {
     return 1.0
+  }
+
+  getAudioVisualization(): import('./AudioVisualization.ts').AudioVisualizationSnapshot | null {
+    const observer = this.pipes?.find(pipe => pipe instanceof AudioVisualization)
+    return observer instanceof AudioVisualization ? observer.snapshot() : null
   }
 
   getRMS(): number {
@@ -2941,8 +2949,13 @@ class StreamAudioResource extends BaseAudioResource {
       streams.push(protectedOutput)
     }
 
-    streams.push(opusEncoder)
     if (protectedOutput) this.pipes?.push(protectedOutput)
+    if (nodelink.options.playback.audio?.visualization === true) {
+      const observer = new AudioVisualization()
+      streams.push(observer)
+      this.pipes?.push(observer)
+    }
+    streams.push(opusEncoder)
     this.pipes?.push(opusEncoder)
 
     pipeline(streams as unknown as Readable[], (err: Error | null): void => {

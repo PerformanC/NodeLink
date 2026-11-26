@@ -4315,7 +4315,9 @@ export class Player {
       'Player',
       `[Action: toJSON] Method invoked for guild ${this.guildId}`
     )
+    const visualization = this.track && !this.isPaused ? this._getAudioStream()?.getAudioVisualization?.() : null
     return {
+      ...(visualization ? { visualization } : {}),
       guildId: this.guildId,
       track: this.track,
       volume: this.volumePercent,

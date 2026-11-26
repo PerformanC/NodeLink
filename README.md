@@ -487,3 +487,7 @@ NodeLink is open-source software released under the **GNU General Public License
 <p align="center">
   <sub>GIFs by Pudgy Penguins, embedded from Tenor. Click a GIF to visit its source.</sub>
 </p>
+
+### Audio visualization (experimental)
+
+`playback.audio.visualization: true` enables bounded snapshots on existing player JSON responses while playback is active. `visualization` contains stereo RMS/peak, a 32-bin peak envelope, eight frequency probe magnitudes and the output PCM frame counter. Samples are taken before Opus encoding, after output processing; the frame counter is not a media timestamp and can lead audible playback due to buffering. Crossfades and mixed layers are represented as output audio. No raw PCM is exposed, and snapshots older than one second are omitted. Disabled by default. Synthetic signal tests do not establish Discord playback timing or production CPU cost.
