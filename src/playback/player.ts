@@ -3554,6 +3554,22 @@ export class Player {
       }
       this._fading('trackEndSchedule', { startPosition: this._realPosition() })
     }
+    const transitionMs =
+      newFilterSettings.timescale?.transition?.durationMs ?? 0
+    if (this.connection?.audioStream && transitionMs > 0) {
+      const track = this.track
+      const settlesAt = Date.now() + transitionMs
+      const timer = setInterval(() => {
+        if (this.destroying || this.track !== track) return clearInterval(timer)
+        this._snapshotPosition()
+        if (Date.now() < settlesAt) return
+        clearInterval(timer)
+        if (!this.isPaused)
+          this._fading('trackEndSchedule', {
+            startPosition: this._realPosition()
+          })
+      }, 100)
+    }
     if (
       !this.nextResourceIsCrossfade &&
       this.getAudioProcessingMode() !== 'protected'
