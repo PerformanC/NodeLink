@@ -80,6 +80,14 @@ export interface TrackMediaMetadata {
     mediaTags?: string[]
     genres?: string[]
     previewUrl?: string
+    releaseDate?: string
+    audioSpecifications?: {
+      maximumBitDepth?: number
+      maximumSamplingRateHz?: number
+      maximumChannelCount?: number
+      hiRes?: boolean
+      hiResStreamable?: boolean
+    }
   }
   canvas?: {
     url: string

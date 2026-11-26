@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { buildTrackMedia } from '../modules/trackMedia.ts'
+import { buildQobuzMedia } from '../modules/qobuzMedia.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -437,14 +437,7 @@ export default class QobuzSource {
       max
     )
 
-    const tracks = allItems.map((item) => {
-      item.album = {
-        title: data.title,
-        image: data.image,
-        id: data.id
-      }
-      return this.buildTrack(item)
-    })
+    const tracks = allItems.map((item) => this.buildTrack(item, data))
 
     return {
       loadType: 'playlist',
@@ -531,7 +524,7 @@ export default class QobuzSource {
       max
     )
 
-    const tracks = allItems.map((item) => this.buildTrack(item))
+    const tracks = allItems.map((item) => this.buildTrack(item, undefined, data))
     const artistName = this.asString(data.name) || 'Unknown Artist'
     return {
       loadType: 'playlist',
@@ -680,7 +673,7 @@ export default class QobuzSource {
         logger(
           'debug',
           'Qobuz',
-          `API Error (${statusCode}) on ${path}: ${JSON.stringify(body)}`
+          `API Error (${statusCode}) on ${path}`
         )
         return null
       }
@@ -800,14 +793,14 @@ export default class QobuzSource {
    * @param item - Qobuz track object.
    * @returns Encoded track payload.
    */
-  private buildTrack(item: Record<string, unknown>): {
+  private buildTrack(item: Record<string, unknown>, parentAlbum?: Record<string, unknown>, parentArtist?: Record<string, unknown>): {
     encoded: string
     info: TrackInfo
     pluginInfo: Record<string, unknown>
   } {
     const artist = this.asRecord(item.artist)
     const performer = this.asRecord(item.performer)
-    const album = this.asRecord(item.album)
+    const album = this.asRecord(item.album) ?? parentAlbum
     const albumImage = this.asRecord(album?.image)
 
     const trackInfo: TrackInfo = {
@@ -835,39 +828,7 @@ export default class QobuzSource {
       encoded: encodeTrack(encodedInput),
       info: trackInfo,
       pluginInfo: {
-        media: buildTrackMedia('qobuz', {
-          identifiers: { isrc: trackInfo.isrc },
-          artists: [artist, performer]
-            .filter(
-              (entry, index, all) =>
-                entry &&
-                all.findIndex(
-                  (other) =>
-                    other &&
-                    (entry.id != null && other.id != null
-                      ? entry.id === other.id
-                      : entry.name === other.name)
-                ) === index
-            )
-            .map((entry) => ({
-              name: this.asString(entry?.name),
-              id:
-                typeof entry?.id === 'number'
-                  ? entry.id
-                  : this.asString(entry?.id)
-            })),
-          album: {
-            name: this.asString(album?.title),
-            id:
-              typeof album?.id === 'number'
-                ? album.id
-                : this.asString(album?.id),
-            artwork: [
-              { url: this.asString(albumImage?.large) },
-              { url: this.asString(albumImage?.small) }
-            ]
-          }
-        })
+        media: buildQobuzMedia(item, parentAlbum, parentArtist)
       }
     }
   }
