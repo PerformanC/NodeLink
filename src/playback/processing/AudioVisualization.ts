@@ -26,7 +26,6 @@ export class AudioVisualization extends Transform {
   private frame = 0
   private latest: AudioVisualizationSnapshot | null = null
 
-  constructor(){super()}
 
   private ingest(l:number,r:number):void{
     const slot=this.frame%HOP

@@ -352,6 +352,7 @@ export interface NodeLinkOptions {
   }
   audio?: {
     processingMode?: AudioProcessingMode
+    visualization?: boolean
     encryption?: string | null
     fading?: FadingConfig
     loudnessNormalizer?: boolean
