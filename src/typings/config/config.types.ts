@@ -1416,6 +1416,7 @@ export interface NodelinkConfig {
     audio: {
       /** Audio processing path; defaults to the unchanged legacy pipeline. */
       processingMode?: AudioProcessingMode
+      protected?: import('../../playback/processing/protectedProcessingOptions.ts').ProtectedProcessingOptions
       quality: string
       encryption: string
       resamplingQuality: string

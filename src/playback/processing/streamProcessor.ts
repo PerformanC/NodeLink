@@ -57,6 +57,7 @@ import { ScratchTransformer } from './ScratchTransformer.ts'
 import { FlowController } from './FlowController.ts'
 import { FiltersManager } from './filtersManager.ts'
 import { VolumeTransformer } from './VolumeTransformer.ts'
+import { protectedProcessingOptions } from './protectedProcessingOptions.ts'
 import {
   CrossfadeController,
   type CrossfadePrepareOptions
@@ -2831,7 +2832,8 @@ class StreamAudioResource extends BaseAudioResource {
         processingMode === 'protected'
           ? 0
           : nodelink.options.playback.audio?.lookaheadMs,
-      gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
+      gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS,
+      targetLoudnessLufs: processingMode === 'protected' ? protectedProcessingOptions(nodelink.options.playback.audio?.protected).targetLoudnessLufs : undefined
     })
     const fadeTransformer = new FadeTransformer({
       type: 's16le',
@@ -2935,7 +2937,7 @@ class StreamAudioResource extends BaseAudioResource {
 
     if (processingMode === 'protected') {
       protectedOutput = new ProtectedLimiterOutput(() =>
-        volumeTransformer.getRequestedVolume()
+        volumeTransformer.getRequestedVolume(), nodelink.options.playback.audio?.protected
       )
       this.protectedLimiterOutput = protectedOutput
       streams.push(protectedOutput)

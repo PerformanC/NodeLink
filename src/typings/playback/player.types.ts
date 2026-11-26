@@ -351,6 +351,7 @@ export interface NodeLinkOptions {
   }
   audio?: {
     processingMode?: AudioProcessingMode
+    protected?: import('../../playback/processing/protectedProcessingOptions.ts').ProtectedProcessingOptions
     encryption?: string | null
     fading?: FadingConfig
     loudnessNormalizer?: boolean
@@ -552,6 +553,7 @@ export interface PlayPayload {
  * JSON-safe representation of a player used in gateway events.
  */
 export interface PlayerStateJSON {
+  audioProcessing?: import('../../playback/processing/audioContract.ts').AudioProcessingTelemetrySnapshot
   guildId: string
   track: PlayerTrack | null
   volume: number
