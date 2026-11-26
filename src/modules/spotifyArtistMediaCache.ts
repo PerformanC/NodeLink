@@ -9,10 +9,13 @@ export class SpotifyArtistMediaCache {
   private readonly entries = new Map<string, { artist: Artist; expires: number }>()
   private readonly pending = new Map<string, Promise<Artist | undefined>>()
 
-  constructor(
-    private readonly fetchArtist: FetchArtist,
-    private readonly now: () => number = Date.now
-  ) {}
+  private readonly fetchArtist: FetchArtist
+  private readonly now: () => number
+
+  constructor(fetchArtist: FetchArtist, now: () => number = Date.now) {
+    this.fetchArtist = fetchArtist
+    this.now = now
+  }
 
   async get(id: string): Promise<Artist | undefined> {
     if (!/^[A-Za-z0-9]{22}$/.test(id)) return undefined
