@@ -64,7 +64,7 @@ export interface TrackMediaMetadata {
   motionArtwork?: {
     url: string
     scope?: 'track' | 'album'
-    variants?: Array<{ url: string; aspectRatio: '1:1' | '9:16' }>
+    variants?: Array<{ url: string; aspectRatio: '1:1' | '3:4' | '9:16' }>
   }
   artwork?: MediaImage[]
   channel?: {

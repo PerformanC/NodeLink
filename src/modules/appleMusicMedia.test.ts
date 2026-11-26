@@ -95,7 +95,7 @@ test('returns distinct album motion variants with explicit album scope', () => {
       scope: 'album',
       variants: [
         { url: square, aspectRatio: '1:1' },
-        { url: tall, aspectRatio: '9:16' }
+        { url: tall, aspectRatio: '3:4' }
       ]
     }
   )
@@ -114,7 +114,7 @@ test('prefers track motion and does not mix album or artist variants', () => {
     {
       url,
       scope: 'track',
-      variants: [{ url, aspectRatio: '9:16' }]
+      variants: [{ url, aspectRatio: '3:4' }]
     }
   )
 })

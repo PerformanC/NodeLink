@@ -66,7 +66,7 @@ interface AppleMusicAttributes {
   editorialVideo?: {
     /** Square detail video variant. */
     motionDetailSquare?: { video: string }
-    /** Tall detail video variant. */
+    /** Tall detail video variant (nominal 3:4 editorial layout). */
     motionDetailTall?: { video: string }
     /** 1x1 square video variant. */
     motionSquareVideo1x1?: { video: string }
