@@ -5,6 +5,7 @@
 
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
+import { resolveMediaCredential } from '../modules/mediaProviderConfig.ts'
 import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.ts'
 import { buildTidalMedia } from '../modules/tidalMedia.ts'
 import type {
@@ -628,7 +629,11 @@ export default class TidalSource {
 
   /** Optional, independent metadata requests. Never use a v1 token on another API. */
   private async fetchCatalogExtras(id: string): Promise<{ catalog?: unknown; preview?: unknown }> {
-    const token = process.env.NODELINK_TIDAL_METADATA_ACCESS_TOKEN?.trim()
+    const token = resolveMediaCredential(
+      this.config.enrichCatalog === true,
+      process.env.NODELINK_TIDAL_METADATA_ACCESS_TOKEN,
+      this.config.metadataAccessToken
+    )
     const get = async (url: URL, init: RequestInit): Promise<unknown> => {
       try {
         const response = await fetch(url, {

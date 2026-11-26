@@ -606,6 +606,7 @@ export const config: NodelinkConfig = {
     tidal: {
       enrichCredits: false,
       enrichCatalog: false,
+      metadataAccessToken: '',
       extractPreview: false,
       enabled: true,
       token: 'token_here',

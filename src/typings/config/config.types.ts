@@ -300,6 +300,9 @@ export interface TidalSourceConfig {
   /** Opt-in official v2 metadata with a separately supplied OAuth access token. */
   enrichCatalog?: boolean
 
+  /** Separately authorized v2 OAuth access token; environment override is optional. */
+  metadataAccessToken?: string
+
   /** Opt-in public GraphQL preview lookup. */
   extractPreview?: boolean
 
