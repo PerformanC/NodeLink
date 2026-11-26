@@ -524,7 +524,9 @@ export default class QobuzSource {
       max
     )
 
-    const tracks = allItems.map((item) => this.buildTrack(item, undefined, data))
+    const tracks = allItems.map((item) =>
+      this.buildTrack(item, undefined, data)
+    )
     const artistName = this.asString(data.name) || 'Unknown Artist'
     return {
       loadType: 'playlist',
@@ -670,11 +672,7 @@ export default class QobuzSource {
       })
 
       if (statusCode !== 200) {
-        logger(
-          'debug',
-          'Qobuz',
-          `API Error (${statusCode}) on ${path}`
-        )
+        logger('debug', 'Qobuz', `API Error (${statusCode}) on ${path}`)
         return null
       }
 
@@ -793,7 +791,11 @@ export default class QobuzSource {
    * @param item - Qobuz track object.
    * @returns Encoded track payload.
    */
-  private buildTrack(item: Record<string, unknown>, parentAlbum?: Record<string, unknown>, parentArtist?: Record<string, unknown>): {
+  private buildTrack(
+    item: Record<string, unknown>,
+    parentAlbum?: Record<string, unknown>,
+    parentArtist?: Record<string, unknown>
+  ): {
     encoded: string
     info: TrackInfo
     pluginInfo: Record<string, unknown>

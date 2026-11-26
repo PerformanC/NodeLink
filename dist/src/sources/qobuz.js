@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { buildTrackMedia } from '../modules/trackMedia.js';
+import { buildQobuzMedia } from '../modules/qobuzMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
@@ -344,14 +344,7 @@ export default class QobuzSource {
         if (!data || !tracksBlock)
             return { loadType: 'empty', data: {} };
         const allItems = await this.fetchRemainingTracks('/album/get', { album_id: String(data.id) }, tracksBlock, max);
-        const tracks = allItems.map((item) => {
-            item.album = {
-                title: data.title,
-                image: data.image,
-                id: data.id
-            };
-            return this.buildTrack(item);
-        });
+        const tracks = allItems.map((item) => this.buildTrack(item, data));
         return {
             loadType: 'playlist',
             data: {
@@ -418,7 +411,7 @@ export default class QobuzSource {
         if (!data || !tracksBlock)
             return { loadType: 'empty', data: {} };
         const allItems = await this.fetchRemainingTracks('/artist/get', { artist_id: id, extra: 'tracks' }, tracksBlock, max);
-        const tracks = allItems.map((item) => this.buildTrack(item));
+        const tracks = allItems.map((item) => this.buildTrack(item, undefined, data));
         const artistName = this.asString(data.name) || 'Unknown Artist';
         return {
             loadType: 'playlist',
@@ -530,7 +523,7 @@ export default class QobuzSource {
                 disableBodyCompression: this.asBoolean(options.disableBodyCompression) ?? false
             });
             if (statusCode !== 200) {
-                logger('debug', 'Qobuz', `API Error (${statusCode}) on ${path}: ${JSON.stringify(body)}`);
+                logger('debug', 'Qobuz', `API Error (${statusCode}) on ${path}`);
                 return null;
             }
             if (typeof body === 'string') {
@@ -626,10 +619,10 @@ export default class QobuzSource {
      * @param item - Qobuz track object.
      * @returns Encoded track payload.
      */
-    buildTrack(item) {
+    buildTrack(item, parentAlbum, parentArtist) {
         const artist = this.asRecord(item.artist);
         const performer = this.asRecord(item.performer);
-        const album = this.asRecord(item.album);
+        const album = this.asRecord(item.album) ?? parentAlbum;
         const albumImage = this.asRecord(album?.image);
         const trackInfo = {
             identifier: String(item.id),
@@ -653,31 +646,7 @@ export default class QobuzSource {
             encoded: encodeTrack(encodedInput),
             info: trackInfo,
             pluginInfo: {
-                media: buildTrackMedia('qobuz', {
-                    identifiers: { isrc: trackInfo.isrc },
-                    artists: [artist, performer]
-                        .filter((entry, index, all) => entry &&
-                        all.findIndex((other) => other &&
-                            (entry.id != null && other.id != null
-                                ? entry.id === other.id
-                                : entry.name === other.name)) === index)
-                        .map((entry) => ({
-                        name: this.asString(entry?.name),
-                        id: typeof entry?.id === 'number'
-                            ? entry.id
-                            : this.asString(entry?.id)
-                    })),
-                    album: {
-                        name: this.asString(album?.title),
-                        id: typeof album?.id === 'number'
-                            ? album.id
-                            : this.asString(album?.id),
-                        artwork: [
-                            { url: this.asString(albumImage?.large) },
-                            { url: this.asString(albumImage?.small) }
-                        ]
-                    }
-                })
+                media: buildQobuzMedia(item, parentAlbum, parentArtist)
             }
         };
     }
