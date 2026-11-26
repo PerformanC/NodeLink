@@ -1,7 +1,6 @@
 import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
-import { fetchPathfinderCanvas } from '../modules/spotifyPathfinderCanvas.ts'
 import { mediaDetails, type MediaColors, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
@@ -1339,37 +1338,27 @@ export default class SpotifySource implements SourceInstance {
   }
 
   /**
-   * Enriches a resolved track using only the selected, existing Canvas session.
+   * Enriches a resolved track using only the existing mobile Canvas session.
    * Never switches credentials or retries a rejected Canvas request.
    * @internal
    */
   private async _attachCanvas(track: TrackData, id: string): Promise<void> {
-    const pathfinder = process.env.NODELINK_SPOTIFY_CANVAS_MODE === 'pathfinder'
-    const useAuthenticatedMobile =
-      pathfinder && Boolean(this.config.sp_dc?.trim()) && !this.mobileAuthRejected && Boolean(this.mobileToken)
-    const token = pathfinder
-      ? (useAuthenticatedMobile ? this.mobileToken : this.anonymousToken)
-      : this.mobileToken
-    const expiry = pathfinder
-      ? (useAuthenticatedMobile ? this.mobileTokenExpiry : this.anonymousTokenExpiry)
-      : this.mobileTokenExpiry
-    const state = !pathfinder && this.mobileAuthRejected
+    const token = this.mobileToken
+    const expiry = this.mobileTokenExpiry
+    const state = this.mobileAuthRejected
       ? 'authorization-rejected'
       : spotifyCanvasSessionState(token, expiry)
     const diagnose = (event: unknown) =>
       logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
     diagnose({
       kind: 'session',
-      mode: pathfinder ? 'pathfinder' : 'native',
       state
     })
     if (!token || state === 'missing' || state === 'expired' || state === 'authorization-rejected') return
 
     try {
       const trackUri = `spotify:track:${id}`
-      const result = pathfinder
-        ? await fetchPathfinderCanvas(trackUri, token, diagnose, process.env.NODELINK_SPOTIFY_CANVAS_CLIENT_TOKEN?.trim())
-        : await fetchCanvas(trackUri, token, diagnose)
+      const result = await fetchCanvas(trackUri, token, diagnose)
       const selected = selectSpotifyCanvas(result?.data.canvasesList, trackUri)
       if (!selected) return
       const media = track.pluginInfo.media as TrackMediaMetadata | undefined
