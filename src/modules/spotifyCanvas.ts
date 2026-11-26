@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { readCanvasResponse } from './spotifyCanvasResponse.ts'
 import type {
   SpotifyCanvasArtist,
   SpotifyCanvasDecodedResponse,
@@ -330,10 +331,12 @@ export async function fetchCanvas(
     )
 
     onDiagnostic?.({ kind: 'http', status: res.status })
-    if (!res.ok) return null
+    if (!res.ok) {
+      await res.body?.cancel()
+      return null
+    }
 
-    const arrayBuffer = await res.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
+    const buffer = await readCanvasResponse(res, 1024 * 1024)
     const data = decodeCanvasResponse(buffer)
     onDiagnostic?.({
       kind: 'decoded',

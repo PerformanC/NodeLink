@@ -177,3 +177,19 @@ test('does not expose a partial Canvas when an embedded field is truncated', asy
   t.mock.method(globalThis, 'fetch', async () => new Response(new Uint8Array(body)))
   assert.deepEqual(await fetchCanvas(trackUri, 'malformed-entry-fixture'), { data: { canvasesList: [] } })
 })
+
+test('rejects oversized native responses without caching them', async (t) => {
+  const request = t.mock.method(globalThis, 'fetch', async () => new Response(new Uint8Array(1024 * 1024 + 1)))
+  const events: CanvasDiagnostic[] = []
+  for (let i = 0; i < 2; i++) assert.equal(await fetchCanvas(trackUri, 'oversize-fixture', e => events.push(e)), null)
+  assert.equal(request.mock.callCount(), 2)
+  assert.deepEqual(events, [{ kind: 'http', status: 200 }, { kind: 'request-error' }, { kind: 'http', status: 200 }, { kind: 'request-error' }])
+})
+
+test('rejects oversized declared length and cancels the response body', async (t) => {
+  let cancelled = false
+  const stream = new ReadableStream({ cancel() { cancelled = true } })
+  t.mock.method(globalThis, 'fetch', async () => new Response(stream, { headers: { 'content-length': '1048577' } }))
+  assert.equal(await fetchCanvas(trackUri, 'oversize-header-fixture'), null)
+  assert.equal(cancelled, true)
+})

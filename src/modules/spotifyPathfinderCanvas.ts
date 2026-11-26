@@ -1,3 +1,4 @@
+import { readCanvasResponse, spotifyCanvasUrl } from './spotifyCanvasResponse.ts'
 import type { SpotifyCanvasFetchResult } from '../typings/modules/spotifyCanvas.types.ts'
 
 type Diagnostic = {
@@ -35,17 +36,14 @@ export function normalizePathfinderCanvas(payload: unknown, trackUri: string): {
     }
   }
   try {
-    const url = new URL(canvas.url)
-    if (url.protocol !== 'https:' || url.username || url.password || url.port ||
-        !(url.hostname === 'scdn.co' || url.hostname.endsWith('.scdn.co'))) {
-      return { outcome: 'unexpected-payload', result: null }
-    }
+    const url = spotifyCanvasUrl(canvas.url)
+    if (!url) return { outcome: 'unexpected-payload', result: null }
     const canvasUri = typeof canvas.uri === 'string' && /^spotify:canvas:[A-Za-z0-9]+$/.test(canvas.uri) ? canvas.uri : ''
     return {
       outcome: 'found',
       result: { data: { canvasesList: [{
         id: canvasUri ? canvasUri.split(':')[2] ?? '' : '',
-        canvasUrl: url.href,
+        canvasUrl: url,
         trackUri,
         canvasUri,
         ...(typeof canvas.fileId === 'string' && /^[a-f0-9]{32}$/i.test(canvas.fileId) ? { fileId: canvas.fileId } : {}),
@@ -87,23 +85,8 @@ export async function fetchPathfinderCanvas(
       onDiagnostic?.({ kind: 'pathfinder', outcome: 'http-error', status: response.status })
       return null
     }
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error('Missing body')
-    const chunks: Uint8Array[] = []
-    let bytes = 0
-    try {
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        bytes += value.byteLength
-        if (bytes > 256 * 1024) {
-          await reader.cancel()
-          throw new Error('Response too large')
-        }
-        chunks.push(value)
-      }
-    } finally { reader.releaseLock() }
-    const { outcome, result, canvasState } = normalizePathfinderCanvas(JSON.parse(Buffer.concat(chunks).toString('utf8')), trackUri)
+    const body = await readCanvasResponse(response, 256 * 1024)
+    const { outcome, result, canvasState } = normalizePathfinderCanvas(JSON.parse(body.toString('utf8')), trackUri)
     onDiagnostic?.({ kind: 'pathfinder', outcome, status: response.status, ...(canvasState ? { canvasState } : {}) })
     return result
   } catch {

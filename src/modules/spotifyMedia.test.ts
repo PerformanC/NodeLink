@@ -22,7 +22,7 @@ test('omits unavailable metadata and accepts fallback artwork', () => {
 })
 
 test('normalizes Canvas only for the matching track and a safe URL', () => {
-  const entry = { id: 'c', canvasUrl: 'https://example.com/c.mp4', trackUri: 'spotify:track:a' }
+  const entry = { id: 'c', canvasUrl: 'https://canvaz.scdn.co/c.mp4', trackUri: 'spotify:track:a' }
   assert.deepEqual(spotifyCanvasMedia(entry, 'spotify:track:a'), { id: 'c', url: entry.canvasUrl })
   assert.equal(spotifyCanvasMedia(entry, 'spotify:track:b'), undefined)
   assert.equal(spotifyCanvasMedia({ canvasUrl: 'file:///tmp/c.mp4' }, 'spotify:track:a'), undefined)
@@ -30,7 +30,7 @@ test('normalizes Canvas only for the matching track and a safe URL', () => {
 
 test('selects a valid matching Canvas even after unrelated or unusable entries', () => {
   const target = 'spotify:track:target'
-  const valid = { id: 'correct', trackUri: target, canvasUrl: 'https://example.com/loop.mp4' }
+  const valid = { id: 'correct', trackUri: target, canvasUrl: 'https://canvaz.scdn.co/loop.mp4' }
   const unrelated = { id: 'wrong', trackUri: 'spotify:track:other', canvasUrl: valid.canvasUrl }
   const unsafe = { id: 'unsafe', trackUri: target, canvasUrl: 'file:///tmp/loop.mp4' }
   assert.deepEqual(selectSpotifyCanvas([unrelated, unsafe, valid], target), {
@@ -109,4 +109,15 @@ test('reads only unambiguous explicitly typed legacy ISRCs', () => {
   assert.equal(readSpotifyMetadataIsrc({ external_id: [{ type: 'upc', id: 'USUG12205736' }] }), undefined)
   assert.equal(readSpotifyMetadataIsrc({ external_id: {} }), undefined)
   assert.equal(readSpotifyMetadataIsrc('USUG12205736'), undefined)
+})
+
+test('rejects non-provider Canvas domains, credentials and custom ports', () => {
+  const trackUri = 'spotify:track:a'
+  for (const canvasUrl of [
+    'https://canvaz.scdn.co.attacker.test/a.mp4',
+    'https://attacker.test/a.mp4',
+    'https://user@canvaz.scdn.co/a.mp4',
+    'https://canvaz.scdn.co:8443/a.mp4',
+    'http://canvaz.scdn.co/a.mp4'
+  ]) assert.equal(spotifyCanvasMedia({ trackUri, canvasUrl }, trackUri), undefined)
 })

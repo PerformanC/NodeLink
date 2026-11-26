@@ -1,3 +1,4 @@
+import { spotifyCanvasUrl } from './spotifyCanvasResponse.ts'
 import {
   mediaUrl as webUrl,
   mediaDetails,
@@ -74,7 +75,7 @@ type CanvasMediaInput = { id?: string; canvasUrl?: string; trackUri?: string; ca
 /** Normalizes an existing Canvas response without fetching or proxying media. */
 export function spotifyCanvasMedia(entry: CanvasMediaInput, trackUri: string): TrackMediaMetadata['canvas'] {
   if (!entry.trackUri || entry.trackUri !== trackUri) return undefined
-  const url = webUrl(entry.canvasUrl)
+  const url = spotifyCanvasUrl(entry.canvasUrl)
   return url ? {
     url,
     ...(entry.id ? { id: entry.id } : {}),
