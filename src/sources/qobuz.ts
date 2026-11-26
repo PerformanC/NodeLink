@@ -838,18 +838,30 @@ export default class QobuzSource {
         media: buildTrackMedia('qobuz', {
           identifiers: { isrc: trackInfo.isrc },
           artists: [artist, performer]
-            .filter((entry, index, all) => entry && all.findIndex((other) =>
-              other && (entry.id != null && other.id != null
-                ? entry.id === other.id
-                : entry.name === other.name)
-            ) === index)
+            .filter(
+              (entry, index, all) =>
+                entry &&
+                all.findIndex(
+                  (other) =>
+                    other &&
+                    (entry.id != null && other.id != null
+                      ? entry.id === other.id
+                      : entry.name === other.name)
+                ) === index
+            )
             .map((entry) => ({
               name: this.asString(entry?.name),
-              id: typeof entry?.id === 'number' ? entry.id : this.asString(entry?.id)
+              id:
+                typeof entry?.id === 'number'
+                  ? entry.id
+                  : this.asString(entry?.id)
             })),
           album: {
             name: this.asString(album?.title),
-            id: typeof album?.id === 'number' ? album.id : this.asString(album?.id),
+            id:
+              typeof album?.id === 'number'
+                ? album.id
+                : this.asString(album?.id),
             artwork: [
               { url: this.asString(albumImage?.large) },
               { url: this.asString(albumImage?.small) }

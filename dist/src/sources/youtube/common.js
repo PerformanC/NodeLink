@@ -1,3 +1,11 @@
+/**
+ * YouTube Source Common Utilities
+ * Provides shared types, utilities, and helpers for YouTube data processing.
+ *
+ * @packageDocumentation
+ * @module YouTubeSourceCommon
+ */
+import { buildTrackMedia } from '../../modules/trackMedia.js';
 import { YOUTUBE_CONSTANTS } from '../../typings/sources/youtube.types.js';
 import { encodeTrack, logger, makeRequest } from '../../utils.js';
 export { YOUTUBE_CONSTANTS };
@@ -1203,7 +1211,10 @@ export async function buildTrack(itemData, itemType, sourceNameOverride = null, 
         pluginInfo: {
             captions: JSON.stringify(extractCaptions(fullApiResponse?.captions ?? {})),
             audioFormats: JSON.stringify(audioFormats),
-            audioTracks: JSON.stringify(audioTracks)
+            audioTracks: JSON.stringify(audioTracks),
+            media: buildTrackMedia(trackInfo.sourceName, {
+                artwork: [{ url: trackInfo.artworkUrl }]
+            })
         }
     };
     if (enableHolo) {
@@ -1439,7 +1450,33 @@ export async function buildHoloTrack(trackInfo, itemData, itemType, fullApiRespo
             audioFormats: JSON.stringify(audioFormats),
             audioTracks: JSON.stringify(audioTracks),
             captions: JSON.stringify(captions),
-            channel: JSON.stringify(channelData)
+            channel: JSON.stringify(channelData),
+            media: buildTrackMedia(trackInfo.sourceName, {
+                artwork: [
+                    { url: trackInfo.artworkUrl },
+                    { url: thumbnails.default },
+                    { url: thumbnails.medium },
+                    { url: thumbnails.high }
+                ],
+                channel: {
+                    name: typeof channelData.name === 'string' ? channelData.name : undefined,
+                    id: typeof channelData.id === 'string' ? channelData.id : undefined,
+                    artwork: [
+                        {
+                            url: typeof channelData.icon === 'string'
+                                ? channelData.icon
+                                : undefined
+                        }
+                    ],
+                    banners: [
+                        {
+                            url: typeof channelData.banner === 'string'
+                                ? channelData.banner
+                                : undefined
+                        }
+                    ]
+                }
+            })
         }
     };
     return result;

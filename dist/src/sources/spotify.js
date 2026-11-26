@@ -1,8 +1,8 @@
 import { getLocalToken } from '../modules/spotifyAuth.js';
 import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.js';
 import { fetchCanvas } from '../modules/spotifyCanvas.js';
+import { buildSpotifyArtistMedia, buildSpotifyMedia, normalizeSpotifyDynamicColors, readOfficialSpotifyIsrc, readSpotifyMetadataIsrc, selectSpotifyCanvas, spotifyCanvasSessionState } from '../modules/spotifyMedia.js';
 import { mediaDetails } from '../modules/trackMedia.js';
-import { buildSpotifyMedia, buildSpotifyArtistMedia, readOfficialSpotifyIsrc, readSpotifyMetadataIsrc, normalizeSpotifyDynamicColors, selectSpotifyCanvas, spotifyCanvasSessionState } from '../modules/spotifyMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for the official Spotify Web API.
@@ -489,7 +489,9 @@ export default class SpotifySource {
         try {
             const res = await http1makeRequest(url, { ...options, headers });
             if (singleAttempt) {
-                return res.statusCode === 200 || res.statusCode === 201 ? res.body : null;
+                return res.statusCode === 200 || res.statusCode === 201
+                    ? res.body
+                    : null;
             }
             if (res.statusCode === 429) {
                 if (retry >= 3)
@@ -745,7 +747,9 @@ export default class SpotifySource {
                                 if (media)
                                     first.pluginInfo.media = {
                                         ...media,
-                                        ...mediaDetails({ identifiers: { ...media.identifiers, isrc } })
+                                        ...mediaDetails({
+                                            identifiers: { ...media.identifiers, isrc }
+                                        })
                                     };
                                 first.encoded = encodeTrack({ ...first.info, details: [] });
                             }
@@ -1095,7 +1099,10 @@ export default class SpotifySource {
             kind: 'session',
             state
         });
-        if (!token || state === 'missing' || state === 'expired' || state === 'authorization-rejected')
+        if (!token ||
+            state === 'missing' ||
+            state === 'expired' ||
+            state === 'authorization-rejected')
             return;
         try {
             const trackUri = `spotify:track:${id}`;
@@ -2009,7 +2016,7 @@ export default class SpotifySource {
                     }
                     if (!best) {
                         const primaryTitle = track.title
-                            .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')
+                            .replace(/\s*[([][^)\]]*[)\]]/g, '')
                             .trim();
                         if (primaryTitle && primaryTitle !== track.title) {
                             const primaryRes = await sm.searchWithDefault(primaryTitle);

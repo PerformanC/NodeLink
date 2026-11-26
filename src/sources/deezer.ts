@@ -2034,15 +2034,17 @@ export default class DeezerSource implements SourceVariantHandler {
     const pluginInfo: DeezerTrackPluginInfo = {
       media: buildTrackMedia('deezer', {
         identifiers: { isrc: trackInfo.isrc },
-        artists: [{
-          id: item.artist?.id,
-          name: item.artist?.name,
-          artwork: [
-            { url: item.artist?.picture_xl },
-            { url: item.artist?.picture_big },
-            { url: item.artist?.picture_medium }
-          ]
-        }],
+        artists: [
+          {
+            id: item.artist?.id,
+            name: item.artist?.name,
+            artwork: [
+              { url: item.artist?.picture_xl },
+              { url: item.artist?.picture_big },
+              { url: item.artist?.picture_medium }
+            ]
+          }
+        ],
         album: {
           id: item.album?.id,
           name: item.album?.title,

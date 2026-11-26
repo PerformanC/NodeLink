@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { readCanvasResponse } from './spotifyCanvasResponse.ts'
 import type {
   SpotifyCanvasArtist,
   SpotifyCanvasDecodedResponse,
@@ -7,6 +6,7 @@ import type {
   SpotifyCanvasFetchResult,
   SpotifyCanvasVarintResult
 } from '../typings/modules/spotifyCanvas.types.ts'
+import { readCanvasResponse } from './spotifyCanvasResponse.ts'
 
 /**
  * Reads a protobuf varint from the provided buffer.
@@ -196,7 +196,8 @@ function decodeCanvasResponse(buffer: Buffer): SpotifyCanvasDecodedResponse {
       if (fieldNumber === 1 && wireType === 2) {
         const len = readVarint(buffer, offset)
         offset = len.next
-        if (len.val > buffer.length - offset) throw new Error('Truncated Canvas')
+        if (len.val > buffer.length - offset)
+          throw new Error('Truncated Canvas')
         const canvasBuf = buffer.subarray(offset, offset + len.val)
         offset += len.val
         canvases.push(decodeCanvas(canvasBuf))
@@ -251,10 +252,13 @@ function readEmptyResponseTtl(buffer: Buffer): number | undefined {
     const byte = buffer[i] ?? 0
     ttl |= BigInt(byte & 127) << BigInt((i - 1) * 7)
     if (!(byte & 128)) {
-      if (i !== buffer.length - 1 || ttl <= 0n || ttl > 0x7fffffffffffffffn) return
-      return Number(ttl > BigInt(MAX_NEGATIVE_TTL_SECONDS)
-        ? BigInt(MAX_NEGATIVE_TTL_SECONDS)
-        : ttl)
+      if (i !== buffer.length - 1 || ttl <= 0n || ttl > 0x7fffffffffffffffn)
+        return
+      return Number(
+        ttl > BigInt(MAX_NEGATIVE_TTL_SECONDS)
+          ? BigInt(MAX_NEGATIVE_TTL_SECONDS)
+          : ttl
+      )
     }
   }
 }
@@ -262,7 +266,13 @@ function readEmptyResponseTtl(buffer: Buffer): number | undefined {
 /** Non-sensitive Canvas request diagnostics. */
 export type CanvasDiagnostic =
   | { kind: 'http'; status: number }
-  | { kind: 'decoded'; bytes: number; entries: number; matching: number; withUrl: number }
+  | {
+      kind: 'decoded'
+      bytes: number
+      entries: number
+      matching: number
+      withUrl: number
+    }
   | {
       kind: 'short-response'
       fields: Array<{ number: number; wireType: number }>
@@ -342,8 +352,10 @@ export async function fetchCanvas(
       kind: 'decoded',
       bytes: buffer.length,
       entries: data.canvasesList.length,
-      matching: data.canvasesList.filter((entry) => entry.trackUri === trackUri).length,
-      withUrl: data.canvasesList.filter((entry) => Boolean(entry.canvasUrl)).length
+      matching: data.canvasesList.filter((entry) => entry.trackUri === trackUri)
+        .length,
+      withUrl: data.canvasesList.filter((entry) => Boolean(entry.canvasUrl))
+        .length
     })
     if (buffer.length > 0 && buffer.length <= 16 && !data.canvasesList.length) {
       onDiagnostic?.({
@@ -351,9 +363,8 @@ export async function fetchCanvas(
         ...summarizeShortResponse(buffer)
       })
     }
-    const ttlSeconds = data.canvasesList.length === 0
-      ? readEmptyResponseTtl(buffer)
-      : undefined
+    const ttlSeconds =
+      data.canvasesList.length === 0 ? readEmptyResponseTtl(buffer) : undefined
     if (ttlSeconds !== undefined) {
       // Keep cache bounded per worker; scope to the current credential and track.
       if (negativeCache.size >= MAX_NEGATIVE_ENTRIES) {

@@ -1,16 +1,20 @@
 import { getLocalToken } from '../modules/spotifyAuth.ts'
 import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
-import { mediaDetails, type MediaColors, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
-  buildSpotifyMedia,
   buildSpotifyArtistMedia,
+  buildSpotifyMedia,
+  normalizeSpotifyDynamicColors,
   readOfficialSpotifyIsrc,
   readSpotifyMetadataIsrc,
-  normalizeSpotifyDynamicColors,
   selectSpotifyCanvas,
   spotifyCanvasSessionState
 } from '../modules/spotifyMedia.ts'
+import {
+  type MediaColors,
+  mediaDetails,
+  type TrackMediaMetadata
+} from '../modules/trackMedia.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
   PlaylistPluginInfo,
@@ -500,7 +504,11 @@ export default class SpotifySource implements SourceInstance {
               if (timer) clearTimeout(timer)
               this.tokenRefreshTimers.delete('mobile')
               cm.delete?.('spotify_mobile_token')
-              logger('debug', 'SpotifyCanvas', 'Mobile authorization rejected; Canvas disabled until source restart.')
+              logger(
+                'debug',
+                'SpotifyCanvas',
+                'Mobile authorization rejected; Canvas disabled until source restart.'
+              )
             }
             return false
           }
@@ -626,7 +634,9 @@ export default class SpotifySource implements SourceInstance {
       const res = await http1makeRequest(url, { ...options, headers })
 
       if (singleAttempt) {
-        return res.statusCode === 200 || res.statusCode === 201 ? res.body as T : null
+        return res.statusCode === 200 || res.statusCode === 201
+          ? (res.body as T)
+          : null
       }
 
       if (res.statusCode === 429) {
@@ -764,7 +774,11 @@ export default class SpotifySource implements SourceInstance {
     if (!/^[A-Za-z0-9]{22}$/.test(id)) return undefined
     if (this.config.clientId && this.config.clientSecret) {
       const track = await this._apiRequest<SpotifyTrack>(
-        `/tracks/${id}?market=${this.market}`, 'official', {}, 0, true
+        `/tracks/${id}?market=${this.market}`,
+        'official',
+        {},
+        0,
+        true
       )
       return readOfficialSpotifyIsrc(track, id)
     }
@@ -773,13 +787,17 @@ export default class SpotifySource implements SourceInstance {
     if (!hex) return undefined
     const body = await this._apiRequest<unknown>(
       `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`,
-      'mobile', { responseType: 'buffer' }, 0, true
+      'mobile',
+      { responseType: 'buffer' },
+      0,
+      true
     )
     if (!body) return undefined
     let metadata: unknown = body
     if (Buffer.isBuffer(body)) {
-      try { metadata = JSON.parse(body.toString('utf8')) }
-      catch {
+      try {
+        metadata = JSON.parse(body.toString('utf8'))
+      } catch {
         return undefined
       }
     }
@@ -942,11 +960,16 @@ export default class SpotifySource implements SourceInstance {
               const isrc = await this._fetchTrackIsrc(first.info.identifier)
               if (isrc) {
                 first.info.isrc = isrc
-                const media = first.pluginInfo.media as TrackMediaMetadata | undefined
-                if (media) first.pluginInfo.media = {
-                  ...media,
-                  ...mediaDetails({ identifiers: { ...media.identifiers, isrc } })
-                }
+                const media = first.pluginInfo.media as
+                  | TrackMediaMetadata
+                  | undefined
+                if (media)
+                  first.pluginInfo.media = {
+                    ...media,
+                    ...mediaDetails({
+                      identifiers: { ...media.identifiers, isrc }
+                    })
+                  }
                 first.encoded = encodeTrack({ ...first.info, details: [] })
               }
             }
@@ -1289,13 +1312,14 @@ export default class SpotifySource implements SourceInstance {
           }
 
           const media = track.pluginInfo.media as TrackMediaMetadata | undefined
-          if (media) track.pluginInfo.media = {
-            ...media,
-            ...mediaDetails({
-              identifiers: { ...media.identifiers, isrc: track.info.isrc },
-              colors: track.pluginInfo.colors
-            })
-          }
+          if (media)
+            track.pluginInfo.media = {
+              ...media,
+              ...mediaDetails({
+                identifiers: { ...media.identifiers, isrc: track.info.isrc },
+                colors: track.pluginInfo.colors
+              })
+            }
           return { loadType: 'track', data: track }
         }
       }
@@ -1333,7 +1357,13 @@ export default class SpotifySource implements SourceInstance {
       kind: 'session',
       state
     })
-    if (!token || state === 'missing' || state === 'expired' || state === 'authorization-rejected') return
+    if (
+      !token ||
+      state === 'missing' ||
+      state === 'expired' ||
+      state === 'authorization-rejected'
+    )
+      return
 
     try {
       const trackUri = `spotify:track:${id}`
@@ -2475,7 +2505,7 @@ export default class SpotifySource implements SourceInstance {
           }
           if (!best) {
             const primaryTitle = track.title
-              .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')
+              .replace(/\s*[([][^)\]]*[)\]]/g, '')
               .trim()
             if (primaryTitle && primaryTitle !== track.title) {
               const primaryRes = await sm.searchWithDefault(primaryTitle)
@@ -2992,9 +3022,15 @@ export default class SpotifySource implements SourceInstance {
     try {
       // The optional dynamic palette uses one request with existing authorized access.
       if (this.config.colorMode === 'dynamic') {
-        const data = await this._internalApiRequest<unknown>(QUERIES.getDynamicColorsByUris, {
-          imageUris: [`https://i.scdn.co/image/${match[1]}`]
-        }, 'anonymous', 0, true)
+        const data = await this._internalApiRequest<unknown>(
+          QUERIES.getDynamicColorsByUris,
+          {
+            imageUris: [`https://i.scdn.co/image/${match[1]}`]
+          },
+          'anonymous',
+          0,
+          true
+        )
         return normalizeSpotifyDynamicColors(data) ?? null
       }
       const data = await this._internalApiRequest<{

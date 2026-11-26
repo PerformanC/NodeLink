@@ -5,7 +5,10 @@ import type {
   SpotifyServerTimeResponse
 } from '../typings/modules/spotifyAuth.types.ts'
 import { http1makeRequest, logger } from '../utils.ts'
-import { SpotifyAuthError, isSpotifyAuthRejection } from './spotifyAuthStatus.ts'
+import {
+  isSpotifyAuthRejection,
+  SpotifyAuthError
+} from './spotifyAuthStatus.ts'
 
 /**
  * Built-in encoded TOTP secrets used as primary/fallback bootstrap.

@@ -4,6 +4,7 @@
  */
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
+import { buildTrackMedia } from '../modules/trackMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 const API_BASE = 'https://api.tidal.com/v1/';
 const CACHE_VALIDITY_DAYS = 7;
@@ -680,7 +681,8 @@ export default class TidalSource {
         if (idRaw === undefined || idRaw === null)
             return null;
         const identifier = String(idRaw);
-        const artists = this.asArrayRecords(item.artists)
+        const rawArtists = this.asArrayRecords(item.artists);
+        const artists = rawArtists
             .map((artist) => this.asString(artist.name))
             .filter((name) => Boolean(name));
         const album = this.asRecord(item.album);
@@ -703,7 +705,24 @@ export default class TidalSource {
         return {
             encoded: encodeTrack(encodedInput),
             info: trackInfo,
-            pluginInfo: {}
+            pluginInfo: {
+                media: buildTrackMedia('tidal', {
+                    identifiers: { isrc: trackInfo.isrc },
+                    artists: rawArtists.map((artist) => ({
+                        name: this.asString(artist.name),
+                        id: typeof artist.id === 'number'
+                            ? artist.id
+                            : this.asString(artist.id)
+                    })),
+                    album: {
+                        name: this.asString(album?.title),
+                        id: typeof album?.id === 'number'
+                            ? album.id
+                            : this.asString(album?.id),
+                        artwork: [{ url: trackInfo.artworkUrl }]
+                    }
+                })
+            }
         };
     }
     /**

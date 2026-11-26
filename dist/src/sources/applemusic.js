@@ -1,3 +1,5 @@
+import { appleMusicArtists, appleMusicMotion, matchAppleMusicIsrc, normalizeAppleMusicIsrc } from '../modules/appleMusicMedia.js';
+import { buildTrackMedia } from '../modules/trackMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest } from '../utils.js';
 /**
  * Apple Music source implementation.
@@ -86,7 +88,7 @@ export default class AppleMusicSource {
      * Prefixes used to identify search queries targeting this source.
      * @public
      */
-    searchTerms = ['amsearch'];
+    searchTerms = ['amsearch', 'amisrc'];
     /**
      * Regular expression patterns used to match Apple Music URLs.
      * @public
@@ -263,7 +265,7 @@ export default class AppleMusicSource {
      * @returns A promise resolving to the parsed response body or null.
      * @internal
      */
-    async apiRequest(path) {
+    async apiRequest(path, retryOnUnauthorized = true) {
         if (!this.tokenInitialized || !this.isTokenValid()) {
             const ok = await this.setup();
             if (!ok)
@@ -281,7 +283,9 @@ export default class AppleMusicSource {
         });
         if (statusCode === 401) {
             this.tokenInitialized = false;
-            return this.apiRequest(path);
+            if (!retryOnUnauthorized)
+                return null;
+            return this.apiRequest(path, false);
         }
         return typeof statusCode === 'number' &&
             statusCode >= 200 &&
@@ -299,6 +303,11 @@ export default class AppleMusicSource {
      */
     async search(query, _sourceName, searchType = 'track') {
         try {
+            if (_sourceName === 'amisrc') {
+                if (searchType !== 'track')
+                    return { loadType: 'empty', data: {} };
+                return await this.searchByIsrc(query);
+            }
             const limit = this.nodelink.options.search.maxResults || 10;
             const typeMap = {
                 track: 'songs',
@@ -326,6 +335,22 @@ export default class AppleMusicSource {
                 exception: { message: e.message, severity: 'fault' }
             };
         }
+    }
+    /**
+     * Looks up recordings using the documented catalog ISRC filter.
+     * Multiple editions may share one ISRC; leave selection to the caller.
+     */
+    async searchByIsrc(query) {
+        const isrc = normalizeAppleMusicIsrc(query);
+        if (!isrc)
+            return { loadType: 'empty', data: {} };
+        const response = await this.apiRequest(`/catalog/${this.country}/songs?filter%5Bisrc%5D=${encodeURIComponent(isrc)}`);
+        const tracks = matchAppleMusicIsrc(response?.data, isrc)
+            .map((item) => this.buildTrack(item))
+            .filter((item) => item !== null);
+        return tracks.length
+            ? { loadType: 'search', data: tracks }
+            : { loadType: 'empty', data: {} };
     }
     /**
      * Resolves an Apple Music URL to its corresponding resource.
@@ -373,11 +398,28 @@ export default class AppleMusicSource {
      * @internal
      */
     async resolveTrack(id, country) {
-        const data = await this.apiRequest(`/catalog/${country}/songs/${id}?extend=artistUrl,editorialVideo&include=albums`);
+        const path = `/catalog/${country}/songs/${id}?extend=artistUrl,editorialVideo&include=albums,artists`;
+        const data = (await this.apiRequest(`${path}&extend%5Balbums%5D=editorialVideo`)) ?? (await this.apiRequest(path));
         const song = data?.data?.[0];
         if (!song)
             return { loadType: 'empty', data: {} };
-        const track = this.buildTrack(song);
+        let album = song.relationships?.albums?.data?.[0];
+        // Some responses omit extended attributes on included resources.
+        // Only enrich explicit single-track resolution, never every search/playlist item.
+        if (album &&
+            /^\d+$/.test(album.id) &&
+            !appleMusicMotion(song.attributes?.editorialVideo, album.attributes?.editorialVideo)) {
+            const fullAlbum = await this.apiRequest(`/catalog/${country}/albums/${album.id}?extend=editorialVideo`).catch(() => null);
+            const candidate = fullAlbum?.data?.[0];
+            if (candidate?.id === album.id && candidate.type === 'albums') {
+                album = {
+                    ...album,
+                    ...candidate,
+                    attributes: { ...album.attributes, ...candidate.attributes }
+                };
+            }
+        }
+        const track = this.buildTrack(song, undefined, undefined, album);
         if (!track)
             return { loadType: 'empty', data: {} };
         return { loadType: 'track', data: track };
@@ -504,15 +546,16 @@ export default class AppleMusicSource {
         const artwork = parent.type === 'albums'
             ? this.parseArtwork(parent.attributes?.artwork)
             : null;
-        const editorialVideo = this.extractVideoUrl(parent.attributes);
+        const editorialVideo = parent.type === 'albums' ? this.extractVideoUrl(parent.attributes) : null;
+        const albumParent = parent.type === 'albums' ? parent : undefined;
         const results = baseTracks
-            .map((t) => this.buildTrack(t, artwork, editorialVideo))
+            .map((t) => this.buildTrack(t, artwork, editorialVideo, albumParent))
             .filter((t) => !!t);
         for (let i = 1; i < allowed; i++) {
             const pageData = await this.apiRequest(`${path}${path.includes('?') ? '&' : '?'}limit=${limit}&offset=${i * limit}`);
             if (pageData?.data) {
                 results.push(...pageData.data
-                    .map((t) => this.buildTrack(t, artwork, editorialVideo))
+                    .map((t) => this.buildTrack(t, artwork, editorialVideo, albumParent))
                     .filter((t) => !!t));
             }
         }
@@ -523,14 +566,18 @@ export default class AppleMusicSource {
      * @param item - The track resource from the API.
      * @param artworkOverride - Optional artwork URL to override the resource's own.
      * @param videoOverride - Optional video URL to override the resource's own.
+     * @param albumParent - Known album resource when expanding an album.
      * @returns The normalized TrackData or null if attributes are missing.
      * @internal
      */
-    buildTrack(item, artworkOverride, videoOverride) {
+    buildTrack(item, artworkOverride, videoOverride, albumParent) {
         const attr = item.attributes;
         if (!attr)
             return null;
         const artwork = artworkOverride || this.parseArtwork(attr.artwork);
+        const album = albumParent ?? item.relationships?.albums?.data?.[0];
+        const albumArtwork = this.parseArtwork(album?.attributes?.artwork);
+        const motion = appleMusicMotion(attr.editorialVideo, album?.attributes?.editorialVideo);
         const isExplicit = attr.contentRating === 'explicit';
         const trackUri = attr.url
             ? `${attr.url}${attr.url.includes('?') ? '&' : '?'}explicit=${isExplicit}`
@@ -554,7 +601,32 @@ export default class AppleMusicSource {
             pluginInfo: {
                 albumName: attr.albumName,
                 previewUrl: attr.previews?.[0]?.url,
-                hlsVideoUrl: videoOverride || this.extractVideoUrl(attr)
+                hlsVideoUrl: motion?.url || videoOverride || this.extractVideoUrl(attr),
+                media: {
+                    ...buildTrackMedia('applemusic', {
+                        artists: appleMusicArtists(item.relationships?.artists?.data, attr.artistName),
+                        identifiers: { isrc: attr.isrc, upc: album?.attributes?.upc },
+                        credits: [{ name: attr.composerName, role: 'composer' }],
+                        album: {
+                            id: album?.id,
+                            name: album?.attributes?.name || attr.albumName,
+                            artwork: [
+                                {
+                                    url: albumArtwork,
+                                    width: album?.attributes?.artwork?.width,
+                                    height: album?.attributes?.artwork?.height
+                                },
+                                {
+                                    url: this.parseArtwork(attr.artwork),
+                                    width: attr.artwork?.width,
+                                    height: attr.artwork?.height
+                                },
+                                { url: artworkOverride }
+                            ]
+                        }
+                    }),
+                    ...(motion ? { motionArtwork: motion } : {})
+                }
             }
         };
     }
@@ -593,8 +665,13 @@ export default class AppleMusicSource {
      * @internal
      */
     parseArtwork(artwork) {
-        if (!artwork?.url)
+        if (typeof artwork?.url !== 'string' || !artwork.url)
             return null;
+        if (!Number.isSafeInteger(artwork.width) ||
+            artwork.width <= 0 ||
+            !Number.isSafeInteger(artwork.height) ||
+            artwork.height <= 0)
+            return /\{[wh]\}/.test(artwork.url) ? null : artwork.url;
         return artwork.url
             .replace('{w}', artwork.width.toString())
             .replace('{h}', artwork.height.toString());

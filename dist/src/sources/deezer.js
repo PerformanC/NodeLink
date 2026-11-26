@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { PassThrough } from 'node:stream';
 import BlowfishCBC from '../decrypters/blowfish-cbc.js';
+import { buildTrackMedia } from '../modules/trackMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
@@ -1102,7 +1103,31 @@ export default class DeezerSource {
             sourceName: 'deezer',
             details: []
         };
-        const pluginInfo = {};
+        const pluginInfo = {
+            media: buildTrackMedia('deezer', {
+                identifiers: { isrc: trackInfo.isrc },
+                artists: [
+                    {
+                        id: item.artist?.id,
+                        name: item.artist?.name,
+                        artwork: [
+                            { url: item.artist?.picture_xl },
+                            { url: item.artist?.picture_big },
+                            { url: item.artist?.picture_medium }
+                        ]
+                    }
+                ],
+                album: {
+                    id: item.album?.id,
+                    name: item.album?.title,
+                    artwork: [
+                        { url: item.album?.cover_xl },
+                        { url: item.album?.cover_big },
+                        { url: item.album?.cover_medium }
+                    ]
+                }
+            })
+        };
         if (item.album?.title?.trim())
             pluginInfo.albumName = item.album.title.trim();
         if (item.album?.id !== undefined &&
@@ -1150,7 +1175,13 @@ export default class DeezerSource {
         return {
             encoded: encodeTrack(info),
             info,
-            pluginInfo: {}
+            pluginInfo: {
+                media: buildTrackMedia('deezer', {
+                    identifiers: { isrc: info.isrc },
+                    artists: [{ name: item.ART_NAME }],
+                    album: { artwork: [{ url: info.artworkUrl }] }
+                })
+            }
         };
     }
     /**

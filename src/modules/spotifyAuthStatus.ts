@@ -10,6 +10,11 @@ export class SpotifyAuthError extends Error {
 }
 
 /** An explicit authorization rejection is terminal for this request. */
-export function isSpotifyAuthRejection(error: unknown): error is SpotifyAuthError {
-  return error instanceof SpotifyAuthError && (error.status === 401 || error.status === 403)
+export function isSpotifyAuthRejection(
+  error: unknown
+): error is SpotifyAuthError {
+  return (
+    error instanceof SpotifyAuthError &&
+    (error.status === 401 || error.status === 403)
+  )
 }

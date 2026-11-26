@@ -93,8 +93,7 @@ const URL_PATTERNS = {
     /^https?:\/\/(?:music\.)?(?:www\.)?youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
 
   /** YouTube Music watch URL (music.youtube.com/watch?v=xxx) */
-  musicVideo:
-    /^https?:\/\/music\.youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
+  musicVideo: /^https?:\/\/music\.youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
 
   /** YouTube playlist URL (www.youtube.com/playlist?list=xxx) */
   playlist:
@@ -2010,10 +2009,25 @@ export async function buildHoloTrack(
           { url: thumbnails.high }
         ],
         channel: {
-          name: typeof channelData.name === 'string' ? channelData.name : undefined,
+          name:
+            typeof channelData.name === 'string' ? channelData.name : undefined,
           id: typeof channelData.id === 'string' ? channelData.id : undefined,
-          artwork: [{ url: typeof channelData.icon === 'string' ? channelData.icon : undefined }],
-          banners: [{ url: typeof channelData.banner === 'string' ? channelData.banner : undefined }]
+          artwork: [
+            {
+              url:
+                typeof channelData.icon === 'string'
+                  ? channelData.icon
+                  : undefined
+            }
+          ],
+          banners: [
+            {
+              url:
+                typeof channelData.banner === 'string'
+                  ? channelData.banner
+                  : undefined
+            }
+          ]
         }
       })
     }

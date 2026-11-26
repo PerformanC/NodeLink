@@ -926,11 +926,17 @@ export default class TidalSource {
           identifiers: { isrc: trackInfo.isrc },
           artists: rawArtists.map((artist) => ({
             name: this.asString(artist.name),
-            id: typeof artist.id === 'number' ? artist.id : this.asString(artist.id)
+            id:
+              typeof artist.id === 'number'
+                ? artist.id
+                : this.asString(artist.id)
           })),
           album: {
             name: this.asString(album?.title),
-            id: typeof album?.id === 'number' ? album.id : this.asString(album?.id),
+            id:
+              typeof album?.id === 'number'
+                ? album.id
+                : this.asString(album?.id),
             artwork: [{ url: trackInfo.artworkUrl }]
           }
         })

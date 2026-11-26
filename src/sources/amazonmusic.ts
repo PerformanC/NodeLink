@@ -478,7 +478,11 @@ export default class AmazonMusicSource implements SourceInstance {
                   encoded: encodeTrack({ ...t, details: [] }),
                   info: t,
                   pluginInfo: {
-                    media: buildAmazonMedia(t, rawTracks[index], collectionResource)
+                    media: buildAmazonMedia(
+                      t,
+                      rawTracks[index],
+                      collectionResource
+                    )
                   }
                 })),
                 pluginInfo: {} as Record<string, unknown>

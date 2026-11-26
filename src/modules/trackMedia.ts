@@ -47,16 +47,32 @@ export interface MediaCredit {
 /** Provider-neutral media metadata carried in track.pluginInfo.media. */
 export interface TrackMediaMetadata {
   provider: string
-  artists: Array<{ name: string; id?: string; artwork?: MediaImage[]; banners?: MediaImage[] }>
+  artists: Array<{
+    name: string
+    id?: string
+    artwork?: MediaImage[]
+    banners?: MediaImage[]
+  }>
   album?: { name?: string; id?: string; artwork?: MediaImage[] }
-  canvas?: { url: string; id?: string; uri?: string; fileId?: string; type?: string }
+  canvas?: {
+    url: string
+    id?: string
+    uri?: string
+    fileId?: string
+    type?: string
+  }
   motionArtwork?: {
     url: string
     scope?: 'track' | 'album'
     variants?: Array<{ url: string; aspectRatio: '1:1' | '9:16' }>
   }
   artwork?: MediaImage[]
-  channel?: { name?: string; id?: string; artwork?: MediaImage[]; banners?: MediaImage[] }
+  channel?: {
+    name?: string
+    id?: string
+    artwork?: MediaImage[]
+    banners?: MediaImage[]
+  }
   identifiers?: MediaIdentifiers
   colors?: MediaColors
   credits?: MediaCredit[]
@@ -79,7 +95,8 @@ export function mediaUrl(value?: string | null): string | undefined {
   if (typeof value !== 'string' || !value) return undefined
   try {
     const url = new URL(value)
-    if (url.protocol === 'https:' && !url.username && !url.password) return value
+    if (url.protocol === 'https:' && !url.username && !url.password)
+      return value
   } catch {}
   return undefined
 }
@@ -97,12 +114,14 @@ export function normalizeMediaImages(
       typeof item.width === 'number' &&
       Number.isSafeInteger(item.width) &&
       item.width > 0
-    ) image.width = item.width
+    )
+      image.width = item.width
     if (
       typeof item.height === 'number' &&
       Number.isSafeInteger(item.height) &&
       item.height > 0
-    ) image.height = item.height
+    )
+      image.height = item.height
     result.set(url, image)
   }
   return [...result.values()]
@@ -110,9 +129,10 @@ export function normalizeMediaImages(
 
 function normalizeEntity(input: MediaEntityInput) {
   const name = typeof input.name === 'string' ? input.name.trim() : undefined
-  const id = typeof input.id === 'string' || typeof input.id === 'number'
-    ? String(input.id).trim()
-    : undefined
+  const id =
+    typeof input.id === 'string' || typeof input.id === 'number'
+      ? String(input.id).trim()
+      : undefined
   const artwork = normalizeMediaImages(input.artwork)
   const banners = normalizeMediaImages(input.banners)
   return {
@@ -124,15 +144,21 @@ function normalizeEntity(input: MediaEntityInput) {
 }
 
 function colorHex(value: unknown): string | undefined {
-  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toUpperCase() : undefined
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
+    ? value.toUpperCase()
+    : undefined
 }
 
 function colorRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined
 }
 
 /** Validate provider palette values without inventing missing colors or contrast ratios. */
-export function normalizeMediaPalette(value: unknown): MediaPalette | undefined {
+export function normalizeMediaPalette(
+  value: unknown
+): MediaPalette | undefined {
   const source = colorRecord(value)
   if (!source) return undefined
   const palette: MediaPalette = {}
@@ -142,11 +168,21 @@ export function normalizeMediaPalette(value: unknown): MediaPalette | undefined 
     const theme: MediaColorTheme = {}
     const base = colorHex(raw.encoreBaseSetTextColor)
     if (base) theme.encoreBaseSetTextColor = base
-    for (const level of ['minContrast', 'highContrast', 'higherContrast'] as const) {
+    for (const level of [
+      'minContrast',
+      'highContrast',
+      'higherContrast'
+    ] as const) {
       const input = colorRecord(raw[level])
       if (!input) continue
       const colors: MediaColorSet = {}
-      for (const key of ['backgroundBase', 'backgroundTintedBase', 'textBase', 'textBrightAccent', 'textSubdued'] as const) {
+      for (const key of [
+        'backgroundBase',
+        'backgroundTintedBase',
+        'textBase',
+        'textBrightAccent',
+        'textSubdued'
+      ] as const) {
         const hex = colorHex(input[key])
         if (hex) colors[key] = hex
       }
@@ -155,7 +191,11 @@ export function normalizeMediaPalette(value: unknown): MediaPalette | undefined 
     if (Object.keys(theme).length) palette[mode] = theme
   }
   if (!palette.dark && !palette.light) return undefined
-  if ((source.bestFit === 'dark' || source.bestFit === 'light') && palette[source.bestFit]) palette.bestFit = source.bestFit
+  if (
+    (source.bestFit === 'dark' || source.bestFit === 'light') &&
+    palette[source.bestFit]
+  )
+    palette.bestFit = source.bestFit
   return palette
 }
 
@@ -173,24 +213,32 @@ export function mediaDetails(input: {
   }
   for (const key of ['upc', 'ean'] as const) {
     const raw = input.identifiers?.[key]
-    if (typeof raw === 'string' && /^[0-9]{8,14}$/.test(raw.trim())) identifiers[key] = raw.trim()
+    if (typeof raw === 'string' && /^[0-9]{8,14}$/.test(raw.trim()))
+      identifiers[key] = raw.trim()
   }
   const colors: MediaColors = {}
   if (input.colors && typeof input.colors === 'object') {
     const source = input.colors as Record<string, unknown>
     for (const key of ['dark', 'light', 'raw'] as const) {
       const value = source[key]
-      if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)) colors[key] = value.toUpperCase()
+      if (typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value))
+        colors[key] = value.toUpperCase()
     }
     const palette = normalizeMediaPalette(source.palette)
     if (palette) colors.palette = palette
   }
   const credits: MediaCredit[] = []
   for (const credit of Array.isArray(input.credits) ? input.credits : []) {
-    if (typeof credit?.name !== 'string' || typeof credit?.role !== 'string') continue
+    if (typeof credit?.name !== 'string' || typeof credit?.role !== 'string')
+      continue
     const name = credit.name.trim()
     const role = credit.role.trim()
-    if (name && role && !credits.some((item) => item.name === name && item.role === role)) credits.push({ name, role })
+    if (
+      name &&
+      role &&
+      !credits.some((item) => item.name === name && item.role === role)
+    )
+      credits.push({ name, role })
   }
   return {
     ...(Object.keys(identifiers).length ? { identifiers } : {}),

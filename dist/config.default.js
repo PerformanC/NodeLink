@@ -421,6 +421,16 @@ export const config = {
         enableTrackStreamEndpoint: false,
         enableLoadStreamEndpoint: false,
         enableHlsEndpoint: false,
+        media: {
+            musicbrainz: {
+                enabled: true,
+                userAgent: '' // Application/version and real contact; env override supported.
+            },
+            fanart: {
+                enabled: true,
+                projectKey: '' // Prefer NODELINK_FANART_PROJECT_KEY for secrets.
+            }
+        },
         metrics: {
             enabled: true,
             authorization: {
@@ -535,6 +545,8 @@ export const config = {
             albumPageLoadConcurrency: 5,
             allowExplicit: true,
             allowLocalFiles: false,
+            extractColors: false,
+            colorMode: 'legacy',
             sp_dc: ''
         },
         applemusic: {

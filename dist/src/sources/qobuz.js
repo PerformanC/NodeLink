@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { buildTrackMedia } from '../modules/trackMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
@@ -651,7 +652,33 @@ export default class QobuzSource {
         return {
             encoded: encodeTrack(encodedInput),
             info: trackInfo,
-            pluginInfo: {}
+            pluginInfo: {
+                media: buildTrackMedia('qobuz', {
+                    identifiers: { isrc: trackInfo.isrc },
+                    artists: [artist, performer]
+                        .filter((entry, index, all) => entry &&
+                        all.findIndex((other) => other &&
+                            (entry.id != null && other.id != null
+                                ? entry.id === other.id
+                                : entry.name === other.name)) === index)
+                        .map((entry) => ({
+                        name: this.asString(entry?.name),
+                        id: typeof entry?.id === 'number'
+                            ? entry.id
+                            : this.asString(entry?.id)
+                    })),
+                    album: {
+                        name: this.asString(album?.title),
+                        id: typeof album?.id === 'number'
+                            ? album.id
+                            : this.asString(album?.id),
+                        artwork: [
+                            { url: this.asString(albumImage?.large) },
+                            { url: this.asString(albumImage?.small) }
+                        ]
+                    }
+                })
+            }
         };
     }
     /**
