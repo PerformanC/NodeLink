@@ -39,7 +39,6 @@ export class MusicAnalysis extends Transform {
   private totalFrames = 0
   private latest: MusicAnalysisSnapshot|null = null
 
-  constructor(){super()}
 
   private consume(frame:Buffer):void{
     if(this.windowFrames===WINDOW_FRAMES){
