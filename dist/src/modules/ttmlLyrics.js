@@ -121,6 +121,7 @@ export function parseTtmlLyrics(xml) {
         const start = ownStart ?? inheritedStart;
         const end = ownEnd ?? inheritedEnd;
         const words = [];
+        const alternatives = [];
         function collect(node) {
             let text = '';
             for (const child of node.children) {
@@ -134,9 +135,26 @@ export function parseTtmlLyrics(xml) {
                 }
                 const next = inherit(child, context);
                 const role = child.attrs['ttm:role']?.split(/\s+/) ?? [];
-                // Alternate text must never be mixed into the primary lyric.
-                if (role.includes('x-translation') || role.includes('x-romanization'))
+                // Keep alternate text separate and preserve its declared language.
+                const kind = role.includes('x-translation')
+                    ? 'translation'
+                    : role.includes('x-romanization')
+                        ? 'romanization'
+                        : undefined;
+                if (kind) {
+                    const plain = (node) => node.children
+                        .map((part) => typeof part === 'string'
+                        ? part
+                        : localName(part) === 'br'
+                            ? ' '
+                            : plain(part))
+                        .join('');
+                    const text = normalizeText(plain(child));
+                    const language = child.attrs['xml:lang']?.trim();
+                    if (text)
+                        alternatives.push({ kind, text, ...(language ? { language } : {}) });
                     continue;
+                }
                 if ((!context.isBackground && next.isBackground) ||
                     (next.agent && next.agent !== context.agent)) {
                     collectLine(child, next, start, end);
@@ -175,6 +193,7 @@ export function parseTtmlLyrics(xml) {
                     ? end - lineStart
                     : 0,
                 ...(words.length ? { words } : {}),
+                ...(alternatives.length ? { alternatives } : {}),
                 ...(context.section ? { section: context.section } : {}),
                 ...(context.agent ? { agent: context.agent } : {}),
                 ...(context.isBackground ? { isBackground: true } : {})

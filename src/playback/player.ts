@@ -8,7 +8,10 @@ import discordVoice, {
   type VoicePlayerState
 } from '@performanc/voice'
 import { EndReasons, GatewayEvents } from '../constants.ts'
-import { activeLyricsIndices, buildPlaybackLyrics } from '../modules/playbackLyrics.ts'
+import {
+  activeLyricsIndices,
+  buildPlaybackLyrics
+} from '../modules/playbackLyrics.ts'
 import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.ts'
 import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
 import type {
@@ -1422,7 +1425,10 @@ export class Player {
     ) {
       extraData.__resolvedFormat = resolvedUrlData.format
     }
-    if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+    if (
+      resolvedUrlData.isLive !== undefined &&
+      extraData.isLive === undefined
+    ) {
       extraData.isLive = resolvedUrlData.isLive
     }
     if (
@@ -3900,10 +3906,16 @@ export class Player {
     const mixAdditionalData: Record<string, unknown> = {
       ...(urlData.additionalData ?? {})
     }
-    if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+    if (
+      typeof urlData.format === 'string' &&
+      !mixAdditionalData.__resolvedFormat
+    ) {
       mixAdditionalData.__resolvedFormat = urlData.format
     }
-    if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+    if (
+      urlData.isLive !== undefined &&
+      mixAdditionalData.isLive === undefined
+    ) {
       mixAdditionalData.isLive = urlData.isLive
     }
     if (
@@ -4154,7 +4166,12 @@ export class Player {
       this.skipTrackSource
     )
 
-    if (!this.isLyricsSubscribed || this.track !== track || this._lyricsRequestRevision !== revision) return
+    if (
+      !this.isLyricsSubscribed ||
+      this.track !== track ||
+      this._lyricsRequestRevision !== revision
+    )
+      return
 
     if (lyricsData && lyricsData.loadType === 'lyrics') {
       const lines = buildPlaybackLyrics(lyricsData.data)
@@ -4162,7 +4179,7 @@ export class Player {
         sourceName: track.info.sourceName,
         provider: lyricsData.data.provider,
         synced: lyricsData.data.synced === true,
-        text: lines.map(line => line.line).join('\n'),
+        text: lines.map((line) => line.line).join('\n'),
         lines,
         plugin: {}
       }
@@ -4186,7 +4203,13 @@ export class Player {
    * Synchronizes lyrics with current playback position.
    */
   private _syncLyrics(force = false): void {
-    if (!this.isLyricsSubscribed || this.isPaused || this.currentLyrics?.synced !== true || !this.currentLyrics.lines) return
+    if (
+      !this.isLyricsSubscribed ||
+      this.isPaused ||
+      this.currentLyrics?.synced !== true ||
+      !this.currentLyrics.lines
+    )
+      return
     if (this._lyricsMarkerTimer) {
       if (!force) return
       clearTimeout(this._lyricsMarkerTimer)
@@ -4210,7 +4233,12 @@ export class Player {
 
     this._lyricsMarkerTimer = setTimeout(() => {
       this._lyricsMarkerTimer = null
-      if (!this.isLyricsSubscribed || this.isPaused || this.currentLyrics !== lyrics) return
+      if (
+        !this.isLyricsSubscribed ||
+        this.isPaused ||
+        this.currentLyrics !== lyrics
+      )
+        return
       const timedLine = lyrics.lines[nextIndex]
       if (!timedLine) return
       const nowPosition = this._getLyricsPosition(playbackSpeed)
@@ -4260,7 +4288,12 @@ export class Player {
     linesOverride?: LyricsLine[],
     allowBackward = false
   ): void {
-    if (this.isPaused || this.currentLyrics?.synced !== true || !this.currentLyrics.lines) return
+    if (
+      this.isPaused ||
+      this.currentLyrics?.synced !== true ||
+      !this.currentLyrics.lines
+    )
+      return
 
     const lines = linesOverride || this.currentLyrics.lines
     let position = positionOverride

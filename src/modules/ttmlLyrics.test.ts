@@ -72,8 +72,13 @@ test('validates clock and offset timing', () => {
   assert.equal(parseTtmlTime('-1s'), undefined)
 })
 
-test('preserves explicit translations and romanization outside the primary text',()=>{
- const result=parseTtmlLyrics('<tt><body><p begin="1s" end="2s">Hello<span ttm:role="x-translation" xml:lang="es">Hola</span><span ttm:role="x-romanization">Hello</span></p></body></tt>')
- assert.equal(result.lines[0]?.text,'Hello')
- assert.deepEqual(result.lines[0]?.alternatives,[{kind:'translation',text:'Hola',language:'es'},{kind:'romanization',text:'Hello'}])
+test('preserves explicit translations and romanization outside the primary text', () => {
+  const result = parseTtmlLyrics(
+    '<tt><body><p begin="1s" end="2s">Hello<span ttm:role="x-translation" xml:lang="es">Hola</span><span ttm:role="x-romanization">Hello</span></p></body></tt>'
+  )
+  assert.equal(result.lines[0]?.text, 'Hello')
+  assert.deepEqual(result.lines[0]?.alternatives, [
+    { kind: 'translation', text: 'Hola', language: 'es' },
+    { kind: 'romanization', text: 'Hello' }
+  ])
 })

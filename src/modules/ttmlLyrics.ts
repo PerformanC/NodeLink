@@ -160,12 +160,26 @@ export function parseTtmlLyrics(xml: string): {
         const next = inherit(child, context)
         const role = child.attrs['ttm:role']?.split(/\s+/) ?? []
         // Keep alternate text separate and preserve its declared language.
-        const kind = role.includes('x-translation') ? 'translation' : role.includes('x-romanization') ? 'romanization' : undefined
+        const kind = role.includes('x-translation')
+          ? 'translation'
+          : role.includes('x-romanization')
+            ? 'romanization'
+            : undefined
         if (kind) {
-          const plain = (node: Element): string => node.children.map(part => typeof part === 'string' ? part : localName(part) === 'br' ? ' ' : plain(part)).join('')
+          const plain = (node: Element): string =>
+            node.children
+              .map((part) =>
+                typeof part === 'string'
+                  ? part
+                  : localName(part) === 'br'
+                    ? ' '
+                    : plain(part)
+              )
+              .join('')
           const text = normalizeText(plain(child))
           const language = child.attrs['xml:lang']?.trim()
-          if (text) alternatives.push({kind,text,...(language ? {language} : {})})
+          if (text)
+            alternatives.push({ kind, text, ...(language ? { language } : {}) })
           continue
         }
         if (
