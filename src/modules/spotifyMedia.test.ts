@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildSpotifyArtistMedia, buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
+import { readOfficialSpotifyIsrc, buildSpotifyArtistMedia, buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
 
 test('normalizes official artist and album metadata with image dimensions', () => {
   assert.deepEqual(buildSpotifyMedia({ artists: [{ id: 'a', name: 'Artist' }], album: { id: 'b', name: 'Album', images: [{ url: 'https://example.com/cover', width: 640, height: 640 }] } }), {
@@ -69,4 +69,13 @@ test('supports official artist images and omits invalid or unavailable optional 
   assert.deepEqual(buildSpotifyArtistMedia({ id: 'abc', name: ' Artist ', images: [{ url: 'https://example.com/a' }, { url: 'http://example.com/b' }] }, 'abc'), { provider: 'spotify', artists: [{ id: 'abc', name: 'Artist', artwork: [{ url: 'https://example.com/a' }] }] })
   assert.equal(buildSpotifyArtistMedia({ profile: { name: 12 } }, 'abc'), undefined)
   assert.deepEqual(buildSpotifyArtistMedia({ name: 'Artist', visuals: { gallery: { items: 12 } }, headerImage: { data: { sources: false } } }, 'abc'), { provider: 'spotify', artists: [{ id: 'abc', name: 'Artist' }] })
+})
+
+test('reads and validates ISRC from the exact official catalog track', () => {
+  const track = { id: 'abc', external_ids: { isrc: 'us-ug1-22-05736' } }
+  assert.equal(readOfficialSpotifyIsrc(track, 'abc'), 'USUG12205736')
+  assert.equal(readOfficialSpotifyIsrc({ ...track, id: 'other', linked_from: { id: 'abc' } }, 'abc'), undefined)
+  assert.equal(readOfficialSpotifyIsrc({ id: 'abc', external_ids: { isrc: 'invalid' } }, 'abc'), undefined)
+  assert.equal(readOfficialSpotifyIsrc({ id: 'abc', external_ids: null }, 'abc'), undefined)
+  assert.equal(readOfficialSpotifyIsrc(null, 'abc'), undefined)
 })

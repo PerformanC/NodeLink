@@ -126,3 +126,13 @@ export function buildSpotifyArtistMedia(input: unknown, expectedId: string): Tra
   return { provider: 'spotify', artists: [{ id: expectedId, name: name.trim(),
     ...(artwork.length ? { artwork } : {}), ...(banners.length ? { banners } : {}) }] }
 }
+
+/** Read an ISRC only from the exact track returned by the official catalog. */
+export function readOfficialSpotifyIsrc(input: unknown, expectedId: string): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const track = input as Record<string, unknown>
+  if (track.id !== expectedId) return undefined
+  const ids = track.external_ids
+  if (!ids || typeof ids !== 'object' || Array.isArray(ids)) return undefined
+  return mediaDetails({ identifiers: { isrc: (ids as Record<string, unknown>).isrc } }).identifiers?.isrc
+}

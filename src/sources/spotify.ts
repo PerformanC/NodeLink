@@ -6,6 +6,7 @@ import { mediaDetails, type TrackMediaMetadata } from '../modules/trackMedia.ts'
 import {
   buildSpotifyMedia,
   buildSpotifyArtistMedia,
+  readOfficialSpotifyIsrc,
   selectSpotifyCanvas,
   spotifyCanvasSessionState
 } from '../modules/spotifyMedia.ts'
@@ -575,7 +576,8 @@ export default class SpotifySource implements SourceInstance {
     path: string,
     tier: SpotifyTokenType = 'official',
     options: Record<string, unknown> = {},
-    retry = 0
+    retry = 0,
+    singleAttempt = false
   ): Promise<T | null> {
     const ok = await this._ensureToken(tier)
     const token =
@@ -586,6 +588,7 @@ export default class SpotifySource implements SourceInstance {
           : this.mobileToken
 
     if (!ok || !token) {
+      if (singleAttempt) return null
       const next =
         tier === 'official'
           ? 'anonymous'
@@ -617,6 +620,10 @@ export default class SpotifySource implements SourceInstance {
 
     try {
       const res = await http1makeRequest(url, { ...options, headers })
+
+      if (singleAttempt) {
+        return res.statusCode === 200 || res.statusCode === 201 ? res.body as T : null
+      }
 
       if (res.statusCode === 429) {
         if (retry >= 3) return null
@@ -752,6 +759,19 @@ export default class SpotifySource implements SourceInstance {
    * @returns Resolves to metadata object or null.
    * @internal
    */
+  private async _fetchTrackIsrc(id: string): Promise<string | undefined> {
+    if (!/^[A-Za-z0-9]{22}$/.test(id)) return undefined
+    if (this.config.clientId && this.config.clientSecret) {
+      const track = await this._apiRequest<SpotifyTrack>(
+        `/tracks/${id}?market=${this.market}`, 'official', {}, 0, true
+      )
+      return readOfficialSpotifyIsrc(track, id)
+    }
+    if (this.mobileAuthRejected) return undefined
+    const meta = await this._fetchTrackMetadata(id)
+    return mediaDetails({ identifiers: { isrc: meta?.external_id?.find((entry) => entry.type === 'isrc')?.id } }).identifiers?.isrc
+  }
+
   private async _fetchTrackMetadata(
     id: string
   ): Promise<SpotifyMetadataResponse | null> {
@@ -760,7 +780,7 @@ export default class SpotifySource implements SourceInstance {
     const url = `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`
     const body = await this._apiRequest<unknown>(url, 'mobile', {
       responseType: 'buffer'
-    })
+    }, 0, true)
     if (!body) return null
 
     if (Buffer.isBuffer(body)) {
@@ -930,8 +950,7 @@ export default class SpotifySource implements SourceInstance {
           if (results.length > 0) {
             const first = results[0]
             if (type === 'track' && first && !first.info.isrc) {
-              const meta = await this._fetchTrackMetadata(first.info.identifier)
-              const isrc = meta?.external_id?.find((e) => e.type === 'isrc')?.id
+              const isrc = await this._fetchTrackIsrc(first.info.identifier)
               if (isrc) {
                 first.info.isrc = isrc
                 const media = first.pluginInfo.media as TrackMediaMetadata | undefined
@@ -1253,9 +1272,8 @@ export default class SpotifySource implements SourceInstance {
 
           if (!track.info.isrc) {
             tasks.push(
-              this._fetchTrackMetadata(id)
-                .then((meta) => {
-                  const isrc = meta?.external_id?.find((entry) => entry.type === 'isrc')?.id
+              this._fetchTrackIsrc(id)
+                .then((isrc) => {
                   if (isrc) {
                     track.info.isrc = isrc
                     track.encoded = encodeTrack({ ...track.info, details: [] })
