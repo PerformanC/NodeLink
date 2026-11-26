@@ -2,7 +2,11 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { alignLyrics } from '../modules/lyricsAligner.ts'
-import { enrichTemporalMetadata, getLyricsQualityTier, type LyricsTiming } from '../modules/lyricsTiming.ts'
+import {
+  enrichTemporalMetadata,
+  getLyricsQualityTier,
+  type LyricsTiming
+} from '../modules/lyricsTiming.ts'
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type { SourceResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'

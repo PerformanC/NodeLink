@@ -10,6 +10,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { alignLyrics } from '../modules/lyricsAligner.js';
+import { enrichTemporalMetadata, getLyricsQualityTier } from '../modules/lyricsTiming.js';
 import { logger } from '../utils.js';
 const getErrorMessage = (error) => error instanceof Error ? error.message : String(error);
 const isTrackInfoLike = (value) => typeof value === 'object' && value !== null;
@@ -30,36 +31,6 @@ const isLyricsSourceEnabled = (lyricsConfig, sourceName) => {
         return false;
     const enabled = sourceConfig.enabled;
     return enabled === true;
-};
-const getLyricsQualityTier = (result) => {
-    if (result.loadType !== 'lyrics')
-        return 0;
-    const lines = result.data.lines ?? [];
-    if (lines.some((line) => Array.isArray(line.words) && line.words.length > 0)) {
-        return 3;
-    }
-    if (result.data.synced)
-        return 2;
-    return 1;
-};
-const enrichTemporalMetadata = (data, trackLengthMs) => {
-    const lines = data.lines;
-    if (!lines || lines.length === 0)
-        return;
-    const first = lines[0];
-    if (first && first.time > 0 && data.introEndMs === undefined) {
-        data.introEndMs = first.time;
-    }
-    const last = lines[lines.length - 1];
-    if (last && data.outroStartMs === undefined) {
-        const lastEnd = last.time + Math.max(0, last.duration || 0);
-        if (trackLengthMs && trackLengthMs > lastEnd && lastEnd > 0) {
-            data.outroStartMs = lastEnd;
-        }
-        else if (!last.duration && last.time > 0) {
-            data.outroStartMs = last.time;
-        }
-    }
 };
 export default class LyricsManager {
     nodelink;
@@ -157,9 +128,10 @@ export default class LyricsManager {
                 };
             }
             logger('debug', 'Lyrics', `Loading lyrics from ${requestedName} for ${trackInfo?.title || 'Unknown Title'}.`);
-            const requestedLyrics = await requestedLyricsSource.getLyrics(trackInfo, language);
+            const requestedLyrics = await this._fetchFrom(requestedLyricsSource, requestedName, trackInfo, language);
             if (requestedLyrics?.loadType === 'lyrics') {
                 requestedLyrics.data.provider = requestedName;
+                enrichTemporalMetadata(requestedLyrics.data, trackInfo.length);
             }
             return requestedLyrics;
         }
@@ -228,9 +200,11 @@ export default class LyricsManager {
             }
             if (lyrics?.loadType === 'lyrics') {
                 const tier = getLyricsQualityTier(lyrics);
-                if (!bestCandidate || tier > bestCandidate.tier) {
+                if (tier > 0 && (!bestCandidate || tier > bestCandidate.tier)) {
                     bestCandidate = { result: lyrics, name, tier };
                 }
+                if (tier === 0)
+                    sawEmpty = true;
                 if (tier === 3) {
                     break;
                 }

@@ -1,3 +1,4 @@
+import { readLyricsTimestamp } from './lyricsTiming.js';
 /**
  * Calculates normalized similarity between two strings.
  * @param s1 - First string.
@@ -56,8 +57,9 @@ function cleanWord(text) {
     return text
         .replace(/\[.*?\]/g, '')
         .replace(/\(.*?\)/g, '')
+        .normalize('NFKC')
         .toLowerCase()
-        .replace(/[^a-z0-9]/g, '');
+        .replace(/[^\p{L}\p{N}\p{M}]/gu, '');
 }
 /**
  * Converts YouTube caption payload into flat timed words.
@@ -78,7 +80,9 @@ function flattenYouTubeLyrics(ytLyrics) {
                     continue;
                 const wordTokens = word.text.trim().split(/\s+/);
                 const durationPerWord = (word.duration || 0) / (wordTokens.length || 1);
-                const baseTime = parseInt(String(word.timestamp ?? word.time ?? 0), 10);
+                const baseTime = readLyricsTimestamp(word.timestamp ?? word.time);
+                if (baseTime === undefined)
+                    continue;
                 wordTokens.forEach((token, index) => {
                     const clean = cleanWord(token);
                     if (clean.length > 0) {
@@ -91,6 +95,9 @@ function flattenYouTubeLyrics(ytLyrics) {
             }
         }
         else if (line.text) {
+            const lineStart = readLyricsTimestamp(line.time);
+            if (lineStart === undefined)
+                continue;
             const lineText = line.text.trim();
             const lineWords = lineText.split(/\s+/);
             const durationPerWord = (line.duration || 2000) / (lineWords.length || 1);
@@ -99,7 +106,7 @@ function flattenYouTubeLyrics(ytLyrics) {
                 if (clean.length > 0) {
                     words.push({
                         text: clean,
-                        time: parseInt(String(line.time), 10) + index * durationPerWord
+                        time: lineStart + index * durationPerWord
                     });
                 }
             });
@@ -247,15 +254,22 @@ export function alignLyrics(hqLyrics, youtubeData) {
         else {
             offsetToUse = currentOffset;
         }
-        const newTime = Math.max(0, Math.round(line.time + offsetToUse - 50));
+        if (!offsetInitialized) {
+            alignedLines.push(line);
+            continue;
+        }
+        const newTime = Math.max(0, Math.round(line.time + offsetToUse));
         const delta = newTime - line.time;
         const shiftedWords = line.words?.map((word) => {
             const updated = { ...word };
-            if (typeof word.timestamp === 'number') {
-                updated.timestamp = Math.max(0, word.timestamp + delta);
-            }
-            if (typeof word.time === 'number') {
-                updated.time = Math.max(0, word.time + delta);
+            for (const field of ['timestamp', 'time']) {
+                const original = word[field];
+                const time = readLyricsTimestamp(original);
+                if (time !== undefined) {
+                    const shifted = Math.max(0, time + delta);
+                    updated[field] =
+                        typeof original === 'string' ? String(shifted) : shifted;
+                }
             }
             return updated;
         });

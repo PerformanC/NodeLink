@@ -9,23 +9,34 @@ export interface LyricsTiming {
 }
 
 export function readLyricsTimestamp(value: unknown): number | undefined {
-  if (typeof value !== 'number' && (typeof value !== 'string' || !/^\d+(?:\.\d+)?$/.test(value))) return undefined
+  if (
+    typeof value !== 'number' &&
+    (typeof value !== 'string' || !/^\d+(?:\.\d+)?$/.test(value))
+  )
+    return undefined
   const number = Number(value)
   return Number.isFinite(number) && number >= 0 ? number : undefined
 }
 
 export function summarizeLyricsTiming(data: LyricsData): LyricsTiming {
-  const lines = (data.lines ?? []).filter((line) => line.kind !== 'instrumental' && line.text.trim())
+  const lines = (data.lines ?? []).filter(
+    (line) => line.kind !== 'instrumental' && line.text.trim()
+  )
   let timedLines = 0
   let tokenTimedLines = 0
   if (data.synced === true) {
     for (const line of lines) {
       if (readLyricsTimestamp(line.time) === undefined) continue
       timedLines++
-      if (line.words?.some((word) =>
-        typeof word.text === 'string' && word.text.trim() &&
-        readLyricsTimestamp(word.timestamp ?? word.time) !== undefined
-      )) tokenTimedLines++
+      if (
+        line.words?.some(
+          (word) =>
+            typeof word.text === 'string' &&
+            word.text.trim() &&
+            readLyricsTimestamp(word.timestamp ?? word.time) !== undefined
+        )
+      )
+        tokenTimedLines++
     }
   }
   return {
@@ -45,7 +56,10 @@ export function getLyricsQualityTier(result: LyricsLoadResult): number {
 }
 
 /** Only derive intro/outro from reliable timed vocal intervals. */
-export function enrichTemporalMetadata(data: LyricsData, trackLengthMs?: number): void {
+export function enrichTemporalMetadata(
+  data: LyricsData,
+  trackLengthMs?: number
+): void {
   data.timing = summarizeLyricsTiming(data)
   if (data.synced !== true) return
   let firstStart = Infinity
@@ -66,12 +80,21 @@ export function enrichTemporalMetadata(data: LyricsData, trackLengthMs?: number)
     lastEnd = Math.max(lastEnd, start + line.duration)
   }
   const length = readLyricsTimestamp(trackLengthMs)
-  if (Number.isFinite(firstStart) && firstStart > 0 &&
-      (length === undefined || firstStart < length) && data.introEndMs === undefined) {
+  if (
+    Number.isFinite(firstStart) &&
+    firstStart > 0 &&
+    (length === undefined || firstStart < length) &&
+    data.introEndMs === undefined
+  ) {
     data.introEndMs = firstStart
   }
-  if (!hasUnknownDuration && lastEnd > 0 && length !== undefined &&
-      lastEnd < length && data.outroStartMs === undefined) {
+  if (
+    !hasUnknownDuration &&
+    lastEnd > 0 &&
+    length !== undefined &&
+    lastEnd < length &&
+    data.outroStartMs === undefined
+  ) {
     data.outroStartMs = lastEnd
   }
 }

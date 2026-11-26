@@ -304,7 +304,8 @@ export function alignLyrics(
         const time = readLyricsTimestamp(original)
         if (time !== undefined) {
           const shifted = Math.max(0, time + delta)
-          updated[field] = typeof original === 'string' ? String(shifted) : shifted
+          updated[field] =
+            typeof original === 'string' ? String(shifted) : shifted
         }
       }
       return updated
