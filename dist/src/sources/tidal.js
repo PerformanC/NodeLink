@@ -475,7 +475,14 @@ export default class TidalSource {
         const data = await this.getJson(`tracks/${id}`);
         if (!data)
             return { loadType: 'empty', data: {} };
-        const track = this.buildTrack(data);
+        let credits;
+        if (this.config.enrichCredits === true &&
+            /^\d+$/.test(id) &&
+            String(data.id) === id) {
+            // Optional endpoint; failure must not make the track unavailable.
+            credits = await this.getJsonPayload(`tracks/${id}/credits`, {}, 5000).catch(() => undefined);
+        }
+        const track = this.buildTrack(data, undefined, credits);
         if (!track)
             return { loadType: 'empty', data: {} };
         return { loadType: 'track', data: track };
@@ -623,12 +630,16 @@ export default class TidalSource {
      * @returns Parsed JSON payload.
      */
     async getJson(endpoint, params = {}) {
+        return this.asRecord(await this.getJsonPayload(endpoint, params));
+    }
+    async getJsonPayload(endpoint, params, timeout) {
         const url = new URL(`${API_BASE}${endpoint}`);
         const queryParams = { ...params, countryCode: this.countryCode };
         for (const [key, value] of Object.entries(queryParams)) {
             url.searchParams.append(key, String(value));
         }
         const { body, error, statusCode } = await http1makeRequest(url.toString(), {
+            ...(timeout !== undefined ? { timeout } : {}),
             headers: {
                 'x-tidal-token': this.token || '',
                 'User-Agent': 'TIDAL/3704 CFNetwork/1220.1 Darwin/20.3.0'
@@ -639,13 +650,13 @@ export default class TidalSource {
         }
         if (typeof body === 'string') {
             try {
-                return this.asRecord(JSON.parse(body));
+                return JSON.parse(body);
             }
             catch {
                 return null;
             }
         }
-        return this.asRecord(body);
+        return body;
     }
     /**
      * Builds a Tidal CDN image URL from an image UUID.
@@ -676,7 +687,7 @@ export default class TidalSource {
      * @param item - Raw Tidal track object.
      * @returns Encoded track payload.
      */
-    buildTrack(item, parentAlbum) {
+    buildTrack(item, parentAlbum, credits) {
         const idRaw = item.id;
         if (idRaw === undefined || idRaw === null)
             return null;
@@ -706,7 +717,7 @@ export default class TidalSource {
             encoded: encodeTrack(encodedInput),
             info: trackInfo,
             pluginInfo: {
-                media: buildTidalMedia(item, parentAlbum)
+                media: buildTidalMedia(item, parentAlbum, credits)
             }
         };
     }

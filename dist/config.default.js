@@ -583,6 +583,7 @@ export const config = {
             decryptionKey: ''
         },
         tidal: {
+            enrichCredits: false,
             enabled: true,
             token: 'token_here',
             countryCode: 'US',

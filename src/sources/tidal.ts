@@ -607,9 +607,17 @@ export default class TidalSource {
     if (!data) return { loadType: 'empty', data: {} }
 
     let credits: unknown
-    if (this.config.enrichCredits === true && /^\d+$/.test(id) && String(data.id) === id) {
+    if (
+      this.config.enrichCredits === true &&
+      /^\d+$/.test(id) &&
+      String(data.id) === id
+    ) {
       // Optional endpoint; failure must not make the track unavailable.
-      credits = await this.getJsonPayload(`tracks/${id}/credits`, {}, 5000).catch(() => undefined)
+      credits = await this.getJsonPayload(
+        `tracks/${id}/credits`,
+        {},
+        5000
+      ).catch(() => undefined)
     }
     const track = this.buildTrack(data, undefined, credits)
     if (!track) return { loadType: 'empty', data: {} }
