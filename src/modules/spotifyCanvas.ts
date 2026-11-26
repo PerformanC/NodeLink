@@ -197,10 +197,42 @@ function decodeCanvasResponse(buffer: Buffer): SpotifyCanvasDecodedResponse {
   return { canvasesList: canvases }
 }
 
+/** Summarizes only field tags in a short response, never field values. */
+function summarizeShortResponse(buffer: Buffer): {
+  fields: Array<{ number: number; wireType: number }>
+  complete: boolean
+} {
+  const fields: Array<{ number: number; wireType: number }> = []
+  let offset = 0
+
+  try {
+    while (offset < buffer.length) {
+      const key = readVarint(buffer, offset)
+      const number = key.val >>> 3
+      const wireType = key.val & 7
+      if (number === 0) return { fields, complete: false }
+      fields.push({ number, wireType })
+      const next = skipField(buffer, key.next, wireType)
+      if (next <= offset || next > buffer.length) {
+        return { fields, complete: false }
+      }
+      offset = next
+    }
+    return { fields, complete: true }
+  } catch {
+    return { fields, complete: false }
+  }
+}
+
 /** Non-sensitive Canvas request diagnostics. */
 export type CanvasDiagnostic =
   | { kind: 'http'; status: number }
   | { kind: 'decoded'; bytes: number; entries: number; matching: number; withUrl: number }
+  | {
+      kind: 'short-response'
+      fields: Array<{ number: number; wireType: number }>
+      complete: boolean
+    }
   | { kind: 'request-error' }
 
 /**
@@ -234,7 +266,7 @@ export async function fetchCanvas(
         body: requestBuf,
         headers: {
           Accept: 'application/protobuf',
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/protobuf',
           'User-Agent': 'Spotify/9.0.34.593 iOS/18.4 (iPhone15,3)',
           Authorization: `Bearer ${token}`
         }
@@ -254,6 +286,12 @@ export async function fetchCanvas(
       matching: data.canvasesList.filter((entry) => entry.trackUri === trackUri).length,
       withUrl: data.canvasesList.filter((entry) => Boolean(entry.canvasUrl)).length
     })
+    if (buffer.length > 0 && buffer.length <= 16 && !data.canvasesList.length) {
+      onDiagnostic?.({
+        kind: 'short-response',
+        ...summarizeShortResponse(buffer)
+      })
+    }
     return { data }
   } catch {
     onDiagnostic?.({ kind: 'request-error' })

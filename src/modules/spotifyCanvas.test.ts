@@ -45,3 +45,44 @@ test('reports matching entries and media URLs in a protobuf fixture', async (t) 
     { kind: 'decoded', bytes: body.length, entries: 1, matching: 1, withUrl: 1 }
   ])
 })
+
+test('sends the existing binary request with a protobuf content type', async (t) => {
+  let request: RequestInit | undefined
+  t.mock.method(globalThis, 'fetch', async (_input: unknown, init?: RequestInit) => {
+    request = init
+    return new Response(new Uint8Array(), { status: 200 })
+  })
+  await fetchCanvas(trackUri, 'secret')
+  const headers = new Headers(request?.headers)
+  assert.equal(headers.get('content-type'), 'application/protobuf')
+  assert.equal(headers.get('accept'), 'application/protobuf')
+  assert.equal(request?.method, 'POST')
+  assert.deepEqual(request?.body, Buffer.concat([
+    Buffer.from([10, 19, 10, 17]),
+    Buffer.from(trackUri)
+  ]))
+})
+
+test('reports only field tags for a short response without Canvas entries', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    new Response(new Uint8Array([0x10, 0xe8, 0x07]), { status: 200 }))
+  const events: CanvasDiagnostic[] = []
+  await fetchCanvas(trackUri, 'secret', (event) => events.push(event))
+  assert.deepEqual(events, [
+    { kind: 'http', status: 200 },
+    { kind: 'decoded', bytes: 3, entries: 0, matching: 0, withUrl: 0 },
+    { kind: 'short-response', fields: [{ number: 2, wireType: 0 }], complete: true }
+  ])
+})
+
+test('distinguishes a truncated field from a complete short response', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    new Response(new Uint8Array([0x12, 0x05, 0x01]), { status: 200 }))
+  const events: CanvasDiagnostic[] = []
+  await fetchCanvas(trackUri, 'secret', (event) => events.push(event))
+  assert.deepEqual(events.at(-1), {
+    kind: 'short-response',
+    fields: [{ number: 2, wireType: 2 }],
+    complete: false
+  })
+})
