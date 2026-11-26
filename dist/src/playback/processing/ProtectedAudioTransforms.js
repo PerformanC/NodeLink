@@ -1,6 +1,7 @@
 import { Transform } from 'node:stream';
 import { AudioProcessingTelemetryAccumulator } from './audioContract.js';
 import { float32PcmToInt16Pcm, int16PcmToFloat32Pcm } from './float32Pcm.js';
+import { protectedProcessingOptions } from './protectedProcessingOptions.js';
 import { TruePeakLookaheadLimiter } from './TruePeakLookaheadLimiter.js';
 const F32_STEREO_FRAME_BYTES = 8;
 /** Converts decoded s16le stereo PCM to the Protected internal representation. */
@@ -26,9 +27,10 @@ export class ProtectedLimiterOutput extends Transform {
     telemetry = new AudioProcessingTelemetryAccumulator(100);
     requestedGain;
     destroyedOutput = false;
-    constructor(requestedGain) {
+    constructor(requestedGain, options) {
         super({ writableHighWaterMark: 3840 * 2, readableHighWaterMark: 3840 });
         this.requestedGain = requestedGain;
+        const settings = protectedProcessingOptions(options);
         // A -2.5 dBTP input ceiling uses the worst +1.3 dB post-Opus rise observed
         // in the local synthetic/captured samples plus 0.2 dB reserve. This is an
         // empirical operating point, not a universal ceiling guarantee.
@@ -36,10 +38,10 @@ export class ProtectedLimiterOutput extends Transform {
             sampleRate: 48000,
             channels: 2,
             oversampling: 4,
-            lookaheadMs: 5,
+            lookaheadMs: settings.lookaheadMs,
             attackMs: 2,
-            releaseMs: 80,
-            ceilingDbTP: -2.4
+            releaseMs: settings.releaseMs,
+            ceilingDbTP: settings.ceilingDbTP
         });
     }
     snapshot() {

@@ -2413,9 +2413,7 @@ class WebmOpusSeekTrimTransform extends Transform {
 
     const timing = this.timings[this.timingIndex]
     if (!timing) {
-      callback(
-        new Error('Missing WebM packet timestamp for decoded Opus PCM')
-      )
+      callback(new Error('Missing WebM packet timestamp for decoded Opus PCM'))
       return
     }
     if (!Number.isFinite(timing.timestampMs)) {
@@ -2430,9 +2428,10 @@ class WebmOpusSeekTrimTransform extends Transform {
       packetStartSample,
       this.targetSampleFrame
     )
-    const clippedEndSample = this.endSampleFrame === null
-      ? packetEndSample
-      : Math.min(packetEndSample, this.endSampleFrame)
+    const clippedEndSample =
+      this.endSampleFrame === null
+        ? packetEndSample
+        : Math.min(packetEndSample, this.endSampleFrame)
 
     // Only fill gaps between packets. Never pad the tail: a missing final
     // packet must remain visible as an early EOF instead of being hidden.
@@ -2452,10 +2451,7 @@ class WebmOpusSeekTrimTransform extends Transform {
         clippedStartSample,
         this.nextOutputSampleFrame
       )
-      const outputEndSample = Math.max(
-        outputStartSample,
-        clippedEndSample
-      )
+      const outputEndSample = Math.max(outputStartSample, clippedEndSample)
       const framesToKeep = outputEndSample - outputStartSample
 
       if (framesToKeep > 0) {
@@ -2833,7 +2829,12 @@ class StreamAudioResource extends BaseAudioResource {
           ? 0
           : nodelink.options.playback.audio?.lookaheadMs,
       gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS,
-      targetLoudnessLufs: processingMode === 'protected' ? protectedProcessingOptions(nodelink.options.playback.audio?.protected).targetLoudnessLufs : undefined
+      targetLoudnessLufs:
+        processingMode === 'protected'
+          ? protectedProcessingOptions(
+              nodelink.options.playback.audio?.protected
+            ).targetLoudnessLufs
+          : undefined
     })
     const fadeTransformer = new FadeTransformer({
       type: 's16le',
@@ -2936,8 +2937,9 @@ class StreamAudioResource extends BaseAudioResource {
     }
 
     if (processingMode === 'protected') {
-      protectedOutput = new ProtectedLimiterOutput(() =>
-        volumeTransformer.getRequestedVolume(), nodelink.options.playback.audio?.protected
+      protectedOutput = new ProtectedLimiterOutput(
+        () => volumeTransformer.getRequestedVolume(),
+        nodelink.options.playback.audio?.protected
       )
       this.protectedLimiterOutput = protectedOutput
       streams.push(protectedOutput)

@@ -4,8 +4,11 @@ import {
   type AudioProcessingTelemetrySnapshot
 } from './audioContract.ts'
 import { float32PcmToInt16Pcm, int16PcmToFloat32Pcm } from './float32Pcm.ts'
+import {
+  type ProtectedProcessingOptions,
+  protectedProcessingOptions
+} from './protectedProcessingOptions.ts'
 import { TruePeakLookaheadLimiter } from './TruePeakLookaheadLimiter.ts'
-import { protectedProcessingOptions, type ProtectedProcessingOptions } from './protectedProcessingOptions.ts'
 
 const F32_STEREO_FRAME_BYTES = 8
 
@@ -40,10 +43,13 @@ export class ProtectedLimiterOutput extends Transform {
   private readonly requestedGain: () => number
   private destroyedOutput = false
 
-  constructor(requestedGain: () => number, options?: ProtectedProcessingOptions) {
+  constructor(
+    requestedGain: () => number,
+    options?: ProtectedProcessingOptions
+  ) {
     super({ writableHighWaterMark: 3840 * 2, readableHighWaterMark: 3840 })
     this.requestedGain = requestedGain
-    const settings=protectedProcessingOptions(options)
+    const settings = protectedProcessingOptions(options)
     // A -2.5 dBTP input ceiling uses the worst +1.3 dB post-Opus rise observed
     // in the local synthetic/captured samples plus 0.2 dB reserve. This is an
     // empirical operating point, not a universal ceiling guarantee.

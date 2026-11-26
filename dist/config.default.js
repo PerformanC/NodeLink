@@ -351,6 +351,13 @@ export const config = {
         },
         audio: {
             processingMode: 'legacy',
+            protected: {
+                targetLoudnessLufs: -14,
+                ceilingDbTP: -2.4,
+                lookaheadMs: 5,
+                releaseMs: 80,
+                telemetry: false
+            },
             quality: 'high',
             encryption: 'aead_xchacha20_poly1305_rtpsize',
             resamplingQuality: 'best',

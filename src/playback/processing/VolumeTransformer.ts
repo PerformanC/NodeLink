@@ -118,7 +118,9 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
     this._thresholdValue = this.limiterThreshold * INT16_MAX
     this._limitHeadroom = INT16_MAX - this._thresholdValue
 
-    this.targetLoudness = Number.isFinite(targetLoudnessLufs) ? targetLoudnessLufs : -14
+    this.targetLoudness = Number.isFinite(targetLoudnessLufs)
+      ? targetLoudnessLufs
+      : -14
     this.gateThresholdLUFS = gateThresholdLUFS
     this.agc = enableAGC
       ? new LoudnessNormalizer({
@@ -360,22 +362,29 @@ export class VolumeTransformer extends Transform implements IVolumeTransformer {
     if (this.agc) this.agc.processFloat32(chunk)
     // Advance gain once per audio frame, not once per sample/channel.
     // The ramp reaches its target at the same frame regardless of chunking.
-    for (let frame=0;frame<sampleCount/this.channels;frame++) {
+    for (let frame = 0; frame < sampleCount / this.channels; frame++) {
       if (this.fadeActive && this.fadeFramesTotal > 0) {
-        this.fadeFramesElapsed = Math.min(this.fadeFramesTotal,this.fadeFramesElapsed+1)
-        const progress = this._getFadeCurveValue(this.fadeFramesElapsed/this.fadeFramesTotal)
-        this.currentVolume = this.startVolume + (this.targetVolume-this.startVolume)*progress
+        this.fadeFramesElapsed = Math.min(
+          this.fadeFramesTotal,
+          this.fadeFramesElapsed + 1
+        )
+        const progress = this._getFadeCurveValue(
+          this.fadeFramesElapsed / this.fadeFramesTotal
+        )
+        this.currentVolume =
+          this.startVolume + (this.targetVolume - this.startVolume) * progress
         if (this.fadeFramesElapsed === this.fadeFramesTotal) {
           this.fadeActive = false
           this.currentVolume = this.targetVolume
           this.startVolume = this.targetVolume
         }
       } else this.currentVolume = this.targetVolume
-      for(let ch=0;ch<this.channels;ch++){
-        const offset=(frame*this.channels+ch)*4
-        const value=chunk.readFloatLE(offset)*this.currentVolume
-        if(!Number.isFinite(value)||Math.abs(value)>3.4028234663852886e38) throw new RangeError(`Protected volume overflow at byte ${offset}`)
-        chunk.writeFloatLE(value,offset)
+      for (let ch = 0; ch < this.channels; ch++) {
+        const offset = (frame * this.channels + ch) * 4
+        const value = chunk.readFloatLE(offset) * this.currentVolume
+        if (!Number.isFinite(value) || Math.abs(value) > 3.4028234663852886e38)
+          throw new RangeError(`Protected volume overflow at byte ${offset}`)
+        chunk.writeFloatLE(value, offset)
       }
     }
     return chunk

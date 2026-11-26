@@ -1419,7 +1419,10 @@ export class Player {
     ) {
       extraData.__resolvedFormat = resolvedUrlData.format
     }
-    if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+    if (
+      resolvedUrlData.isLive !== undefined &&
+      extraData.isLive === undefined
+    ) {
       extraData.isLive = resolvedUrlData.isLive
     }
     if (
@@ -3897,10 +3900,16 @@ export class Player {
     const mixAdditionalData: Record<string, unknown> = {
       ...(urlData.additionalData ?? {})
     }
-    if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+    if (
+      typeof urlData.format === 'string' &&
+      !mixAdditionalData.__resolvedFormat
+    ) {
       mixAdditionalData.__resolvedFormat = urlData.format
     }
-    if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+    if (
+      urlData.isLive !== undefined &&
+      mixAdditionalData.isLive === undefined
+    ) {
       mixAdditionalData.isLive = urlData.isLive
     }
     if (
@@ -4315,9 +4324,13 @@ export class Player {
       'Player',
       `[Action: toJSON] Method invoked for guild ${this.guildId}`
     )
-    const audioProcessing = this.track && this.nodelink.options.playback.audio?.protected?.telemetry === true ? this._getAudioStream()?.getAudioProcessingTelemetry?.() : null
+    const audioProcessing =
+      this.track &&
+      this.nodelink.options.playback.audio?.protected?.telemetry === true
+        ? this._getAudioStream()?.getAudioProcessingTelemetry?.()
+        : null
     return {
-      ...(audioProcessing ? {audioProcessing} : {}),
+      ...(audioProcessing ? { audioProcessing } : {}),
       guildId: this.guildId,
       track: this.track,
       volume: this.volumePercent,

@@ -15,6 +15,7 @@ import { ScratchTransformer } from './ScratchTransformer.js';
 import { FlowController } from './FlowController.js';
 import { FiltersManager } from './filtersManager.js';
 import { VolumeTransformer } from './VolumeTransformer.js';
+import { protectedProcessingOptions } from './protectedProcessingOptions.js';
 import { CrossfadeController } from './CrossfadeController.js';
 import { SilenceDetector } from './SilenceDetector.js';
 import { assertAudioCapabilities, resolveAudioProcessingMode } from './audioContract.js';
@@ -2153,7 +2154,10 @@ class StreamAudioResource extends BaseAudioResource {
             lookaheadMs: processingMode === 'protected'
                 ? 0
                 : nodelink.options.playback.audio?.lookaheadMs,
-            gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS
+            gateThresholdLUFS: nodelink.options.playback.audio?.gateThresholdLUFS,
+            targetLoudnessLufs: processingMode === 'protected'
+                ? protectedProcessingOptions(nodelink.options.playback.audio?.protected).targetLoudnessLufs
+                : undefined
         });
         const fadeTransformer = new FadeTransformer({
             type: 's16le',
@@ -2237,7 +2241,7 @@ class StreamAudioResource extends BaseAudioResource {
             }
         }
         if (processingMode === 'protected') {
-            protectedOutput = new ProtectedLimiterOutput(() => volumeTransformer.getRequestedVolume());
+            protectedOutput = new ProtectedLimiterOutput(() => volumeTransformer.getRequestedVolume(), nodelink.options.playback.audio?.protected);
             this.protectedLimiterOutput = protectedOutput;
             streams.push(protectedOutput);
         }
