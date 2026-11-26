@@ -604,6 +604,7 @@ export const config: NodelinkConfig = {
     },
 
     tidal: {
+      embedFallback: false,
       enrichCredits: false,
       enrichCatalog: false,
       metadataAccessToken: '',

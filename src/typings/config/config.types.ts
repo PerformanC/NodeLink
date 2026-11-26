@@ -294,6 +294,9 @@ export interface DeezerSourceConfig {
  * Configuration for the Tidal high-fidelity music provider.
  */
 export interface TidalSourceConfig {
+  /** Opt-in public embed metadata fallback for direct track/album HTTP 401 failures. */
+  embedFallback?: boolean
+
   /** Opt-in detailed recording credits for explicit single-track resolution. */
   enrichCredits?: boolean
 

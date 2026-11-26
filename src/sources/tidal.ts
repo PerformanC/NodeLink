@@ -7,6 +7,7 @@ import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { resolveMediaCredential } from '../modules/mediaProviderConfig.ts'
 import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.ts'
+import { fetchTidalEmbed, type TidalEmbedKind, type TidalEmbedTrack } from '../modules/tidalEmbed.ts'
 import { buildTidalMedia } from '../modules/tidalMedia.ts'
 import type {
   SourceResult,
@@ -28,6 +29,14 @@ import {
   logger,
   makeRequest
 } from '../utils.ts'
+
+class TidalApiError extends Error {
+  readonly statusCode: number | undefined
+  constructor(message: string, statusCode: number | undefined) {
+    super(message)
+    this.statusCode = statusCode
+  }
+}
 
 const API_BASE = 'https://api.tidal.com/v1/'
 const CACHE_VALIDITY_DAYS = 7
@@ -325,9 +334,9 @@ export default class TidalSource {
     try {
       switch (type) {
         case 'track':
-          return this.resolveTrack(id)
+          return await this.resolveTrack(id)
         case 'album':
-          return this.resolveAlbum(id)
+          return await this.resolveAlbum(id)
         case 'mix':
           return this.getMix(id)
         case 'playlist':
@@ -338,11 +347,47 @@ export default class TidalSource {
           return { loadType: 'empty', data: {} }
       }
     } catch (error) {
+      if (this.config.embedFallback === true && error instanceof TidalApiError &&
+          error.statusCode === 401 && (type === 'track' || type === 'album')) {
+        const result = await this.resolveEmbed(type, id)
+        if (result) return result
+      }
       return {
         loadType: 'error',
         exception: { message: this.getErrorMessage(error), severity: 'fault' }
       }
     }
+  }
+
+  private async resolveEmbed(kind: TidalEmbedKind, id: string): Promise<SourceResult | undefined> {
+    const result = await fetchTidalEmbed(kind, id)
+    if (!result) return undefined
+    if (kind === 'track') {
+      const item = result.tracks[0]
+      return item ? { loadType: 'track', data: this.buildEmbedTrack(item) } : undefined
+    }
+    const limit = capTotalTracks(result.tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
+    const tracks = result.tracks.slice(0, limit).map(item => this.buildEmbedTrack(item))
+    if (!tracks.length) return undefined
+    return {
+      loadType: 'playlist',
+      data: {
+        info: { name: result.name, selectedTrack: 0 },
+        tracks,
+        pluginInfo: { metadataSource: 'tidal-embed' }
+      }
+    }
+  }
+
+  private buildEmbedTrack(item: TidalEmbedTrack) {
+    const info: TrackInfo = {
+      identifier: item.id, title: item.title, author: item.author, length: item.durationMs,
+      isSeekable: true, isStream: false, position: 0,
+      uri: `https://tidal.com/browse/track/${item.id}`, artworkUrl: item.artworkUrl,
+      isrc: null, sourceName: 'tidal'
+    }
+    return { encoded: encodeTrack({ ...info, details: [] }), info,
+      pluginInfo: { media: item.media, metadataSource: 'tidal-embed' } }
   }
 
   /**
@@ -931,8 +976,9 @@ export default class TidalSource {
     })
 
     if (error || statusCode !== 200) {
-      throw new Error(
-        `Failed to fetch from Tidal API: ${error || `Status ${statusCode}`}`
+      throw new TidalApiError(
+        `Failed to fetch from Tidal API: ${error || `Status ${statusCode}`}`,
+        statusCode
       )
     }
 
