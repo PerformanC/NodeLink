@@ -21,7 +21,7 @@ const handler: ApiRouteHandler = async (_nodelink, req, res, sendResponse, parse
     if (!projectKey) return sendResponse(req, res, { error: 'Fanart.tv disabled' }, 503)
     const result = await fanart.lookup(id, `https://webservice.fanart.tv/v3.2/music/${id}`,
       { 'api-key': projectKey, Accept: 'application/json' }, data => fanartArtist(data, id))
-    return sendResponse(req, res, result.data ?? { error: 'Fanart.tv lookup unavailable' }, result.status)
+    return sendResponse(req, res, result.data ?? { error: 'Fanart.tv lookup unavailable', reason: result.reason, upstreamStatus: result.upstreamStatus }, result.status)
   }
   const agent = process.env.NODELINK_MUSICBRAINZ_USER_AGENT?.trim()
   if (!agent) return sendResponse(req, res, { error: 'MusicBrainz disabled' }, 503)
@@ -31,7 +31,7 @@ const handler: ApiRouteHandler = async (_nodelink, req, res, sendResponse, parse
   const result = await musicBrainz.lookup<unknown>(`${key}:${id}`, url,
     { 'User-Agent': agent, Accept: 'application/json' },
     data => key === 'isrc' ? musicBrainzRecordings(data, id) : musicBrainzWork(data, id))
-  return sendResponse(req, res, result.data ?? { error: 'MusicBrainz lookup unavailable' }, result.status)
+  return sendResponse(req, res, result.data ?? { error: 'MusicBrainz lookup unavailable', reason: result.reason, upstreamStatus: result.upstreamStatus }, result.status)
 }
 const route: ApiRouteModule = { handler }
 export default route

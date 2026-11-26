@@ -11,12 +11,12 @@ export class MediaLookupClient {
   }
 
   async lookup<T>(key: string, url: string, headers: Record<string, string>,
-    normalize: (data: unknown) => T | null): Promise<{ status: number; data: T | null }> {
+    normalize: (data: unknown) => T | null): Promise<{ status: number; data: T | null; reason?: string; upstreamStatus?: number }> {
     const now = Date.now()
     const cached = this.cache.get(key)
     if (cached && cached.until > now) return { status: 200, data: cached.value as T }
     if (cached) this.cache.delete(key)
-    if (this.busy || now < this.nextRequest) return { status: 429, data: null }
+    if (this.busy || now < this.nextRequest) return { status: 429, data: null, reason: 'local-rate-limit' }
     this.busy = true
     this.nextRequest = now + 1100
     try {
@@ -28,10 +28,10 @@ export class MediaLookupClient {
           const seconds = retry && /^\d+$/.test(retry) ? Number(retry) : 60
           this.nextRequest = Math.max(this.nextRequest, Date.now() + Math.min(3600, Math.max(1, seconds)) * 1000)
         }
-        return { status: response.status === 404 ? 404 : 502, data: null }
+        return { status: response.status === 404 ? 404 : 502, data: null, reason: 'upstream-http', upstreamStatus: response.status }
       }
       const reader = response.body?.getReader()
-      if (!reader) return { status: 502, data: null }
+      if (!reader) return { status: 502, data: null, reason: 'missing-body' }
       const chunks: Uint8Array[] = []
       let size = 0
       try {
@@ -41,21 +41,25 @@ export class MediaLookupClient {
           size += value.byteLength
           if (size > 1024 * 1024) {
             await reader.cancel()
-            return { status: 502, data: null }
+            return { status: 502, data: null, reason: 'response-too-large' }
           }
           chunks.push(value)
         }
       } finally { reader.releaseLock() }
-      const data = normalize(JSON.parse(Buffer.concat(chunks).toString('utf8')))
-      if (data === null) return { status: 502, data: null }
+      let payload: unknown
+      try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) }
+      catch { return { status: 502, data: null, reason: 'invalid-json' } }
+      const data = normalize(payload)
+      if (data === null) return { status: 502, data: null, reason: 'unexpected-provider-payload' }
       if (this.cache.size >= 256) {
         const first = this.cache.keys().next().value
         if (first !== undefined) this.cache.delete(first)
       }
       this.cache.set(key, { until: Date.now() + 3600000, value: data })
       return { status: 200, data }
-    } catch {
-      return { status: 502, data: null }
+    } catch (error) {
+      const timeout = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
+      return { status: 502, data: null, reason: timeout ? 'timeout' : 'request-failed' }
     } finally { this.busy = false }
   }
 }

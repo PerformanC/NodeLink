@@ -43,3 +43,18 @@ test('does not cache upstream failures', async (t) => {
   assert.equal((await client.lookup('one', 'https://example.com', {}, value => value)).status, 502)
   assert.equal(calls, 2)
 })
+
+
+test('diagnoses upstream HTTP errors without exposing the response body', async () => {
+  const client = new MediaLookupClient(async () => new Response('private diagnostic', { status: 401 }))
+  assert.deepEqual(await client.lookup('one', 'https://example.com', {}, value => value), {
+    status: 502, data: null, reason: 'upstream-http', upstreamStatus: 401
+  })
+})
+
+test('distinguishes unexpected provider payloads from invalid JSON', async () => {
+  const invalid = new MediaLookupClient(async () => new Response('not JSON'))
+  const unexpected = new MediaLookupClient(async () => new Response('{}'))
+  assert.equal((await invalid.lookup('one', 'https://example.com', {}, value => value)).reason, 'invalid-json')
+  assert.equal((await unexpected.lookup('one', 'https://example.com', {}, () => null)).reason, 'unexpected-provider-payload')
+})
