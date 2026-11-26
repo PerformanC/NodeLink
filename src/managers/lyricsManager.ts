@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { alignLyrics } from '../modules/lyricsAligner.ts'
+import { enrichTemporalMetadata, getLyricsQualityTier, type LyricsTiming } from '../modules/lyricsTiming.ts'
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
 import type { SourceResult } from '../typings/sources/source.types.ts'
 import { logger } from '../utils.ts'
@@ -80,6 +81,8 @@ export interface LyricsData {
   provider?: string
   /** Whether payload represents musical lyrics or raw source captions. */
   kind?: 'lyrics' | 'captions'
+  /** Coverage of supplied lyric timing spans. */
+  timing?: LyricsTiming
   /** End timestamp (ms) of the instrumental intro before the first line. */
   introEndMs?: number
   /** Start timestamp (ms) of the instrumental outro after the last line. */
@@ -187,39 +190,6 @@ const isLyricsSourceEnabled = (
 
   const enabled = (sourceConfig as { enabled?: unknown }).enabled
   return enabled === true
-}
-
-const getLyricsQualityTier = (result: LyricsLoadResult): number => {
-  if (result.loadType !== 'lyrics') return 0
-  const lines = result.data.lines ?? []
-  if (lines.some((line) => Array.isArray(line.words) && line.words.length > 0)) {
-    return 3
-  }
-  if (result.data.synced) return 2
-  return 1
-}
-
-const enrichTemporalMetadata = (
-  data: LyricsData,
-  trackLengthMs?: number
-): void => {
-  const lines = data.lines
-  if (!lines || lines.length === 0) return
-
-  const first = lines[0]
-  if (first && first.time > 0 && data.introEndMs === undefined) {
-    data.introEndMs = first.time
-  }
-
-  const last = lines[lines.length - 1]
-  if (last && data.outroStartMs === undefined) {
-    const lastEnd = last.time + Math.max(0, last.duration || 0)
-    if (trackLengthMs && trackLengthMs > lastEnd && lastEnd > 0) {
-      data.outroStartMs = lastEnd
-    } else if (!last.duration && last.time > 0) {
-      data.outroStartMs = last.time
-    }
-  }
 }
 
 export default class LyricsManager {
@@ -388,12 +358,15 @@ export default class LyricsManager {
         'Lyrics',
         `Loading lyrics from ${requestedName} for ${trackInfo?.title || 'Unknown Title'}.`
       )
-      const requestedLyrics = await requestedLyricsSource.getLyrics(
+      const requestedLyrics = await this._fetchFrom(
+        requestedLyricsSource,
+        requestedName,
         trackInfo,
         language
       )
       if (requestedLyrics?.loadType === 'lyrics') {
         requestedLyrics.data.provider = requestedName
+        enrichTemporalMetadata(requestedLyrics.data, trackInfo.length)
       }
       return requestedLyrics
     }
@@ -491,9 +464,10 @@ export default class LyricsManager {
 
       if (lyrics?.loadType === 'lyrics') {
         const tier = getLyricsQualityTier(lyrics)
-        if (!bestCandidate || tier > bestCandidate.tier) {
+        if (tier > 0 && (!bestCandidate || tier > bestCandidate.tier)) {
           bestCandidate = { result: lyrics, name, tier }
         }
+        if (tier === 0) sawEmpty = true
         if (tier === 3) {
           break
         }
