@@ -63,3 +63,33 @@ export function appleMusicMotion(
   }
   return undefined
 }
+
+
+/** Accept standard or hyphenated ISRC values, without guessing from text. */
+export function normalizeAppleMusicIsrc(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim().toUpperCase()
+  if (!/^[A-Z]{2}-?[A-Z0-9]{3}-?[0-9]{2}-?[0-9]{5}$/.test(trimmed)) return undefined
+  return trimmed.replace(/-/g, '')
+}
+
+/** Verify every recording's code and retain distinct matching editions. */
+export function matchAppleMusicIsrc<T extends {
+  id: string
+  type: string
+  attributes?: { isrc?: string }
+}>(items: T[] | undefined, value: unknown): T[] {
+  const isrc = normalizeAppleMusicIsrc(value)
+  if (!isrc || !Array.isArray(items)) return []
+  const seen = new Set<string>()
+  const matches: T[] = []
+  for (const item of items) {
+    if (item?.type !== 'songs' || typeof item.id !== 'string' ||
+        !/^\d+$/.test(item.id) || seen.has(item.id) ||
+        normalizeAppleMusicIsrc(item.attributes?.isrc) !== isrc) continue
+    seen.add(item.id)
+    matches.push(item)
+    if (matches.length === 25) break
+  }
+  return matches
+}

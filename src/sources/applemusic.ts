@@ -1,4 +1,4 @@
-import { appleMusicArtists, appleMusicMotion } from '../modules/appleMusicMedia.ts'
+import { appleMusicArtists, appleMusicMotion, matchAppleMusicIsrc, normalizeAppleMusicIsrc } from '../modules/appleMusicMedia.ts'
 import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type { AppleMusicSourceConfig } from '../typings/config/config.types.ts'
 import type {
@@ -201,7 +201,7 @@ export default class AppleMusicSource implements SourceInstance {
    * Prefixes used to identify search queries targeting this source.
    * @public
    */
-  public readonly searchTerms = ['amsearch']
+  public readonly searchTerms = ['amsearch', 'amisrc']
 
   /**
    * Regular expression patterns used to match Apple Music URLs.
@@ -418,7 +418,7 @@ export default class AppleMusicSource implements SourceInstance {
    * @returns A promise resolving to the parsed response body or null.
    * @internal
    */
-  private async apiRequest<T>(path: string): Promise<T | null> {
+  private async apiRequest<T>(path: string, retryOnUnauthorized = true): Promise<T | null> {
     if (!this.tokenInitialized || !this.isTokenValid()) {
       const ok = await this.setup()
       if (!ok) throw new Error('Apple Music token unavailable')
@@ -437,7 +437,8 @@ export default class AppleMusicSource implements SourceInstance {
 
     if (statusCode === 401) {
       this.tokenInitialized = false
-      return this.apiRequest<T>(path)
+      if (!retryOnUnauthorized) return null
+      return this.apiRequest<T>(path, false)
     }
 
     return typeof statusCode === 'number' &&
@@ -461,6 +462,10 @@ export default class AppleMusicSource implements SourceInstance {
     searchType = 'track'
   ): Promise<SourceResult> {
     try {
+      if (_sourceName === 'amisrc') {
+        if (searchType !== 'track') return { loadType: 'empty', data: {} }
+        return await this.searchByIsrc(query)
+      }
       const limit = (this.nodelink.options.search.maxResults as number) || 10
       const typeMap: Record<string, string> = {
         track: 'songs',
@@ -493,6 +498,26 @@ export default class AppleMusicSource implements SourceInstance {
         exception: { message: (e as Error).message, severity: 'fault' }
       }
     }
+  }
+
+  /**
+   * Looks up recordings using the documented catalog ISRC filter.
+   * Multiple editions may share one ISRC; leave selection to the caller.
+   */
+  private async searchByIsrc(query: string): Promise<SourceResult> {
+    const isrc = normalizeAppleMusicIsrc(query)
+    if (!isrc) return { loadType: 'empty', data: {} }
+
+    const response = await this.apiRequest<{ data: AppleMusicResource[] }>(
+      `/catalog/${this.country}/songs?filter%5Bisrc%5D=${encodeURIComponent(isrc)}`
+    )
+    const tracks = matchAppleMusicIsrc(response?.data, isrc)
+      .map((item) => this.buildTrack(item))
+      .filter((item): item is TrackData => item !== null)
+
+    return tracks.length
+      ? { loadType: 'search', data: tracks }
+      : { loadType: 'empty', data: {} }
   }
 
   /**

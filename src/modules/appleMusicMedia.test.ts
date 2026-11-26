@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { appleMusicArtists, appleMusicMotion } from './appleMusicMedia.ts'
+import { appleMusicArtists, appleMusicMotion, matchAppleMusicIsrc, normalizeAppleMusicIsrc } from './appleMusicMedia.ts'
 import { buildTrackMedia } from './trackMedia.ts'
 
 test('preserves individual artist identities and provider artwork', () => {
@@ -62,4 +62,30 @@ test('rejects malformed or untrusted motion URLs and unrelated artist videos', (
     motionDetailTall: { video: 'http://example.com/video.m3u8' },
     motionArtistSquare: { video: 'https://example.com/artist.m3u8' }
   }), undefined)
+})
+
+test('normalizes valid ISRC codes and rejects free text', () => {
+  assert.equal(normalizeAppleMusicIsrc(' us-ug1-22-05736 '), 'USUG12205736')
+  assert.equal(normalizeAppleMusicIsrc('Taylor Swift USUG12205736'), undefined)
+  assert.equal(normalizeAppleMusicIsrc('USUG1220573'), undefined)
+  assert.equal(normalizeAppleMusicIsrc(null), undefined)
+})
+
+test('retains distinct exact ISRC editions and rejects unrelated results', () => {
+  const song = (id: string, isrc: string, type = 'songs') => ({ id, type, attributes: { isrc } })
+  const first = song('1', 'USUG12205736')
+  const second = song('2', 'US-UG1-22-05736')
+  assert.deepEqual(matchAppleMusicIsrc([
+    first, first, second, song('3', 'USUG12205737'),
+    song('4', 'USUG12205736', 'music-videos'), song('bad', 'USUG12205736')
+  ], 'USUG12205736'), [first, second])
+})
+
+test('bounds exact matches and treats unavailable results as empty', () => {
+  const items = Array.from({ length: 30 }, (_, index) => ({
+    id: String(index + 1), type: 'songs', attributes: { isrc: 'USUG12205736' }
+  }))
+  assert.equal(matchAppleMusicIsrc(items, 'USUG12205736').length, 25)
+  assert.deepEqual(matchAppleMusicIsrc(undefined, 'USUG12205736'), [])
+  assert.deepEqual(matchAppleMusicIsrc(items, 'invalid'), [])
 })
