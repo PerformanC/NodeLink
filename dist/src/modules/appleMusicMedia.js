@@ -47,7 +47,8 @@ export function appleMusicMotion(trackEditorial, albumEditorial) {
         for (const [key, aspectRatio] of [
             ['motionDetailSquare', '1:1'],
             ['motionSquareVideo1x1', '1:1'],
-            ['motionDetailTall', '9:16']
+            // Nominal editorial layout, verified against the After Hours HLS manifest.
+            ['motionDetailTall', '3:4']
         ]) {
             const entry = fields[key];
             if (!entry || typeof entry !== 'object')
