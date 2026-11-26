@@ -466,12 +466,8 @@ export interface LyricsManagerLike {
     loadType: 'lyrics'
     data: {
       provider: string
-      lines: Array<{
-        time: number
-        duration?: number
-        text: string
-        words?: Array<Record<string, unknown>>
-      }>
+      synced?: boolean
+      lines: Array<Omit<import('../../managers/lyricsManager.ts').LyricsLine, 'duration'> & { duration?: number }>
     }
   } | null>
 }

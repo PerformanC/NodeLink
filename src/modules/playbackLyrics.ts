@@ -1,12 +1,12 @@
 import type { LyricsLine } from '../typings/playback/player.types.ts'
-import type { LyricsData } from '../managers/lyricsManager.ts'
+import type { LyricsData, LyricsLine as ProviderLyricsLine } from '../managers/lyricsManager.ts'
 import { readLyricsTimestamp } from './lyricsTiming.ts'
 
 /** Build the existing event payload while retaining provider timing and annotations. */
-export function buildPlaybackLyrics(data: LyricsData): LyricsLine[] {
+export function buildPlaybackLyrics(data: Omit<LyricsData, 'lines'> & { lines?: Array<Omit<ProviderLyricsLine, 'duration'> & { duration?: number }> }): LyricsLine[] {
   const lines = (data.lines ?? []).map(line => ({
     timestamp: readLyricsTimestamp(line.time) ?? 0,
-    duration: Number.isFinite(line.duration) && line.duration > 0 ? line.duration : 0,
+    duration: typeof line.duration === 'number' && Number.isFinite(line.duration) && line.duration > 0 ? line.duration : 0,
     line: line.text,
     words: line.words ?? [],
     plugin: {
