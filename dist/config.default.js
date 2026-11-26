@@ -351,6 +351,7 @@ export const config = {
         },
         audio: {
             processingMode: 'legacy',
+            musicAnalysis: false,
             quality: 'high',
             encryption: 'aead_xchacha20_poly1305_rtpsize',
             resamplingQuality: 'best',

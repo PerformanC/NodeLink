@@ -985,7 +985,8 @@ export class Player {
             !extraData.__resolvedFormat) {
             extraData.__resolvedFormat = resolvedUrlData.format;
         }
-        if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+        if (resolvedUrlData.isLive !== undefined &&
+            extraData.isLive === undefined) {
             extraData.isLive = resolvedUrlData.isLive;
         }
         if (resolvedUrlData.isEncrypted !== undefined &&
@@ -2681,10 +2682,12 @@ export class Player {
         const mixAdditionalData = {
             ...(urlData.additionalData ?? {})
         };
-        if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+        if (typeof urlData.format === 'string' &&
+            !mixAdditionalData.__resolvedFormat) {
             mixAdditionalData.__resolvedFormat = urlData.format;
         }
-        if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+        if (urlData.isLive !== undefined &&
+            mixAdditionalData.isLive === undefined) {
             mixAdditionalData.isLive = urlData.isLive;
         }
         if (urlData.isEncrypted !== undefined &&
@@ -2982,7 +2985,11 @@ export class Player {
      */
     toJSON() {
         logger('debug', 'Player', `[Action: toJSON] Method invoked for guild ${this.guildId}`);
+        const musicAnalysis = this.track && !this.isPaused
+            ? this._getAudioStream()?.getMusicAnalysis?.()
+            : null;
         return {
+            ...(musicAnalysis ? { musicAnalysis } : {}),
             guildId: this.guildId,
             track: this.track,
             volume: this.volumePercent,
