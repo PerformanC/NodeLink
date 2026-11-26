@@ -2289,6 +2289,12 @@ export class Player {
     })
   }
 
+  private _isSeekStale(token: number, track: PlayerTrack): boolean {
+    return (
+      token !== this._seekFadeToken || this.destroying || this.track !== track
+    )
+  }
+
   /**
    * Performs a seek operation to the requested position.
    *
@@ -2380,7 +2386,7 @@ export class Player {
           'No stream info URL available for seek. awaiting getTrackUrl.'
         )
         await sleep(1600)
-        if (this.destroying || this.track !== seekTrack) return false
+        if (this._isSeekStale(token, seekTrack)) return false
         if (!this.streamInfo?.url) {
           logger(
             'debug',
@@ -2393,7 +2399,7 @@ export class Player {
               audioTrackId: this.track.audioTrackId
             }
             const urlData = await this.nodelink.sources.getTrackUrl(trackInfo)
-            if (this.destroying || this.track !== seekTrack) return false
+            if (this._isSeekStale(token, seekTrack)) return false
             this.streamInfo = { ...urlData, trackInfo: this.track.info }
             logger(
               'debug',
@@ -2447,7 +2453,7 @@ export class Player {
 
       const startPosition = this._realPosition()
       const result = await seekPromise
-      if (this.destroying || this.track !== seekTrack) return false
+      if (this._isSeekStale(token, seekTrack)) return false
       this._fading('seek')
       if (result) {
         this.emitEvent(GatewayEvents.SEEK, {
@@ -2511,8 +2517,8 @@ export class Player {
       }
       return result
     } catch (e) {
-      if (this.destroying || this.track !== seekTrack) return false
-      if (fadedOut && token === this._seekFadeToken) this._fading('seek')
+      if (this._isSeekStale(token, seekTrack)) return false
+      if (fadedOut) this._fading('seek')
       logger('error', 'Player', `Seek failed for guild ${this.guildId}`, e)
       this._onError(e as Error)
       return false
@@ -2530,6 +2536,7 @@ export class Player {
   ): Promise<boolean> {
     if (!this.track) return false
     const seekTrack = this.track
+    const seekToken = this._seekFadeToken
 
     logger(
       'debug',
@@ -2554,7 +2561,7 @@ export class Player {
 
       const previousSession = await inputStream?.beginSeekHandoff?.()
 
-      if (this.destroying || this.track !== seekTrack) {
+      if (this._isSeekStale(seekToken, seekTrack)) {
         inputStream?.cancelSeekHandoff?.()
         return false
       }
@@ -2627,7 +2634,7 @@ export class Player {
         true
       )
 
-      if (this.destroying || this.track !== seekTrack) return false
+      if (this._isSeekStale(seekToken, seekTrack)) return false
       if (cachedResult) return true
 
       logger(
@@ -2640,7 +2647,7 @@ export class Player {
     const urlData =
       reuseUrlData || (await this.nodelink.sources.getTrackUrl(trackInfo))
 
-    if (this.destroying || this.track !== seekTrack) {
+    if (this._isSeekStale(seekToken, seekTrack)) {
       seekHandoff?.cancelSeekHandoff()
       return false
     }
@@ -2665,7 +2672,7 @@ export class Player {
         true
       )
 
-      if (this.destroying || this.track !== seekTrack) {
+      if (this._isSeekStale(seekToken, seekTrack)) {
         seekHandoff?.cancelSeekHandoff()
         return false
       }
@@ -2688,13 +2695,14 @@ export class Player {
   ): Promise<boolean> {
     if (!this.track) return false
     const seekTrack = this.track
+    const seekToken = this._seekFadeToken
     if (this.nodelink.options?.playback.mix?.enabled !== false) {
       await this._ensureAudioMixer()
-      if (this.destroying || this.track !== seekTrack) return false
+      if (this._isSeekStale(seekToken, seekTrack)) return false
     }
 
     await getStreamProcessor()
-    if (this.destroying || this.track !== seekTrack) return false
+    if (this._isSeekStale(seekToken, seekTrack)) return false
     const seekResourceFactory = createSeekeableAudioResource
     if (!seekResourceFactory) {
       return this._legacySeek(position, endTime)
@@ -2747,7 +2755,7 @@ export class Player {
             undefined,
             true
           )
-          if (this.destroying || this.track !== seekTrack) return false
+          if (this._isSeekStale(seekToken, seekTrack)) return false
           if (!fresh.exception && fresh.url && this.track) {
             const oldUrl = url as string
             this.streamInfo = {
@@ -2775,7 +2783,7 @@ export class Player {
           )
         }
       }
-      if (this.destroying || this.track !== seekTrack) return false
+      if (this._isSeekStale(seekToken, seekTrack)) return false
       if (!url) return false
 
       const source = this.nodelink.sources?.getSource?.(
@@ -2800,7 +2808,7 @@ export class Player {
           : this.getAudioProcessingMode(seekTrack.info)
       )
 
-      if (this.destroying || this.track !== seekTrack) {
+      if (this._isSeekStale(seekToken, seekTrack)) {
         if (!('exception' in resourceResult)) resourceResult.destroy()
         return false
       }
@@ -2848,7 +2856,7 @@ export class Player {
         'playerStateChange',
         (s: VoicePlayerState) => s.status === 'playing'
       )
-      if (this.destroying || this.track !== seekTrack) {
+      if (this._isSeekStale(seekToken, seekTrack)) {
         resource.destroy()
         return false
       }
@@ -2861,7 +2869,7 @@ export class Player {
       return true
     } catch (e) {
       /* INFO: A failed seek for the previous track must not start a legacy seek on its replacement. */
-      if (this.destroying || this.track !== seekTrack) return false
+      if (this._isSeekStale(seekToken, seekTrack)) return false
       const err = e as Error
       logger(
         'error',
@@ -2890,6 +2898,7 @@ export class Player {
   ): Promise<boolean> {
     if (!this.track) return false
     const seekTrack = this.track
+    const seekToken = this._seekFadeToken
 
     if (
       position < 0 ||
@@ -2918,7 +2927,7 @@ export class Player {
       this._isRecovering
     )
 
-    if (this.destroying || this.track !== seekTrack) return false
+    if (this._isSeekStale(seekToken, seekTrack)) return false
 
     this.streamInfo = { ...urlData, trackInfo: this.track.info }
 
@@ -2944,7 +2953,7 @@ export class Player {
       } catch {}
     }
 
-    if (this.destroying || this.track !== seekTrack) return false
+    if (this._isSeekStale(seekToken, seekTrack)) return false
 
     if (!this.connection || !this._isVoiceReady()) {
       this._onError(
@@ -2964,7 +2973,7 @@ export class Player {
     )
 
     /* INFO: A resource fetched for the old track must be released without replacing the current pipeline. */
-    if (this.destroying || this.track !== seekTrack) {
+    if (this._isSeekStale(seekToken, seekTrack)) {
       if (!('exception' in fetched)) fetched.stream.destroy()
       return false
     }
@@ -3010,7 +3019,7 @@ export class Player {
       (s: VoicePlayerState) => s.status === 'playing'
     )
 
-    if (this.destroying || this.track !== seekTrack) return false
+    if (this._isSeekStale(seekToken, seekTrack)) return false
 
     this._lyricsBasePosition = position
     this._lyricsBasePackets = this.connection?.statistics?.packetsExpected ?? 0
