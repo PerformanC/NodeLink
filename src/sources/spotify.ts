@@ -1345,8 +1345,14 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _attachCanvas(track: TrackData, id: string): Promise<void> {
     const pathfinder = process.env.NODELINK_SPOTIFY_CANVAS_MODE === 'pathfinder'
-    const token = pathfinder ? this.anonymousToken : this.mobileToken
-    const expiry = pathfinder ? this.anonymousTokenExpiry : this.mobileTokenExpiry
+    const useAuthenticatedMobile =
+      pathfinder && Boolean(this.config.sp_dc?.trim()) && !this.mobileAuthRejected && Boolean(this.mobileToken)
+    const token = pathfinder
+      ? (useAuthenticatedMobile ? this.mobileToken : this.anonymousToken)
+      : this.mobileToken
+    const expiry = pathfinder
+      ? (useAuthenticatedMobile ? this.mobileTokenExpiry : this.anonymousTokenExpiry)
+      : this.mobileTokenExpiry
     const state = !pathfinder && this.mobileAuthRejected
       ? 'authorization-rejected'
       : spotifyCanvasSessionState(token, expiry)
