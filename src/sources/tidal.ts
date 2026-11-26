@@ -289,9 +289,17 @@ export default class TidalSource {
     try {
       const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10
       if (this.config.officialSearch === true) {
-        const results = await this.officialClient.search(query, this.countryCode, limit, this.config)
+        const results = await this.officialClient.search(
+          query,
+          this.countryCode,
+          limit,
+          this.config
+        )
         if (!results.length) return { loadType: 'empty', data: {} }
-        return { loadType: 'search', data: results.map(item => this.buildEmbedTrack(item, 'tidal-v2')) }
+        return {
+          loadType: 'search',
+          data: results.map((item) => this.buildEmbedTrack(item, 'tidal-v2'))
+        }
       }
       const items = await tidalSearch(
         query,
@@ -420,7 +428,10 @@ export default class TidalSource {
     }
   }
 
-  private buildEmbedTrack(item: TidalEmbedTrack, metadataSource = 'tidal-embed') {
+  private buildEmbedTrack(
+    item: TidalEmbedTrack,
+    metadataSource = 'tidal-embed'
+  ) {
     const info: TrackInfo = {
       identifier: item.id,
       title: item.title,
@@ -742,9 +753,12 @@ export default class TidalSource {
   private async fetchCatalogExtras(
     id: string
   ): Promise<{ catalog?: unknown; preview?: unknown }> {
-    const token = this.config.enrichCatalog === true
-      ? await this.officialClient.accessToken(this.config).catch(() => undefined)
-      : undefined
+    const token =
+      this.config.enrichCatalog === true
+        ? await this.officialClient
+            .accessToken(this.config)
+            .catch(() => undefined)
+        : undefined
     const get = async (url: URL, init: RequestInit): Promise<unknown> => {
       try {
         const response = await fetch(url, {

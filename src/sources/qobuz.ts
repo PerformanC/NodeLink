@@ -1,5 +1,10 @@
 import crypto from 'node:crypto'
-import { buildQobuzMedia, filterQobuzIsrc, normalizeQobuzIsrc, qobuzAlbum } from '../modules/qobuzMedia.ts'
+import {
+  buildQobuzMedia,
+  filterQobuzIsrc,
+  normalizeQobuzIsrc,
+  qobuzAlbum
+} from '../modules/qobuzMedia.ts'
 import type {
   SourceResult,
   TrackInfo,

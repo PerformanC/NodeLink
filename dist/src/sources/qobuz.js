@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { buildQobuzMedia } from '../modules/qobuzMedia.js';
+import { buildQobuzMedia, filterQobuzIsrc, normalizeQobuzIsrc, qobuzAlbum } from '../modules/qobuzMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
@@ -195,13 +195,17 @@ export default class QobuzSource {
         if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
             return this.getRecommendations(query);
         }
+        const isrc = sourceTerm === 'qbisrc' ? normalizeQobuzIsrc(query) : undefined;
+        if (sourceTerm === 'qbisrc' && !isrc)
+            return { loadType: 'empty', data: {} };
         const data = await this.apiRequest('/catalog/search', {
-            query,
+            query: isrc ?? query,
             limit: this.getMaxSearchResults(),
             type: 'tracks'
         });
         const tracksBlock = this.asRecord(data?.tracks);
-        const items = this.asArrayRecords(tracksBlock?.items);
+        const candidates = this.asArrayRecords(tracksBlock?.items);
+        const items = isrc ? filterQobuzIsrc(candidates, isrc) : candidates;
         if (items.length === 0)
             return { loadType: 'empty', data: {} };
         const tracks = items.map((item) => this.buildTrack(item));
@@ -622,7 +626,7 @@ export default class QobuzSource {
     buildTrack(item, parentAlbum, parentArtist) {
         const artist = this.asRecord(item.artist);
         const performer = this.asRecord(item.performer);
-        const album = this.asRecord(item.album) ?? parentAlbum;
+        const album = qobuzAlbum(item, parentAlbum);
         const albumImage = this.asRecord(album?.image);
         const trackInfo = {
             identifier: String(item.id),
@@ -636,7 +640,11 @@ export default class QobuzSource {
             title: this.asString(item.title) || 'Unknown Title',
             uri: `https://open.qobuz.com/track/${item.id}`,
             artworkUrl: this.asString(albumImage?.large) ||
+                this.asString(albumImage?.extralarge) ||
+                this.asString(albumImage?.mega) ||
+                this.asString(albumImage?.medium) ||
                 this.asString(albumImage?.small) ||
+                this.asString(albumImage?.thumbnail) ||
                 null,
             isrc: this.asString(item.isrc) || null,
             sourceName: 'qobuz'

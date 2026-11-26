@@ -4,10 +4,10 @@
  */
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { resolveMediaCredential } from '../modules/mediaProviderConfig.js';
 import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.js';
 import { fetchTidalEmbed } from '../modules/tidalEmbed.js';
 import { buildTidalMedia } from '../modules/tidalMedia.js';
+import { TidalOfficialClient } from '../modules/tidalOfficial.js';
 import { matchingTidalAlbum, tidalSearch } from '../modules/tidalSearch.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 class TidalApiError extends Error {
@@ -218,12 +218,22 @@ export default class TidalSource {
      * @param sourceTerm - Source alias.
      * @returns Search result payload.
      */
+    officialClient = new TidalOfficialClient();
     async search(query, sourceTerm) {
         if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
             return this.getRecommendations(query);
         }
         try {
             const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10;
+            if (this.config.officialSearch === true) {
+                const results = await this.officialClient.search(query, this.countryCode, limit, this.config);
+                if (!results.length)
+                    return { loadType: 'empty', data: {} };
+                return {
+                    loadType: 'search',
+                    data: results.map((item) => this.buildEmbedTrack(item, 'tidal-v2'))
+                };
+            }
             const items = await tidalSearch(query, limit, (endpoint, params) => this.getJson(endpoint, params), this.config.alternateTrackSearch === true, (error) => error instanceof TidalApiError && error.statusCode === 401);
             if (items.length === 0)
                 return { loadType: 'empty', data: {} };
@@ -320,7 +330,7 @@ export default class TidalSource {
             }
         };
     }
-    buildEmbedTrack(item) {
+    buildEmbedTrack(item, metadataSource = 'tidal-embed') {
         const info = {
             identifier: item.id,
             title: item.title,
@@ -331,13 +341,13 @@ export default class TidalSource {
             position: 0,
             uri: `https://tidal.com/browse/track/${item.id}`,
             artworkUrl: item.artworkUrl,
-            isrc: null,
+            isrc: item.media.identifiers?.isrc ?? null,
             sourceName: 'tidal'
         };
         return {
             encoded: encodeTrack({ ...info, details: [] }),
             info,
-            pluginInfo: { media: item.media, metadataSource: 'tidal-embed' }
+            pluginInfo: { media: item.media, metadataSource }
         };
     }
     /**
@@ -563,7 +573,11 @@ export default class TidalSource {
     }
     /** Optional, independent metadata requests. Never use a v1 token on another API. */
     async fetchCatalogExtras(id) {
-        const token = resolveMediaCredential(this.config.enrichCatalog === true, process.env.NODELINK_TIDAL_METADATA_ACCESS_TOKEN, this.config.metadataAccessToken);
+        const token = this.config.enrichCatalog === true
+            ? await this.officialClient
+                .accessToken(this.config)
+                .catch(() => undefined)
+            : undefined;
         const get = async (url, init) => {
             try {
                 const response = await fetch(url, {

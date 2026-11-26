@@ -68,7 +68,7 @@ export function normalizeQobuzIsrc(value: unknown): string | undefined {
 export function filterQobuzIsrc(items: Data[], requested: string): Data[] {
   const code = normalizeQobuzIsrc(requested)
   if (!code) return []
-  return items.filter(item => normalizeQobuzIsrc(item.isrc) === code)
+  return items.filter((item) => normalizeQobuzIsrc(item.isrc) === code)
 }
 
 /** Reuse only an explicitly matching parent album, or the enclosing album for rows without an album ID. */
@@ -79,11 +79,19 @@ export function qobuzAlbum(item: Data, parentAlbum?: Data): Data | undefined {
   if (!parentId || (nestedId && nestedId !== parentId)) return nested
   const image = {
     ...record(parentAlbum?.image),
-    ...Object.fromEntries(Object.entries(record(nested?.image) ?? {}).filter(([, value]) => value != null && value !== ''))
+    ...Object.fromEntries(
+      Object.entries(record(nested?.image) ?? {}).filter(
+        ([, value]) => value != null && value !== ''
+      )
+    )
   }
   return {
     ...parentAlbum,
-    ...Object.fromEntries(Object.entries(nested ?? {}).filter(([, value]) => value != null && value !== '')),
+    ...Object.fromEntries(
+      Object.entries(nested ?? {}).filter(
+        ([, value]) => value != null && value !== ''
+      )
+    ),
     image
   }
 }

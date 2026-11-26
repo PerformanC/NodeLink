@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildQobuzMedia, qobuzCredits, filterQobuzIsrc, qobuzAlbum } from './qobuzMedia.ts'
+import {
+  buildQobuzMedia,
+  filterQobuzIsrc,
+  qobuzAlbum,
+  qobuzCredits
+} from './qobuzMedia.ts'
 
 test('normalizes Qobuz catalog, explicit recording credits, images and advertised audio limits', () => {
   const media = buildQobuzMedia(
@@ -79,14 +84,38 @@ test('does not mix another album or artist, or fabricate invalid values', () => 
 test('ISRC filtering excludes unrelated recordings and malformed identifiers', () => {
   const exact = { id: 1, isrc: 'USUM71900764' }
   const alternate = { id: 2, isrc: 'us-um7-19-00764' }
-  assert.deepEqual(filterQobuzIsrc([exact, alternate, { id: 3, isrc: 'USUM71912813' }, { id: 4 }], 'USUM71900764'), [exact, alternate])
+  assert.deepEqual(
+    filterQobuzIsrc(
+      [exact, alternate, { id: 3, isrc: 'USUM71912813' }, { id: 4 }],
+      'USUM71900764'
+    ),
+    [exact, alternate]
+  )
   assert.deepEqual(filterQobuzIsrc([exact], 'bad guy'), [])
 })
 
 test('partial matching album image inherits available sizes without mixing albums', () => {
-  const parent = { id: 'a', image: { large: 'https://static.qobuz.com/large.jpg', small: 'https://static.qobuz.com/small.jpg' }, upc: '00602577427657' }
-  const item = { album: { id: 'a', image: { large: null, small: 'https://static.qobuz.com/alternate.jpg' } } }
-  assert.deepEqual(qobuzAlbum(item, parent)?.image, { large: parent.image.large, small: 'https://static.qobuz.com/alternate.jpg' })
+  const parent = {
+    id: 'a',
+    image: {
+      large: 'https://static.qobuz.com/large.jpg',
+      small: 'https://static.qobuz.com/small.jpg'
+    },
+    upc: '00602577427657'
+  }
+  const item = {
+    album: {
+      id: 'a',
+      image: { large: null, small: 'https://static.qobuz.com/alternate.jpg' }
+    }
+  }
+  assert.deepEqual(qobuzAlbum(item, parent)?.image, {
+    large: parent.image.large,
+    small: 'https://static.qobuz.com/alternate.jpg'
+  })
   assert.equal(buildQobuzMedia(item, parent).album?.artwork?.length, 2)
-  assert.equal(buildQobuzMedia({ album: { id: 'b' } }, parent).identifiers, undefined)
+  assert.equal(
+    buildQobuzMedia({ album: { id: 'b' } }, parent).identifiers,
+    undefined
+  )
 })

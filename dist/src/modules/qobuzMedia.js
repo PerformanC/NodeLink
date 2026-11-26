@@ -51,16 +51,36 @@ export function qobuzCredits(value) {
     }
     return result;
 }
-export function buildQobuzMedia(item, parentAlbum, parentArtist) {
+/** Only accept exact recording identifiers in an ISRC search. */
+export function normalizeQobuzIsrc(value) {
+    const code = text(value)?.replace(/-/g, '').toUpperCase();
+    return code && /^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$/.test(code) ? code : undefined;
+}
+export function filterQobuzIsrc(items, requested) {
+    const code = normalizeQobuzIsrc(requested);
+    if (!code)
+        return [];
+    return items.filter((item) => normalizeQobuzIsrc(item.isrc) === code);
+}
+/** Reuse only an explicitly matching parent album, or the enclosing album for rows without an album ID. */
+export function qobuzAlbum(item, parentAlbum) {
     const nested = record(item.album);
     const parentId = id(parentAlbum?.id);
     const nestedId = id(nested?.id);
-    const album = parentId && (!nestedId || nestedId === parentId)
-        ? {
-            ...parentAlbum,
-            ...Object.fromEntries(Object.entries(nested ?? {}).filter(([, value]) => value != null))
-        }
-        : nested;
+    if (!parentId || (nestedId && nestedId !== parentId))
+        return nested;
+    const image = {
+        ...record(parentAlbum?.image),
+        ...Object.fromEntries(Object.entries(record(nested?.image) ?? {}).filter(([, value]) => value != null && value !== ''))
+    };
+    return {
+        ...parentAlbum,
+        ...Object.fromEntries(Object.entries(nested ?? {}).filter(([, value]) => value != null && value !== '')),
+        image
+    };
+}
+export function buildQobuzMedia(item, parentAlbum, parentArtist) {
+    const album = qobuzAlbum(item, parentAlbum);
     const artists = new Map();
     for (const raw of [item.artist, item.performer]) {
         const artist = record(raw);
