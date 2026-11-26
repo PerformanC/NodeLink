@@ -45,6 +45,27 @@ function relations(value) {
     }
     return { credits, workMbids: [...works] };
 }
+function releaseGroups(value) {
+    const seen = new Set();
+    return list(value)
+        .slice(0, 100)
+        .flatMap((raw) => {
+        const group = record(raw);
+        const id = mbid(group.id);
+        const title = name(group.title);
+        if (!id || !title || seen.has(id))
+            return [];
+        seen.add(id);
+        return [
+            {
+                mbid: id,
+                title,
+                firstReleaseDate: name(group['first-release-date']),
+                type: name(group['primary-type'])
+            }
+        ];
+    });
+}
 /** Return distinct recording candidates rather than guessing which version is correct. */
 export function musicBrainzRecordings(payload, isrc) {
     const root = record(payload);
@@ -82,7 +103,8 @@ export function musicBrainzRecordings(payload, isrc) {
                 item.length >= 0
                 ? { durationMs: item.length }
                 : {}),
-            ...relations(item.relations)
+            ...relations(item.relations),
+            releaseGroups: releaseGroups(item['release-groups'])
         });
     }
     return { provider: 'musicbrainz', isrc, recordings };
@@ -154,5 +176,24 @@ export function fanartArtist(payload, id) {
             ...fanartImages(root.hdmusiclogo),
             ...fanartImages(root.musiclogo)
         ])
+    };
+}
+/** Official v3.2 album arrays and legacy maps, keyed by exact release-group MBID. */
+export function fanartAlbum(payload, id) {
+    const root = record(payload);
+    const albums = root.albums;
+    const item = Array.isArray(albums)
+        ? albums.map(record).find((album) => mbid(album.release_group_id) === id)
+        : record(record(albums)[id]);
+    if (!item || !Object.keys(item).length)
+        return null;
+    if (item.release_group_id !== undefined && mbid(item.release_group_id) !== id)
+        return null;
+    return {
+        provider: 'fanart.tv',
+        releaseGroupMbid: id,
+        artistName: name(root.name),
+        artwork: fanartImages(item.albumcover),
+        discArtwork: fanartImages(item.cdart)
     };
 }

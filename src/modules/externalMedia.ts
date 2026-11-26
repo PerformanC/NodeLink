@@ -53,14 +53,23 @@ function relations(value: unknown) {
 
 function releaseGroups(value: unknown) {
   const seen = new Set<string>()
-  return list(value).slice(0,100).flatMap(raw => {
-    const group = record(raw)
-    const id = mbid(group.id)
-    const title = name(group.title)
-    if (!id || !title || seen.has(id)) return []
-    seen.add(id)
-    return [{mbid:id,title,firstReleaseDate:name(group['first-release-date']),type:name(group['primary-type'])}]
-  })
+  return list(value)
+    .slice(0, 100)
+    .flatMap((raw) => {
+      const group = record(raw)
+      const id = mbid(group.id)
+      const title = name(group.title)
+      if (!id || !title || seen.has(id)) return []
+      seen.add(id)
+      return [
+        {
+          mbid: id,
+          title,
+          firstReleaseDate: name(group['first-release-date']),
+          type: name(group['primary-type'])
+        }
+      ]
+    })
 }
 
 /** Return distinct recording candidates rather than guessing which version is correct. */
@@ -184,10 +193,11 @@ export function fanartAlbum(payload: unknown, id: string) {
   const root = record(payload)
   const albums = root.albums
   const item = Array.isArray(albums)
-    ? albums.map(record).find(album => mbid(album.release_group_id) === id)
+    ? albums.map(record).find((album) => mbid(album.release_group_id) === id)
     : record(record(albums)[id])
   if (!item || !Object.keys(item).length) return null
-  if (item.release_group_id !== undefined && mbid(item.release_group_id) !== id) return null
+  if (item.release_group_id !== undefined && mbid(item.release_group_id) !== id)
+    return null
   return {
     provider: 'fanart.tv',
     releaseGroupMbid: id,

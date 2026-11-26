@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  fanartArtist,
   fanartAlbum,
+  fanartArtist,
   musicBrainzRecordings,
   musicBrainzWork
 } from './externalMedia.ts'
@@ -210,19 +210,62 @@ test('preserves environment compatibility and honors explicit provider disable',
 })
 
 test('preserves distinct release groups without choosing an edition', () => {
-  const result = musicBrainzRecordings({isrc,recordings:[{id,title:'Song','release-groups':[{id:artist,title:'Album','primary-type':'Album','first-release-date':'2013-05-20'},{id:artist,title:'Duplicate'},{id:'invalid',title:'Unknown'}]}]},isrc)
-  assert.deepEqual(result?.recordings[0]?.releaseGroups,[{mbid:artist,title:'Album',type:'Album',firstReleaseDate:'2013-05-20'}])
+  const result = musicBrainzRecordings(
+    {
+      isrc,
+      recordings: [
+        {
+          id,
+          title: 'Song',
+          'release-groups': [
+            {
+              id: artist,
+              title: 'Album',
+              'primary-type': 'Album',
+              'first-release-date': '2013-05-20'
+            },
+            { id: artist, title: 'Duplicate' },
+            { id: 'invalid', title: 'Unknown' }
+          ]
+        }
+      ]
+    },
+    isrc
+  )
+  assert.deepEqual(result?.recordings[0]?.releaseGroups, [
+    {
+      mbid: artist,
+      title: 'Album',
+      type: 'Album',
+      firstReleaseDate: '2013-05-20'
+    }
+  ])
 })
 
-test('Fanart album artwork matches only the requested release group in both response formats',()=>{
-  const cover={url:'https://assets.fanart.tv/cover.jpg',width:'1000',height:'1000'}
-  const disc={url:'https://assets.fanart.tv/disc.png'}
-  const item={release_group_id:id,albumcover:[cover],cdart:[disc]}
-  for(const albums of [[{release_group_id:artist,albumcover:[disc]},item],{[id]:item}]){
-    const result=fanartAlbum({albums,name:'Artist'},id)
-    assert.deepEqual(result?.artwork,[{url:cover.url,width:1000,height:1000}])
-    assert.deepEqual(result?.discArtwork,[disc])
+test('Fanart album artwork matches only the requested release group in both response formats', () => {
+  const cover = {
+    url: 'https://assets.fanart.tv/cover.jpg',
+    width: '1000',
+    height: '1000'
   }
-  assert.equal(fanartAlbum({albums:[{release_group_id:artist}]},id),null)
-  assert.equal(fanartAlbum({albums:{[id]:{release_group_id:artist}}},id),null)
+  const disc = { url: 'https://assets.fanart.tv/disc.png' }
+  const item = { release_group_id: id, albumcover: [cover], cdart: [disc] }
+  for (const albums of [
+    [{ release_group_id: artist, albumcover: [disc] }, item],
+    { [id]: item }
+  ]) {
+    const result = fanartAlbum({ albums, name: 'Artist' }, id)
+    assert.deepEqual(result?.artwork, [
+      { url: cover.url, width: 1000, height: 1000 }
+    ])
+    assert.deepEqual(result?.discArtwork, [disc])
+  }
+  assert.equal(
+    fanartAlbum({ albums: [{ release_group_id: artist }] }, id),
+    null
+  )
+  assert.equal(
+    fanartAlbum({ albums: { [id]: { release_group_id: artist } } }, id),
+    null
+  )
 })

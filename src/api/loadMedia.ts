@@ -1,6 +1,6 @@
 import {
-  fanartArtist,
   fanartAlbum,
+  fanartArtist,
   mbid,
   mediaIsrc,
   musicBrainzRecordings,
@@ -34,7 +34,10 @@ const handler: ApiRouteHandler = async (
     return sendResponse(
       req,
       res,
-      { error: 'Specify exactly one of isrc, workMbid, artistMbid or releaseGroupMbid' },
+      {
+        error:
+          'Specify exactly one of isrc, workMbid, artistMbid or releaseGroupMbid'
+      },
       400
     )
   }
@@ -59,7 +62,7 @@ const handler: ApiRouteHandler = async (
       `${key}:${id}`,
       url,
       { 'api-key': projectKey, Accept: 'application/json' },
-      (data) => album ? fanartAlbum(data, id) : fanartArtist(data, id)
+      (data) => (album ? fanartAlbum(data, id) : fanartArtist(data, id))
     )
     return sendResponse(
       req,
