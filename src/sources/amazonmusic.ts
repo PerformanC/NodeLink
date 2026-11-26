@@ -1,4 +1,4 @@
-import { buildAmazonMedia } from '../modules/amazonMusicMedia.ts'
+import { amazonTrackIdentity, buildAmazonMedia } from '../modules/amazonMusicMedia.ts'
 import type { AmazonMusicSourceConfig } from '../typings/config/config.types.ts'
 import type {
   SourceInstance,
@@ -501,18 +501,18 @@ export default class AmazonMusicSource implements SourceInstance {
           'Unknown Artist'
         const trackTitle = trackData.name || trackData.title || 'Unknown Track'
         const trackImage = trackData.image || artworkUrl
-        const trackId =
-          targetId ||
-          this.extractIdentifier(trackData.url || trackData['@id'] || url) ||
-          url.split('/').pop() ||
-          'am-unknown'
+        const identity = amazonTrackIdentity(
+          trackData,
+          targetId ?? this.extractIdentifier(url) ?? undefined
+        )
+        if (!identity) return null
 
         return this.buildTrackResult(
           trackTitle,
           artist,
-          trackData.url || url,
+          identity.uri,
           trackImage,
-          trackId,
+          identity.id,
           this.parseISO8601Duration(trackData.duration),
           trackData.isrcCode || null,
           trackData

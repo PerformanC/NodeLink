@@ -19,7 +19,7 @@ type Resource = {
 /** Only extract IDs from canonical Amazon Music resource URLs. */
 function resourceId(
   value: string | undefined,
-  kind: 'artists' | 'albums'
+  kind: 'artists' | 'albums' | 'tracks'
 ): string | undefined {
   if (typeof value !== 'string') return undefined
   try {
@@ -31,13 +31,29 @@ function resourceId(
       )
     )
       return undefined
-    if (url.username || url.password) return undefined
+    if (url.username || url.password || url.port) return undefined
     return url.pathname.match(
       new RegExp(`^/${kind}/([A-Z0-9]{10})/?$`, 'i')
     )?.[1]
   } catch {
     return undefined
   }
+}
+
+/** Keep the recording identifier and URI tied to the same trusted resource. */
+export function amazonTrackIdentity(
+  resource: { url?: string; '@id'?: string },
+  requestedId?: string
+): { id: string; uri: string } | undefined {
+  for (const candidate of [resource.url, resource['@id']]) {
+    const id = resourceId(candidate, 'tracks')
+    if (id && candidate) return { id: id.toUpperCase(), uri: candidate }
+  }
+  if (typeof requestedId === 'string' && /^[A-Z0-9]{10}$/i.test(requestedId)) {
+    const id = requestedId.toUpperCase()
+    return { id, uri: `https://music.amazon.com/tracks/${id}` }
+  }
+  return undefined
 }
 
 /** Normalizes only existing Amazon Music metadata, with no additional requests. */
