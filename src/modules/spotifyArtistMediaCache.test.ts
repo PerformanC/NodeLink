@@ -13,7 +13,10 @@ test('merges artist artwork and coalesces concurrent lookups', async () => {
     return { id: artistId, name: 'Artist', artwork: [image], banners: [banner] }
   })
   const artists = [{ id, name: 'Original', artwork: [image] }]
-  const [first, second] = await Promise.all([cache.enrich(artists), cache.enrich(artists)])
+  const [first, second] = await Promise.all([
+    cache.enrich(artists),
+    cache.enrich(artists)
+  ])
   assert.deepEqual(first, [{ ...artists[0], banners: [banner] }])
   assert.deepEqual(second, first)
   assert.equal(calls, 1)
@@ -24,12 +27,15 @@ test('merges artist artwork and coalesces concurrent lookups', async () => {
 test('expires successful results and does not cache failures or wrong IDs', async () => {
   let time = 0
   let calls = 0
-  const cache = new SpotifyArtistMediaCache(async (artistId) => {
-    calls++
-    if (calls === 1) throw new Error('network')
-    if (calls === 2) return { id: 'wrong', name: 'Wrong', artwork: [image] }
-    return { id: artistId, name: 'Artist', banners: [banner] }
-  }, () => time)
+  const cache = new SpotifyArtistMediaCache(
+    async (artistId) => {
+      calls++
+      if (calls === 1) throw new Error('network')
+      if (calls === 2) return { id: 'wrong', name: 'Wrong', artwork: [image] }
+      return { id: artistId, name: 'Artist', banners: [banner] }
+    },
+    () => time
+  )
   const artists = [{ id, name: 'Artist' }]
   assert.deepEqual(await cache.enrich(artists), artists)
   assert.deepEqual(await cache.enrich(artists), artists)
@@ -49,6 +55,9 @@ test('limits per-track requests and preserves artist order', async () => {
   const artists = ids.map((artistId) => ({ id: artistId, name: artistId }))
   const result = await cache.enrich(artists)
   assert.deepEqual(calls, ids.slice(0, 3))
-  assert.deepEqual(result.map((artist) => artist.id), ids)
+  assert.deepEqual(
+    result.map((artist) => artist.id),
+    ids
+  )
   assert.equal(result[3]?.banners, undefined)
 })

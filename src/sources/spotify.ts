@@ -265,17 +265,20 @@ export default class SpotifySource implements SourceInstance {
    */
   private inFlightResolves = new Map<string, Promise<SourceResult>>()
 
-  private readonly artistMediaCache = new SpotifyArtistMediaCache(async (id) => {
-    const data = await this._internalApiRequest<SpotifyGraphQLArtistResponse>(
-      QUERIES.getArtist,
-      { uri: `spotify:artist:${id}`, locale: 'en', includePrerelease: false },
-      'anonymous',
-      0,
-      true
-    )
-    if (!data?.artistUnion || data.artistUnion.__typename === 'NotFound') return undefined
-    return buildSpotifyArtistMedia(data.artistUnion, id)?.artists[0]
-  })
+  private readonly artistMediaCache = new SpotifyArtistMediaCache(
+    async (id) => {
+      const data = await this._internalApiRequest<SpotifyGraphQLArtistResponse>(
+        QUERIES.getArtist,
+        { uri: `spotify:artist:${id}`, locale: 'en', includePrerelease: false },
+        'anonymous',
+        0,
+        true
+      )
+      if (!data?.artistUnion || data.artistUnion.__typename === 'NotFound')
+        return undefined
+      return buildSpotifyArtistMedia(data.artistUnion, id)?.artists[0]
+    }
+  )
 
   /**
    * Prevents duplicate in-flight track delegation lookups.
@@ -1346,7 +1349,10 @@ export default class SpotifySource implements SourceInstance {
       if (data) {
         const track = this._buildTrack(data)
         if (track) {
-          await Promise.all([this._attachCanvas(track, id), this._attachArtistMedia(track)])
+          await Promise.all([
+            this._attachCanvas(track, id),
+            this._attachArtistMedia(track)
+          ])
           return { loadType: 'track', data: track }
         }
       }

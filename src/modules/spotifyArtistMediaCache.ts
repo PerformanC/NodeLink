@@ -6,7 +6,10 @@ type FetchArtist = (id: string) => Promise<Artist | undefined>
 
 /** Per-source, bounded cache of successful artist artwork lookups. */
 export class SpotifyArtistMediaCache {
-  private readonly entries = new Map<string, { artist: Artist; expires: number }>()
+  private readonly entries = new Map<
+    string,
+    { artist: Artist; expires: number }
+  >()
   private readonly pending = new Map<string, Promise<Artist | undefined>>()
 
   private readonly fetchArtist: FetchArtist
@@ -28,7 +31,12 @@ export class SpotifyArtistMediaCache {
     const task = Promise.resolve()
       .then(() => this.fetchArtist(id))
       .then((artist) => {
-        if (!artist || artist.id !== id || (!artist.artwork?.length && !artist.banners?.length)) return undefined
+        if (
+          !artist ||
+          artist.id !== id ||
+          (!artist.artwork?.length && !artist.banners?.length)
+        )
+          return undefined
         this.entries.set(id, { artist, expires: this.now() + 15 * 60_000 })
         if (this.entries.size > 128) {
           const oldest = this.entries.keys().next().value
@@ -43,15 +51,29 @@ export class SpotifyArtistMediaCache {
   }
 
   async enrich(artists: Artist[]): Promise<Artist[]> {
-    const ids = [...new Set(artists.flatMap((artist) => artist.id ? [artist.id] : []))].slice(0, 3)
-    const results = await Promise.all(ids.map(async (id) => [id, await this.get(id)] as const))
+    const ids = [
+      ...new Set(artists.flatMap((artist) => (artist.id ? [artist.id] : [])))
+    ].slice(0, 3)
+    const results = await Promise.all(
+      ids.map(async (id) => [id, await this.get(id)] as const)
+    )
     const byId = new Map(results)
     return artists.map((artist) => {
       const detail = artist.id ? byId.get(artist.id) : undefined
       if (!detail) return artist
-      const artwork = normalizeMediaImages([...(artist.artwork ?? []), ...(detail.artwork ?? [])])
-      const banners = normalizeMediaImages([...(artist.banners ?? []), ...(detail.banners ?? [])])
-      return { ...artist, ...(artwork.length ? { artwork } : {}), ...(banners.length ? { banners } : {}) }
+      const artwork = normalizeMediaImages([
+        ...(artist.artwork ?? []),
+        ...(detail.artwork ?? [])
+      ])
+      const banners = normalizeMediaImages([
+        ...(artist.banners ?? []),
+        ...(detail.banners ?? [])
+      ])
+      return {
+        ...artist,
+        ...(artwork.length ? { artwork } : {}),
+        ...(banners.length ? { banners } : {})
+      }
     })
   }
 }

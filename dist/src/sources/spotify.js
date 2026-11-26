@@ -1,3 +1,4 @@
+import { SpotifyArtistMediaCache } from '../modules/spotifyArtistMediaCache.js';
 import { getLocalToken } from '../modules/spotifyAuth.js';
 import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.js';
 import { fetchCanvas } from '../modules/spotifyCanvas.js';
@@ -191,6 +192,12 @@ export default class SpotifySource {
      * @internal
      */
     inFlightResolves = new Map();
+    artistMediaCache = new SpotifyArtistMediaCache(async (id) => {
+        const data = await this._internalApiRequest(QUERIES.getArtist, { uri: `spotify:artist:${id}`, locale: 'en', includePrerelease: false }, 'anonymous', 0, true);
+        if (!data?.artistUnion || data.artistUnion.__typename === 'NotFound')
+            return undefined;
+        return buildSpotifyArtistMedia(data.artistUnion, id)?.artists[0];
+    });
     /**
      * Prevents duplicate in-flight track delegation lookups.
      * @internal
@@ -1036,6 +1043,7 @@ export default class SpotifySource {
                         this.config.extractColors === true;
                     const tasks = [];
                     tasks.push(this._attachCanvas(track, id));
+                    tasks.push(this._attachArtistMedia(track));
                     if (!track.info.isrc) {
                         tasks.push(this._fetchTrackIsrc(id)
                             .then((isrc) => {
@@ -1076,12 +1084,27 @@ export default class SpotifySource {
             if (data) {
                 const track = this._buildTrack(data);
                 if (track) {
-                    await this._attachCanvas(track, id);
+                    await Promise.all([
+                        this._attachCanvas(track, id),
+                        this._attachArtistMedia(track)
+                    ]);
                     return { loadType: 'track', data: track };
                 }
             }
         }
         return { loadType: 'empty', data: {} };
+    }
+    /** Optional artist artwork enrichment for explicit single-track resolutions. */
+    async _attachArtistMedia(track) {
+        if (this.config.enrichArtists !== true || !this.anonymousToken)
+            return;
+        const media = track.pluginInfo.media;
+        if (!media?.artists.length)
+            return;
+        const artists = await this.artistMediaCache.enrich(media.artists);
+        const current = track.pluginInfo.media;
+        if (current)
+            track.pluginInfo.media = { ...current, artists };
     }
     /**
      * Enriches a resolved track using only the existing mobile Canvas session.
