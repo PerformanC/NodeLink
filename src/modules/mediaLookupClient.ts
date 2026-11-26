@@ -1,12 +1,14 @@
+type MediaRequest = (url: string, init: RequestInit) => Promise<Response>
+
 /** Bounded, opt-in external metadata requests. No playback or media proxying. */
 export class MediaLookupClient {
   private readonly cache = new Map<string, { until: number; value: unknown }>()
   private busy = false
   private nextRequest = 0
 
-  private readonly request: typeof fetch
+  private readonly request: MediaRequest
 
-  constructor(request: typeof fetch = fetch) {
+  constructor(request: MediaRequest = fetch) {
     this.request = request
   }
 
