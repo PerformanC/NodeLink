@@ -7,6 +7,7 @@ import {
   buildSpotifyMedia,
   buildSpotifyArtistMedia,
   readOfficialSpotifyIsrc,
+  readSpotifyMetadataIsrc,
   normalizeSpotifyDynamicColors,
   selectSpotifyCanvas,
   spotifyCanvasSessionState
@@ -32,7 +33,6 @@ import type {
   SpotifyGraphQLSearchResponse,
   SpotifyGraphQLShowResponse,
   SpotifyGraphQLTrack,
-  SpotifyMetadataResponse,
   SpotifyPagingObject,
   SpotifyPlaylist,
   SpotifyPlaylistItem,
@@ -582,7 +582,8 @@ export default class SpotifySource implements SourceInstance {
     tier: SpotifyTokenType = 'official',
     options: Record<string, unknown> = {},
     retry = 0,
-    singleAttempt = false
+    singleAttempt = false,
+    onAttempt?: (event: { outcome: 'missing-token' | 'http' | 'request-error'; status?: number }) => void
   ): Promise<T | null> {
     const ok = await this._ensureToken(tier)
     const token =
@@ -593,7 +594,10 @@ export default class SpotifySource implements SourceInstance {
           : this.mobileToken
 
     if (!ok || !token) {
-      if (singleAttempt) return null
+      if (singleAttempt) {
+        onAttempt?.({ outcome: 'missing-token' })
+        return null
+      }
       const next =
         tier === 'official'
           ? 'anonymous'
@@ -627,6 +631,7 @@ export default class SpotifySource implements SourceInstance {
       const res = await http1makeRequest(url, { ...options, headers })
 
       if (singleAttempt) {
+        onAttempt?.({ outcome: 'http', status: res.statusCode })
         return res.statusCode === 200 || res.statusCode === 201 ? res.body as T : null
       }
 
@@ -701,6 +706,10 @@ export default class SpotifySource implements SourceInstance {
 
       return res.body as T
     } catch (e) {
+      if (singleAttempt && onAttempt) {
+        onAttempt({ outcome: 'request-error' })
+        return null
+      }
       logger(
         'error',
         'Spotify',
@@ -759,50 +768,44 @@ export default class SpotifySource implements SourceInstance {
     return res?.data || null
   }
 
-  /**
-   * Fetches advanced track metadata (including ISRC) using the internal Client API.
-   * IDs must be converted to hex format for this legacy-oriented endpoint.
-   *
-   * @param id - Spotify Base62 ID.
-   * @returns Resolves to metadata object or null.
-   * @internal
-   */
+  /** Resolve an ISRC with existing authorized catalog access, without credential switching. */
   private async _fetchTrackIsrc(id: string): Promise<string | undefined> {
     if (!/^[A-Za-z0-9]{22}$/.test(id)) return undefined
+    const diagnose = (event: Record<string, unknown>) =>
+      logger('debug', 'SpotifyISRC', `Track ${id}: ${JSON.stringify(event)}`)
     if (this.config.clientId && this.config.clientSecret) {
       const track = await this._apiRequest<SpotifyTrack>(
-        `/tracks/${id}?market=${this.market}`, 'official', {}, 0, true
+        `/tracks/${id}?market=${this.market}`, 'official', {}, 0, true,
+        event => diagnose({ source: 'official', ...event })
       )
-      return readOfficialSpotifyIsrc(track, id)
+      const isrc = readOfficialSpotifyIsrc(track, id)
+      if (track) diagnose({ source: 'official', outcome: isrc ? 'found' : 'missing-or-mismatched-isrc' })
+      return isrc
     }
-    if (this.mobileAuthRejected) return undefined
-    const meta = await this._fetchTrackMetadata(id)
-    return mediaDetails({ identifiers: { isrc: meta?.external_id?.find((entry) => entry.type === 'isrc')?.id } }).identifiers?.isrc
-  }
-
-  private async _fetchTrackMetadata(
-    id: string
-  ): Promise<SpotifyMetadataResponse | null> {
+    diagnose({ source: 'official', outcome: 'not-configured' })
+    if (this.mobileAuthRejected) {
+      diagnose({ source: 'mobile', outcome: 'authorization-rejected' })
+      return undefined
+    }
     const hex = this._base62ToHex(id)
-    if (!hex) return null
-    const url = `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`
-    const body = await this._apiRequest<unknown>(url, 'mobile', {
-      responseType: 'buffer'
-    }, 0, true)
-    if (!body) return null
-
+    if (!hex) return undefined
+    const body = await this._apiRequest<unknown>(
+      `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`,
+      'mobile', { responseType: 'buffer' }, 0, true,
+      event => diagnose({ source: 'mobile', ...event })
+    )
+    if (!body) return undefined
+    let metadata: unknown = body
     if (Buffer.isBuffer(body)) {
-      try {
-        return JSON.parse(body.toString()) as SpotifyMetadataResponse
-      } catch {
-        const raw = body.toString()
-        const isrc = raw.match(/[A-Z0-9]{12}/)
-        if (isrc) return { external_id: [{ type: 'isrc', id: isrc[0] }] }
+      try { metadata = JSON.parse(body.toString('utf8')) }
+      catch {
+        diagnose({ source: 'mobile', outcome: 'unsupported-binary-metadata' })
+        return undefined
       }
-    } else if (typeof body === 'object') {
-      return body as SpotifyMetadataResponse
     }
-    return null
+    const isrc = readSpotifyMetadataIsrc(metadata)
+    diagnose({ source: 'mobile', outcome: isrc ? 'found' : 'missing-or-ambiguous-isrc' })
+    return isrc
   }
 
   /**

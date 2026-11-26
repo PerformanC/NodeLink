@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeSpotifyDynamicColors, readOfficialSpotifyIsrc, buildSpotifyArtistMedia, buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
+import { readSpotifyMetadataIsrc, normalizeSpotifyDynamicColors, readOfficialSpotifyIsrc, buildSpotifyArtistMedia, buildSpotifyMedia, spotifyCanvasMedia, selectSpotifyCanvas, spotifyCanvasSessionState } from './spotifyMedia.ts'
 
 test('normalizes official artist and album metadata with image dimensions', () => {
   assert.deepEqual(buildSpotifyMedia({ artists: [{ id: 'a', name: 'Artist' }], album: { id: 'b', name: 'Album', images: [{ url: 'https://example.com/cover', width: 640, height: 640 }] } }), {
@@ -101,4 +101,12 @@ test('rejects ambiguous, failed and malformed dynamic palettes', () => {
   assert.equal(normalizeSpotifyDynamicColors({ dynamicColors: [{ status: 'ERROR' }] }), undefined)
   assert.equal(normalizeSpotifyDynamicColors(null), undefined)
   assert.deepEqual(mediaDetails({ colors: { dark: '#ffffff', palette: { bestFit: 'dark', dark: { highContrast: { textBase: 'bad' } } } } }), { colors: { dark: '#FFFFFF' } })
+})
+
+test('reads only unambiguous explicitly typed legacy ISRCs', () => {
+  assert.equal(readSpotifyMetadataIsrc({ external_id: [{ type: 'upc', id: 'USUG12205736' }, { type: 'isrc', id: 'usug12205736' }] }), 'USUG12205736')
+  assert.equal(readSpotifyMetadataIsrc({ external_id: [{ type: 'isrc', id: 'USUG12205736' }, { type: 'isrc', id: 'USUG12205737' }] }), undefined)
+  assert.equal(readSpotifyMetadataIsrc({ external_id: [{ type: 'upc', id: 'USUG12205736' }] }), undefined)
+  assert.equal(readSpotifyMetadataIsrc({ external_id: {} }), undefined)
+  assert.equal(readSpotifyMetadataIsrc('USUG12205736'), undefined)
 })

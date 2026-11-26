@@ -175,3 +175,17 @@ export function normalizeSpotifyDynamicColors(input: unknown): MediaColors | und
   const light = palette.light?.highContrast?.backgroundBase
   return { ...(dark ? { dark } : {}), ...(light ? { light } : {}), palette }
 }
+
+/** Read only explicitly identified ISRCs from the legacy metadata response. */
+export function readSpotifyMetadataIsrc(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined
+  const ids = (input as Record<string, unknown>).external_id
+  if (!Array.isArray(ids)) return undefined
+  const values = new Set<string>()
+  for (const entry of ids) {
+    if (!entry || typeof entry !== 'object' || entry.type !== 'isrc') continue
+    const isrc = mediaDetails({ identifiers: { isrc: entry.id } }).identifiers?.isrc
+    if (isrc) values.add(isrc)
+  }
+  return values.size === 1 ? [...values][0] : undefined
+}
