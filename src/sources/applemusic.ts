@@ -1,4 +1,4 @@
-import { appleMusicArtists } from '../modules/appleMusicMedia.ts'
+import { appleMusicArtists, appleMusicMotion } from '../modules/appleMusicMedia.ts'
 import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type { AppleMusicSourceConfig } from '../typings/config/config.types.ts'
 import type {
@@ -542,13 +542,29 @@ export default class AppleMusicSource implements SourceInstance {
     id: string,
     country: string
   ): Promise<SourceResult> {
+    const path = `/catalog/${country}/songs/${id}?extend=artistUrl,editorialVideo&include=albums,artists`
     const data = await this.apiRequest<{ data: AppleMusicResource[] }>(
-      `/catalog/${country}/songs/${id}?extend=artistUrl,editorialVideo&include=albums,artists`
-    )
+      `${path}&extend%5Balbums%5D=editorialVideo`
+    ) ?? await this.apiRequest<{ data: AppleMusicResource[] }>(path)
     const song = data?.data?.[0]
     if (!song) return { loadType: 'empty', data: {} }
 
-    const track = this.buildTrack(song)
+    let album = song.relationships?.albums?.data?.[0]
+    // Some responses omit extended attributes on included resources.
+    // Only enrich explicit single-track resolution, never every search/playlist item.
+    if (
+      album && /^\d+$/.test(album.id) &&
+      !appleMusicMotion(song.attributes?.editorialVideo, album.attributes?.editorialVideo)
+    ) {
+      const fullAlbum = await this.apiRequest<{ data: AppleMusicResource[] }>(
+        `/catalog/${country}/albums/${album.id}?extend=editorialVideo`
+      ).catch(() => null)
+      const candidate = fullAlbum?.data?.[0]
+      if (candidate?.id === album.id && candidate.type === 'albums') {
+        album = { ...album, ...candidate, attributes: { ...album.attributes, ...candidate.attributes } }
+      }
+    }
+    const track = this.buildTrack(song, undefined, undefined, album)
     if (!track) return { loadType: 'empty', data: {} }
 
     return { loadType: 'track', data: track }
@@ -718,7 +734,7 @@ export default class AppleMusicSource implements SourceInstance {
       parent.type === 'albums'
         ? this.parseArtwork(parent.attributes?.artwork)
         : null
-    const editorialVideo = this.extractVideoUrl(parent.attributes)
+    const editorialVideo = parent.type === 'albums' ? this.extractVideoUrl(parent.attributes) : null
     const albumParent = parent.type === 'albums' ? parent : undefined
 
     const results = baseTracks
@@ -762,6 +778,7 @@ export default class AppleMusicSource implements SourceInstance {
     const artwork = artworkOverride || this.parseArtwork(attr.artwork)
     const album = albumParent ?? item.relationships?.albums?.data?.[0]
     const albumArtwork = this.parseArtwork(album?.attributes?.artwork)
+    const motion = appleMusicMotion(attr.editorialVideo, album?.attributes?.editorialVideo)
     const isExplicit = attr.contentRating === 'explicit'
     const trackUri = attr.url
       ? `${attr.url}${attr.url.includes('?') ? '&' : '?'}explicit=${isExplicit}`
@@ -787,8 +804,9 @@ export default class AppleMusicSource implements SourceInstance {
       pluginInfo: {
         albumName: attr.albumName,
         previewUrl: attr.previews?.[0]?.url,
-        hlsVideoUrl: videoOverride || this.extractVideoUrl(attr),
-        media: buildTrackMedia('applemusic', {
+        hlsVideoUrl: motion?.url || videoOverride || this.extractVideoUrl(attr),
+        media: {
+          ...buildTrackMedia('applemusic', {
           artists: appleMusicArtists(item.relationships?.artists?.data, attr.artistName),
           identifiers: { isrc: attr.isrc, upc: album?.attributes?.upc },
           credits: [{ name: attr.composerName, role: 'composer' }],
@@ -809,10 +827,9 @@ export default class AppleMusicSource implements SourceInstance {
               { url: artworkOverride }
             ]
           },
-          motionArtworkUrl:
-            this.extractVideoUrl(attr) ||
-            this.extractVideoUrl(album?.attributes)
-        })
+          }),
+          ...(motion ? { motionArtwork: motion } : {})
+        }
       }
     }
   }
@@ -861,7 +878,7 @@ export default class AppleMusicSource implements SourceInstance {
     width: number
     height: number
   }): string | null {
-    if (!artwork?.url) return null
+    if (typeof artwork?.url !== 'string' || !artwork.url) return null
     if (
       !Number.isSafeInteger(artwork.width) || artwork.width <= 0 ||
       !Number.isSafeInteger(artwork.height) || artwork.height <= 0

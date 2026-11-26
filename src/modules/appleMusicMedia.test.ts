@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { appleMusicArtists } from './appleMusicMedia.ts'
+import { appleMusicArtists, appleMusicMotion } from './appleMusicMedia.ts'
 import { buildTrackMedia } from './trackMedia.ts'
 
 test('preserves individual artist identities and provider artwork', () => {
@@ -32,4 +32,34 @@ test('malformed artist attributes do not throw or invent media', () => {
     { id: '2', attributes: { name: 'Artist', artwork: { url: 42, width: 640, height: 640 } } }
   ] as unknown as Parameters<typeof appleMusicArtists>[0]
   assert.deepEqual(appleMusicArtists(malformedArtwork), [{ name: 'Artist', id: '2' }])
+})
+
+test('returns distinct album motion variants with explicit album scope', () => {
+  const square = 'https://example.com/square.m3u8'
+  const tall = 'https://example.com/tall.m3u8'
+  assert.deepEqual(appleMusicMotion(undefined, {
+    motionDetailSquare: { video: square },
+    motionSquareVideo1x1: { video: square },
+    motionDetailTall: { video: tall }
+  }), { url: square, scope: 'album', variants: [
+    { url: square, aspectRatio: '1:1' }, { url: tall, aspectRatio: '9:16' }
+  ] })
+})
+
+test('prefers track motion and does not mix album or artist variants', () => {
+  const url = 'https://example.com/track.m3u8'
+  assert.deepEqual(appleMusicMotion({
+    motionDetailTall: { video: url },
+    motionArtistFullscreen: { video: 'https://example.com/artist.m3u8' }
+  }, { motionDetailSquare: { video: 'https://example.com/album.m3u8' } }), {
+    url, scope: 'track', variants: [{ url, aspectRatio: '9:16' }]
+  })
+})
+
+test('rejects malformed or untrusted motion URLs and unrelated artist videos', () => {
+  assert.equal(appleMusicMotion({
+    motionDetailSquare: { video: 123 },
+    motionDetailTall: { video: 'http://example.com/video.m3u8' },
+    motionArtistSquare: { video: 'https://example.com/artist.m3u8' }
+  }), undefined)
 })

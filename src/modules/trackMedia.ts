@@ -28,7 +28,11 @@ export interface TrackMediaMetadata {
   artists: Array<{ name: string; id?: string; artwork?: MediaImage[]; banners?: MediaImage[] }>
   album?: { name?: string; id?: string; artwork?: MediaImage[] }
   canvas?: { url: string; id?: string }
-  motionArtwork?: { url: string }
+  motionArtwork?: {
+    url: string
+    scope?: 'track' | 'album'
+    variants?: Array<{ url: string; aspectRatio: '1:1' | '9:16' }>
+  }
   artwork?: MediaImage[]
   channel?: { name?: string; id?: string; artwork?: MediaImage[]; banners?: MediaImage[] }
   identifiers?: MediaIdentifiers
