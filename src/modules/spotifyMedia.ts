@@ -101,7 +101,7 @@ export function selectSpotifyCanvas<T extends CanvasMediaInput>(
 
 /** Report only the validity of an existing session, never its token or expiry. */
 export function spotifyCanvasSessionState(token: string | null, expiry: number | null, now = Date.now()): 'missing' | 'expired' | 'unknown-expiry' | 'ready' {
-  if (!token || !token.trim()) return 'missing'
+  if (!token?.trim()) return 'missing'
   if (expiry === null || !Number.isFinite(expiry)) return 'unknown-expiry'
   return expiry <= now ? 'expired' : 'ready'
 }
@@ -149,7 +149,7 @@ export function normalizeSpotifyDynamicColors(input: unknown): MediaColors | und
   }
   function rgb(value: unknown): string | undefined {
     const color = object(value)
-    if (!color || color.alpha !== 255) return undefined
+    if (color?.alpha !== 255) return undefined
     const channels = [color.red, color.green, color.blue]
     if (!channels.every((v) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 255)) return undefined
     return '#' + channels.map((v) => (v as number).toString(16).padStart(2, '0')).join('').toUpperCase()
@@ -157,7 +157,7 @@ export function normalizeSpotifyDynamicColors(input: unknown): MediaColors | und
   const items = object(input)?.dynamicColors
   if (!Array.isArray(items) || items.length !== 1) return undefined
   const source = object(items[0])
-  if (!source || source.status !== 'OK') return undefined
+  if (source?.status !== 'OK') return undefined
   const converted: Record<string, unknown> = {
     bestFit: source.bestFit === 'DARK' ? 'dark' : source.bestFit === 'LIGHT' ? 'light' : undefined
   }

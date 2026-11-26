@@ -33,7 +33,7 @@ jobs:
           mapfile -d '' -t files < /tmp/media-files
           if (( ${#files[@]} )); then
             npx --no-install biome check --write --max-diagnostics=200 "${files[@]}"
-            npx --no-install biome check --max-diagnostics=200 "${files[@]}"
+            npx --no-install biome check --error-on-warnings --max-diagnostics=200 "${files[@]}"
           fi
       - name: Type check
         run: npm run type-check
@@ -50,7 +50,7 @@ jobs:
       - name: Publish verified formatting and phase-specific compiled output
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mapfile -d '' -t files < /tmp/media-files
@@ -58,10 +58,13 @@ jobs:
             git add -- "$file"
             if [[ "$file" == *.ts ]]; then
               output="dist/${file%.ts}.js"
-              if [[ -f "$output" ]]; then git add -f -- "$output"; fi
+              if [[ -f "$output" ]] && { [[ "$file" != *.test.ts && "$file" != scripts/* ]] || git ls-files --error-unmatch "$output" >/dev/null 2>&1; }; then
+                git add -f -- "$output"
+              fi
             fi
           done
           if git diff --cached --quiet; then exit 0; fi
           git diff --cached --stat
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'chore(media): format and rebuild rich media contribution'
-          git -c http.extraHeader="AUTHORIZATION: bearer $GITHUB_TOKEN" push origin HEAD:refs/heads/feat/rich-media-metadata
+          gh auth setup-git
+          git push origin HEAD:refs/heads/feat/rich-media-metadata
