@@ -98,9 +98,13 @@ export class BunResponseShim extends Writable {
             callback();
             return;
         }
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+        // The write callback below may fire while the stream still queues this
+        // chunk, after which the producer is free to reuse or mutate its Buffer.
+        // Enqueue an owned copy, never a view over the caller's backing store.
+        const source = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+        const owned = new Uint8Array(source);
         try {
-            controller.enqueue(new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength));
+            controller.enqueue(owned);
         }
         catch (error) {
             callback(error instanceof Error ? error : new Error(String(error)));
