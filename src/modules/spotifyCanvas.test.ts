@@ -71,7 +71,8 @@ test('reports only field tags for a short response without Canvas entries', asyn
   assert.deepEqual(events, [
     { kind: 'http', status: 200 },
     { kind: 'decoded', bytes: 3, entries: 0, matching: 0, withUrl: 0 },
-    { kind: 'short-response', fields: [{ number: 2, wireType: 0 }], complete: true }
+    { kind: 'short-response', fields: [{ number: 2, wireType: 0 }], complete: true },
+    { kind: 'negative-cache', ttlSeconds: 1000 }
   ])
 })
 
@@ -79,10 +80,63 @@ test('distinguishes a truncated field from a complete short response', async (t)
   t.mock.method(globalThis, 'fetch', async () =>
     new Response(new Uint8Array([0x12, 0x05, 0x01]), { status: 200 }))
   const events: CanvasDiagnostic[] = []
-  await fetchCanvas(trackUri, 'secret', (event) => events.push(event))
+  await fetchCanvas(trackUri, 'truncated-fixture', (event) => events.push(event))
   assert.deepEqual(events.at(-1), {
     kind: 'short-response',
     fields: [{ number: 2, wireType: 2 }],
     complete: false
   })
+})
+
+test('negative cache expires and is isolated by track and credential', async (t) => {
+  let now = 1000
+  t.mock.method(Date, 'now', () => now)
+  const request = t.mock.method(globalThis, 'fetch', async () =>
+    new Response(new Uint8Array([0x10, 0x02]), { status: 200 }))
+  const events: CanvasDiagnostic[] = []
+  const collect = (event: CanvasDiagnostic) => events.push(event)
+  await fetchCanvas(trackUri, 'cache-fixture', collect)
+  assert.equal(request.mock.callCount(), 1)
+  assert.deepEqual(events.at(-1), { kind: 'negative-cache', ttlSeconds: 2 })
+  await fetchCanvas(trackUri, 'cache-fixture', collect)
+  assert.equal(request.mock.callCount(), 1)
+  assert.deepEqual(events.at(-1), { kind: 'negative-cache-hit', remainingSeconds: 2 })
+  await fetchCanvas(trackUri, 'other-credential', collect)
+  await fetchCanvas('spotify:track:def', 'cache-fixture', collect)
+  assert.equal(request.mock.callCount(), 3)
+  now += 2000
+  await fetchCanvas(trackUri, 'cache-fixture', collect)
+  assert.equal(request.mock.callCount(), 4)
+})
+
+test('caps a long provider TTL at one hour', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () =>
+    new Response(new Uint8Array([0x10, 0x90, 0x4e]), { status: 200 }))
+  const events: CanvasDiagnostic[] = []
+  await fetchCanvas(trackUri, 'long-ttl-fixture', (event) => events.push(event))
+  assert.deepEqual(events.at(-1), { kind: 'negative-cache', ttlSeconds: 3600 })
+})
+
+test('never caches errors or malformed, zero or missing TTL responses', async (t) => {
+  const fixtures = [
+    new Uint8Array(),
+    new Uint8Array([0x10, 0]),
+    new Uint8Array([0x10, 0x80]),
+    new Uint8Array([0x10, 2, 0x12, 5]),
+    new Uint8Array([0x10, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 1])
+  ]
+  let response = new Uint8Array()
+  let status = 200
+  const request = t.mock.method(globalThis, 'fetch', async () =>
+    new Response(response, { status }))
+  for (const fixture of fixtures) {
+    response = fixture
+    await fetchCanvas(trackUri, 'invalid-ttl-fixture')
+    await fetchCanvas(trackUri, 'invalid-ttl-fixture')
+  }
+  status = 403
+  response = new Uint8Array([0x10, 2])
+  await fetchCanvas(trackUri, 'invalid-ttl-fixture')
+  await fetchCanvas(trackUri, 'invalid-ttl-fixture')
+  assert.equal(request.mock.callCount(), fixtures.length * 2 + 2)
 })

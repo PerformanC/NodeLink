@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type {
   SpotifyCanvasArtist,
   SpotifyCanvasDecodedResponse,
@@ -224,6 +225,27 @@ function summarizeShortResponse(buffer: Buffer): {
   }
 }
 
+// Negative entries only: never cache a media URL or an HTTP/transport error.
+const MAX_NEGATIVE_ENTRIES = 512
+const MAX_NEGATIVE_TTL_SECONDS = 3600
+const negativeCache = new Map<string, number>()
+
+/** Accept only a complete TTL-only response (field 2, int64). */
+function readEmptyResponseTtl(buffer: Buffer): number | undefined {
+  if (buffer.length < 2 || buffer.length > 11 || buffer[0] !== 0x10) return
+  let ttl = 0n
+  for (let i = 1; i < buffer.length; i++) {
+    const byte = buffer[i] ?? 0
+    ttl |= BigInt(byte & 127) << BigInt((i - 1) * 7)
+    if (!(byte & 128)) {
+      if (i !== buffer.length - 1 || ttl <= 0n || ttl > 0x7fffffffffffffffn) return
+      return Number(ttl > BigInt(MAX_NEGATIVE_TTL_SECONDS)
+        ? BigInt(MAX_NEGATIVE_TTL_SECONDS)
+        : ttl)
+    }
+  }
+}
+
 /** Non-sensitive Canvas request diagnostics. */
 export type CanvasDiagnostic =
   | { kind: 'http'; status: number }
@@ -233,6 +255,8 @@ export type CanvasDiagnostic =
       fields: Array<{ number: number; wireType: number }>
       complete: boolean
     }
+  | { kind: 'negative-cache'; ttlSeconds: number }
+  | { kind: 'negative-cache-hit'; remainingSeconds: number }
   | { kind: 'request-error' }
 
 /**
@@ -249,6 +273,24 @@ export async function fetchCanvas(
   onDiagnostic?: (event: CanvasDiagnostic) => void
 ): Promise<SpotifyCanvasFetchResult | null> {
   try {
+    const cacheKey = createHash('sha256')
+      .update(token)
+      .update('\0')
+      .update(trackUri)
+      .digest('hex')
+    const now = Date.now()
+    const expiresAt = negativeCache.get(cacheKey)
+    if (expiresAt !== undefined) {
+      if (expiresAt > now) {
+        onDiagnostic?.({
+          kind: 'negative-cache-hit',
+          remainingSeconds: Math.ceil((expiresAt - now) / 1000)
+        })
+        return { data: { canvasesList: [] } }
+      }
+      negativeCache.delete(cacheKey)
+    }
+
     const trackUriBuf = Buffer.from(trackUri)
     const trackBuf = Buffer.concat([
       Buffer.from([0x0a, trackUriBuf.length]),
@@ -291,6 +333,18 @@ export async function fetchCanvas(
         kind: 'short-response',
         ...summarizeShortResponse(buffer)
       })
+    }
+    const ttlSeconds = data.canvasesList.length === 0
+      ? readEmptyResponseTtl(buffer)
+      : undefined
+    if (ttlSeconds !== undefined) {
+      // Keep cache bounded per worker; scope to the current credential and track.
+      if (negativeCache.size >= MAX_NEGATIVE_ENTRIES) {
+        const oldest = negativeCache.keys().next().value
+        if (oldest !== undefined) negativeCache.delete(oldest)
+      }
+      negativeCache.set(cacheKey, Date.now() + ttlSeconds * 1000)
+      onDiagnostic?.({ kind: 'negative-cache', ttlSeconds })
     }
     return { data }
   } catch {
