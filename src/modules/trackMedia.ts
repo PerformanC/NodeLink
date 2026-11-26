@@ -27,7 +27,7 @@ export interface TrackMediaMetadata {
   provider: string
   artists: Array<{ name: string; id?: string; artwork?: MediaImage[]; banners?: MediaImage[] }>
   album?: { name?: string; id?: string; artwork?: MediaImage[] }
-  canvas?: { url: string; id?: string }
+  canvas?: { url: string; id?: string; uri?: string; fileId?: string; type?: string }
   motionArtwork?: {
     url: string
     scope?: 'track' | 'album'

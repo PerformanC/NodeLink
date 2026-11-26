@@ -48,6 +48,8 @@ export function normalizePathfinderCanvas(payload: unknown, trackUri: string): {
         canvasUrl: url.href,
         trackUri,
         canvasUri,
+        ...(typeof canvas.fileId === 'string' && /^[a-f0-9]{32}$/i.test(canvas.fileId) ? { fileId: canvas.fileId } : {}),
+        ...(typeof canvas.type === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(canvas.type) ? { type: canvas.type } : {}),
         artist: { artistUri: '', artistName: '', artistImgUrl: '' }
       }] } }
     }

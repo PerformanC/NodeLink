@@ -67,15 +67,23 @@ export function buildSpotifyMedia(item: SpotifyMediaInput, fallbackArtwork?: str
   }
 }
 
+type CanvasMediaInput = { id?: string; canvasUrl?: string; trackUri?: string; canvasUri?: string; fileId?: string; type?: string }
+
 /** Normalizes an existing Canvas response without fetching or proxying media. */
-export function spotifyCanvasMedia(entry: { id?: string; canvasUrl?: string; trackUri?: string }, trackUri: string): TrackMediaMetadata['canvas'] {
+export function spotifyCanvasMedia(entry: CanvasMediaInput, trackUri: string): TrackMediaMetadata['canvas'] {
   if (!entry.trackUri || entry.trackUri !== trackUri) return undefined
   const url = webUrl(entry.canvasUrl)
-  return url ? { url, ...(entry.id ? { id: entry.id } : {}) } : undefined
+  return url ? {
+    url,
+    ...(entry.id ? { id: entry.id } : {}),
+    ...(typeof entry.canvasUri === 'string' && /^spotify:canvas:[A-Za-z0-9]+$/.test(entry.canvasUri) ? { uri: entry.canvasUri } : {}),
+    ...(typeof entry.fileId === 'string' && /^[a-f0-9]{32}$/i.test(entry.fileId) ? { fileId: entry.fileId } : {}),
+    ...(typeof entry.type === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(entry.type) ? { type: entry.type } : {})
+  } : undefined
 }
 
 /** Select a matching, playable Canvas rather than trusting response order. */
-export function selectSpotifyCanvas<T extends { id?: string; canvasUrl?: string; trackUri?: string }>(
+export function selectSpotifyCanvas<T extends CanvasMediaInput>(
   entries: readonly T[] | undefined,
   trackUri: string
 ): { entry: T; canvas: NonNullable<TrackMediaMetadata['canvas']> } | undefined {

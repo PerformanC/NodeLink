@@ -67,6 +67,12 @@ export interface SpotifyCanvasEntry {
 
   /** Optional additional identifier (protobuf field 9). */
   otherId?: string
+
+  /** Provider-supplied media file identifier (Pathfinder). */
+  fileId?: string
+
+  /** Provider-supplied Canvas playback type (Pathfinder). */
+  type?: string
 }
 
 /**

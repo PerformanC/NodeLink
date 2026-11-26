@@ -53,3 +53,25 @@ test('distinguishes explicit null from a Canvas with an identifier but no URL', 
   assert.equal(await fetchPathfinderCanvas(trackUri, 'secret', event => events.push(event)), null)
   assert.deepEqual(events, [{ kind: 'pathfinder', outcome: 'canvas-without-url', status: 200, canvasState: 'uri-only' }])
 })
+
+// Synthetic values matching the observed browser response structure; no captured credentials or URLs.
+test('preserves the complete Pathfinder Canvas metadata shape', () => {
+  const fileId = '0123456789abcdef0123456789abcdef'
+  const canvasUri = 'spotify:canvas:abcdefghijklmnopqrstuv'
+  const value = normalizePathfinderCanvas({ data: { trackUnion: {
+    __typename: 'Track', uri: trackUri, canvas: { fileId, type: 'VIDEO_LOOPING_RANDOM', uri: canvasUri, url }
+  } } }, trackUri)
+  assert.deepEqual(value.result?.data.canvasesList[0], {
+    id: 'abcdefghijklmnopqrstuv', canvasUrl: url, trackUri, canvasUri, fileId,
+    type: 'VIDEO_LOOPING_RANDOM', artist: { artistUri: '', artistName: '', artistImgUrl: '' }
+  })
+})
+
+test('omits malformed optional Canvas identifiers and playback types', () => {
+  const value = normalizePathfinderCanvas({ data: { trackUnion: { uri: trackUri, canvas: { url, fileId: 'bad', type: 'invalid type', uri: {} } } } }, trackUri)
+  const entry = value.result?.data.canvasesList[0]
+  assert.equal(entry?.canvasUrl, url)
+  assert.equal(entry?.fileId, undefined)
+  assert.equal(entry?.type, undefined)
+  assert.equal(entry?.canvasUri, '')
+})

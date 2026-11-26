@@ -49,3 +49,9 @@ test('classifies Canvas session availability without exposing credentials', () =
   assert.equal(spotifyCanvasSessionState('fixture', Number.NaN, 1000), 'unknown-expiry')
   assert.equal(spotifyCanvasSessionState('fixture', 1001, 1000), 'ready')
 })
+
+test('preserves optional Canvas playback metadata in the public media contract', () => {
+  const entry = { id: 'abc', trackUri: 'spotify:track:a', canvasUrl: 'https://canvaz.scdn.co/example.mp4', canvasUri: 'spotify:canvas:abc', fileId: '0123456789abcdef0123456789abcdef', type: 'VIDEO_LOOPING_RANDOM' }
+  assert.deepEqual(selectSpotifyCanvas([entry], entry.trackUri)?.canvas, { url: entry.canvasUrl, id: entry.id, uri: entry.canvasUri, fileId: entry.fileId, type: entry.type })
+  assert.deepEqual(spotifyCanvasMedia({ ...entry, canvasUri: 'invalid', fileId: 'bad', type: 'bad type' }, entry.trackUri), { url: entry.canvasUrl, id: entry.id })
+})
