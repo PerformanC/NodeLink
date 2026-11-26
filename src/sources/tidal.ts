@@ -621,14 +621,19 @@ export default class TidalSource {
         5000
       ).catch(() => undefined)
     }
-    const extras = /^\d+$/.test(id) && String(data.id) === id ? await this.fetchCatalogExtras(id) : undefined
+    const extras =
+      /^\d+$/.test(id) && String(data.id) === id
+        ? await this.fetchCatalogExtras(id)
+        : undefined
     const track = this.buildTrack(data, undefined, credits, extras)
     if (!track) return { loadType: 'empty', data: {} }
     return { loadType: 'track', data: track }
   }
 
   /** Optional, independent metadata requests. Never use a v1 token on another API. */
-  private async fetchCatalogExtras(id: string): Promise<{ catalog?: unknown; preview?: unknown }> {
+  private async fetchCatalogExtras(
+    id: string
+  ): Promise<{ catalog?: unknown; preview?: unknown }> {
     const token = resolveMediaCredential(
       this.config.enrichCatalog === true,
       process.env.NODELINK_TIDAL_METADATA_ACCESS_TOKEN,
@@ -669,17 +674,23 @@ export default class TidalSource {
     catalogUrl.searchParams.set('include', 'genres,artists.biography')
     const [catalog, preview] = await Promise.all([
       token && this.config.enrichCatalog === true
-        ? get(catalogUrl, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.api+json' } })
+        ? get(catalogUrl, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: 'application/vnd.api+json'
+            }
+          })
         : undefined,
       this.config.extractPreview === true
         ? get(new URL('https://gqlapi.tidal.com'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: 'query ($id: BigInt!, $countryCode: String) { trackPreviewUrl(id: $id, countryCode: $countryCode) }',
-            variables: { id, countryCode: this.countryCode }
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query:
+                'query ($id: BigInt!, $countryCode: String) { trackPreviewUrl(id: $id, countryCode: $countryCode) }',
+              variables: { id, countryCode: this.countryCode }
+            })
           })
-        })
         : undefined
     ])
     return { catalog, preview }

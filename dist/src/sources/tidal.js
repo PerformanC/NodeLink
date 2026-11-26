@@ -4,6 +4,8 @@
  */
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
+import { resolveMediaCredential } from '../modules/mediaProviderConfig.js';
+import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.js';
 import { buildTidalMedia } from '../modules/tidalMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 const API_BASE = 'https://api.tidal.com/v1/';
@@ -482,10 +484,77 @@ export default class TidalSource {
             // Optional endpoint; failure must not make the track unavailable.
             credits = await this.getJsonPayload(`tracks/${id}/credits`, {}, 5000).catch(() => undefined);
         }
-        const track = this.buildTrack(data, undefined, credits);
+        const extras = /^\d+$/.test(id) && String(data.id) === id
+            ? await this.fetchCatalogExtras(id)
+            : undefined;
+        const track = this.buildTrack(data, undefined, credits, extras);
         if (!track)
             return { loadType: 'empty', data: {} };
         return { loadType: 'track', data: track };
+    }
+    /** Optional, independent metadata requests. Never use a v1 token on another API. */
+    async fetchCatalogExtras(id) {
+        const token = resolveMediaCredential(this.config.enrichCatalog === true, process.env.NODELINK_TIDAL_METADATA_ACCESS_TOKEN, this.config.metadataAccessToken);
+        const get = async (url, init) => {
+            try {
+                const response = await fetch(url, {
+                    ...init,
+                    redirect: 'error',
+                    signal: AbortSignal.timeout(5000)
+                });
+                if (!response.ok)
+                    return undefined;
+                if (!response.body)
+                    return undefined;
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let size = 0;
+                let body = '';
+                try {
+                    for (;;) {
+                        const { done, value } = await reader.read();
+                        if (done)
+                            break;
+                        size += value.byteLength;
+                        if (size > 1024 * 1024)
+                            return undefined;
+                        body += decoder.decode(value, { stream: true });
+                    }
+                    return JSON.parse(body + decoder.decode());
+                }
+                finally {
+                    await reader.cancel().catch(() => undefined);
+                    reader.releaseLock();
+                }
+            }
+            catch {
+                return undefined;
+            }
+        };
+        const catalogUrl = new URL(`https://openapi.tidal.com/v2/tracks/${id}`);
+        catalogUrl.searchParams.set('countryCode', this.countryCode);
+        catalogUrl.searchParams.set('include', 'genres,artists.biography');
+        const [catalog, preview] = await Promise.all([
+            token && this.config.enrichCatalog === true
+                ? get(catalogUrl, {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        Accept: 'application/vnd.api+json'
+                    }
+                })
+                : undefined,
+            this.config.extractPreview === true
+                ? get(new URL('https://gqlapi.tidal.com'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: 'query ($id: BigInt!, $countryCode: String) { trackPreviewUrl(id: $id, countryCode: $countryCode) }',
+                        variables: { id, countryCode: this.countryCode }
+                    })
+                })
+                : undefined
+        ]);
+        return { catalog, preview };
     }
     /**
      * Resolves an album by ID.
@@ -687,7 +756,7 @@ export default class TidalSource {
      * @param item - Raw Tidal track object.
      * @returns Encoded track payload.
      */
-    buildTrack(item, parentAlbum, credits) {
+    buildTrack(item, parentAlbum, credits, extras) {
         const idRaw = item.id;
         if (idRaw === undefined || idRaw === null)
             return null;
@@ -712,12 +781,19 @@ export default class TidalSource {
             isrc: this.asString(item.isrc) || null,
             sourceName: 'tidal'
         };
+        const media = buildTidalMedia(item, parentAlbum, credits);
+        if (extras) {
+            applyTidalCatalog(media, identifier, extras.catalog);
+            const preview = tidalPreview(extras.preview);
+            if (preview)
+                media.catalog = { ...media.catalog, previewUrl: preview };
+        }
         const encodedInput = { ...trackInfo, details: [] };
         return {
             encoded: encodeTrack(encodedInput),
             info: trackInfo,
             pluginInfo: {
-                media: buildTidalMedia(item, parentAlbum, credits)
+                media
             }
         };
     }

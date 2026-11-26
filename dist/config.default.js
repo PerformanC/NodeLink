@@ -584,6 +584,9 @@ export const config = {
         },
         tidal: {
             enrichCredits: false,
+            enrichCatalog: false,
+            metadataAccessToken: '',
+            extractPreview: false,
             enabled: true,
             token: 'token_here',
             countryCode: 'US',
