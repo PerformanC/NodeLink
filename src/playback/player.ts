@@ -8,6 +8,7 @@ import discordVoice, {
   type VoicePlayerState
 } from '@performanc/voice'
 import { EndReasons, GatewayEvents } from '../constants.ts'
+import { activeLyricsIndices, buildPlaybackLyrics } from '../modules/playbackLyrics.ts'
 import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.ts'
 import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
 import type {
@@ -172,6 +173,7 @@ export class Player {
   private _lyricsBasePosition = 0
   private _lyricsBasePackets = 0
   private _lyricsMarkerTimer: NodeJS.Timeout | null = null
+  private _lyricsRequestRevision = 0
   private _audioMixerInitPromise: Promise<void> | null = null
 
   public isLyricsSubscribed = false
@@ -1058,6 +1060,7 @@ export class Player {
     this._lastStreamDataTime = 0
     this.streamInfo = null
     this.sponsorBlock.segments = []
+    this._lyricsRequestRevision++
     this.currentLyrics = null
     this.lyricsLineIndex = -1
     this._fading('reset')
@@ -4054,6 +4057,7 @@ export class Player {
     )
     return new Promise((resolve) => {
       this.isLyricsSubscribed = false
+      this._lyricsRequestRevision++
       this.skipTrackSource = false
       this.currentLyrics = null
       this.lyricsLineIndex = -1
@@ -4136,40 +4140,29 @@ export class Player {
    * Loads lyrics for the current track and emits events.
    */
   private async _loadLyrics(): Promise<void> {
-    if (!this.track) return
+    const track = this.track
+    if (!track || !this.isLyricsSubscribed) return
+    const revision = ++this._lyricsRequestRevision
 
     const lyricsManager =
       this.nodelink.lyrics ?? (await this.nodelink.getLyricsManager?.())
     if (!lyricsManager) return
 
     const lyricsData = await lyricsManager.loadLyrics(
-      { info: this.track.info },
+      { info: track.info },
       undefined,
       this.skipTrackSource
     )
 
+    if (!this.isLyricsSubscribed || this.track !== track || this._lyricsRequestRevision !== revision) return
+
     if (lyricsData && lyricsData.loadType === 'lyrics') {
-      const lines: LyricsLine[] = lyricsData.data.lines.map((line) => ({
-        timestamp: line.time,
-        duration: line.duration || 0,
-        line: line.text,
-        words: line.words || [],
-        plugin: {}
-      }))
-
-      for (let i = 0; i < lines.length - 1; i++) {
-        const current = lines[i]
-        const next = lines[i + 1]
-        if (!current || !next) continue
-        if (current.duration === 0) {
-          current.duration = next.timestamp - current.timestamp
-        }
-      }
-
+      const lines = buildPlaybackLyrics(lyricsData.data)
       const payload: LyricsPayload = {
-        sourceName: this.track.info.sourceName,
+        sourceName: track.info.sourceName,
         provider: lyricsData.data.provider,
-        text: lyricsData.data.lines.map((l) => l.text).join('\n'),
+        synced: lyricsData.data.synced === true,
+        text: lines.map(line => line.line).join('\n'),
         lines,
         plugin: {}
       }
@@ -4193,8 +4186,12 @@ export class Player {
    * Synchronizes lyrics with current playback position.
    */
   private _syncLyrics(force = false): void {
-    if (!this.isLyricsSubscribed || !this.currentLyrics?.lines) return
-    if (this._lyricsMarkerTimer && !force) return
+    if (!this.isLyricsSubscribed || this.isPaused || this.currentLyrics?.synced !== true || !this.currentLyrics.lines) return
+    if (this._lyricsMarkerTimer) {
+      if (!force) return
+      clearTimeout(this._lyricsMarkerTimer)
+      this._lyricsMarkerTimer = null
+    }
 
     const timescale = this._getTimescale()
     const playbackSpeed = timescale.speed * timescale.rate
@@ -4206,13 +4203,15 @@ export class Player {
     const nextLine = lines[nextIndex]
     if (!nextLine) return
 
+    if (!Number.isFinite(playbackSpeed) || playbackSpeed <= 0) return
+    const lyrics = this.currentLyrics
     const nextTimestamp = nextLine.timestamp
     const delayMs = Math.max(0, (nextTimestamp - position) / playbackSpeed)
 
     this._lyricsMarkerTimer = setTimeout(() => {
       this._lyricsMarkerTimer = null
-      if (!this.isLyricsSubscribed || !this.currentLyrics?.lines) return
-      const timedLine = this.currentLyrics.lines[nextIndex]
+      if (!this.isLyricsSubscribed || this.isPaused || this.currentLyrics !== lyrics) return
+      const timedLine = lyrics.lines[nextIndex]
       if (!timedLine) return
       const nowPosition = this._getLyricsPosition(playbackSpeed)
       const drift = nowPosition - nextTimestamp
@@ -4234,7 +4233,8 @@ export class Player {
       this.emitEvent('LyricsLineEvent', {
         lineIndex: nextIndex,
         line: timedLine,
-        skipped: drift > 60
+        skipped: drift > 60,
+        activeLineIndices: activeLyricsIndices(lyrics.lines, nowPosition)
       })
       this._syncLyrics(true)
     }, delayMs)
@@ -4260,7 +4260,7 @@ export class Player {
     linesOverride?: LyricsLine[],
     allowBackward = false
   ): void {
-    if (!this.currentLyrics?.lines) return
+    if (this.isPaused || this.currentLyrics?.synced !== true || !this.currentLyrics.lines) return
 
     const lines = linesOverride || this.currentLyrics.lines
     let position = positionOverride
@@ -4300,7 +4300,8 @@ export class Player {
         this.emitEvent('LyricsLineEvent', {
           lineIndex: foundIndex,
           line: line,
-          skipped
+          skipped,
+          activeLineIndices: activeLyricsIndices(lines, position)
         })
       }
     }

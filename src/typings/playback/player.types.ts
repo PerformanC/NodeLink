@@ -80,6 +80,9 @@ export interface LyricsLine {
  * Full lyrics payload emitted to clients.
  */
 export interface LyricsPayload {
+  /** Whether the provider supplied reliable timestamps. */
+  synced?: boolean
+
   sourceName: string
   provider: string
   text: string
