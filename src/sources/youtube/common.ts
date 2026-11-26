@@ -2005,15 +2005,21 @@ export async function buildHoloTrack(
       audioTracks: JSON.stringify(audioTracks),
       captions: JSON.stringify(captions),
       channel: JSON.stringify(channelData),
-      media: buildYouTubeMedia(trackInfo, renderer, fullApiResponse, {
-        ...channelData,
-        artwork: channelMedia?.artwork,
-        banners: channelMedia?.banners
-      }, [
-        { url: thumbnails.default },
-        { url: thumbnails.medium },
-        { url: thumbnails.high }
-      ])
+      media: buildYouTubeMedia(
+        trackInfo,
+        renderer,
+        fullApiResponse,
+        {
+          ...channelData,
+          artwork: channelMedia?.artwork,
+          banners: channelMedia?.banners
+        },
+        [
+          { url: thumbnails.default },
+          { url: thumbnails.medium },
+          { url: thumbnails.high }
+        ]
+      )
     }
   }
 

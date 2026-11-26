@@ -5,7 +5,7 @@
  * @packageDocumentation
  * @module YouTubeSourceCommon
  */
-import { buildTrackMedia } from '../../modules/trackMedia.js';
+import { buildYouTubeMedia, youtubeImages } from '../../modules/youtubeMedia.js';
 import { YOUTUBE_CONSTANTS } from '../../typings/sources/youtube.types.js';
 import { encodeTrack, logger, makeRequest } from '../../utils.js';
 export { YOUTUBE_CONSTANTS };
@@ -491,6 +491,7 @@ export async function fetchChannelInfo(channelId, makeRequestFn, context) {
             Array.isArray(avatarSources) && avatarSources.length > 0
                 ? avatarSources[avatarSources.length - 1]?.url?.split('=')[0] || null
                 : null;
+        channelInfo.artwork = youtubeImages(avatarSources);
         const bannerRoot = header.banner;
         const bannerViewModel = bannerRoot?.imageBannerViewModel;
         const bannerImage = bannerViewModel?.image;
@@ -499,6 +500,7 @@ export async function fetchChannelInfo(channelId, makeRequestFn, context) {
             Array.isArray(bannerSources) && bannerSources.length > 0
                 ? bannerSources[bannerSources.length - 1]?.url?.split('=')[0] || null
                 : null;
+        channelInfo.banners = youtubeImages(bannerSources);
         const titleRoot = header.title;
         const dynamicText = titleRoot?.dynamicTextViewModel;
         const rendererCtx = dynamicText?.rendererContext;
@@ -1212,9 +1214,7 @@ export async function buildTrack(itemData, itemType, sourceNameOverride = null, 
             captions: JSON.stringify(extractCaptions(fullApiResponse?.captions ?? {})),
             audioFormats: JSON.stringify(audioFormats),
             audioTracks: JSON.stringify(audioTracks),
-            media: buildTrackMedia(trackInfo.sourceName, {
-                artwork: [{ url: trackInfo.artworkUrl }]
-            })
+            media: buildYouTubeMedia(trackInfo, renderer, fullApiResponse)
         }
     };
     if (enableHolo) {
@@ -1376,10 +1376,12 @@ export async function buildHoloTrack(trackInfo, itemData, itemType, fullApiRespo
     accessibilityLabel =
         accessibilityLabel ||
             `${trackInfo.title} by ${channelData.name || trackInfo.author}`;
+    let channelMedia = null;
     if (config.search.fetchChannelInfo && channelData.id && makeRequestFn) {
         try {
             const channelInfo = await fetchChannelInfo(channelData.id, makeRequestFn, fullApiResponse?.responseContext);
             if (channelInfo) {
+                channelMedia = channelInfo;
                 channelData.icon = channelInfo.icon;
                 channelData.banner = channelInfo.banner;
                 channelData.subscribers = channelInfo.subscribers;
@@ -1451,32 +1453,15 @@ export async function buildHoloTrack(trackInfo, itemData, itemType, fullApiRespo
             audioTracks: JSON.stringify(audioTracks),
             captions: JSON.stringify(captions),
             channel: JSON.stringify(channelData),
-            media: buildTrackMedia(trackInfo.sourceName, {
-                artwork: [
-                    { url: trackInfo.artworkUrl },
-                    { url: thumbnails.default },
-                    { url: thumbnails.medium },
-                    { url: thumbnails.high }
-                ],
-                channel: {
-                    name: typeof channelData.name === 'string' ? channelData.name : undefined,
-                    id: typeof channelData.id === 'string' ? channelData.id : undefined,
-                    artwork: [
-                        {
-                            url: typeof channelData.icon === 'string'
-                                ? channelData.icon
-                                : undefined
-                        }
-                    ],
-                    banners: [
-                        {
-                            url: typeof channelData.banner === 'string'
-                                ? channelData.banner
-                                : undefined
-                        }
-                    ]
-                }
-            })
+            media: buildYouTubeMedia(trackInfo, renderer, fullApiResponse, {
+                ...channelData,
+                artwork: channelMedia?.artwork,
+                banners: channelMedia?.banners
+            }, [
+                { url: thumbnails.default },
+                { url: thumbnails.medium },
+                { url: thumbnails.high }
+            ])
         }
     };
     return result;
