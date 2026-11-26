@@ -41,3 +41,15 @@ test('accepts existing credentials only and parses successful GraphQL responses'
   assert.equal(JSON.parse(String(init?.body)).variables.trackUri, trackUri)
   assert.equal(new Headers(init?.headers).has('client-token'), false)
 })
+
+test('distinguishes explicit null from a Canvas with an identifier but no URL', async (t) => {
+  const absent = { data: { trackUnion: { canvas: null } } }
+  const uriOnly = { data: { trackUnion: { canvas: { uri: 'spotify:canvas:abc', url: null } } } }
+  assert.deepEqual(normalizePathfinderCanvas(absent, trackUri), { outcome: 'missing-canvas', canvasState: 'null', result: null })
+  assert.deepEqual(normalizePathfinderCanvas(uriOnly, trackUri), { outcome: 'canvas-without-url', canvasState: 'uri-only', result: null })
+  assert.deepEqual(normalizePathfinderCanvas({ data: { trackUnion: { canvas: {} } } }, trackUri), { outcome: 'canvas-without-url', canvasState: 'no-url', result: null })
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify(uriOnly)))
+  const events: unknown[] = []
+  assert.equal(await fetchPathfinderCanvas(trackUri, 'secret', event => events.push(event)), null)
+  assert.deepEqual(events, [{ kind: 'pathfinder', outcome: 'canvas-without-url', status: 200, canvasState: 'uri-only' }])
+})

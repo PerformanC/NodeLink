@@ -2,8 +2,9 @@ import type { SpotifyCanvasFetchResult } from '../typings/modules/spotifyCanvas.
 
 type Diagnostic = {
   kind: 'pathfinder'
-  outcome: 'http-error' | 'graphql-error' | 'missing-canvas' | 'unexpected-payload' | 'found' | 'request-error' | 'missing-token'
+  outcome: 'http-error' | 'graphql-error' | 'missing-canvas' | 'canvas-without-url' | 'unexpected-payload' | 'found' | 'request-error' | 'missing-token'
   status?: number
+  canvasState?: 'null' | 'uri-only' | 'no-url'
 }
 type JsonRecord = Record<string, unknown>
 
@@ -15,16 +16,24 @@ function record(value: unknown): JsonRecord | undefined {
 /** Normalize a single-track GraphQL response without trusting unrelated track IDs. */
 export function normalizePathfinderCanvas(payload: unknown, trackUri: string): {
   outcome: Diagnostic['outcome']
+  canvasState?: Diagnostic['canvasState']
   result: SpotifyCanvasFetchResult | null
 } {
   const root = record(payload)
   if (Array.isArray(root?.errors) && root.errors.length) return { outcome: 'graphql-error', result: null }
   const track = record(record(root?.data)?.trackUnion)
   if (!track || (track.uri !== undefined && track.uri !== trackUri)) return { outcome: 'unexpected-payload', result: null }
-  if (track.canvas === null) return { outcome: 'missing-canvas', result: null }
+  if (track.canvas === null) return { outcome: 'missing-canvas', canvasState: 'null', result: null }
   const canvas = record(track.canvas)
   if (!canvas) return { outcome: 'unexpected-payload', result: null }
-  if (typeof canvas.url !== 'string' || !canvas.url) return { outcome: 'missing-canvas', result: null }
+  if (typeof canvas.url !== 'string' || !canvas.url.trim()) {
+    const hasUri = typeof canvas.uri === 'string' && canvas.uri.trim().length > 0
+    return {
+      outcome: 'canvas-without-url',
+      canvasState: hasUri ? 'uri-only' : 'no-url',
+      result: null
+    }
+  }
   try {
     const url = new URL(canvas.url)
     if (url.protocol !== 'https:' || url.username || url.password || url.port ||
@@ -92,8 +101,8 @@ export async function fetchPathfinderCanvas(
         chunks.push(value)
       }
     } finally { reader.releaseLock() }
-    const { outcome, result } = normalizePathfinderCanvas(JSON.parse(Buffer.concat(chunks).toString('utf8')), trackUri)
-    onDiagnostic?.({ kind: 'pathfinder', outcome, status: response.status })
+    const { outcome, result, canvasState } = normalizePathfinderCanvas(JSON.parse(Buffer.concat(chunks).toString('utf8')), trackUri)
+    onDiagnostic?.({ kind: 'pathfinder', outcome, status: response.status, ...(canvasState ? { canvasState } : {}) })
     return result
   } catch {
     onDiagnostic?.({ kind: 'pathfinder', outcome: 'request-error' })
