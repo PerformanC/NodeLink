@@ -493,7 +493,7 @@ export default class SpotifySource implements SourceInstance {
               const timer = this.tokenRefreshTimers.get('mobile')
               if (timer) clearTimeout(timer)
               this.tokenRefreshTimers.delete('mobile')
-              cm.delete('spotify_mobile_token')
+              cm.delete?.('spotify_mobile_token')
               logger('debug', 'SpotifyCanvas', 'Mobile authorization rejected; Canvas disabled until source restart.')
             }
             return false
