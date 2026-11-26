@@ -321,6 +321,8 @@ The source modules cover music services, video platforms, live streams, local fi
 
 Some sources provide a playable stream directly. Others resolve a track's metadata and delegate audio retrieval to another source. Finding a track in a provider's catalog does not necessarily mean that provider is delivering the audio bytes.
 
+Spotify Canvas is optional metadata. The existing Canvas service can return an empty list with a cache TTL even when the track resolves successfully. NodeLink caches these TTL-only negative responses per worker, credential and track for at most one hour (512 entries per worker). HTTP errors, malformed responses and responses without a positive TTL are not negatively cached. No media files are downloaded or cached by this helper. Clients should fall back to static artwork when Canvas is absent. Spotify's public [Get Track API](https://developer.spotify.com/documentation/web-api/reference/get-track) does not document a Canvas video field; availability of the existing service is not guaranteed.
+
 The default configuration enables 49 of the 52 source modules in the repository. Providers may still require credentials, cookies, tokens, external services or extra configuration. Third-party changes can also affect availability. The [Configuration Guide](https://nodelink.js.org/docs/config) lists the provider-specific options.
 
 ---
