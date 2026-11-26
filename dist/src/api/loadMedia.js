@@ -1,17 +1,23 @@
-import { fanartAlbum, fanartArtist, mbid, mediaIsrc, musicBrainzRecordings, musicBrainzWork } from '../modules/externalMedia.js';
+import { fanartAlbum, fanartArtist, mbid, mediaIsrc, musicBrainzRecording, musicBrainzRecordings, musicBrainzWork } from '../modules/externalMedia.js';
 import { MediaLookupClient } from '../modules/mediaLookupClient.js';
 import { resolveMediaCredential } from '../modules/mediaProviderConfig.js';
 const musicBrainz = new MediaLookupClient();
 const fanart = new MediaLookupClient();
 const handler = async (nodelink, req, res, sendResponse, parsedUrl) => {
-    const keys = ['isrc', 'workMbid', 'artistMbid', 'releaseGroupMbid'];
+    const keys = [
+        'isrc',
+        'recordingMbid',
+        'workMbid',
+        'artistMbid',
+        'releaseGroupMbid'
+    ];
     const selected = keys.filter((key) => parsedUrl.searchParams.has(key));
     const key = selected[0];
     if (selected.length !== 1 ||
         !key ||
         parsedUrl.searchParams.getAll(key).length !== 1) {
         return sendResponse(req, res, {
-            error: 'Specify exactly one of isrc, workMbid, artistMbid or releaseGroupMbid'
+            error: 'Specify exactly one of isrc, recordingMbid, workMbid, artistMbid or releaseGroupMbid'
         }, 400);
     }
     const raw = parsedUrl.searchParams.get(key);
@@ -39,11 +45,15 @@ const handler = async (nodelink, req, res, sendResponse, parsedUrl) => {
     if (!agent)
         return sendResponse(req, res, { error: 'MusicBrainz disabled' }, 503);
     const url = key === 'isrc'
-        ? `https://musicbrainz.org/ws/2/isrc/${id}?inc=artist-credits+artist-rels+work-rels+isrcs+release-groups&fmt=json`
-        : `https://musicbrainz.org/ws/2/work/${id}?inc=artist-rels&fmt=json`;
+        ? `https://musicbrainz.org/ws/2/isrc/${id}?inc=artist-credits+artist-rels+work-rels+isrcs&fmt=json`
+        : key === 'recordingMbid'
+            ? `https://musicbrainz.org/ws/2/recording/${id}?inc=artist-credits+artist-rels+work-rels+isrcs+releases+release-groups&fmt=json`
+            : `https://musicbrainz.org/ws/2/work/${id}?inc=artist-rels&fmt=json`;
     const result = await musicBrainz.lookup(`${key}:${id}`, url, { 'User-Agent': agent, Accept: 'application/json' }, (data) => key === 'isrc'
         ? musicBrainzRecordings(data, id)
-        : musicBrainzWork(data, id));
+        : key === 'recordingMbid'
+            ? musicBrainzRecording(data, id)
+            : musicBrainzWork(data, id));
     return sendResponse(req, res, result.data ?? {
         error: 'MusicBrainz lookup unavailable',
         reason: result.reason,

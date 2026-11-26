@@ -66,6 +66,49 @@ function releaseGroups(value) {
         ];
     });
 }
+function normalizeRecording(item, id, title) {
+    const artists = list(item['artist-credit'])
+        .slice(0, 50)
+        .flatMap((rawCredit) => {
+        const credit = record(rawCredit);
+        const artist = record(credit.artist);
+        const artistId = mbid(artist.id);
+        const artistName = name(credit.name) ?? name(artist.name);
+        return artistId && artistName
+            ? [{ mbid: artistId, name: artistName }]
+            : [];
+    });
+    return {
+        mbid: id,
+        title,
+        artists,
+        ...(typeof item.length === 'number' &&
+            Number.isSafeInteger(item.length) &&
+            item.length >= 0
+            ? { durationMs: item.length }
+            : {}),
+        ...relations(item.relations),
+        releaseGroups: releaseGroups([
+            ...list(item['release-groups']),
+            ...list(item.releases).map((release) => record(release)['release-group'])
+        ])
+    };
+}
+export function musicBrainzRecording(payload, id) {
+    const item = record(payload);
+    const title = name(item.title);
+    if (mbid(item.id) !== id || !title)
+        return null;
+    return {
+        provider: 'musicbrainz',
+        ...normalizeRecording(item, id, title),
+        isrcs: [
+            ...new Set(list(item.isrcs)
+                .map(mediaIsrc)
+                .filter((code) => !!code))
+        ]
+    };
+}
 /** Return distinct recording candidates rather than guessing which version is correct. */
 export function musicBrainzRecordings(payload, isrc) {
     const root = record(payload);
@@ -83,29 +126,7 @@ export function musicBrainzRecordings(payload, isrc) {
             !item.isrcs.some((code) => mediaIsrc(code) === isrc))
             continue;
         seen.add(id);
-        const artists = list(item['artist-credit'])
-            .slice(0, 50)
-            .flatMap((rawCredit) => {
-            const credit = record(rawCredit);
-            const artist = record(credit.artist);
-            const artistId = mbid(artist.id);
-            const artistName = name(credit.name) ?? name(artist.name);
-            return artistId && artistName
-                ? [{ mbid: artistId, name: artistName }]
-                : [];
-        });
-        recordings.push({
-            mbid: id,
-            title,
-            artists,
-            ...(typeof item.length === 'number' &&
-                Number.isSafeInteger(item.length) &&
-                item.length >= 0
-                ? { durationMs: item.length }
-                : {}),
-            ...relations(item.relations),
-            releaseGroups: releaseGroups(item['release-groups'])
-        });
+        recordings.push(normalizeRecording(item, id, title));
     }
     return { provider: 'musicbrainz', isrc, recordings };
 }

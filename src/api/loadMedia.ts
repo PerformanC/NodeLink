@@ -3,8 +3,8 @@ import {
   fanartArtist,
   mbid,
   mediaIsrc,
-  musicBrainzRecordings,
   musicBrainzRecording,
+  musicBrainzRecordings,
   musicBrainzWork
 } from '../modules/externalMedia.ts'
 import { MediaLookupClient } from '../modules/mediaLookupClient.ts'
@@ -24,7 +24,13 @@ const handler: ApiRouteHandler = async (
   sendResponse,
   parsedUrl
 ) => {
-  const keys = ['isrc', 'recordingMbid', 'workMbid', 'artistMbid', 'releaseGroupMbid'] as const
+  const keys = [
+    'isrc',
+    'recordingMbid',
+    'workMbid',
+    'artistMbid',
+    'releaseGroupMbid'
+  ] as const
   const selected = keys.filter((key) => parsedUrl.searchParams.has(key))
   const key = selected[0]
   if (
@@ -97,7 +103,9 @@ const handler: ApiRouteHandler = async (
     (data) =>
       key === 'isrc'
         ? musicBrainzRecordings(data, id)
-        : key === 'recordingMbid' ? musicBrainzRecording(data,id) : musicBrainzWork(data, id)
+        : key === 'recordingMbid'
+          ? musicBrainzRecording(data, id)
+          : musicBrainzWork(data, id)
   )
   return sendResponse(
     req,

@@ -73,36 +73,49 @@ function releaseGroups(value: unknown) {
 }
 
 function normalizeRecording(item: RecordValue, id: string, title: string) {
-    const artists = list(item['artist-credit'])
-      .slice(0, 50)
-      .flatMap((rawCredit) => {
-        const credit = record(rawCredit)
-        const artist = record(credit.artist)
-        const artistId = mbid(artist.id)
-        const artistName = name(credit.name) ?? name(artist.name)
-        return artistId && artistName
-          ? [{ mbid: artistId, name: artistName }]
-          : []
-      })
-    return {
-      mbid: id,
-      title,
-      artists,
-      ...(typeof item.length === 'number' &&
-      Number.isSafeInteger(item.length) &&
-      item.length >= 0
-        ? { durationMs: item.length }
-        : {}),
-      ...relations(item.relations),
-      releaseGroups: releaseGroups([...list(item['release-groups']), ...list(item.releases).map(release => record(release)['release-group'])])
-    }
+  const artists = list(item['artist-credit'])
+    .slice(0, 50)
+    .flatMap((rawCredit) => {
+      const credit = record(rawCredit)
+      const artist = record(credit.artist)
+      const artistId = mbid(artist.id)
+      const artistName = name(credit.name) ?? name(artist.name)
+      return artistId && artistName
+        ? [{ mbid: artistId, name: artistName }]
+        : []
+    })
+  return {
+    mbid: id,
+    title,
+    artists,
+    ...(typeof item.length === 'number' &&
+    Number.isSafeInteger(item.length) &&
+    item.length >= 0
+      ? { durationMs: item.length }
+      : {}),
+    ...relations(item.relations),
+    releaseGroups: releaseGroups([
+      ...list(item['release-groups']),
+      ...list(item.releases).map((release) => record(release)['release-group'])
+    ])
+  }
 }
 
 export function musicBrainzRecording(payload: unknown, id: string) {
   const item = record(payload)
   const title = name(item.title)
   if (mbid(item.id) !== id || !title) return null
-  return {provider:'musicbrainz',...normalizeRecording(item,id,title),isrcs:[...new Set(list(item.isrcs).map(mediaIsrc).filter((code):code is string=>!!code))]}
+  return {
+    provider: 'musicbrainz',
+    ...normalizeRecording(item, id, title),
+    isrcs: [
+      ...new Set(
+        list(item.isrcs)
+          .map(mediaIsrc)
+          .filter((code): code is string => !!code)
+      )
+    ]
+  }
 }
 
 /** Return distinct recording candidates rather than guessing which version is correct. */
