@@ -12,8 +12,8 @@ import {
   type TidalEmbedKind,
   type TidalEmbedTrack
 } from '../modules/tidalEmbed.ts'
-import { matchingTidalAlbum, tidalSearch } from '../modules/tidalSearch.ts'
 import { buildTidalMedia } from '../modules/tidalMedia.ts'
+import { matchingTidalAlbum, tidalSearch } from '../modules/tidalSearch.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -200,7 +200,9 @@ export default class TidalSource {
       /^https?:\/\/(?:(?:listen|www)\.)?tidal\.com\/(?:browse\/)?(?<type>album|track|playlist|mix|artist)\/(?<id>[a-zA-Z0-9-]+)(?:\/[a-zA-Z0-9/_-]*)?(?:\?.*)?$/
     ]
     if (this.config.embedFallback === true) {
-      this.patterns.push(/^https:\/\/embed\.tidal\.com\/(?:tracks|albums)\/\d{1,20}\/?$/)
+      this.patterns.push(
+        /^https:\/\/embed\.tidal\.com\/(?:tracks|albums)\/\d{1,20}\/?$/
+      )
     }
     this.priority = 90
     this.token = this.asString(this.config.token)
@@ -319,9 +321,16 @@ export default class TidalSource {
    * @returns Track/playlist/empty payload.
    */
   public async resolve(url: string): Promise<SourceResult> {
-    const embed = url.match(/^https:\/\/embed\.tidal\.com\/(tracks|albums)\/(\d{1,20})\/?$/)
+    const embed = url.match(
+      /^https:\/\/embed\.tidal\.com\/(tracks|albums)\/(\d{1,20})\/?$/
+    )
     if (embed && this.config.embedFallback === true && embed[2]) {
-      return (await this.resolveEmbed(embed[1] === 'tracks' ? 'track' : 'album', embed[2])) ?? { loadType: 'empty', data: {} }
+      return (
+        (await this.resolveEmbed(
+          embed[1] === 'tracks' ? 'track' : 'album',
+          embed[2]
+        )) ?? { loadType: 'empty', data: {} }
+      )
     }
     const pattern = this.patterns[0]
     if (!pattern) return { loadType: 'empty', data: {} }
@@ -706,9 +715,17 @@ export default class TidalSource {
         ? await this.fetchCatalogExtras(id)
         : undefined
     const albumId = String(this.asRecord(data.album)?.id ?? '')
-    const parentAlbum = this.config.enrichAlbum === true && String(data.id) === id && /^\d+$/.test(albumId)
-      ? matchingTidalAlbum(await this.getJsonPayload('albums/' + albumId, {}, 5000).catch(() => undefined), albumId)
-      : undefined
+    const parentAlbum =
+      this.config.enrichAlbum === true &&
+      String(data.id) === id &&
+      /^\d+$/.test(albumId)
+        ? matchingTidalAlbum(
+            await this.getJsonPayload('albums/' + albumId, {}, 5000).catch(
+              () => undefined
+            ),
+            albumId
+          )
+        : undefined
     const track = this.buildTrack(data, parentAlbum, credits, extras)
     if (!track) return { loadType: 'empty', data: {} }
     return { loadType: 'track', data: track }

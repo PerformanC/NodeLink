@@ -8,6 +8,7 @@ import { resolveMediaCredential } from '../modules/mediaProviderConfig.js';
 import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.js';
 import { fetchTidalEmbed } from '../modules/tidalEmbed.js';
 import { buildTidalMedia } from '../modules/tidalMedia.js';
+import { matchingTidalAlbum, tidalSearch } from '../modules/tidalSearch.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 class TidalApiError extends Error {
     statusCode;
@@ -156,6 +157,9 @@ export default class TidalSource {
         this.patterns = [
             /^https?:\/\/(?:(?:listen|www)\.)?tidal\.com\/(?:browse\/)?(?<type>album|track|playlist|mix|artist)\/(?<id>[a-zA-Z0-9-]+)(?:\/[a-zA-Z0-9/_-]*)?(?:\?.*)?$/
         ];
+        if (this.config.embedFallback === true) {
+            this.patterns.push(/^https:\/\/embed\.tidal\.com\/(?:tracks|albums)\/\d{1,20}\/?$/);
+        }
         this.priority = 90;
         this.token = this.asString(this.config.token);
         this.countryCode = this.asString(this.config.countryCode) || 'US';
@@ -220,13 +224,7 @@ export default class TidalSource {
         }
         try {
             const limit = this.asNumber(this.nodelink.options.search.maxResults) ?? 10;
-            const data = await this.getJson('search', {
-                query,
-                limit,
-                types: 'TRACKS'
-            });
-            const tracksBlock = this.asRecord(data?.tracks);
-            const items = this.asArrayRecords(tracksBlock?.items);
+            const items = await tidalSearch(query, limit, (endpoint, params) => this.getJson(endpoint, params), this.config.alternateTrackSearch === true, (error) => error instanceof TidalApiError && error.statusCode === 401);
             if (items.length === 0)
                 return { loadType: 'empty', data: {} };
             const tracks = items
@@ -247,6 +245,10 @@ export default class TidalSource {
      * @returns Track/playlist/empty payload.
      */
     async resolve(url) {
+        const embed = url.match(/^https:\/\/embed\.tidal\.com\/(tracks|albums)\/(\d{1,20})\/?$/);
+        if (embed && this.config.embedFallback === true && embed[2]) {
+            return ((await this.resolveEmbed(embed[1] === 'tracks' ? 'track' : 'album', embed[2])) ?? { loadType: 'empty', data: {} });
+        }
         const pattern = this.patterns[0];
         if (!pattern)
             return { loadType: 'empty', data: {} };
@@ -548,7 +550,13 @@ export default class TidalSource {
         const extras = /^\d+$/.test(id) && String(data.id) === id
             ? await this.fetchCatalogExtras(id)
             : undefined;
-        const track = this.buildTrack(data, undefined, credits, extras);
+        const albumId = String(this.asRecord(data.album)?.id ?? '');
+        const parentAlbum = this.config.enrichAlbum === true &&
+            String(data.id) === id &&
+            /^\d+$/.test(albumId)
+            ? matchingTidalAlbum(await this.getJsonPayload('albums/' + albumId, {}, 5000).catch(() => undefined), albumId)
+            : undefined;
+        const track = this.buildTrack(data, parentAlbum, credits, extras);
         if (!track)
             return { loadType: 'empty', data: {} };
         return { loadType: 'track', data: track };
