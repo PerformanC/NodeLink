@@ -59,23 +59,41 @@ export function qobuzCredits(
   return result
 }
 
+/** Only accept exact recording identifiers in an ISRC search. */
+export function normalizeQobuzIsrc(value: unknown): string | undefined {
+  const code = text(value)?.replace(/-/g, '').toUpperCase()
+  return code && /^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$/.test(code) ? code : undefined
+}
+
+export function filterQobuzIsrc(items: Data[], requested: string): Data[] {
+  const code = normalizeQobuzIsrc(requested)
+  if (!code) return []
+  return items.filter(item => normalizeQobuzIsrc(item.isrc) === code)
+}
+
+/** Reuse only an explicitly matching parent album, or the enclosing album for rows without an album ID. */
+export function qobuzAlbum(item: Data, parentAlbum?: Data): Data | undefined {
+  const nested = record(item.album)
+  const parentId = id(parentAlbum?.id)
+  const nestedId = id(nested?.id)
+  if (!parentId || (nestedId && nestedId !== parentId)) return nested
+  const image = {
+    ...record(parentAlbum?.image),
+    ...Object.fromEntries(Object.entries(record(nested?.image) ?? {}).filter(([, value]) => value != null && value !== ''))
+  }
+  return {
+    ...parentAlbum,
+    ...Object.fromEntries(Object.entries(nested ?? {}).filter(([, value]) => value != null && value !== '')),
+    image
+  }
+}
+
 export function buildQobuzMedia(
   item: Data,
   parentAlbum?: Data,
   parentArtist?: Data
 ) {
-  const nested = record(item.album)
-  const parentId = id(parentAlbum?.id)
-  const nestedId = id(nested?.id)
-  const album =
-    parentId && (!nestedId || nestedId === parentId)
-      ? {
-          ...parentAlbum,
-          ...Object.fromEntries(
-            Object.entries(nested ?? {}).filter(([, value]) => value != null)
-          )
-        }
-      : nested
+  const album = qobuzAlbum(item, parentAlbum)
   const artists = new Map<string, Data>()
   for (const raw of [item.artist, item.performer]) {
     const artist = record(raw)

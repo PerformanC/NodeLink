@@ -17,7 +17,7 @@ function refs(v: Data | undefined, key: string): Data[] {
 }
 function seconds(v: unknown): number | undefined {
   const m = str(v)?.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/)
-  if (!m || !m.slice(1).some(Boolean)) return undefined
+  if (!m?.slice(1).some(Boolean)) return undefined
   const n = Number(m[1] ?? 0)*3600 + Number(m[2] ?? 0)*60 + Number(m[3] ?? 0)
   return Number.isFinite(n) && n > 0 && n < 86400 ? n : undefined
 }

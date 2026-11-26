@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { buildQobuzMedia } from '../modules/qobuzMedia.ts'
+import { buildQobuzMedia, filterQobuzIsrc, normalizeQobuzIsrc, qobuzAlbum } from '../modules/qobuzMedia.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -266,14 +266,17 @@ export default class QobuzSource {
       return this.getRecommendations(query)
     }
 
+    const isrc = sourceTerm === 'qbisrc' ? normalizeQobuzIsrc(query) : undefined
+    if (sourceTerm === 'qbisrc' && !isrc) return { loadType: 'empty', data: {} }
     const data = await this.apiRequest('/catalog/search', {
-      query,
+      query: isrc ?? query,
       limit: this.getMaxSearchResults(),
       type: 'tracks'
     })
 
     const tracksBlock = this.asRecord(data?.tracks)
-    const items = this.asArrayRecords(tracksBlock?.items)
+    const candidates = this.asArrayRecords(tracksBlock?.items)
+    const items = isrc ? filterQobuzIsrc(candidates, isrc) : candidates
     if (items.length === 0) return { loadType: 'empty', data: {} }
 
     const tracks = items.map((item) => this.buildTrack(item))
@@ -802,7 +805,7 @@ export default class QobuzSource {
   } {
     const artist = this.asRecord(item.artist)
     const performer = this.asRecord(item.performer)
-    const album = this.asRecord(item.album) ?? parentAlbum
+    const album = qobuzAlbum(item, parentAlbum)
     const albumImage = this.asRecord(album?.image)
 
     const trackInfo: TrackInfo = {
@@ -819,7 +822,11 @@ export default class QobuzSource {
       uri: `https://open.qobuz.com/track/${item.id}`,
       artworkUrl:
         this.asString(albumImage?.large) ||
+        this.asString(albumImage?.extralarge) ||
+        this.asString(albumImage?.mega) ||
+        this.asString(albumImage?.medium) ||
         this.asString(albumImage?.small) ||
+        this.asString(albumImage?.thumbnail) ||
         null,
       isrc: this.asString(item.isrc) || null,
       sourceName: 'qobuz'
