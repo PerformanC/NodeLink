@@ -583,6 +583,7 @@ export const config = {
             decryptionKey: ''
         },
         tidal: {
+            embedFallback: false,
             enrichCredits: false,
             enrichCatalog: false,
             metadataAccessToken: '',

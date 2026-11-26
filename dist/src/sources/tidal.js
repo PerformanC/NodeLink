@@ -6,8 +6,16 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { resolveMediaCredential } from '../modules/mediaProviderConfig.js';
 import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.js';
+import { fetchTidalEmbed } from '../modules/tidalEmbed.js';
 import { buildTidalMedia } from '../modules/tidalMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
+class TidalApiError extends Error {
+    statusCode;
+    constructor(message, statusCode) {
+        super(message);
+        this.statusCode = statusCode;
+    }
+}
 const API_BASE = 'https://api.tidal.com/v1/';
 const CACHE_VALIDITY_DAYS = 7;
 const TIDAL_ASSET_URL = 'https://tidal.com/assets/index-CJ0DsMmf.js';
@@ -257,9 +265,9 @@ export default class TidalSource {
         try {
             switch (type) {
                 case 'track':
-                    return this.resolveTrack(id);
+                    return await this.resolveTrack(id);
                 case 'album':
-                    return this.resolveAlbum(id);
+                    return await this.resolveAlbum(id);
                 case 'mix':
                     return this.getMix(id);
                 case 'playlist':
@@ -271,11 +279,64 @@ export default class TidalSource {
             }
         }
         catch (error) {
+            if (this.config.embedFallback === true &&
+                error instanceof TidalApiError &&
+                error.statusCode === 401 &&
+                (type === 'track' || type === 'album')) {
+                const result = await this.resolveEmbed(type, id);
+                if (result)
+                    return result;
+            }
             return {
                 loadType: 'error',
                 exception: { message: this.getErrorMessage(error), severity: 'fault' }
             };
         }
+    }
+    async resolveEmbed(kind, id) {
+        const result = await fetchTidalEmbed(kind, id);
+        if (!result)
+            return undefined;
+        if (kind === 'track') {
+            const item = result.tracks[0];
+            return item
+                ? { loadType: 'track', data: this.buildEmbedTrack(item) }
+                : undefined;
+        }
+        const limit = capTotalTracks(result.tracks.length, this.nodelink.options.playback?.maxPlaylistLength);
+        const tracks = result.tracks
+            .slice(0, limit)
+            .map((item) => this.buildEmbedTrack(item));
+        if (!tracks.length)
+            return undefined;
+        return {
+            loadType: 'playlist',
+            data: {
+                info: { name: result.name, selectedTrack: 0 },
+                tracks,
+                pluginInfo: { metadataSource: 'tidal-embed' }
+            }
+        };
+    }
+    buildEmbedTrack(item) {
+        const info = {
+            identifier: item.id,
+            title: item.title,
+            author: item.author,
+            length: item.durationMs,
+            isSeekable: true,
+            isStream: false,
+            position: 0,
+            uri: `https://tidal.com/browse/track/${item.id}`,
+            artworkUrl: item.artworkUrl,
+            isrc: null,
+            sourceName: 'tidal'
+        };
+        return {
+            encoded: encodeTrack({ ...info, details: [] }),
+            info,
+            pluginInfo: { media: item.media, metadataSource: 'tidal-embed' }
+        };
     }
     /**
      * Resolves a recommendation query.
@@ -715,7 +776,7 @@ export default class TidalSource {
             }
         });
         if (error || statusCode !== 200) {
-            throw new Error(`Failed to fetch from Tidal API: ${error || `Status ${statusCode}`}`);
+            throw new TidalApiError(`Failed to fetch from Tidal API: ${error || `Status ${statusCode}`}`, statusCode);
         }
         if (typeof body === 'string') {
             try {

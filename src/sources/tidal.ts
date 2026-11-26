@@ -7,7 +7,11 @@ import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { resolveMediaCredential } from '../modules/mediaProviderConfig.ts'
 import { applyTidalCatalog, tidalPreview } from '../modules/tidalCatalog.ts'
-import { fetchTidalEmbed, type TidalEmbedKind, type TidalEmbedTrack } from '../modules/tidalEmbed.ts'
+import {
+  fetchTidalEmbed,
+  type TidalEmbedKind,
+  type TidalEmbedTrack
+} from '../modules/tidalEmbed.ts'
 import { buildTidalMedia } from '../modules/tidalMedia.ts'
 import type {
   SourceResult,
@@ -347,8 +351,12 @@ export default class TidalSource {
           return { loadType: 'empty', data: {} }
       }
     } catch (error) {
-      if (this.config.embedFallback === true && error instanceof TidalApiError &&
-          error.statusCode === 401 && (type === 'track' || type === 'album')) {
+      if (
+        this.config.embedFallback === true &&
+        error instanceof TidalApiError &&
+        error.statusCode === 401 &&
+        (type === 'track' || type === 'album')
+      ) {
         const result = await this.resolveEmbed(type, id)
         if (result) return result
       }
@@ -359,15 +367,25 @@ export default class TidalSource {
     }
   }
 
-  private async resolveEmbed(kind: TidalEmbedKind, id: string): Promise<SourceResult | undefined> {
+  private async resolveEmbed(
+    kind: TidalEmbedKind,
+    id: string
+  ): Promise<SourceResult | undefined> {
     const result = await fetchTidalEmbed(kind, id)
     if (!result) return undefined
     if (kind === 'track') {
       const item = result.tracks[0]
-      return item ? { loadType: 'track', data: this.buildEmbedTrack(item) } : undefined
+      return item
+        ? { loadType: 'track', data: this.buildEmbedTrack(item) }
+        : undefined
     }
-    const limit = capTotalTracks(result.tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
-    const tracks = result.tracks.slice(0, limit).map(item => this.buildEmbedTrack(item))
+    const limit = capTotalTracks(
+      result.tracks.length,
+      this.nodelink.options.playback?.maxPlaylistLength
+    )
+    const tracks = result.tracks
+      .slice(0, limit)
+      .map((item) => this.buildEmbedTrack(item))
     if (!tracks.length) return undefined
     return {
       loadType: 'playlist',
@@ -381,13 +399,23 @@ export default class TidalSource {
 
   private buildEmbedTrack(item: TidalEmbedTrack) {
     const info: TrackInfo = {
-      identifier: item.id, title: item.title, author: item.author, length: item.durationMs,
-      isSeekable: true, isStream: false, position: 0,
-      uri: `https://tidal.com/browse/track/${item.id}`, artworkUrl: item.artworkUrl,
-      isrc: null, sourceName: 'tidal'
+      identifier: item.id,
+      title: item.title,
+      author: item.author,
+      length: item.durationMs,
+      isSeekable: true,
+      isStream: false,
+      position: 0,
+      uri: `https://tidal.com/browse/track/${item.id}`,
+      artworkUrl: item.artworkUrl,
+      isrc: null,
+      sourceName: 'tidal'
     }
-    return { encoded: encodeTrack({ ...info, details: [] }), info,
-      pluginInfo: { media: item.media, metadataSource: 'tidal-embed' } }
+    return {
+      encoded: encodeTrack({ ...info, details: [] }),
+      info,
+      pluginInfo: { media: item.media, metadataSource: 'tidal-embed' }
+    }
   }
 
   /**
