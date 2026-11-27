@@ -26,14 +26,21 @@ export function acquireAnalysisResource<T>(
       abort()
       return
     }
-    Promise.resolve().then(() => {
-      if (finished) return null
-      return acquire(acquisitionSignal)
-    }).then((value) => {
-      if (value === null) return finish(null)
-      if (finished) {
-        try { dispose(value) } catch {}
-      } else finish(value)
-    }, () => finish(null))
+    Promise.resolve()
+      .then(() => {
+        if (finished) return null
+        return acquire(acquisitionSignal)
+      })
+      .then(
+        (value) => {
+          if (value === null) return finish(null)
+          if (finished) {
+            try {
+              dispose(value)
+            } catch {}
+          } else finish(value)
+        },
+        () => finish(null)
+      )
   })
 }

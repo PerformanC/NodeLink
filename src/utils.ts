@@ -2248,7 +2248,9 @@ async function makeRequest(
       const res = await fetch(urlString, {
         method,
         headers: customHeaders as never,
-        signal: options.signal ? AbortSignal.any([ac.signal, options.signal]) : ac.signal
+        signal: options.signal
+          ? AbortSignal.any([ac.signal, options.signal])
+          : ac.signal
       })
       if (t) {
         clearTimeout(t)
@@ -3152,23 +3154,25 @@ export function getBestMatch<T extends BestMatchCandidate>(
 
   const normalize = (str: string): string => {
     if (!str) return ''
-    return str
-      .toLowerCase()
-      .replace(/feat\.?/g, '')
-      .replace(/ft\.?/g, '')
-      .replace(
-        /\s*\([^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi,
-        ''
-      )
-      .replace(
-        /\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi,
-        ''
-      )
-      // Preserves letters and numbers across all Unicode scripts (\p{L}\p{N}), ensuring
-      // non-Latin titles (Japanese, Chinese, Cyrillic, etc.) are not erased during normalization.
-      // Ref: https://github.com/PerformanC/NodeLink/commit/7ee75784
-      .replace(/[^\p{L}\p{N}\s]/gu, '')
-      .trim()
+    return (
+      str
+        .toLowerCase()
+        .replace(/feat\.?/g, '')
+        .replace(/ft\.?/g, '')
+        .replace(
+          /\s*\([^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi,
+          ''
+        )
+        .replace(
+          /\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi,
+          ''
+        )
+        // Preserves letters and numbers across all Unicode scripts (\p{L}\p{N}), ensuring
+        // non-Latin titles (Japanese, Chinese, Cyrillic, etc.) are not erased during normalization.
+        // Ref: https://github.com/PerformanC/NodeLink/commit/7ee75784
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .trim()
+    )
   }
 
   const specKeywords = [
@@ -3218,9 +3222,7 @@ export function getBestMatch<T extends BestMatchCandidate>(
     if (stripped.length >= 2) cleanTitleForWords = stripped
   }
   const originalWords = new Set(
-    cleanTitleForWords
-      .split(/\s+/)
-      .filter((w) => w.length > 0)
+    cleanTitleForWords.split(/\s+/).filter((w) => w.length > 0)
   )
   // Split multiple artists (e.g. "ぴーなた, 重音テト") to match individual artist aliases/channels.
   const originalArtists = original.author
@@ -3462,8 +3464,7 @@ export function getBestMatch<T extends BestMatchCandidate>(
     }
 
     const isEpisode =
-      original.uri?.includes('/episode/') ||
-      original.uri?.includes('/chapter/')
+      original.uri?.includes('/episode/') || original.uri?.includes('/chapter/')
 
     if (targetDuration > 0) {
       const diff = Math.abs(item.info.length - targetDuration)

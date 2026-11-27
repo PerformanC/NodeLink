@@ -542,14 +542,20 @@ export class AutoMixRegistry {
       if (
         this.pendingResourceFetches >= 2 ||
         this.pendingResourceKeys.has(job.deduplicationKey)
-      ) return null
+      )
+        return null
       const fetched = await acquireAnalysisResource(
         async (signal) => {
           this.pendingResourceFetches++
           this.pendingResourceKeys.add(job.deduplicationKey)
           try {
             return await options.fetchResource(
-              trackInfo, options.urlData, windowStartMs, true, true, signal
+              trackInfo,
+              options.urlData,
+              windowStartMs,
+              true,
+              true,
+              signal
             )
           } finally {
             this.pendingResourceFetches--
@@ -599,7 +605,10 @@ export class AutoMixRegistry {
       jobLagMonitor.unref?.()
 
       if (!TransitionProfileCache.get(trackId)) {
-        AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando')
+        AutoMixCacheManager.getInstance().setAnalysisStatus(
+          trackId,
+          'preparando'
+        )
       }
 
       const resultPromise = new Promise<TrackPreAnalysisProfile | null>(
@@ -826,7 +835,9 @@ export class AutoMixRegistry {
             const remainingBytes = Math.max(0, expectedBytes - bytesRead)
             const bytesToTake = Math.min(chunk.length, remainingBytes)
             const alignedBytes = bytesToTake - (bytesToTake % 4)
-            pendingBytes = Buffer.from(chunk.subarray(alignedBytes, bytesToTake))
+            pendingBytes = Buffer.from(
+              chunk.subarray(alignedBytes, bytesToTake)
+            )
 
             if (alignedBytes > 0) {
               const alignedChunk =

@@ -1369,7 +1369,10 @@ export class Player {
     signal?: AbortSignal
   ): Promise<{ stream: AudioResource } | { exception: { message: string } }> {
     signal?.throwIfAborted()
-    if (!isBackgroundAnalysis && this.nodelink.options?.playback.mix?.enabled !== false) {
+    if (
+      !isBackgroundAnalysis &&
+      this.nodelink.options?.playback.mix?.enabled !== false
+    ) {
       await this._ensureAudioMixer()
     }
 
@@ -2488,7 +2491,14 @@ export class Player {
                 priority: 'IMMINENT_TRANSITION',
                 triggerSource: `player:${this.guildId}:seekImminent`,
                 signal: this._outroAnalysisSignal(),
-                fetchResource: (info, uData, wStart, returnPcm, _background, signal) =>
+                fetchResource: (
+                  info,
+                  uData,
+                  wStart,
+                  returnPcm,
+                  _background,
+                  signal
+                ) =>
                   this._fetchResource(
                     info,
                     uData,
@@ -5020,8 +5030,23 @@ export class Player {
           priority,
           triggerSource: `player:${this.guildId}:nextTrack`,
           signal: this._outroAnalysisSignal(),
-          fetchResource: (info, uData, wStart, returnPcm, _background, signal) =>
-            this._fetchResource(info, uData, wStart, returnPcm, false, true, signal)
+          fetchResource: (
+            info,
+            uData,
+            wStart,
+            returnPcm,
+            _background,
+            signal
+          ) =>
+            this._fetchResource(
+              info,
+              uData,
+              wStart,
+              returnPcm,
+              false,
+              true,
+              signal
+            )
         })
         .then((profile) => {
           if (

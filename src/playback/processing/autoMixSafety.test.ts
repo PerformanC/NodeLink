@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { createServer } from 'node:http'
-import { createServer as createHttp2Server, type ServerHttp2Session } from 'node:http2'
+import {
+  createServer as createHttp2Server,
+  type ServerHttp2Session
+} from 'node:http2'
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 import SourcesManager from '../../managers/sourceManager.ts'
@@ -66,24 +69,48 @@ function fixture(identifier: string, windowDurationMs = 1000) {
       }
     }
   }
-  return { stream, options, key: autoMixTrackKey(track), fetches: () => fetches }
+  return {
+    stream,
+    options,
+    key: autoMixTrackKey(track),
+    fetches: () => fetches
+  }
 }
 
 test('cache identity includes source, rendition and duration', () => {
   const track = { info: { sourceName: 'a', identifier: 'id', length: 100 } }
   const key = autoMixTrackKey(track)
-  assert.notEqual(key, autoMixTrackKey({ info: { ...track.info, sourceName: 'b' } }))
+  assert.notEqual(
+    key,
+    autoMixTrackKey({ info: { ...track.info, sourceName: 'b' } })
+  )
   assert.notEqual(key, autoMixTrackKey({ ...track, audioTrackId: 'other' }))
-  assert.notEqual(key, autoMixTrackKey({ info: { ...track.info, length: 101 } }))
+  assert.notEqual(
+    key,
+    autoMixTrackKey({ info: { ...track.info, length: 101 } })
+  )
 })
 
 test('only a contiguous silent tail after observed sound qualifies', () => {
   const tail = Array.from({ length: 40 }, (_, i) => point(20 + i * 20, true))
   assert.equal(trailingSilenceStart([point(0, false), ...tail]), 20)
   assert.equal(trailingSilenceStart(tail), null)
-  assert.equal(trailingSilenceStart([point(0, false), ...tail.slice(0, 39)]), null)
-  assert.equal(trailingSilenceStart([point(0, false), ...tail.slice(0, 20), ...tail.slice(23)]), null)
-  assert.equal(trailingSilenceStart([point(0, false), ...tail, point(820, false)]), null)
+  assert.equal(
+    trailingSilenceStart([point(0, false), ...tail.slice(0, 39)]),
+    null
+  )
+  assert.equal(
+    trailingSilenceStart([
+      point(0, false),
+      ...tail.slice(0, 20),
+      ...tail.slice(23)
+    ]),
+    null
+  )
+  assert.equal(
+    trailingSilenceStart([point(0, false), ...tail, point(820, false)]),
+    null
+  )
 })
 
 test('end boundary rejects old profiles, incomplete coverage and explicit ends', () => {
@@ -99,7 +126,10 @@ test('end boundary rejects old profiles, incomplete coverage and explicit ends',
   } as TrackPreAnalysisProfile
   assert.equal(safeAutoMixEnd(100000, profile, false), 98700)
   assert.equal(safeAutoMixEnd(100000, profile, true), 100000)
-  assert.equal(safeAutoMixEnd(100000, { ...profile, analysisVersion: 3 }, false), 100000)
+  assert.equal(
+    safeAutoMixEnd(100000, { ...profile, analysisVersion: 3 }, false),
+    100000
+  )
   const partial = {
     ...profile,
     outroProfile: { ...profile.outroProfile!, analyzedWindowEndMs: 99500 }
@@ -110,7 +140,12 @@ test('end boundary rejects old profiles, incomplete coverage and explicit ends',
 test('stream error after 24.5 of 25 seconds does not cache or call completion', async () => {
   const f = fixture('error', 25000)
   let calls = 0
-  const result = registry.requestOutroAnalysis({ ...f.options, onComplete: () => { calls++ } })
+  const result = registry.requestOutroAnalysis({
+    ...f.options,
+    onComplete: () => {
+      calls++
+    }
+  })
   await nextTurn()
   const pcm = Buffer.alloc(24500 * 192)
   pcm.fill(12, 0, 23700 * 192)
@@ -153,8 +188,20 @@ test('deduplicated consumers complete exactly once and one abort does not cancel
   const second = new AbortController()
   let firstCalls = 0
   let secondCalls = 0
-  const a = registry.requestOutroAnalysis({ ...f.options, signal: first.signal, onComplete: () => { firstCalls++ } })
-  const b = registry.requestOutroAnalysis({ ...f.options, signal: second.signal, onComplete: () => { secondCalls++ } })
+  const a = registry.requestOutroAnalysis({
+    ...f.options,
+    signal: first.signal,
+    onComplete: () => {
+      firstCalls++
+    }
+  })
+  const b = registry.requestOutroAnalysis({
+    ...f.options,
+    signal: second.signal,
+    onComplete: () => {
+      secondCalls++
+    }
+  })
   await nextTurn()
   first.abort()
   assert.equal(await a, null)
@@ -175,8 +222,20 @@ test('last subscriber abort destroys the analysis stream and suppresses completi
   const a = new AbortController()
   const b = new AbortController()
   let calls = 0
-  const first = registry.requestOutroAnalysis({ ...f.options, signal: a.signal, onComplete: () => { calls++ } })
-  const second = registry.requestOutroAnalysis({ ...f.options, signal: b.signal, onComplete: () => { calls++ } })
+  const first = registry.requestOutroAnalysis({
+    ...f.options,
+    signal: a.signal,
+    onComplete: () => {
+      calls++
+    }
+  })
+  const second = registry.requestOutroAnalysis({
+    ...f.options,
+    signal: b.signal,
+    onComplete: () => {
+      calls++
+    }
+  })
   await nextTurn()
   a.abort()
   assert.equal(f.stream.destroyed, false)
@@ -191,7 +250,12 @@ test('last subscriber abort destroys the analysis stream and suppresses completi
 test('initial requester callback is delivered exactly once', async () => {
   const f = fixture('single')
   let calls = 0
-  const result = registry.requestOutroAnalysis({ ...f.options, onComplete: () => { calls++ } })
+  const result = registry.requestOutroAnalysis({
+    ...f.options,
+    onComplete: () => {
+      calls++
+    }
+  })
   await nextTurn()
   f.stream.end(Buffer.alloc(192000))
   assert.ok(await result)
@@ -212,7 +276,10 @@ test('an already aborted consumer never starts a fetch', async () => {
   const controller = new AbortController()
   controller.abort()
   assert.equal(
-    await registry.requestOutroAnalysis({ ...f.options, signal: controller.signal }),
+    await registry.requestOutroAnalysis({
+      ...f.options,
+      signal: controller.signal
+    }),
     null
   )
   assert.equal(f.fetches(), 0)
@@ -223,7 +290,10 @@ test('last subscriber abort closes a pending source request and releases the wor
   const first = new AbortController()
   const last = new AbortController()
   const f = fixture('pending-acquisition')
-  const state = registry as unknown as { activeWorkers: number; pendingResourceFetches: number }
+  const state = registry as unknown as {
+    activeWorkers: number
+    pendingResourceFetches: number
+  }
   const idle = async () => {
     const deadline = Date.now() + 2000
     while (state.activeWorkers !== 0 || state.pendingResourceFetches !== 0) {
@@ -234,8 +304,12 @@ test('last subscriber abort closes a pending source request and releases the wor
   await idle()
   let notifyRequest!: () => void
   let notifyClosed!: () => void
-  const requested = new Promise<void>(resolve => { notifyRequest = resolve })
-  const closed = new Promise<void>(resolve => { notifyClosed = resolve })
+  const requested = new Promise<void>((resolve) => {
+    notifyRequest = resolve
+  })
+  const closed = new Promise<void>((resolve) => {
+    notifyClosed = resolve
+  })
   let requests = 0
   const server = createServer((_req, res) => {
     requests++
@@ -250,28 +324,65 @@ test('last subscriber abort closes a pending source request and releases the wor
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const url = 'http://127.0.0.1:' + (server.address() as AddressInfo).port
-  const manager = new SourcesManager({ options: {} } as ConstructorParameters<typeof SourcesManager>[0])
+  const manager = new SourcesManager({ options: {} } as ConstructorParameters<
+    typeof SourcesManager
+  >[0])
   let sourceSignal: AbortSignal | undefined
   const source = {
-    loadStream: async (_track: unknown, input: string, _protocol: unknown, data: Record<string, unknown>) => {
+    loadStream: async (
+      _track: unknown,
+      input: string,
+      _protocol: unknown,
+      data: Record<string, unknown>
+    ) => {
       sourceSignal = data.signal as AbortSignal
-      const response = await http1makeRequest(input, { streamOnly: true, maxRetries: 0 })
+      const response = await http1makeRequest(input, {
+        streamOnly: true,
+        maxRetries: 0
+      })
       return { stream: response.stream, type: 'pcm' }
     }
   } as unknown as NonNullable<ReturnType<typeof manager.sourceMap.get>>
   manager.sourceMap.set('test', source)
-  const fetchResource: AnalysisRequestOptions['fetchResource'] = async (track, _data, _position, _pcm, _background, signal) => {
-    const result = await manager.getTrackStream(track, url, undefined, {}, signal)
+  const fetchResource: AnalysisRequestOptions['fetchResource'] = async (
+    track,
+    _data,
+    _position,
+    _pcm,
+    _background,
+    signal
+  ) => {
+    const result = await manager.getTrackStream(
+      track,
+      url,
+      undefined,
+      {},
+      signal
+    )
     result.stream?.destroy()
     return { exception: { message: 'fixture completed' } }
   }
   try {
-    const a = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: first.signal })
-    const b = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: last.signal })
-    await Promise.race([requested, new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => reject(new Error('source did not receive request')), 2000)
-      timer.unref?.()
-    })])
+    const a = registry.requestOutroAnalysis({
+      ...f.options,
+      fetchResource,
+      signal: first.signal
+    })
+    const b = registry.requestOutroAnalysis({
+      ...f.options,
+      fetchResource,
+      signal: last.signal
+    })
+    await Promise.race([
+      requested,
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('source did not receive request')),
+          2000
+        )
+        timer.unref?.()
+      })
+    ])
     assert.equal(state.activeWorkers, 1)
     assert.equal(requests, 1)
     first.abort()
@@ -280,15 +391,24 @@ test('last subscriber abort closes a pending source request and releases the wor
     last.abort()
     assert.equal(await b, null)
     assert.equal(sourceSignal?.aborted, true)
-    await Promise.race([closed, new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => reject(new Error('upstream connection remained open')), 2000)
-      timer.unref?.()
-    })])
+    await Promise.race([
+      closed,
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('upstream connection remained open')),
+          2000
+        )
+        timer.unref?.()
+      })
+    ])
     await idle()
     assert.equal(state.activeWorkers, 0)
     assert.equal(state.pendingResourceFetches, 0)
     // Same key may be requested again only after the cancelled fetch is released.
-    assert.equal(await registry.requestOutroAnalysis({ ...f.options, fetchResource }), null)
+    assert.equal(
+      await registry.requestOutroAnalysis({ ...f.options, fetchResource }),
+      null
+    )
     await idle()
     assert.equal(requests, 2)
   } finally {
@@ -296,7 +416,7 @@ test('last subscriber abort closes a pending source request and releases the wor
     last.abort()
     f.stream.destroy()
     server.closeAllConnections()
-    await new Promise<void>(resolve => server.close(() => resolve()))
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })
 
@@ -306,24 +426,39 @@ test('an uncooperative source cannot start a duplicate acquisition for the cance
   let calls = 0
   let release!: () => void
   let started!: () => void
-  const ready = new Promise<void>(resolve => { started = resolve })
+  const ready = new Promise<void>((resolve) => {
+    started = resolve
+  })
   const fetchResource: AnalysisRequestOptions['fetchResource'] = async () => {
     calls++
-    await new Promise<void>(resolve => { release = resolve; started() })
+    await new Promise<void>((resolve) => {
+      release = resolve
+      started()
+    })
     return { exception: { message: 'fixture complete' } }
   }
-  const state = registry as unknown as { activeWorkers: number; pendingResourceFetches: number }
+  const state = registry as unknown as {
+    activeWorkers: number
+    pendingResourceFetches: number
+  }
   const deadline = Date.now() + 2000
   while (state.activeWorkers !== 0 || state.pendingResourceFetches !== 0) {
     if (Date.now() > deadline) throw new Error('previous worker not released')
     await nextTurn()
   }
   try {
-    const result = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: controller.signal })
+    const result = registry.requestOutroAnalysis({
+      ...f.options,
+      fetchResource,
+      signal: controller.signal
+    })
     await ready
     controller.abort()
     assert.equal(await result, null)
-    assert.equal(await registry.requestOutroAnalysis({ ...f.options, fetchResource }), null)
+    assert.equal(
+      await registry.requestOutroAnalysis({ ...f.options, fetchResource }),
+      null
+    )
     assert.equal(calls, 1)
   } finally {
     controller.abort()
@@ -338,16 +473,20 @@ test('pending HTTP/2 source acquisition is cancelled without fallback or retry',
   const f = fixture('pending-http2')
   let notifyRequest!: () => void
   let notifyClosed!: () => void
-  const requested = new Promise<void>(resolve => { notifyRequest = resolve })
-  const closed = new Promise<void>(resolve => { notifyClosed = resolve })
+  const requested = new Promise<void>((resolve) => {
+    notifyRequest = resolve
+  })
+  const closed = new Promise<void>((resolve) => {
+    notifyClosed = resolve
+  })
   const sessions = new Set<ServerHttp2Session>()
   let requests = 0
   const server = createHttp2Server()
-  server.on('session', session => {
+  server.on('session', (session) => {
     sessions.add(session)
     session.once('close', () => sessions.delete(session))
   })
-  server.on('stream', stream => {
+  server.on('stream', (stream) => {
     requests++
     stream.once('close', notifyClosed)
     stream.on('error', () => {})
@@ -356,32 +495,63 @@ test('pending HTTP/2 source acquisition is cancelled without fallback or retry',
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   const url = 'http://127.0.0.1:' + (server.address() as AddressInfo).port
-  const manager = new SourcesManager({ options: {} } as ConstructorParameters<typeof SourcesManager>[0])
+  const manager = new SourcesManager({ options: {} } as ConstructorParameters<
+    typeof SourcesManager
+  >[0])
   const source = {
     loadStream: async (_track: unknown, input: string) => {
-      const result = await makeRequest(input, { streamOnly: true, maxRetries: 0 })
+      const result = await makeRequest(input, {
+        streamOnly: true,
+        maxRetries: 0
+      })
       return { stream: result.stream, type: 'pcm' }
     }
   } as unknown as NonNullable<ReturnType<typeof manager.sourceMap.get>>
   manager.sourceMap.set('test', source)
-  const fetchResource: AnalysisRequestOptions['fetchResource'] = async (track, _data, _position, _pcm, _background, signal) => {
-    const result = await manager.getTrackStream(track, url, undefined, {}, signal)
+  const fetchResource: AnalysisRequestOptions['fetchResource'] = async (
+    track,
+    _data,
+    _position,
+    _pcm,
+    _background,
+    signal
+  ) => {
+    const result = await manager.getTrackStream(
+      track,
+      url,
+      undefined,
+      {},
+      signal
+    )
     result.stream?.destroy()
     return { exception: { message: 'fixture completed' } }
   }
-  const state = registry as unknown as { activeWorkers: number; pendingResourceFetches: number }
+  const state = registry as unknown as {
+    activeWorkers: number
+    pendingResourceFetches: number
+  }
   const within = async (promise: Promise<void>) => {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      await Promise.race([promise, new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('HTTP/2 cancellation deadline exceeded')), 2000)
-      })])
+      await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('HTTP/2 cancellation deadline exceeded')),
+            2000
+          )
+        })
+      ])
     } finally {
       if (timer) clearTimeout(timer)
     }
   }
   try {
-    const pending = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: controller.signal })
+    const pending = registry.requestOutroAnalysis({
+      ...f.options,
+      fetchResource,
+      signal: controller.signal
+    })
     await within(requested)
     controller.abort()
     assert.equal(await pending, null)
@@ -396,6 +566,6 @@ test('pending HTTP/2 source acquisition is cancelled without fallback or retry',
     controller.abort()
     f.stream.destroy()
     for (const session of sessions) session.destroy()
-    await new Promise<void>(resolve => server.close(() => resolve()))
+    await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 })

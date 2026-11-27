@@ -11,7 +11,9 @@ export function withStreamAcquisitionSignal<T>(
   return acquisition.run(signal, acquire)
 }
 
-export function streamAcquisitionSignal(explicit?: AbortSignal): AbortSignal | undefined {
+export function streamAcquisitionSignal(
+  explicit?: AbortSignal
+): AbortSignal | undefined {
   const inherited = acquisition.getStore()
   if (!explicit || explicit === inherited) return inherited ?? explicit
   return inherited ? AbortSignal.any([inherited, explicit]) : explicit
