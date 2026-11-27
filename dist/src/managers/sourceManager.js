@@ -14,6 +14,7 @@ import { parentPort } from 'node:worker_threads';
 import { StreamTransportServer } from '../playback/streamTransport.js';
 import { resolveStreamTransportRoute } from '../playback/streamTransportRouter.js';
 import { getBestMatch, logger } from '../utils.js';
+import { withStreamAcquisitionSignal } from '../utils/streamAcquisitionSignal.js';
 /**
  * Central manager for audio source providers.
  * Handles source discovery, dynamic loading, and request routing based on URL patterns or aliases.
@@ -637,7 +638,8 @@ export default class SourcesManager {
      * @returns A promise resolving to the stream result.
      * @public
      */
-    async getTrackStream(track, url, protocol, additionalData) {
+    async getTrackStream(track, url, protocol, additionalData, signal) {
+        signal?.throwIfAborted();
         const instance = this.sourceMap.get(track.sourceName);
         if (!instance?.loadStream) {
             throw new Error(`Source ${track.sourceName} not found or does not support loadStream`);
@@ -652,6 +654,16 @@ export default class SourcesManager {
         if (typeof normalizedAdditionalData.position === 'number' &&
             typeof normalizedAdditionalData.startTime !== 'number') {
             normalizedAdditionalData.startTime = normalizedAdditionalData.position;
+        }
+        // Analysis acquisitions require a local cancellable source call. An
+        // AbortSignal cannot be serialized through the worker transport protocol.
+        if (signal) {
+            const result = await withStreamAcquisitionSignal(signal, () => instance.loadStream(track, url, protocol, { ...normalizedAdditionalData, signal }));
+            if (signal.aborted) {
+                result.stream?.destroy();
+                signal.throwIfAborted();
+            }
+            return result;
         }
         const transportConfig = this.nodelink.options?.cluster?.streamTransport;
         const swm = this.nodelink.sourceWorkerManager;

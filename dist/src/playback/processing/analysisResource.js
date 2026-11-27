@@ -3,6 +3,8 @@
 export function acquireAnalysisResource(acquire, dispose, signal, timeoutMs) {
     if (signal.aborted)
         return Promise.resolve(null);
+    const timeoutController = new AbortController();
+    const acquisitionSignal = AbortSignal.any([signal, timeoutController.signal]);
     return new Promise((resolve) => {
         let finished = false;
         let timer;
@@ -12,20 +14,20 @@ export function acquireAnalysisResource(acquire, dispose, signal, timeoutMs) {
             finished = true;
             if (timer)
                 clearTimeout(timer);
-            signal.removeEventListener('abort', abort);
+            acquisitionSignal.removeEventListener('abort', abort);
             resolve(value);
         };
         const abort = () => finish(null);
-        signal.addEventListener('abort', abort, { once: true });
-        timer = setTimeout(abort, timeoutMs);
-        if (signal.aborted) {
+        acquisitionSignal.addEventListener('abort', abort, { once: true });
+        timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+        if (acquisitionSignal.aborted) {
             abort();
             return;
         }
         Promise.resolve().then(() => {
             if (finished)
                 return null;
-            return acquire();
+            return acquire(acquisitionSignal);
         }).then((value) => {
             if (value === null)
                 return finish(null);

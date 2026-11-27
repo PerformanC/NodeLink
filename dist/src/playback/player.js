@@ -945,11 +945,13 @@ export class Player {
     /**
      * Fetches an audio resource for playback.
      */
-    async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false, isBackgroundAnalysis = false) {
-        if (this.nodelink.options?.playback.mix?.enabled !== false) {
+    async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false, isBackgroundAnalysis = false, signal) {
+        signal?.throwIfAborted();
+        if (!isBackgroundAnalysis && this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
         }
         await getStreamProcessor();
+        signal?.throwIfAborted();
         const audioResourceFactory = createAudioResource;
         if (!audioResourceFactory) {
             return { exception: { message: 'Stream processor not initialized' } };
@@ -996,7 +998,11 @@ export class Player {
             extraData.isEncrypted === undefined) {
             extraData.isEncrypted = resolvedUrlData.isEncrypted;
         }
-        const fetched = await this.nodelink.sources.getTrackStream(track, resolvedUrlData.url, resolvedUrlData.protocol, additionalData);
+        const fetched = await this.nodelink.sources.getTrackStream(track, resolvedUrlData.url, resolvedUrlData.protocol, additionalData, signal);
+        if (signal?.aborted) {
+            fetched.stream?.destroy();
+            signal.throwIfAborted();
+        }
         if (fetched.exception) {
             logger('error', 'Player', `Stream resource fetch failed for guild ${this.guildId}`, fetched.exception);
             return fetched;
@@ -1691,7 +1697,7 @@ export class Player {
                             priority: 'IMMINENT_TRANSITION',
                             triggerSource: `player:${this.guildId}:seekImminent`,
                             signal: this._outroAnalysisSignal(),
-                            fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
+                            fetchResource: (info, uData, wStart, returnPcm, _background, signal) => this._fetchResource(info, uData, wStart, returnPcm, false, true, signal)
                         })
                             .catch(() => { });
                     }
@@ -3527,7 +3533,7 @@ export class Player {
                 priority,
                 triggerSource: `player:${this.guildId}:nextTrack`,
                 signal: this._outroAnalysisSignal(),
-                fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
+                fetchResource: (info, uData, wStart, returnPcm, _background, signal) => this._fetchResource(info, uData, wStart, returnPcm, false, true, signal)
             })
                 .then((profile) => {
                 if (this.track !== currentTrack ||

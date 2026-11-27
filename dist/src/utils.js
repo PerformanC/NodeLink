@@ -12,6 +12,7 @@ import zlib from 'node:zlib';
 import packageJson from '../package.json' with { type: 'json' };
 import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from './constants.js';
 import { defaultSanitizer, LogSanitizer } from './utils/sanitizer.js';
+import { streamAcquisitionSignal } from './utils/streamAcquisitionSignal.js';
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
  *
@@ -1488,7 +1489,8 @@ async function _internalHttp1Request(urlString, options = {}) {
         port: currentUrl.port || (isHttps ? 443 : 80),
         path: currentUrl.pathname + currentUrl.search,
         headers: reqHeaders,
-        localAddress: actualLocalAddress
+        localAddress: actualLocalAddress,
+        signal: options.signal
     };
     return new Promise((resolve, reject) => {
         let req;
@@ -1703,10 +1705,12 @@ async function _internalHttp1Request(urlString, options = {}) {
  * @public
  */
 async function http1makeRequest(urlString, options = {}) {
+    options = { ...options, signal: streamAcquisitionSignal(options.signal) };
     const { maxRetries = 3, proxy } = options;
     let attempt = 0;
     while (true) {
         try {
+            options.signal?.throwIfAborted();
             let finalUrl = urlString;
             const useReverseProxy = shouldUseReverseProxy(proxy);
             if (useReverseProxy && proxy?.url) {
@@ -1745,6 +1749,7 @@ async function http1makeRequest(urlString, options = {}) {
             return await _internalHttp1Request(finalUrl, newOptions);
         }
         catch (err) {
+            options.signal?.throwIfAborted();
             const error = err;
             const code = error.code ? String(error.code) : '';
             const isRetryable = [
@@ -1758,7 +1763,7 @@ async function http1makeRequest(urlString, options = {}) {
                 attempt++;
                 const delay = 100 * 2 ** attempt;
                 logger('warn', 'Network', `Request for ${urlString} failed with ${code}. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`);
-                await new Promise((resolve) => setTimeout(resolve, delay));
+                await import('node:timers/promises').then(({ setTimeout }) => setTimeout(delay, undefined, { signal: options.signal }));
             }
             else {
                 throw error;
@@ -1782,6 +1787,8 @@ async function http1makeRequest(urlString, options = {}) {
  * @public
  */
 async function makeRequest(urlString, options = {}, nodelink) {
+    options = { ...options, signal: streamAcquisitionSignal(options.signal) };
+    options.signal?.throwIfAborted();
     const { method = 'GET', headers: customHeaders = {}, body, timeout = Math.max(1, options?.timeout ?? 30000), streamOnly = false, disableBodyCompression = false, maxRedirects = DEFAULT_MAX_REDIRECTS, maxResponseBodyBytes = DEFAULT_MAX_RESPONSE_BODY_BYTES, _redirectsFollowed = 0 } = options;
     const finalNodeLink = nodelink || runtime.nodelink;
     const logId = crypto.randomBytes(4).toString('hex');
@@ -1819,7 +1826,7 @@ async function makeRequest(urlString, options = {}, nodelink) {
             const res = await fetch(urlString, {
                 method,
                 headers: customHeaders,
-                signal: ac.signal
+                signal: options.signal ? AbortSignal.any([ac.signal, options.signal]) : ac.signal
             });
             if (t) {
                 clearTimeout(t);
@@ -1850,6 +1857,7 @@ async function makeRequest(urlString, options = {}, nodelink) {
         catch (e) {
             if (t)
                 clearTimeout(t);
+            options.signal?.throwIfAborted();
             const msg = e.message;
             if (msg === 'body too large' || e instanceof SyntaxError)
                 throw e;
@@ -1897,6 +1905,12 @@ async function makeRequest(urlString, options = {}, nodelink) {
             // recovery path, if any, must handle a later body interruption.
             if (responseHeadersReceived || fallbackStarted)
                 return;
+            if (options.signal?.aborted) {
+                fallbackStarted = true;
+                releaseStream();
+                reject(options.signal.reason);
+                return;
+            }
             fallbackStarted = true;
             releaseStream();
             if (isProtocolOrAlpnFailure(error)) {
@@ -1910,6 +1924,7 @@ async function makeRequest(urlString, options = {}, nodelink) {
         };
         const trySendHttp2Request = (retryCount = 0) => {
             try {
+                options.signal?.throwIfAborted();
                 currentUrl = new URL(urlString);
                 pooledEntry = getOrCreateHttp2Session(currentUrl.origin, localAddress);
                 session = pooledEntry.session;
@@ -1966,7 +1981,7 @@ async function makeRequest(urlString, options = {}, nodelink) {
                         h2Headers['content-encoding'] = 'gzip';
                 }
                 try {
-                    req = session.request(h2Headers);
+                    req = session.request(h2Headers, { signal: options.signal });
                 }
                 catch (reqErr) {
                     if (pooledEntry) {
@@ -2014,6 +2029,10 @@ async function makeRequest(urlString, options = {}, nodelink) {
                     releaseStream();
                     if (responseHeadersReceived)
                         return;
+                    if (options.signal?.aborted) {
+                        reject(options.signal.reason);
+                        return;
+                    }
                     if (!reqClosed)
                         reqClosed = true;
                     if (isRetryableHttp2Error(err) && retryCount < 2) {

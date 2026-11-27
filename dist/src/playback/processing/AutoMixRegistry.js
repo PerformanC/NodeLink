@@ -51,6 +51,7 @@ export class AutoMixRegistry {
     maxConcurrent = 2;
     activeWorkers = 0;
     pendingResourceFetches = 0;
+    pendingResourceKeys = new Set();
     lastTickTime = performance.now();
     currentEventLoopLagMs = 0;
     maxEventLoopLagMs = 0;
@@ -373,15 +374,18 @@ export class AutoMixRegistry {
                 audioTrackId: track.audioTrackId
             };
             // A source that ignores cancellation must not cause unbounded orphan fetches.
-            if (this.pendingResourceFetches >= 2)
+            if (this.pendingResourceFetches >= 2 ||
+                this.pendingResourceKeys.has(job.deduplicationKey))
                 return null;
-            const fetched = await acquireAnalysisResource(async () => {
+            const fetched = await acquireAnalysisResource(async (signal) => {
                 this.pendingResourceFetches++;
+                this.pendingResourceKeys.add(job.deduplicationKey);
                 try {
-                    return await options.fetchResource(trackInfo, options.urlData, windowStartMs, true, false);
+                    return await options.fetchResource(trackInfo, options.urlData, windowStartMs, true, true, signal);
                 }
                 finally {
                     this.pendingResourceFetches--;
+                    this.pendingResourceKeys.delete(job.deduplicationKey);
                 }
             }, (late) => {
                 if (!('exception' in late))
@@ -711,6 +715,7 @@ export class AutoMixRegistry {
                 streamResource?.destroy();
             }
             catch { }
+            abortController.abort();
         }
     }
 }
