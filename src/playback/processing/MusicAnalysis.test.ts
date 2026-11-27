@@ -21,3 +21,23 @@ test('an estimator failure does not interrupt PCM output', async () => {
   assert.equal(observer.snapshot(), null)
   assert.deepEqual(Buffer.concat(output), Buffer.concat([first, second]))
 })
+
+test('output clock rolls over bounded analysis windows without dropping PCM', async () => {
+  const observer = new MusicAnalysis()
+  let bytes = 0
+  observer.on('data', (chunk: Buffer) => { bytes += chunk.length })
+  const frame = Buffer.alloc(3840)
+  const done = once(observer, 'end')
+  for (let i = 0; i < 800; i++) observer.write(frame)
+  observer.end()
+  await done
+  assert.equal(bytes, 800 * frame.length)
+  const snapshot = observer.snapshot()
+  assert.ok(snapshot)
+  assert.equal(snapshot.outputWindowStartMs, 12000)
+  assert.equal(snapshot.outputWindowEndMs, 16000)
+  assert.equal(snapshot.analyzedMs, 4000)
+  assert.equal(snapshot.silenceRatio, 1)
+  assert.equal(snapshot.bpm, null)
+  assert.equal(snapshot.key, null)
+})
