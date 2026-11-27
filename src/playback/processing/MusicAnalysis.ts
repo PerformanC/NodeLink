@@ -59,17 +59,41 @@ export class MusicAnalysis extends Transform {
       ? points.filter((point) => point.isSilence).length / points.length
       : 1
     const start = (this.totalFrames - this.windowFrames) * 20
-    const audible = silenceRatio < 0.95
+    // Do not publish estimates from sparse or brief audio. Tempo requires
+    // rhythmic evidence; key requires sustained audible signal and separation.
+    const audiblePoints = points.filter((point) => !point.isSilence)
+    let contiguous = 0
+    let longest = 0
+    for (const point of points) {
+      contiguous = point.isSilence ? 0 : contiguous + 1
+      longest = Math.max(longest, contiguous)
+    }
+    const onsets = audiblePoints.filter((point) => point.onset)
+    const onsetSpan =
+      (onsets.at(-1)?.timestampMs ?? 0) - (onsets[0]?.timestampMs ?? 0)
+    const tempoReliable =
+      audiblePoints.length >= 200 &&
+      silenceRatio <= 0.35 &&
+      onsets.length >= 4 &&
+      onsetSpan >= 2000 &&
+      profile.bpm !== null &&
+      Number.isFinite(profile.bpm) &&
+      profile.confidence >= 0.5
+    const keyReliable =
+      longest >= 150 &&
+      silenceRatio <= 0.25 &&
+      profile.key !== null &&
+      profile.keyConfidence >= 0.15
     this.latest = {
       scope: 'processed-output',
       capturedAt: Date.now(),
       outputWindowStartMs: start,
       outputWindowEndMs: this.totalFrames * 20,
       analyzedMs: this.windowFrames * 20,
-      bpm: audible ? profile.bpm : null,
-      bpmConfidence: audible ? profile.confidence : 0,
-      key: audible ? profile.key : null,
-      keyConfidence: audible ? profile.keyConfidence : 0,
+      bpm: tempoReliable ? profile.bpm : null,
+      bpmConfidence: tempoReliable ? profile.confidence : 0,
+      key: keyReliable ? profile.key : null,
+      keyConfidence: keyReliable ? profile.keyConfidence : 0,
       energy: profile.energy,
       estimatedLoudnessLufs: profile.loudnessLufs,
       peak: profile.peak,

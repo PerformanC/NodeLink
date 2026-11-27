@@ -289,6 +289,7 @@ export class MusicalAnalyzer {
                 filter.x2 = filter.x1;
                 filter.x1 = normalizedMono;
                 filter.y2 = filter.y1;
+                filter.y1 = y;
                 const current = this.chromaAccumulator[i] ?? 0;
                 this.chromaAccumulator[i] = current + y * y;
             }
