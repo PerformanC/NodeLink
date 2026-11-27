@@ -24,3 +24,31 @@ test('HTTP-date Retry-After blocks a new request for the full interval', async (
     Date.now = original
   }
 })
+
+test('oversized response is rejected and never normalized', async () => {
+  let normalized = false
+  const client = new MediaLookupClient(async () =>
+    new Response(new Uint8Array(1024 * 1024 + 1))
+  )
+  const result = await client.lookup('large', 'https://musicbrainz.org/', {}, (value) => {
+    normalized = true
+    return value
+  })
+  assert.equal(result.status, 502)
+  assert.equal(result.reason, 'response-too-large')
+  assert.equal(normalized, false)
+})
+
+test('redirects are disabled and successful cache hits avoid network requests', async () => {
+  let calls = 0
+  const client = new MediaLookupClient(async (_url, init) => {
+    calls++
+    assert.equal(init.redirect, 'error')
+    assert.ok(init.signal)
+    return new Response('{"id":"fixture"}')
+  })
+  const request = () => client.lookup('id', 'https://musicbrainz.org/', {}, (value) => value)
+  assert.equal((await request()).status, 200)
+  assert.deepEqual((await request()).data, { id: 'fixture' })
+  assert.equal(calls, 1)
+})

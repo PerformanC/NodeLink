@@ -1,0 +1,61 @@
+name: Fork review validation
+on:
+  push:
+    branches:
+      - 'review/pr-*'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: review-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    if: startsWith(github.ref, 'refs/heads/review/pr-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [node-22, node-24, bun]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.runtime == 'node-22' && '22' || '24' }}
+      - uses: oven-sh/setup-bun@v2
+        if: matrix.runtime == 'bun'
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --no-package-lock
+      - name: Runtime and commit
+        run: |
+          git rev-parse HEAD
+          node --version
+          if command -v bun >/dev/null; then bun --version; fi
+      - name: Type check
+        run: npm run type-check
+      - name: Build
+        run: npm run build
+      - name: Node regressions
+        if: matrix.runtime != 'bun'
+        shell: bash
+        run: |
+          mapfile -d '' tests < <(find src -name '*.test.ts' -print0)
+          test "${#tests[@]}" -gt 0
+          node --experimental-strip-types --test "${tests[@]}"
+      - name: Bun regressions
+        if: matrix.runtime == 'bun'
+        run: bun test ./src
+      - name: Compiled output diff
+        if: matrix.runtime == 'node-24'
+        run: git diff --stat -- dist
+      - uses: actions/upload-artifact@v4
+        if: matrix.runtime == 'node-24'
+        with:
+          name: rebuilt-dist-${{ github.sha }}
+          path: dist/
+          retention-days: 7
