@@ -494,8 +494,6 @@ export interface NormalizedPlaylistInfo {
   author: string | null
   /** Playlist creator's profile URL. */
   authorUrl: string | null
-  /** Playlist description. Omitted when unavailable or generic. */
-  description?: string
   /** Original playlist source. */
   sourceName: string | null
   /** Total tracks available in the original playlist. */

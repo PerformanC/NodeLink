@@ -391,10 +391,8 @@ export function buildPlaylistInfo(rawInfo = {}, pluginInfo = {}, tracks = [], co
         loadedDuration,
         isAlbum
     };
-    if (description !== null) {
-        normalized.description = description;
-    }
-    if (isPartial) {
+    // Never add description, isPartial: false, isExplicit: null, createdAt: null, updatedAt: null to metadata
+    if (isPartial === true) {
         normalized.isPartial = true;
     }
     if (typeof isExplicit === 'boolean') {

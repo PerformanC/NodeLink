@@ -461,11 +461,8 @@ export function buildPlaylistInfo(
     isAlbum
   }
 
-  if (description !== null) {
-    normalized.description = description
-  }
-
-  if (isPartial) {
+  // Never add description, isPartial: false, isExplicit: null, createdAt: null, updatedAt: null to metadata
+  if (isPartial === true) {
     normalized.isPartial = true
   }
 

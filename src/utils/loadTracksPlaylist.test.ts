@@ -140,7 +140,7 @@ test('Integration: YouTube playlist with fallback artwork and complete duration'
   assert.equal(info.loadedTracks, 2)
   assert.equal(info.loadedDuration, 300000)
   assert.equal(info.totalDuration, 300000) // Complete playlist reports full duration
-  assert.equal(info.description, 'Beats to relax/study to')
+  assert.equal('description' in info, false)
   assert.equal(info.sourceName, 'youtube')
 })
 

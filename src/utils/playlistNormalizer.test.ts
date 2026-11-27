@@ -118,7 +118,7 @@ test('buildPlaylistInfo handles complete playlist with all metadata', () => {
   assert.equal(info.artworkUrl, 'https://example.com/playlist-cover.jpg')
   assert.equal(info.author, 'DJ Awesome')
   assert.equal(info.authorUrl, 'https://example.com/dj-awesome')
-  assert.equal(info.description, 'The best songs of 2024')
+  assert.equal('description' in info, false)
   assert.equal(info.sourceName, 'spotify')
   assert.equal(info.totalTracks, 2)
   assert.equal(info.loadedTracks, 2)
@@ -326,7 +326,7 @@ test('buildPlaylistInfo uses null for missing metadata and omits optional null/f
   assert.equal(info.author, null)
   assert.equal(info.authorUrl, null)
   assert.equal('description' in info, false)
-  assert.equal(info.description, undefined)
+  assert.equal((info as unknown as Record<string, unknown>).description, undefined)
   assert.equal(info.sourceName, null)
   assert.equal('isPartial' in info, false)
   assert.equal(info.isPartial, undefined)
@@ -383,7 +383,7 @@ test('normalizePlaylistResult normalizes playlist collections and leaves other r
   assert.equal(typeof normalizedPlaylist.data.info.identifier, 'string')
 })
 
-test('buildPlaylistInfo filters out generic YouTube description and omits it', () => {
+test('buildPlaylistInfo never adds description to metadata under any circumstances', () => {
   const genericInfo = buildPlaylistInfo(
     {
       name: 'Album Test',
@@ -393,7 +393,6 @@ test('buildPlaylistInfo filters out generic YouTube description and omits it', (
     []
   )
   assert.equal('description' in genericInfo, false)
-  assert.equal(genericInfo.description, undefined)
 
   const realInfo = buildPlaylistInfo(
     {
@@ -403,7 +402,17 @@ test('buildPlaylistInfo filters out generic YouTube description and omits it', (
     {},
     []
   )
-  assert.equal(realInfo.description, 'Real album description')
+  assert.equal('description' in realInfo, false)
+
+  const randomInfo = buildPlaylistInfo(
+    {
+      name: 'Album Test',
+      description: 'any custom description'
+    },
+    { description: 'plugin description' },
+    []
+  )
+  assert.equal('description' in randomInfo, false)
 })
 
 test('buildPlaylistInfo conditionally includes isPartial, isExplicit, createdAt, and updatedAt', () => {

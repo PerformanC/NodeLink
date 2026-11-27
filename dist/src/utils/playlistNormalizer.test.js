@@ -77,7 +77,7 @@ test('buildPlaylistInfo handles complete playlist with all metadata', () => {
     assert.equal(info.artworkUrl, 'https://example.com/playlist-cover.jpg');
     assert.equal(info.author, 'DJ Awesome');
     assert.equal(info.authorUrl, 'https://example.com/dj-awesome');
-    assert.equal(info.description, 'The best songs of 2024');
+    assert.equal('description' in info, false);
     assert.equal(info.sourceName, 'spotify');
     assert.equal(info.totalTracks, 2);
     assert.equal(info.loadedTracks, 2);
@@ -255,18 +255,22 @@ test('normalizePlaylistResult normalizes playlist collections and leaves other r
     assert.equal(normalizedPlaylist.data.info.isAlbum, false);
     assert.equal(typeof normalizedPlaylist.data.info.identifier, 'string');
 });
-test('buildPlaylistInfo filters out generic YouTube description and omits it', () => {
+test('buildPlaylistInfo never adds description to metadata under any circumstances', () => {
     const genericInfo = buildPlaylistInfo({
         name: 'Album Test',
         description: 'Share your videos with friends, family, and the world'
     }, {}, []);
     assert.equal('description' in genericInfo, false);
-    assert.equal(genericInfo.description, undefined);
     const realInfo = buildPlaylistInfo({
         name: 'Album Test',
         description: 'Real album description'
     }, {}, []);
-    assert.equal(realInfo.description, 'Real album description');
+    assert.equal('description' in realInfo, false);
+    const randomInfo = buildPlaylistInfo({
+        name: 'Album Test',
+        description: 'any custom description'
+    }, { description: 'plugin description' }, []);
+    assert.equal('description' in randomInfo, false);
 });
 test('buildPlaylistInfo conditionally includes isPartial, isExplicit, createdAt, and updatedAt', () => {
     // When isPartial is true, isExplicit is boolean, createdAt/updatedAt are strings -> included
