@@ -73,6 +73,7 @@ export class Player {
     nextStreamInfo = null;
     nextResourceIsCrossfade = false;
     _crossfadeToken = 0;
+    _outroAnalysisController = null;
     _crossfadeTimer = null;
     _crossfadePrepareTimer = null;
     _crossfadeCurrentResource = null;
@@ -550,6 +551,7 @@ export class Player {
                 const nextTrack = this.nextTrack;
                 const nextStreamInfo = this.nextStreamInfo;
                 this._emitTrackEnd(EndReasons.GAPLESS);
+                this._cancelOutroAnalysis();
                 this.track = nextTrack;
                 this._isRecovering = false;
                 this._isSeeking = false;
@@ -1530,6 +1532,7 @@ export class Player {
                 /* INFO: New tracks start with their own operation state; stale callbacks no longer reset these flags. */
                 this._isRecovering = false;
                 this._isSeeking = false;
+                this._cancelOutroAnalysis();
                 this.track = {
                     encoded,
                     info,
@@ -1687,6 +1690,7 @@ export class Player {
                             remainingMs,
                             priority: 'IMMINENT_TRANSITION',
                             triggerSource: `player:${this.guildId}:seekImminent`,
+                            signal: this._outroAnalysisSignal(),
                             fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
                         })
                             .catch(() => { });
@@ -2015,6 +2019,7 @@ export class Player {
                 logger('debug', 'Player', `[Action: stop] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`);
                 return false;
             }
+            this._cancelOutroAnalysis();
             if (this.nextResource || this.nextResourceIsCrossfade) {
                 if (this.nextResourceIsCrossfade) {
                     this._getAudioStream()?.clearCrossfade?.();
@@ -2083,6 +2088,7 @@ export class Player {
         if (this.nextResourceIsCrossfade) {
             this._getAudioStream()?.clearCrossfade?.();
             this._clearCrossfadeTimer();
+            this._cancelOutroAnalysis();
             this._crossfadeToken += 1;
         }
         if (this.nextResource) {
@@ -2104,6 +2110,7 @@ export class Player {
                 currentLength > 0 &&
                 !!audioStream?.prepareCrossfade;
             if (shouldCrossfade) {
+                this._cancelOutroAnalysis();
                 this._crossfadeToken += 1;
                 this.nextTrack = payload;
                 this.nextResourceIsCrossfade = true;
@@ -2149,7 +2156,7 @@ export class Player {
         logger('debug', 'Player', `[Action: clearNextTrack] Method invoked for guild ${this.guildId}`);
         if (this.destroying)
             return false;
-        // Analysis jobs are shared across players; clearing one queue must not abort another player's job.
+        this._cancelOutroAnalysis();
         if (this.nextResourceIsCrossfade) {
             this._crossfadeToken += 1;
             this._clearCrossfadeTimer();
@@ -2184,6 +2191,7 @@ export class Player {
             this._clearCrossfadeTimer();
             if (this.nextResourceIsCrossfade &&
                 !audioStream?.getCrossfadeState?.().active) {
+                this._cancelOutroAnalysis();
                 this._crossfadeToken += 1;
                 audioStream?.clearCrossfade?.();
                 this.nextResource?.destroy();
@@ -2595,6 +2603,7 @@ export class Player {
         if (this.destroying)
             return;
         this.destroying = true;
+        this._cancelOutroAnalysis();
         if (this.connection) {
             try {
                 this.connection.removeListener('stateChange', this._connStateHandler);
@@ -3421,6 +3430,14 @@ export class Player {
             bufferMs
         };
     }
+    _outroAnalysisSignal() {
+        this._outroAnalysisController ??= new AbortController();
+        return this._outroAnalysisController.signal;
+    }
+    _cancelOutroAnalysis() {
+        this._outroAnalysisController?.abort();
+        this._outroAnalysisController = null;
+    }
     _clearCrossfadeTimer() {
         if (this._crossfadeTimer)
             clearTimeout(this._crossfadeTimer);
@@ -3463,6 +3480,8 @@ export class Player {
         this._crossfadePrepareTimer = setTimeout(() => {
             this._crossfadePrepareTimer = null;
             this._prepareCrossfadeResource(token, payload).catch((error) => {
+                if (token === this._crossfadeToken)
+                    this._cancelOutroAnalysis();
                 logger('error', 'Crossfade', `Crossfade preload failed for guild ${this.guildId}: ${error.message}`);
             });
         }, delay);
@@ -3507,6 +3526,7 @@ export class Player {
                 remainingMs,
                 priority,
                 triggerSource: `player:${this.guildId}:nextTrack`,
+                signal: this._outroAnalysisSignal(),
                 fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
             })
                 .then((profile) => {
@@ -3529,16 +3549,22 @@ export class Player {
         };
         logger('debug', 'Crossfade', `Preparing ${payload.info.identifier} for guild ${this.guildId}`);
         const urlData = await this.nodelink.sources.getTrackUrl(trackInfo);
-        if (urlData.exception || token !== this._crossfadeToken)
+        if (urlData.exception || token !== this._crossfadeToken) {
+            if (token === this._crossfadeToken)
+                this._cancelOutroAnalysis();
             return;
+        }
         const fetched = await this._fetchResource(payload.info, urlData, 0, true, this.getAudioProcessingMode() === 'protected');
         if ('exception' in fetched || token !== this._crossfadeToken) {
             if (!('exception' in fetched))
                 fetched.stream.destroy();
+            if (token === this._crossfadeToken)
+                this._cancelOutroAnalysis();
             return;
         }
         if (!fetched.stream.stream) {
             fetched.stream.destroy();
+            this._cancelOutroAnalysis();
             return;
         }
         const prepared = audioStream.prepareCrossfade(fetched.stream.stream, {
@@ -3554,6 +3580,8 @@ export class Player {
         }, (consumedMs) => this._completeCrossfade(token, consumedMs));
         if (!prepared || token !== this._crossfadeToken) {
             fetched.stream.destroy();
+            if (token === this._crossfadeToken)
+                this._cancelOutroAnalysis();
             return;
         }
         this.nextResource = fetched.stream;
@@ -3654,6 +3682,7 @@ export class Player {
         if (this._crossfadeCurrentResource) {
             this._crossfadeCurrentResource.destroy();
         }
+        this._cancelOutroAnalysis();
         this.track = promotedTrack;
         this._isRecovering = false;
         this._isSeeking = false;
@@ -3677,7 +3706,7 @@ export class Player {
         this._fading('trackEndSchedule', { startPosition: consumedMs });
     }
     _destroyCrossfadeResources(preserveQueuedTrack = false) {
-        // Analysis jobs are shared across players; clearing one queue must not abort another player's job.
+        this._cancelOutroAnalysis();
         const keepQueuedTrack = preserveQueuedTrack &&
             this.nextResourceIsCrossfade &&
             this.nextTrack !== null;

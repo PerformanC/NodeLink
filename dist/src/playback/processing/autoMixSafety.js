@@ -34,15 +34,17 @@ export function safeAutoMixEnd(total, profile, explicitEnd) {
         return total;
     const outro = profile?.outroProfile;
     if (!outro ||
-        profile?.analysisVersion !== 3 ||
+        profile?.analysisVersion !== 4 ||
         !Number.isFinite(outro.analysisConfidence) ||
         outro.analysisConfidence < 0.75)
         return total;
     const end = outro.naturalOutroPointMs;
     if (!Number.isFinite(end) || end <= 0 || end >= total || total - end > 15000)
         return total;
-    if (outro.analyzedWindowStartMs > end ||
-        outro.analyzedWindowEndMs < total - 1000)
+    if (!Number.isFinite(outro.analyzedWindowStartMs) ||
+        !Number.isFinite(outro.analyzedWindowEndMs) ||
+        outro.analyzedWindowStartMs > end ||
+        outro.analyzedWindowEndMs < total)
         return total;
     if (typeof outro.sourceEndRms !== 'number' ||
         !Number.isFinite(outro.sourceEndRms) ||
