@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { createServer } from 'node:http'
+import { createServer as createHttp2Server, type ServerHttp2Session } from 'node:http2'
 import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 import SourcesManager from '../../managers/sourceManager.ts'
-import { http1makeRequest } from '../../utils.ts'
+import { http1makeRequest, makeRequest } from '../../utils.ts'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { test } from 'node:test'
 import type { TemporalFeaturePoint } from '../../typings/playback/progressiveAnalysis.types.ts'
@@ -329,5 +330,72 @@ test('an uncooperative source cannot start a duplicate acquisition for the cance
     release?.()
     f.stream.destroy()
     await nextTurn()
+  }
+})
+
+test('pending HTTP/2 source acquisition is cancelled without fallback or retry', async () => {
+  const controller = new AbortController()
+  const f = fixture('pending-http2')
+  let notifyRequest!: () => void
+  let notifyClosed!: () => void
+  const requested = new Promise<void>(resolve => { notifyRequest = resolve })
+  const closed = new Promise<void>(resolve => { notifyClosed = resolve })
+  const sessions = new Set<ServerHttp2Session>()
+  let requests = 0
+  const server = createHttp2Server()
+  server.on('session', session => {
+    sessions.add(session)
+    session.once('close', () => sessions.delete(session))
+  })
+  server.on('stream', stream => {
+    requests++
+    stream.once('close', notifyClosed)
+    stream.on('error', () => {})
+    notifyRequest()
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const url = 'http://127.0.0.1:' + (server.address() as AddressInfo).port
+  const manager = new SourcesManager({ options: {} } as ConstructorParameters<typeof SourcesManager>[0])
+  const source = {
+    loadStream: async (_track: unknown, input: string) => {
+      const result = await makeRequest(input, { streamOnly: true, maxRetries: 0 })
+      return { stream: result.stream, type: 'pcm' }
+    }
+  } as unknown as NonNullable<ReturnType<typeof manager.sourceMap.get>>
+  manager.sourceMap.set('test', source)
+  const fetchResource: AnalysisRequestOptions['fetchResource'] = async (track, _data, _position, _pcm, _background, signal) => {
+    const result = await manager.getTrackStream(track, url, undefined, {}, signal)
+    result.stream?.destroy()
+    return { exception: { message: 'fixture completed' } }
+  }
+  const state = registry as unknown as { activeWorkers: number; pendingResourceFetches: number }
+  const within = async (promise: Promise<void>) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([promise, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('HTTP/2 cancellation deadline exceeded')), 2000)
+      })])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+  try {
+    const pending = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: controller.signal })
+    await within(requested)
+    controller.abort()
+    assert.equal(await pending, null)
+    await within(closed)
+    const deadline = Date.now() + 2000
+    while (state.activeWorkers !== 0 || state.pendingResourceFetches !== 0) {
+      if (Date.now() > deadline) throw new Error('HTTP/2 worker not released')
+      await nextTurn()
+    }
+    assert.equal(requests, 1)
+  } finally {
+    controller.abort()
+    f.stream.destroy()
+    for (const session of sessions) session.destroy()
+    await new Promise<void>(resolve => server.close(() => resolve()))
   }
 })
