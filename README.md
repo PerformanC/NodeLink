@@ -487,7 +487,3 @@ NodeLink is open-source software released under the **GNU General Public License
 <p align="center">
   <sub>GIFs by Pudgy Penguins, embedded from Tenor. Click a GIF to visit its source.</sub>
 </p>
-
-### Advanced lyrics timing
-
-Lyric payloads preserve explicit word/token timing, voice agents, background vocals, sections and alternate translation/romanization text supplied by the provider. Player lyric events retain annotations in the existing `plugin` field and expose `activeLineIndices` for simultaneous vocals. Unsynced lyrics are returned without timed line events. Stale responses after track changes or unsubscribe are ignored. The TTML parser covers a bounded absolute-time subset used by Unison, not the complete TTML standard. Live Discord playback, provider-specific translations and romanization availability remain unverified.
