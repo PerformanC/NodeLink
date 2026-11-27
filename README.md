@@ -487,7 +487,3 @@ NodeLink is open-source software released under the **GNU General Public License
 <p align="center">
   <sub>GIFs by Pudgy Penguins, embedded from Tenor. Click a GIF to visit its source.</sub>
 </p>
-
-### Advanced Protected audio processing
-
-Protected mode retains Float32 headroom and the terminal limiter. `playback.audio.protected` optionally configures `targetLoudnessLufs` (-30 to -8, default -14), `ceilingDbTP` (-12 to -1, default -2.4), `lookaheadMs` (2–20, default 5), `releaseMs` (20–500, default 80) and `telemetry` (default false). Invalid values fall back to existing defaults. The limiter ceiling is an approximate pre-codec true-peak estimate, not a guaranteed post-Opus maximum. The volume ramp advances per stereo frame and is independent of PCM chunk boundaries. When enabled, `audioProcessing` in player JSON exposes existing resource-lifetime gain/limiter telemetry. Legacy processing remains the default; the optional Protected parameters do not affect its signal path. Live audible quality and production performance are not verified by synthetic tests.
