@@ -1,4 +1,10 @@
 import crypto from 'node:crypto'
+import {
+  buildQobuzMedia,
+  filterQobuzIsrc,
+  normalizeQobuzIsrc,
+  qobuzAlbum
+} from '../modules/qobuzMedia.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -265,14 +271,17 @@ export default class QobuzSource {
       return this.getRecommendations(query)
     }
 
+    const isrc = sourceTerm === 'qbisrc' ? normalizeQobuzIsrc(query) : undefined
+    if (sourceTerm === 'qbisrc' && !isrc) return { loadType: 'empty', data: {} }
     const data = await this.apiRequest('/catalog/search', {
-      query,
+      query: isrc ?? query,
       limit: this.getMaxSearchResults(),
       type: 'tracks'
     })
 
     const tracksBlock = this.asRecord(data?.tracks)
-    const items = this.asArrayRecords(tracksBlock?.items)
+    const candidates = this.asArrayRecords(tracksBlock?.items)
+    const items = isrc ? filterQobuzIsrc(candidates, isrc) : candidates
     if (items.length === 0) return { loadType: 'empty', data: {} }
 
     const tracks = items.map((item) => this.buildTrack(item))
@@ -436,14 +445,7 @@ export default class QobuzSource {
       max
     )
 
-    const tracks = allItems.map((item) => {
-      item.album = {
-        title: data.title,
-        image: data.image,
-        id: data.id
-      }
-      return this.buildTrack(item)
-    })
+    const tracks = allItems.map((item) => this.buildTrack(item, data))
 
     return {
       loadType: 'playlist',
@@ -530,7 +532,9 @@ export default class QobuzSource {
       max
     )
 
-    const tracks = allItems.map((item) => this.buildTrack(item))
+    const tracks = allItems.map((item) =>
+      this.buildTrack(item, undefined, data)
+    )
     const artistName = this.asString(data.name) || 'Unknown Artist'
     return {
       loadType: 'playlist',
@@ -676,11 +680,7 @@ export default class QobuzSource {
       })
 
       if (statusCode !== 200) {
-        logger(
-          'debug',
-          'Qobuz',
-          `API Error (${statusCode}) on ${path}: ${JSON.stringify(body)}`
-        )
+        logger('debug', 'Qobuz', `API Error (${statusCode}) on ${path}`)
         return null
       }
 
@@ -799,14 +799,18 @@ export default class QobuzSource {
    * @param item - Qobuz track object.
    * @returns Encoded track payload.
    */
-  private buildTrack(item: Record<string, unknown>): {
+  private buildTrack(
+    item: Record<string, unknown>,
+    parentAlbum?: Record<string, unknown>,
+    parentArtist?: Record<string, unknown>
+  ): {
     encoded: string
     info: TrackInfo
     pluginInfo: Record<string, unknown>
   } {
     const artist = this.asRecord(item.artist)
     const performer = this.asRecord(item.performer)
-    const album = this.asRecord(item.album)
+    const album = qobuzAlbum(item, parentAlbum)
     const albumImage = this.asRecord(album?.image)
 
     const trackInfo: TrackInfo = {
@@ -823,7 +827,11 @@ export default class QobuzSource {
       uri: `https://open.qobuz.com/track/${item.id}`,
       artworkUrl:
         this.asString(albumImage?.large) ||
+        this.asString(albumImage?.extralarge) ||
+        this.asString(albumImage?.mega) ||
+        this.asString(albumImage?.medium) ||
         this.asString(albumImage?.small) ||
+        this.asString(albumImage?.thumbnail) ||
         null,
       isrc: this.asString(item.isrc) || null,
       sourceName: 'qobuz'
@@ -833,7 +841,9 @@ export default class QobuzSource {
     return {
       encoded: encodeTrack(encodedInput),
       info: trackInfo,
-      pluginInfo: {} as Record<string, unknown> as Record<string, unknown>
+      pluginInfo: {
+        media: buildQobuzMedia(item, parentAlbum, parentArtist)
+      }
     }
   }
 

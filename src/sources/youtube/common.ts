@@ -5,6 +5,7 @@
  * @packageDocumentation
  * @module YouTubeSourceCommon
  */
+import { buildYouTubeMedia, youtubeImages } from '../../modules/youtubeMedia.ts'
 import type {
   SourceResult,
   TrackData,
@@ -92,8 +93,7 @@ const URL_PATTERNS = {
     /^https?:\/\/(?:music\.)?(?:www\.)?youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
 
   /** YouTube Music watch URL (music.youtube.com/watch?v=xxx) */
-  musicVideo:
-    /^https?:\/\/music\.youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
+  musicVideo: /^https?:\/\/music\.youtube\.com\/watch\?(?:[^#]*&)?v=[\w-]+/,
 
   /** YouTube playlist URL (www.youtube.com/playlist?list=xxx) */
   playlist:
@@ -671,6 +671,8 @@ export async function fetchChannelInfo(
         ? avatarSources[avatarSources.length - 1]?.url?.split('=')[0] || null
         : null
 
+    channelInfo.artwork = youtubeImages(avatarSources)
+
     const bannerRoot = header.banner as Record<string, unknown> | undefined
     const bannerViewModel = bannerRoot?.imageBannerViewModel as
       | Record<string, unknown>
@@ -684,6 +686,8 @@ export async function fetchChannelInfo(
       Array.isArray(bannerSources) && bannerSources.length > 0
         ? bannerSources[bannerSources.length - 1]?.url?.split('=')[0] || null
         : null
+
+    channelInfo.banners = youtubeImages(bannerSources)
 
     const titleRoot = header.title as Record<string, unknown> | undefined
     const dynamicText = titleRoot?.dynamicTextViewModel as
@@ -1677,7 +1681,8 @@ export async function buildTrack(
         )
       ),
       audioFormats: JSON.stringify(audioFormats),
-      audioTracks: JSON.stringify(audioTracks)
+      audioTracks: JSON.stringify(audioTracks),
+      media: buildYouTubeMedia(trackInfo, renderer, fullApiResponse)
     }
   }
 
@@ -1900,6 +1905,7 @@ export async function buildHoloTrack(
     accessibilityLabel ||
     `${trackInfo.title} by ${(channelData.name as string | undefined) || trackInfo.author}`
 
+  let channelMedia: YouTubeChannelInfo | null = null
   if (config.search.fetchChannelInfo && channelData.id && makeRequestFn) {
     try {
       const channelInfo = await fetchChannelInfo(
@@ -1908,6 +1914,7 @@ export async function buildHoloTrack(
         fullApiResponse?.responseContext as YouTubeContext | undefined
       )
       if (channelInfo) {
+        channelMedia = channelInfo
         channelData.icon = channelInfo.icon
         channelData.banner = channelInfo.banner
         channelData.subscribers = channelInfo.subscribers
@@ -1997,7 +2004,22 @@ export async function buildHoloTrack(
       audioFormats: JSON.stringify(audioFormats),
       audioTracks: JSON.stringify(audioTracks),
       captions: JSON.stringify(captions),
-      channel: JSON.stringify(channelData)
+      channel: JSON.stringify(channelData),
+      media: buildYouTubeMedia(
+        trackInfo,
+        renderer,
+        fullApiResponse,
+        {
+          ...channelData,
+          artwork: channelMedia?.artwork,
+          banners: channelMedia?.banners
+        },
+        [
+          { url: thumbnails.default },
+          { url: thumbnails.medium },
+          { url: thumbnails.high }
+        ]
+      )
     }
   }
 

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { buildQobuzMedia, filterQobuzIsrc, normalizeQobuzIsrc, qobuzAlbum } from '../modules/qobuzMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 const API_URL = 'https://www.qobuz.com/api.json/0.2';
 const WEB_PLAYER_BASE_URL = 'https://play.qobuz.com';
@@ -194,13 +195,17 @@ export default class QobuzSource {
         if (sourceTerm && this.recommendationTerm.includes(sourceTerm)) {
             return this.getRecommendations(query);
         }
+        const isrc = sourceTerm === 'qbisrc' ? normalizeQobuzIsrc(query) : undefined;
+        if (sourceTerm === 'qbisrc' && !isrc)
+            return { loadType: 'empty', data: {} };
         const data = await this.apiRequest('/catalog/search', {
-            query,
+            query: isrc ?? query,
             limit: this.getMaxSearchResults(),
             type: 'tracks'
         });
         const tracksBlock = this.asRecord(data?.tracks);
-        const items = this.asArrayRecords(tracksBlock?.items);
+        const candidates = this.asArrayRecords(tracksBlock?.items);
+        const items = isrc ? filterQobuzIsrc(candidates, isrc) : candidates;
         if (items.length === 0)
             return { loadType: 'empty', data: {} };
         const tracks = items.map((item) => this.buildTrack(item));
@@ -343,14 +348,7 @@ export default class QobuzSource {
         if (!data || !tracksBlock)
             return { loadType: 'empty', data: {} };
         const allItems = await this.fetchRemainingTracks('/album/get', { album_id: String(data.id) }, tracksBlock, max);
-        const tracks = allItems.map((item) => {
-            item.album = {
-                title: data.title,
-                image: data.image,
-                id: data.id
-            };
-            return this.buildTrack(item);
-        });
+        const tracks = allItems.map((item) => this.buildTrack(item, data));
         return {
             loadType: 'playlist',
             data: {
@@ -417,7 +415,7 @@ export default class QobuzSource {
         if (!data || !tracksBlock)
             return { loadType: 'empty', data: {} };
         const allItems = await this.fetchRemainingTracks('/artist/get', { artist_id: id, extra: 'tracks' }, tracksBlock, max);
-        const tracks = allItems.map((item) => this.buildTrack(item));
+        const tracks = allItems.map((item) => this.buildTrack(item, undefined, data));
         const artistName = this.asString(data.name) || 'Unknown Artist';
         return {
             loadType: 'playlist',
@@ -529,7 +527,7 @@ export default class QobuzSource {
                 disableBodyCompression: this.asBoolean(options.disableBodyCompression) ?? false
             });
             if (statusCode !== 200) {
-                logger('debug', 'Qobuz', `API Error (${statusCode}) on ${path}: ${JSON.stringify(body)}`);
+                logger('debug', 'Qobuz', `API Error (${statusCode}) on ${path}`);
                 return null;
             }
             if (typeof body === 'string') {
@@ -625,10 +623,10 @@ export default class QobuzSource {
      * @param item - Qobuz track object.
      * @returns Encoded track payload.
      */
-    buildTrack(item) {
+    buildTrack(item, parentAlbum, parentArtist) {
         const artist = this.asRecord(item.artist);
         const performer = this.asRecord(item.performer);
-        const album = this.asRecord(item.album);
+        const album = qobuzAlbum(item, parentAlbum);
         const albumImage = this.asRecord(album?.image);
         const trackInfo = {
             identifier: String(item.id),
@@ -642,7 +640,11 @@ export default class QobuzSource {
             title: this.asString(item.title) || 'Unknown Title',
             uri: `https://open.qobuz.com/track/${item.id}`,
             artworkUrl: this.asString(albumImage?.large) ||
+                this.asString(albumImage?.extralarge) ||
+                this.asString(albumImage?.mega) ||
+                this.asString(albumImage?.medium) ||
                 this.asString(albumImage?.small) ||
+                this.asString(albumImage?.thumbnail) ||
                 null,
             isrc: this.asString(item.isrc) || null,
             sourceName: 'qobuz'
@@ -651,7 +653,9 @@ export default class QobuzSource {
         return {
             encoded: encodeTrack(encodedInput),
             info: trackInfo,
-            pluginInfo: {}
+            pluginInfo: {
+                media: buildQobuzMedia(item, parentAlbum, parentArtist)
+            }
         };
     }
     /**

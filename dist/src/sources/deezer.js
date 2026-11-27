@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { PassThrough } from 'node:stream';
 import BlowfishCBC from '../decrypters/blowfish-cbc.js';
+import { buildDeezerMedia } from '../modules/deezerMedia.js';
+import { buildTrackMedia } from '../modules/trackMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, logger, makeRequest } from '../utils.js';
 /**
  * Static IV used by Deezer's Blowfish-CBC chunk decryption scheme.
@@ -1102,7 +1104,9 @@ export default class DeezerSource {
             sourceName: 'deezer',
             details: []
         };
-        const pluginInfo = {};
+        const pluginInfo = {
+            media: buildDeezerMedia(item, trackInfo.isrc)
+        };
         if (item.album?.title?.trim())
             pluginInfo.albumName = item.album.title.trim();
         if (item.album?.id !== undefined &&
@@ -1150,7 +1154,13 @@ export default class DeezerSource {
         return {
             encoded: encodeTrack(info),
             info,
-            pluginInfo: {}
+            pluginInfo: {
+                media: buildTrackMedia('deezer', {
+                    identifiers: { isrc: info.isrc },
+                    artists: [{ name: item.ART_NAME }],
+                    album: { artwork: [{ url: info.artworkUrl }] }
+                })
+            }
         };
     }
     /**

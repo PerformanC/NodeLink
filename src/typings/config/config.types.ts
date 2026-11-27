@@ -217,6 +217,12 @@ export interface SpotifySourceConfig {
 
   /** If true, extracts cover art color palettes for single tracks. Default: false. */
   extractColors?: boolean
+
+  /** Cover art palette format. Default: legacy; dynamic requires authorized access. */
+  colorMode?: 'legacy' | 'dynamic'
+
+  /** Include artist gallery and banners in explicit track resolution. Default: false. */
+  enrichArtists?: boolean
 }
 
 /**
@@ -288,6 +294,33 @@ export interface DeezerSourceConfig {
  * Configuration for the Tidal high-fidelity music provider.
  */
 export interface TidalSourceConfig {
+  /** Opt-in official OAuth v2 text search. */
+  officialSearch?: boolean
+  /** Application credentials (prefer environment variables). */
+  clientId?: string
+  clientSecret?: string
+
+  /** Opt-in single-track album details from the matching v1 album. */
+  enrichAlbum?: boolean
+
+  /** Opt-in track-specific legacy search after general search HTTP 401. */
+  alternateTrackSearch?: boolean
+
+  /** Opt-in public embed metadata fallback for direct track/album HTTP 401 failures. */
+  embedFallback?: boolean
+
+  /** Opt-in detailed recording credits for explicit single-track resolution. */
+  enrichCredits?: boolean
+
+  /** Opt-in official v2 metadata with a separately supplied OAuth access token. */
+  enrichCatalog?: boolean
+
+  /** Separately authorized v2 OAuth access token; environment override is optional. */
+  metadataAccessToken?: string
+
+  /** Opt-in public GraphQL preview lookup. */
+  extractPreview?: boolean
+
   /** Enables the Tidal source plugin. */
   enabled: boolean
 
@@ -1459,6 +1492,11 @@ export interface NodelinkConfig {
     enableTrackStreamEndpoint: boolean
     enableLoadStreamEndpoint: boolean
     enableHlsEndpoint: boolean
+    /** Optional external metadata providers; credentials opt in. */
+    media?: {
+      musicbrainz?: { enabled?: boolean; userAgent?: string }
+      fanart?: { enabled?: boolean; projectKey?: string }
+    }
     metrics: {
       enabled: boolean
       authorization: {

@@ -1,5 +1,9 @@
+import { SpotifyArtistMediaCache } from '../modules/spotifyArtistMediaCache.js';
 import { getLocalToken } from '../modules/spotifyAuth.js';
+import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.js';
 import { fetchCanvas } from '../modules/spotifyCanvas.js';
+import { buildSpotifyArtistMedia, buildSpotifyMedia, normalizeSpotifyDynamicColors, readOfficialSpotifyIsrc, readSpotifyMetadataIsrc, selectSpotifyCanvas, spotifyCanvasSessionState } from '../modules/spotifyMedia.js';
+import { mediaDetails } from '../modules/trackMedia.js';
 import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for the official Spotify Web API.
@@ -58,6 +62,10 @@ const QUERIES = {
     queryBookChapters: {
         name: 'queryBookChapters',
         hash: '8f342d1c624755901657fa65cbb80dd3bacbcca2f6d802f570ae3269d59a403e'
+    },
+    getDynamicColorsByUris: {
+        name: 'getDynamicColorsByUris',
+        hash: 'f0f112945d6d745bd8ff790317bbf8d310036da75df33130490e9d6dc96c59d9'
     },
     fetchExtractedColors: {
         name: 'fetchExtractedColors',
@@ -167,6 +175,8 @@ export default class SpotifySource {
      * @internal
      */
     mobileTokenExpiry = null;
+    /** Stop retrying a rejected mobile authorization until this source is restarted. */
+    mobileAuthRejected = false;
     /**
      * Prevents concurrent token refreshes using a per-tier promise map.
      * @internal
@@ -182,6 +192,12 @@ export default class SpotifySource {
      * @internal
      */
     inFlightResolves = new Map();
+    artistMediaCache = new SpotifyArtistMediaCache(async (id) => {
+        const data = await this._internalApiRequest(QUERIES.getArtist, { uri: `spotify:artist:${id}`, locale: 'en', includePrerelease: false }, 'anonymous', 0, true);
+        if (!data?.artistUnion || data.artistUnion.__typename === 'NotFound')
+            return undefined;
+        return buildSpotifyArtistMedia(data.artistUnion, id)?.artists[0];
+    });
     /**
      * Prevents duplicate in-flight track delegation lookups.
      * @internal
@@ -256,6 +272,8 @@ export default class SpotifySource {
      * @internal
      */
     async _ensureToken(type) {
+        if (type === 'mobile' && this.mobileAuthRejected)
+            return false;
         const now = Date.now();
         let token = null;
         let expiry = null;
@@ -315,6 +333,8 @@ export default class SpotifySource {
      * @internal
      */
     async _refreshToken(type) {
+        if (type === 'mobile' && this.mobileAuthRejected)
+            return false;
         const cm = this.nodelink.credentialManager;
         if (!cm)
             return false;
@@ -369,8 +389,23 @@ export default class SpotifySource {
                 }
                 catch (e) {
                     logger('debug', 'Spotify', `${type} token request failed: ${e instanceof Error ? e.message : String(e)}`);
+                    if (isSpotifyAuthRejection(e)) {
+                        if (type === 'mobile') {
+                            this.mobileAuthRejected = true;
+                            this.mobileToken = null;
+                            this.mobileTokenExpiry = null;
+                            const timer = this.tokenRefreshTimers.get('mobile');
+                            if (timer)
+                                clearTimeout(timer);
+                            this.tokenRefreshTimers.delete('mobile');
+                            cm.delete?.('spotify_mobile_token');
+                            logger('debug', 'SpotifyCanvas', 'Mobile authorization rejected; Canvas disabled until source restart.');
+                        }
+                        return false;
+                    }
                 }
-                if (this.config.externalAuthUrl) {
+                // The external auth response populates only the anonymous tier.
+                if (type === 'anonymous' && this.config.externalAuthUrl) {
                     try {
                         const res = await http1makeRequest(this.config.externalAuthUrl, {
                             disableBodyCompression: true
@@ -423,7 +458,7 @@ export default class SpotifySource {
      * @returns Resolves to body T, or null on terminal failure.
      * @internal
      */
-    async _apiRequest(path, tier = 'official', options = {}, retry = 0) {
+    async _apiRequest(path, tier = 'official', options = {}, retry = 0, singleAttempt = false) {
         const ok = await this._ensureToken(tier);
         const token = tier === 'official'
             ? this.accessToken
@@ -431,6 +466,8 @@ export default class SpotifySource {
                 ? this.anonymousToken
                 : this.mobileToken;
         if (!ok || !token) {
+            if (singleAttempt)
+                return null;
             const next = tier === 'official'
                 ? 'anonymous'
                 : tier === 'anonymous'
@@ -458,6 +495,11 @@ export default class SpotifySource {
         }
         try {
             const res = await http1makeRequest(url, { ...options, headers });
+            if (singleAttempt) {
+                return res.statusCode === 200 || res.statusCode === 201
+                    ? res.body
+                    : null;
+            }
             if (res.statusCode === 429) {
                 if (retry >= 3)
                     return null;
@@ -512,6 +554,8 @@ export default class SpotifySource {
             return res.body;
         }
         catch (e) {
+            if (singleAttempt)
+                return null;
             logger('error', 'Spotify', `API Request failed for ${path}: ${e instanceof Error ? e.message : String(e)}`);
             return null;
         }
@@ -526,7 +570,7 @@ export default class SpotifySource {
      * @returns Resolves to typed data or null if errors were returned.
      * @internal
      */
-    async _internalApiRequest(operation, variables, tier = 'anonymous', retry = 0) {
+    async _internalApiRequest(operation, variables, tier = 'anonymous', retry = 0, singleAttempt = false) {
         const res = await this._apiRequest(SPOTIFY_INTERNAL_API_URL, tier, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -538,46 +582,41 @@ export default class SpotifySource {
                 }
             },
             disableBodyCompression: true
-        }, retry);
+        }, retry, singleAttempt);
         if (res?.errors) {
+            if (singleAttempt)
+                return null;
             logger('error', 'Spotify', `Pathfinder error in ${operation.name}: ${JSON.stringify(res.errors)}`);
             return null;
         }
         return res?.data || null;
     }
-    /**
-     * Fetches advanced track metadata (including ISRC) using the internal Client API.
-     * IDs must be converted to hex format for this legacy-oriented endpoint.
-     *
-     * @param id - Spotify Base62 ID.
-     * @returns Resolves to metadata object or null.
-     * @internal
-     */
-    async _fetchTrackMetadata(id) {
+    /** Resolve an ISRC with existing authorized catalog access, without credential switching. */
+    async _fetchTrackIsrc(id) {
+        if (!/^[A-Za-z0-9]{22}$/.test(id))
+            return undefined;
+        if (this.config.clientId && this.config.clientSecret) {
+            const track = await this._apiRequest(`/tracks/${id}?market=${this.market}`, 'official', {}, 0, true);
+            return readOfficialSpotifyIsrc(track, id);
+        }
+        if (this.mobileAuthRejected)
+            return undefined;
         const hex = this._base62ToHex(id);
         if (!hex)
-            return null;
-        const url = `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`;
-        const body = await this._apiRequest(url, 'mobile', {
-            responseType: 'buffer'
-        });
+            return undefined;
+        const body = await this._apiRequest(`${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`, 'mobile', { responseType: 'buffer' }, 0, true);
         if (!body)
-            return null;
+            return undefined;
+        let metadata = body;
         if (Buffer.isBuffer(body)) {
             try {
-                return JSON.parse(body.toString());
+                metadata = JSON.parse(body.toString('utf8'));
             }
             catch {
-                const raw = body.toString();
-                const isrc = raw.match(/[A-Z0-9]{12}/);
-                if (isrc)
-                    return { external_id: [{ type: 'isrc', id: isrc[0] }] };
+                return undefined;
             }
         }
-        else if (typeof body === 'object') {
-            return body;
-        }
-        return null;
+        return readSpotifyMetadataIsrc(metadata);
     }
     /**
      * Transforms a Spotify Base62 identifier into a 32-character hex string.
@@ -634,7 +673,7 @@ export default class SpotifySource {
         return {
             encoded: encodeTrack({ ...info, details: [] }),
             info,
-            pluginInfo: {}
+            pluginInfo: { media: buildSpotifyMedia(item, info.artworkUrl) }
         };
     }
     /**
@@ -667,7 +706,7 @@ export default class SpotifySource {
         return {
             encoded: encodeTrack({ ...info, details: [] }),
             info,
-            pluginInfo: {}
+            pluginInfo: { media: buildSpotifyMedia(item, info.artworkUrl) }
         };
     }
     /**
@@ -708,10 +747,17 @@ export default class SpotifySource {
                     if (results.length > 0) {
                         const first = results[0];
                         if (type === 'track' && first && !first.info.isrc) {
-                            const meta = await this._fetchTrackMetadata(first.info.identifier);
-                            const isrc = meta?.external_id?.find((e) => e.type === 'isrc')?.id;
+                            const isrc = await this._fetchTrackIsrc(first.info.identifier);
                             if (isrc) {
                                 first.info.isrc = isrc;
+                                const media = first.pluginInfo.media;
+                                if (media)
+                                    first.pluginInfo.media = {
+                                        ...media,
+                                        ...mediaDetails({
+                                            identifiers: { ...media.identifiers, isrc }
+                                        })
+                                    };
                                 first.encoded = encodeTrack({ ...first.info, details: [] });
                             }
                         }
@@ -996,21 +1042,13 @@ export default class SpotifySource {
                         options?.forceDetails ||
                         this.config.extractColors === true;
                     const tasks = [];
-                    if (this.mobileToken) {
-                        tasks.push(fetchCanvas(`spotify:track:${id}`, this.mobileToken)
-                            .then((cv) => {
-                            if (cv?.data?.canvasesList?.[0])
-                                track.pluginInfo.canvas = {
-                                    canvasesList: [cv.data.canvasesList[0]]
-                                };
-                        })
-                            .catch(() => { }));
-                    }
+                    tasks.push(this._attachCanvas(track, id));
+                    tasks.push(this._attachArtistMedia(track));
                     if (!track.info.isrc) {
-                        tasks.push(this._fetchTrackMetadata(id)
-                            .then((meta) => {
-                            if (meta?.external_id?.[0]?.id) {
-                                track.info.isrc = meta.external_id[0].id;
+                        tasks.push(this._fetchTrackIsrc(id)
+                            .then((isrc) => {
+                            if (isrc) {
+                                track.info.isrc = isrc;
                                 track.encoded = encodeTrack({ ...track.info, details: [] });
                             }
                         })
@@ -1028,6 +1066,15 @@ export default class SpotifySource {
                     if (tasks.length > 0) {
                         await Promise.all(tasks);
                     }
+                    const media = track.pluginInfo.media;
+                    if (media)
+                        track.pluginInfo.media = {
+                            ...media,
+                            ...mediaDetails({
+                                identifiers: { ...media.identifiers, isrc: track.info.isrc },
+                                colors: track.pluginInfo.colors
+                            })
+                        };
                     return { loadType: 'track', data: track };
                 }
             }
@@ -1036,11 +1083,66 @@ export default class SpotifySource {
             const data = await this._apiRequest(`/tracks/${id}?market=${this.market}`);
             if (data) {
                 const track = this._buildTrack(data);
-                if (track)
+                if (track) {
+                    await Promise.all([
+                        this._attachCanvas(track, id),
+                        this._attachArtistMedia(track)
+                    ]);
                     return { loadType: 'track', data: track };
+                }
             }
         }
         return { loadType: 'empty', data: {} };
+    }
+    /** Optional artist artwork enrichment for explicit single-track resolutions. */
+    async _attachArtistMedia(track) {
+        if (this.config.enrichArtists !== true || !this.anonymousToken)
+            return;
+        const media = track.pluginInfo.media;
+        if (!media?.artists.length)
+            return;
+        const artists = await this.artistMediaCache.enrich(media.artists);
+        const current = track.pluginInfo.media;
+        if (current)
+            track.pluginInfo.media = { ...current, artists };
+    }
+    /**
+     * Enriches a resolved track using only the existing mobile Canvas session.
+     * Never switches credentials or retries a rejected Canvas request.
+     * @internal
+     */
+    async _attachCanvas(track, id) {
+        const token = this.mobileToken;
+        const expiry = this.mobileTokenExpiry;
+        const state = this.mobileAuthRejected
+            ? 'authorization-rejected'
+            : spotifyCanvasSessionState(token, expiry);
+        const diagnose = (event) => logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`);
+        diagnose({
+            kind: 'session',
+            state
+        });
+        if (!token ||
+            state === 'missing' ||
+            state === 'expired' ||
+            state === 'authorization-rejected')
+            return;
+        try {
+            const trackUri = `spotify:track:${id}`;
+            const result = await fetchCanvas(trackUri, token, diagnose);
+            const selected = selectSpotifyCanvas(result?.data.canvasesList, trackUri);
+            if (!selected)
+                return;
+            const media = track.pluginInfo.media;
+            track.pluginInfo.canvas = { canvasesList: [selected.entry] };
+            track.pluginInfo.media = {
+                ...(media ?? buildSpotifyMedia({}, track.info.artworkUrl)),
+                canvas: selected.canvas
+            };
+        }
+        catch {
+            diagnose({ kind: 'enrichment-error' });
+        }
     }
     /**
      * Resolves an album collection including all sub-tracks.
@@ -1293,7 +1395,8 @@ export default class SpotifySource {
                             identifier: id,
                             url: `https://open.spotify.com/artist/${id}`,
                             author: data.artistUnion.profile.name,
-                            totalTracks: tracks.length
+                            totalTracks: tracks.length,
+                            media: buildSpotifyArtistMedia(data.artistUnion, id)
                         }
                     }
                 };
@@ -1323,7 +1426,8 @@ export default class SpotifySource {
                                 identifier: id,
                                 url: `https://open.spotify.com/artist/${id}`,
                                 author: artistName,
-                                totalTracks: tracks.length
+                                totalTracks: tracks.length,
+                                media: buildSpotifyArtistMedia(meta, id)
                             }
                         }
                     };
@@ -1893,7 +1997,7 @@ export default class SpotifySource {
                     }
                     if (!best) {
                         const primaryTitle = track.title
-                            .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')
+                            .replace(/\s*[([][^)\]]*[)\]]/g, '')
                             .trim();
                         if (primaryTitle && primaryTitle !== track.title) {
                             const primaryRes = await sm.searchWithDefault(primaryTitle);
@@ -2287,6 +2391,13 @@ export default class SpotifySource {
         if (!match?.[1])
             return null;
         try {
+            // The optional dynamic palette uses one request with existing authorized access.
+            if (this.config.colorMode === 'dynamic') {
+                const data = await this._internalApiRequest(QUERIES.getDynamicColorsByUris, {
+                    imageUris: [`https://i.scdn.co/image/${match[1]}`]
+                }, 'anonymous', 0, true);
+                return normalizeSpotifyDynamicColors(data) ?? null;
+            }
             const data = await this._internalApiRequest(QUERIES.fetchExtractedColors, {
                 imageUris: [`spotify:image:${match[1]}`]
             });

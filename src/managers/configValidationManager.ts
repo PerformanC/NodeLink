@@ -362,6 +362,28 @@ export default class ConfigValidationManager {
           enableTrackStreamEndpoint: { type: 'boolean', default: false },
           enableLoadStreamEndpoint: { type: 'boolean', default: false },
           enableHlsEndpoint: { type: 'boolean', default: false },
+          media: {
+            type: 'object',
+            optional: true,
+            props: {
+              musicbrainz: {
+                type: 'object',
+                optional: true,
+                props: {
+                  enabled: { type: 'boolean', optional: true },
+                  userAgent: { type: 'string', optional: true }
+                }
+              },
+              fanart: {
+                type: 'object',
+                optional: true,
+                props: {
+                  enabled: { type: 'boolean', optional: true },
+                  projectKey: { type: 'string', optional: true }
+                }
+              }
+            }
+          },
           metrics: { type: 'object', optional: true }
         }
       },

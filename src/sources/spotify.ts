@@ -1,5 +1,21 @@
+import { SpotifyArtistMediaCache } from '../modules/spotifyArtistMediaCache.ts'
 import { getLocalToken } from '../modules/spotifyAuth.ts'
+import { isSpotifyAuthRejection } from '../modules/spotifyAuthStatus.ts'
 import { fetchCanvas } from '../modules/spotifyCanvas.ts'
+import {
+  buildSpotifyArtistMedia,
+  buildSpotifyMedia,
+  normalizeSpotifyDynamicColors,
+  readOfficialSpotifyIsrc,
+  readSpotifyMetadataIsrc,
+  selectSpotifyCanvas,
+  spotifyCanvasSessionState
+} from '../modules/spotifyMedia.ts'
+import {
+  type MediaColors,
+  mediaDetails,
+  type TrackMediaMetadata
+} from '../modules/trackMedia.ts'
 import type { SpotifySourceConfig } from '../typings/config/config.types.ts'
 import type {
   PlaylistPluginInfo,
@@ -21,7 +37,6 @@ import type {
   SpotifyGraphQLSearchResponse,
   SpotifyGraphQLShowResponse,
   SpotifyGraphQLTrack,
-  SpotifyMetadataResponse,
   SpotifyPagingObject,
   SpotifyPlaylist,
   SpotifyPlaylistItem,
@@ -99,6 +114,10 @@ const QUERIES = {
   queryBookChapters: {
     name: 'queryBookChapters',
     hash: '8f342d1c624755901657fa65cbb80dd3bacbcca2f6d802f570ae3269d59a403e'
+  },
+  getDynamicColorsByUris: {
+    name: 'getDynamicColorsByUris',
+    hash: 'f0f112945d6d745bd8ff790317bbf8d310036da75df33130490e9d6dc96c59d9'
   },
   fetchExtractedColors: {
     name: 'fetchExtractedColors',
@@ -222,6 +241,9 @@ export default class SpotifySource implements SourceInstance {
    */
   private mobileTokenExpiry: number | null = null
 
+  /** Stop retrying a rejected mobile authorization until this source is restarted. */
+  private mobileAuthRejected = false
+
   /**
    * Prevents concurrent token refreshes using a per-tier promise map.
    * @internal
@@ -242,6 +264,21 @@ export default class SpotifySource implements SourceInstance {
    * @internal
    */
   private inFlightResolves = new Map<string, Promise<SourceResult>>()
+
+  private readonly artistMediaCache = new SpotifyArtistMediaCache(
+    async (id) => {
+      const data = await this._internalApiRequest<SpotifyGraphQLArtistResponse>(
+        QUERIES.getArtist,
+        { uri: `spotify:artist:${id}`, locale: 'en', includePrerelease: false },
+        'anonymous',
+        0,
+        true
+      )
+      if (!data?.artistUnion || data.artistUnion.__typename === 'NotFound')
+        return undefined
+      return buildSpotifyArtistMedia(data.artistUnion, id)?.artists[0]
+    }
+  )
 
   /**
    * Prevents duplicate in-flight track delegation lookups.
@@ -336,6 +373,7 @@ export default class SpotifySource implements SourceInstance {
    * @internal
    */
   private async _ensureToken(type: SpotifyTokenType): Promise<boolean> {
+    if (type === 'mobile' && this.mobileAuthRejected) return false
     const now = Date.now()
     let token: string | null = null
     let expiry: number | null = null
@@ -401,6 +439,7 @@ export default class SpotifySource implements SourceInstance {
    * @internal
    */
   private async _refreshToken(type: SpotifyTokenType): Promise<boolean> {
+    if (type === 'mobile' && this.mobileAuthRejected) return false
     const cm = this.nodelink.credentialManager
     if (!cm) return false
 
@@ -472,9 +511,27 @@ export default class SpotifySource implements SourceInstance {
             'Spotify',
             `${type} token request failed: ${e instanceof Error ? e.message : String(e)}`
           )
+          if (isSpotifyAuthRejection(e)) {
+            if (type === 'mobile') {
+              this.mobileAuthRejected = true
+              this.mobileToken = null
+              this.mobileTokenExpiry = null
+              const timer = this.tokenRefreshTimers.get('mobile')
+              if (timer) clearTimeout(timer)
+              this.tokenRefreshTimers.delete('mobile')
+              cm.delete?.('spotify_mobile_token')
+              logger(
+                'debug',
+                'SpotifyCanvas',
+                'Mobile authorization rejected; Canvas disabled until source restart.'
+              )
+            }
+            return false
+          }
         }
 
-        if (this.config.externalAuthUrl) {
+        // The external auth response populates only the anonymous tier.
+        if (type === 'anonymous' && this.config.externalAuthUrl) {
           try {
             const res = await http1makeRequest(this.config.externalAuthUrl, {
               disableBodyCompression: true
@@ -547,7 +604,8 @@ export default class SpotifySource implements SourceInstance {
     path: string,
     tier: SpotifyTokenType = 'official',
     options: Record<string, unknown> = {},
-    retry = 0
+    retry = 0,
+    singleAttempt = false
   ): Promise<T | null> {
     const ok = await this._ensureToken(tier)
     const token =
@@ -558,6 +616,7 @@ export default class SpotifySource implements SourceInstance {
           : this.mobileToken
 
     if (!ok || !token) {
+      if (singleAttempt) return null
       const next =
         tier === 'official'
           ? 'anonymous'
@@ -589,6 +648,12 @@ export default class SpotifySource implements SourceInstance {
 
     try {
       const res = await http1makeRequest(url, { ...options, headers })
+
+      if (singleAttempt) {
+        return res.statusCode === 200 || res.statusCode === 201
+          ? (res.body as T)
+          : null
+      }
 
       if (res.statusCode === 429) {
         if (retry >= 3) return null
@@ -661,6 +726,7 @@ export default class SpotifySource implements SourceInstance {
 
       return res.body as T
     } catch (e) {
+      if (singleAttempt) return null
       logger(
         'error',
         'Spotify',
@@ -684,7 +750,8 @@ export default class SpotifySource implements SourceInstance {
     operation: SpotifyGraphQLOperation,
     variables: Record<string, unknown>,
     tier: SpotifyTokenType = 'anonymous',
-    retry = 0
+    retry = 0,
+    singleAttempt = false
   ): Promise<T | null> {
     const res = await this._apiRequest<{ data?: T; errors?: Array<unknown> }>(
       SPOTIFY_INTERNAL_API_URL,
@@ -701,10 +768,12 @@ export default class SpotifySource implements SourceInstance {
         },
         disableBodyCompression: true
       },
-      retry
+      retry,
+      singleAttempt
     )
 
     if (res?.errors) {
+      if (singleAttempt) return null
       logger(
         'error',
         'Spotify',
@@ -716,37 +785,39 @@ export default class SpotifySource implements SourceInstance {
     return res?.data || null
   }
 
-  /**
-   * Fetches advanced track metadata (including ISRC) using the internal Client API.
-   * IDs must be converted to hex format for this legacy-oriented endpoint.
-   *
-   * @param id - Spotify Base62 ID.
-   * @returns Resolves to metadata object or null.
-   * @internal
-   */
-  private async _fetchTrackMetadata(
-    id: string
-  ): Promise<SpotifyMetadataResponse | null> {
+  /** Resolve an ISRC with existing authorized catalog access, without credential switching. */
+  private async _fetchTrackIsrc(id: string): Promise<string | undefined> {
+    if (!/^[A-Za-z0-9]{22}$/.test(id)) return undefined
+    if (this.config.clientId && this.config.clientSecret) {
+      const track = await this._apiRequest<SpotifyTrack>(
+        `/tracks/${id}?market=${this.market}`,
+        'official',
+        {},
+        0,
+        true
+      )
+      return readOfficialSpotifyIsrc(track, id)
+    }
+    if (this.mobileAuthRejected) return undefined
     const hex = this._base62ToHex(id)
-    if (!hex) return null
-    const url = `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`
-    const body = await this._apiRequest<unknown>(url, 'mobile', {
-      responseType: 'buffer'
-    })
-    if (!body) return null
-
+    if (!hex) return undefined
+    const body = await this._apiRequest<unknown>(
+      `${SPOTIFY_CLIENT_API_URL}/metadata/4/track/${hex}?market=from_token`,
+      'mobile',
+      { responseType: 'buffer' },
+      0,
+      true
+    )
+    if (!body) return undefined
+    let metadata: unknown = body
     if (Buffer.isBuffer(body)) {
       try {
-        return JSON.parse(body.toString()) as SpotifyMetadataResponse
+        metadata = JSON.parse(body.toString('utf8'))
       } catch {
-        const raw = body.toString()
-        const isrc = raw.match(/[A-Z0-9]{12}/)
-        if (isrc) return { external_id: [{ type: 'isrc', id: isrc[0] }] }
+        return undefined
       }
-    } else if (typeof body === 'object') {
-      return body as SpotifyMetadataResponse
     }
-    return null
+    return readSpotifyMetadataIsrc(metadata)
   }
 
   /**
@@ -808,7 +879,7 @@ export default class SpotifySource implements SourceInstance {
     return {
       encoded: encodeTrack({ ...info, details: [] }),
       info,
-      pluginInfo: {}
+      pluginInfo: { media: buildSpotifyMedia(item, info.artworkUrl) }
     }
   }
 
@@ -845,7 +916,7 @@ export default class SpotifySource implements SourceInstance {
     return {
       encoded: encodeTrack({ ...info, details: [] }),
       info,
-      pluginInfo: {}
+      pluginInfo: { media: buildSpotifyMedia(item, info.artworkUrl) }
     }
   }
 
@@ -902,10 +973,19 @@ export default class SpotifySource implements SourceInstance {
           if (results.length > 0) {
             const first = results[0]
             if (type === 'track' && first && !first.info.isrc) {
-              const meta = await this._fetchTrackMetadata(first.info.identifier)
-              const isrc = meta?.external_id?.find((e) => e.type === 'isrc')?.id
+              const isrc = await this._fetchTrackIsrc(first.info.identifier)
               if (isrc) {
                 first.info.isrc = isrc
+                const media = first.pluginInfo.media as
+                  | TrackMediaMetadata
+                  | undefined
+                if (media)
+                  first.pluginInfo.media = {
+                    ...media,
+                    ...mediaDetails({
+                      identifiers: { ...media.identifiers, isrc }
+                    })
+                  }
                 first.encoded = encodeTrack({ ...first.info, details: [] })
               }
             }
@@ -1216,25 +1296,15 @@ export default class SpotifySource implements SourceInstance {
 
           const tasks: Promise<void>[] = []
 
-          if (this.mobileToken) {
-            tasks.push(
-              fetchCanvas(`spotify:track:${id}`, this.mobileToken)
-                .then((cv) => {
-                  if (cv?.data?.canvasesList?.[0])
-                    track.pluginInfo.canvas = {
-                      canvasesList: [cv.data.canvasesList[0]]
-                    }
-                })
-                .catch(() => {})
-            )
-          }
+          tasks.push(this._attachCanvas(track, id))
+          tasks.push(this._attachArtistMedia(track))
 
           if (!track.info.isrc) {
             tasks.push(
-              this._fetchTrackMetadata(id)
-                .then((meta) => {
-                  if (meta?.external_id?.[0]?.id) {
-                    track.info.isrc = meta.external_id[0].id
+              this._fetchTrackIsrc(id)
+                .then((isrc) => {
+                  if (isrc) {
+                    track.info.isrc = isrc
                     track.encoded = encodeTrack({ ...track.info, details: [] })
                   }
                 })
@@ -1258,6 +1328,15 @@ export default class SpotifySource implements SourceInstance {
             await Promise.all(tasks)
           }
 
+          const media = track.pluginInfo.media as TrackMediaMetadata | undefined
+          if (media)
+            track.pluginInfo.media = {
+              ...media,
+              ...mediaDetails({
+                identifiers: { ...media.identifiers, isrc: track.info.isrc },
+                colors: track.pluginInfo.colors
+              })
+            }
           return { loadType: 'track', data: track }
         }
       }
@@ -1269,10 +1348,67 @@ export default class SpotifySource implements SourceInstance {
       )
       if (data) {
         const track = this._buildTrack(data)
-        if (track) return { loadType: 'track', data: track }
+        if (track) {
+          await Promise.all([
+            this._attachCanvas(track, id),
+            this._attachArtistMedia(track)
+          ])
+          return { loadType: 'track', data: track }
+        }
       }
     }
     return { loadType: 'empty', data: {} }
+  }
+
+  /** Optional artist artwork enrichment for explicit single-track resolutions. */
+  private async _attachArtistMedia(track: TrackData): Promise<void> {
+    if (this.config.enrichArtists !== true || !this.anonymousToken) return
+    const media = track.pluginInfo.media as TrackMediaMetadata | undefined
+    if (!media?.artists.length) return
+    const artists = await this.artistMediaCache.enrich(media.artists)
+    const current = track.pluginInfo.media as TrackMediaMetadata | undefined
+    if (current) track.pluginInfo.media = { ...current, artists }
+  }
+
+  /**
+   * Enriches a resolved track using only the existing mobile Canvas session.
+   * Never switches credentials or retries a rejected Canvas request.
+   * @internal
+   */
+  private async _attachCanvas(track: TrackData, id: string): Promise<void> {
+    const token = this.mobileToken
+    const expiry = this.mobileTokenExpiry
+    const state = this.mobileAuthRejected
+      ? 'authorization-rejected'
+      : spotifyCanvasSessionState(token, expiry)
+    const diagnose = (event: unknown) =>
+      logger('debug', 'SpotifyCanvas', `Track ${id}: ${JSON.stringify(event)}`)
+    diagnose({
+      kind: 'session',
+      state
+    })
+    if (
+      !token ||
+      state === 'missing' ||
+      state === 'expired' ||
+      state === 'authorization-rejected'
+    )
+      return
+
+    try {
+      const trackUri = `spotify:track:${id}`
+      const result = await fetchCanvas(trackUri, token, diagnose)
+      const selected = selectSpotifyCanvas(result?.data.canvasesList, trackUri)
+      if (!selected) return
+      const media = track.pluginInfo.media as TrackMediaMetadata | undefined
+      track.pluginInfo.canvas = { canvasesList: [selected.entry] }
+      track.pluginInfo.media = {
+        ...(media ?? buildSpotifyMedia({}, track.info.artworkUrl)),
+        canvas: selected.canvas
+      }
+    } catch {
+      diagnose({ kind: 'enrichment-error' })
+    }
   }
 
   /**
@@ -1567,7 +1703,8 @@ export default class SpotifySource implements SourceInstance {
               identifier: id,
               url: `https://open.spotify.com/artist/${id}`,
               author: data.artistUnion.profile.name,
-              totalTracks: tracks.length
+              totalTracks: tracks.length,
+              media: buildSpotifyArtistMedia(data.artistUnion, id)
             }
           }
         }
@@ -1604,7 +1741,8 @@ export default class SpotifySource implements SourceInstance {
                 identifier: id,
                 url: `https://open.spotify.com/artist/${id}`,
                 author: artistName,
-                totalTracks: tracks.length
+                totalTracks: tracks.length,
+                media: buildSpotifyArtistMedia(meta, id)
               }
             }
           }
@@ -2338,7 +2476,7 @@ export default class SpotifySource implements SourceInstance {
           }
           if (!best) {
             const primaryTitle = track.title
-              .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')
+              .replace(/\s*[([][^)\]]*[)\]]/g, '')
               .trim()
             if (primaryTitle && primaryTitle !== track.title) {
               const primaryRes = await sm.searchWithDefault(primaryTitle)
@@ -2845,7 +2983,7 @@ export default class SpotifySource implements SourceInstance {
    */
   private async _fetchArtworkColors(
     artworkUrl: string | null
-  ): Promise<{ dark?: string; light?: string; raw?: string } | null> {
+  ): Promise<MediaColors | null> {
     if (!artworkUrl) return null
     const match =
       artworkUrl.match(/\/image\/([a-f0-9]{32,40})/i) ||
@@ -2853,6 +2991,19 @@ export default class SpotifySource implements SourceInstance {
     if (!match?.[1]) return null
 
     try {
+      // The optional dynamic palette uses one request with existing authorized access.
+      if (this.config.colorMode === 'dynamic') {
+        const data = await this._internalApiRequest<unknown>(
+          QUERIES.getDynamicColorsByUris,
+          {
+            imageUris: [`https://i.scdn.co/image/${match[1]}`]
+          },
+          'anonymous',
+          0,
+          true
+        )
+        return normalizeSpotifyDynamicColors(data) ?? null
+      }
       const data = await this._internalApiRequest<{
         extractedColors?: Array<{
           colorDark?: { hex?: string }

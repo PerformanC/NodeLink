@@ -1,3 +1,4 @@
+import { amazonTrackIdentity, buildAmazonMedia } from '../modules/amazonMusicMedia.js';
 import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * User agent string used for web scraping operations to trigger SSR JSON-LD output.
@@ -70,12 +71,12 @@ export default class AmazonMusicSource {
             }
         },
         {
-            id: 'amazonmusic.search.amsearch',
-            name: 'Amazon Music catalog search (amsearch:)',
+            id: 'amazonmusic.search.amazonmusic',
+            name: 'Amazon Music catalog search (amazonmusic:)',
             input: {
                 type: 'search',
                 value: 'Radiohead Creep',
-                searchType: 'amsearch'
+                searchType: 'amazonmusic'
             },
             expect: {
                 result: { type: 'search' },
@@ -120,7 +121,7 @@ export default class AmazonMusicSource {
      * Prefixes used to identify search queries targeting this source.
      * @public
      */
-    searchTerms = ['amazonmusic', 'azsearch', 'amsearch'];
+    searchTerms = ['amazonmusic', 'azsearch'];
     /**
      * Regular expression patterns used to match Amazon Music and Retail URLs.
      * @public
@@ -337,8 +338,10 @@ export default class AmazonMusicSource {
                 const collectionName = collection.name || collection.title || 'Unknown Collection';
                 const collectionImage = collection.image || artworkUrl;
                 if (Array.isArray(collection.track) && collection.track.length > 0) {
+                    const collectionResource = collection;
+                    const rawTracks = collection.track;
                     const tracks = [];
-                    for (const t of collection.track) {
+                    for (const t of rawTracks) {
                         const rawUri = t.url || t['@id'] || url;
                         const tId = this.extractIdentifier(rawUri) ||
                             `am-${Buffer.from(t.name || '').toString('hex')}`;
@@ -371,7 +374,9 @@ export default class AmazonMusicSource {
                                 data: {
                                     encoded: encodeTrack({ ...selected, details: [] }),
                                     info: selected,
-                                    pluginInfo: {}
+                                    pluginInfo: {
+                                        media: buildAmazonMedia(selected, rawTracks[tracks.indexOf(selected)], collectionResource)
+                                    }
                                 }
                             };
                         }
@@ -381,10 +386,12 @@ export default class AmazonMusicSource {
                             loadType: 'playlist',
                             data: {
                                 info: { name: collectionName, selectedTrack: 0 },
-                                tracks: tracks.map((t) => ({
+                                tracks: tracks.map((t, index) => ({
                                     encoded: encodeTrack({ ...t, details: [] }),
                                     info: t,
-                                    pluginInfo: {}
+                                    pluginInfo: {
+                                        media: buildAmazonMedia(t, rawTracks[index], collectionResource)
+                                    }
                                 })),
                                 pluginInfo: {}
                             }
@@ -400,11 +407,10 @@ export default class AmazonMusicSource {
                     'Unknown Artist';
                 const trackTitle = trackData.name || trackData.title || 'Unknown Track';
                 const trackImage = trackData.image || artworkUrl;
-                const trackId = targetId ||
-                    this.extractIdentifier(trackData.url || trackData['@id'] || url) ||
-                    url.split('/').pop() ||
-                    'am-unknown';
-                return this.buildTrackResult(trackTitle, artist, trackData.url || url, trackImage, trackId, this.parseISO8601Duration(trackData.duration), trackData.isrcCode || null);
+                const identity = amazonTrackIdentity(trackData, targetId ?? this.extractIdentifier(url) ?? undefined);
+                if (!identity)
+                    return null;
+                return this.buildTrackResult(trackTitle, artist, identity.uri, trackImage, identity.id, this.parseISO8601Duration(trackData.duration), trackData.isrcCode || null, trackData);
             }
         }
         catch (e) {
@@ -442,10 +448,11 @@ export default class AmazonMusicSource {
      * @param id - Stable track identifier.
      * @param length - Track duration in milliseconds.
      * @param isrc - Optional ISRC code.
+     * @param resource - Structured metadata, when available.
      * @returns A SourceResult representing the resolved track.
      * @internal
      */
-    buildTrackResult(title, author, url, image, id, length = 0, isrc = null) {
+    buildTrackResult(title, author, url, image, id, length = 0, isrc = null, resource) {
         const info = {
             identifier: id,
             isSeekable: true,
@@ -464,7 +471,7 @@ export default class AmazonMusicSource {
             data: {
                 encoded: encodeTrack({ ...info, details: [] }),
                 info,
-                pluginInfo: {}
+                pluginInfo: { media: buildAmazonMedia(info, resource) }
             }
         };
     }
@@ -541,7 +548,7 @@ export default class AmazonMusicSource {
                 data: tracks.map((t) => ({
                     encoded: encodeTrack({ ...t, details: [] }),
                     info: t,
-                    pluginInfo: {}
+                    pluginInfo: { media: buildAmazonMedia(t) }
                 }))
             };
         }

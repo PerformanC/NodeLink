@@ -3,6 +3,8 @@ import crypto from 'node:crypto'
 import { performance } from 'node:perf_hooks'
 import { PassThrough, type Readable } from 'node:stream'
 import BlowfishCBC from '../decrypters/blowfish-cbc.ts'
+import { buildDeezerMedia } from '../modules/deezerMedia.ts'
+import { buildTrackMedia } from '../modules/trackMedia.ts'
 import type {
   SourceResult,
   TrackInfo,
@@ -144,6 +146,8 @@ interface DeezerParsedContentRange {
  * Minimal Deezer artist payload used by search, resolve, and track builders.
  */
 interface DeezerArtistSummary {
+  role?: string
+  picture_small?: string | null
   /**
    * Stable Deezer artist identifier.
    */
@@ -174,6 +178,7 @@ interface DeezerArtistSummary {
  * Minimal Deezer album payload used by track and collection builders.
  */
 interface DeezerAlbumSummary {
+  cover_small?: string | null
   /**
    * Stable Deezer album identifier.
    */
@@ -308,6 +313,9 @@ interface DeezerEntity {
    * Nested artist metadata for track responses.
    */
   artist?: DeezerArtistSummary | null
+
+  /** Explicit recording contributors, when exposed by the public API. */
+  contributors?: DeezerArtistSummary[] | null
 
   /**
    * Playlist owner metadata returned by some responses.
@@ -2030,7 +2038,9 @@ export default class DeezerSource implements SourceVariantHandler {
       details: []
     }
 
-    const pluginInfo: DeezerTrackPluginInfo = {}
+    const pluginInfo: DeezerTrackPluginInfo = {
+      media: buildDeezerMedia(item, trackInfo.isrc)
+    }
     if (item.album?.title?.trim())
       pluginInfo.albumName = item.album.title.trim()
     if (
@@ -2086,7 +2096,13 @@ export default class DeezerSource implements SourceVariantHandler {
     return {
       encoded: encodeTrack(info),
       info,
-      pluginInfo: {} as Record<string, unknown>
+      pluginInfo: {
+        media: buildTrackMedia('deezer', {
+          identifiers: { isrc: info.isrc },
+          artists: [{ name: item.ART_NAME }],
+          album: { artwork: [{ url: info.artworkUrl }] }
+        })
+      }
     }
   }
 

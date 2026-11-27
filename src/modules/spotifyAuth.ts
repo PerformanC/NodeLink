@@ -5,6 +5,10 @@ import type {
   SpotifyServerTimeResponse
 } from '../typings/modules/spotifyAuth.types.ts'
 import { http1makeRequest, logger } from '../utils.ts'
+import {
+  isSpotifyAuthRejection,
+  SpotifyAuthError
+} from './spotifyAuthStatus.ts'
 
 /**
  * Built-in encoded TOTP secrets used as primary/fallback bootstrap.
@@ -243,7 +247,7 @@ async function performTokenRequest(
   })
 
   if (res.statusCode !== 200 || !res.body) {
-    throw new Error(`Spotify Auth Error: ${res.statusCode}`)
+    throw new SpotifyAuthError(res.statusCode)
   }
 
   return typeof res.body === 'string'
@@ -275,7 +279,8 @@ export async function getLocalToken(
       spDc,
       productType
     )
-  } catch {
+  } catch (error) {
+    if (isSpotifyAuthRejection(error)) throw error
     await ensureTotpSecrets()
 
     if (!currentTotpSecret) {
