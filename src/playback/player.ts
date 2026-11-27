@@ -10,7 +10,9 @@ import discordVoice, {
 import { EndReasons, GatewayEvents } from '../constants.ts'
 import {
   activeLyricsIndices,
-  buildPlaybackLyrics
+  buildPlaybackLyrics,
+  hasCompleteLyricsTiming,
+  nextLyricsExpiry
 } from '../modules/playbackLyrics.ts'
 import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.ts'
 import type { DuckingConfig } from '../typings/playback/ducking.types.ts'
@@ -4178,7 +4180,7 @@ export class Player {
       const payload: LyricsPayload = {
         sourceName: track.info.sourceName,
         provider: lyricsData.data.provider,
-        synced: lyricsData.data.synced === true,
+        synced: hasCompleteLyricsTiming(lyricsData.data),
         text: lines.map((line) => line.line).join('\n'),
         lines,
         plugin: {}
@@ -4224,10 +4226,37 @@ export class Player {
 
     const nextIndex = this.lyricsLineIndex + 1
     const nextLine = lines[nextIndex]
-    if (!nextLine) return
-
     if (!Number.isFinite(playbackSpeed) || playbackSpeed <= 0) return
     const lyrics = this.currentLyrics
+    const expiry = nextLyricsExpiry(lines, position)
+    if (expiry !== undefined && (!nextLine || expiry < nextLine.timestamp)) {
+      const prior = activeLyricsIndices(lines, position)
+      this._lyricsMarkerTimer = setTimeout(() => {
+        this._lyricsMarkerTimer = null
+        if (!this.isLyricsSubscribed || this.isPaused || this.currentLyrics !== lyrics)
+          return
+        const currentPosition = this._getLyricsPosition(playbackSpeed)
+        const previousIndex = this.lyricsLineIndex
+        this._recalculateLyricsIndex(currentPosition, lines)
+        const active = activeLyricsIndices(lines, currentPosition)
+        const line = lines[this.lyricsLineIndex]
+        if (
+          line && previousIndex === this.lyricsLineIndex &&
+          (prior.length !== active.length || prior.some((value, i) => value !== active[i]))
+        ) {
+          this.emitEvent('LyricsLineEvent', {
+            lineIndex: this.lyricsLineIndex,
+            line,
+            skipped: false,
+            activeLineIndices: active
+          })
+        }
+        this._syncLyrics(true)
+      }, Math.max(20, Math.ceil((expiry - position) / playbackSpeed)))
+      this._lyricsMarkerTimer.unref?.()
+      return
+    }
+    if (!nextLine) return
     const nextTimestamp = nextLine.timestamp
     const delayMs = Math.max(0, (nextTimestamp - position) / playbackSpeed)
 

@@ -5,6 +5,15 @@ import type {
 import type { LyricsLine } from '../typings/playback/player.types.ts'
 import { readLyricsTimestamp } from './lyricsTiming.ts'
 
+/** Only emit timed events when every line has an actual provider timestamp. */
+export function hasCompleteLyricsTiming(data: {
+  synced?: boolean
+  lines?: ReadonlyArray<{ time?: unknown }>
+}): boolean {
+  return data.synced === true && !!data.lines?.length &&
+    data.lines.every((line) => readLyricsTimestamp(line.time) !== undefined)
+}
+
 /** Build the existing event payload while retaining provider timing and annotations. */
 export function buildPlaybackLyrics(
   data: Omit<LyricsData, 'lines'> & {
@@ -29,7 +38,7 @@ export function buildPlaybackLyrics(
       ...(line.alternatives?.length ? { alternatives: line.alternatives } : {})
     }
   }))
-  if (data.synced !== true) return lines
+  if (!hasCompleteLyricsTiming(data)) return lines
   return lines.sort((a, b) => a.timestamp - b.timestamp)
 }
 
@@ -51,4 +60,19 @@ export function activeLyricsIndices(
   if (primary && primary.duration === 0 && !active.includes(latestPrimary))
     active.push(latestPrimary)
   return active.sort((a, b) => a - b)
+}
+
+/** Next expiration of a line that is currently active. */
+export function nextLyricsExpiry(
+  lines: LyricsLine[],
+  position: number
+): number | undefined {
+  let next = Infinity
+  for (const index of activeLyricsIndices(lines, position)) {
+    const line = lines[index]
+    if (!line || line.duration <= 0) continue
+    const end = line.timestamp + line.duration
+    if (Number.isFinite(end) && end > position) next = Math.min(next, end)
+  }
+  return Number.isFinite(next) ? next : undefined
 }
