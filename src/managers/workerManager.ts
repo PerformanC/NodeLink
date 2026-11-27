@@ -1682,12 +1682,19 @@ export default class WorkerManager {
 
     let bestWorker: PlaybackWorker | null = null
     let minCost = Number.POSITIVE_INFINITY
+    let minPlacementCost = Number.POSITIVE_INFINITY
 
     for (const worker of this.workers) {
       if (worker.isConnected()) {
         const cost = this._calculateWorkerCost(worker.id)
-        if (cost < minCost) {
-          minCost = cost
+        minCost = Math.min(minCost, cost)
+        const reportedPlayers = this.workerStats.get(worker.id)?.players ?? 0
+        const assignedPlayers = this.workerToGuilds.get(worker.id)?.size ?? 0
+        /* INFO: Count incoming assignments for placement before worker stats catch up. */
+        const placementCost =
+          cost + Math.max(0, assignedPlayers - reportedPlayers)
+        if (placementCost < minPlacementCost) {
+          minPlacementCost = placementCost
           bestWorker = worker
         }
       }

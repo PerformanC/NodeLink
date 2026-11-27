@@ -277,7 +277,8 @@ class WebmBaseDemuxer extends Transform {
             const code = err.code ? ` (${err.code})` : '';
             logger('error', 'WebmDemuxer', `Stream error: ${err.message}${code}`);
         });
-        this.ringBuffer = new RingBuffer(BUFFER_SIZE);
+        /* INFO: Keep the parser limit for large elements without reserving it for every stream. */
+        this.ringBuffer = new RingBuffer(BUFFER_SIZE, 64 * 1024);
         this.total = 0n;
         this.processed = 0n;
         this.skipUntil = null;
