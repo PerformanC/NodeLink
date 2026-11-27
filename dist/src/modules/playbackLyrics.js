@@ -1,8 +1,9 @@
 import { readLyricsTimestamp } from './lyricsTiming.js';
 /** Only emit timed events when every line has an actual provider timestamp. */
 export function hasCompleteLyricsTiming(data) {
-    return data.synced === true && !!data.lines?.length &&
-        data.lines.every((line) => readLyricsTimestamp(line.time) !== undefined);
+    return (data.synced === true &&
+        !!data.lines?.length &&
+        data.lines.every((line) => readLyricsTimestamp(line.time) !== undefined));
 }
 /** Build the existing event payload while retaining provider timing and annotations. */
 export function buildPlaybackLyrics(data) {

@@ -2903,15 +2903,19 @@ export class Player {
             const prior = activeLyricsIndices(lines, position);
             this._lyricsMarkerTimer = setTimeout(() => {
                 this._lyricsMarkerTimer = null;
-                if (!this.isLyricsSubscribed || this.isPaused || this.currentLyrics !== lyrics)
+                if (!this.isLyricsSubscribed ||
+                    this.isPaused ||
+                    this.currentLyrics !== lyrics)
                     return;
                 const currentPosition = this._getLyricsPosition(playbackSpeed);
                 const previousIndex = this.lyricsLineIndex;
                 this._recalculateLyricsIndex(currentPosition, lines);
                 const active = activeLyricsIndices(lines, currentPosition);
                 const line = lines[this.lyricsLineIndex];
-                if (line && previousIndex === this.lyricsLineIndex &&
-                    (prior.length !== active.length || prior.some((value, i) => value !== active[i]))) {
+                if (line &&
+                    previousIndex === this.lyricsLineIndex &&
+                    (prior.length !== active.length ||
+                        prior.some((value, i) => value !== active[i]))) {
                     this.emitEvent('LyricsLineEvent', {
                         lineIndex: this.lyricsLineIndex,
                         line,
