@@ -46,7 +46,9 @@ export class AudioVisualization extends Transform {
     this.peakR = Math.max(this.peakR, Math.abs(right))
     const group = Math.floor((slot * this.envelope.length) / HOP)
     this.envelope[group] = Math.max(
-      this.envelope[group] ?? 0, Math.abs(left), Math.abs(right)
+      this.envelope[group] ?? 0,
+      Math.abs(left),
+      Math.abs(right)
     )
     // Spectrum uses the most recent contiguous 1024 frames. Level and
     // envelope statistics cover every frame in the 100 ms reporting interval.

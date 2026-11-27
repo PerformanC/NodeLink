@@ -36,7 +36,10 @@ test('peak outside the original 1024-frame window is retained', async () => {
 test('partial frames preserve bytes and statistics', async () => {
   const input = Buffer.alloc(4800 * 4)
   for (let i = 0; i < 4800; i++) {
-    input.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 1000 * i / 48000) * 12000), i * 4)
+    input.writeInt16LE(
+      Math.round(Math.sin((2 * Math.PI * 1000 * i) / 48000) * 12000),
+      i * 4
+    )
     input.writeInt16LE(-input.readInt16LE(i * 4), i * 4 + 2)
   }
   const a = await render(input)
