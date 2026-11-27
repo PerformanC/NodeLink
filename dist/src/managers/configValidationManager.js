@@ -285,6 +285,7 @@ export default class ConfigValidationManager {
                         type: 'object',
                         optional: true,
                         props: {
+                            musicAnalysis: { type: 'boolean', optional: true },
                             processingMode: {
                                 type: 'string',
                                 enum: ['legacy', 'protected'],

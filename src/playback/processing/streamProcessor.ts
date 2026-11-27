@@ -62,6 +62,7 @@ import {
   type CrossfadePrepareOptions
 } from './CrossfadeController.ts'
 import { SilenceDetector } from './SilenceDetector.ts'
+import { MusicAnalysis } from './MusicAnalysis.ts'
 import {
   assertAudioCapabilities,
   resolveAudioProcessingMode,
@@ -799,6 +800,9 @@ class BaseAudioResource {
         checkScratchEffectCompleted?: () => boolean
         getEffectiveRate?: () => number
         getRMS?: () => number
+        getMusicAnalysis?: () =>
+          | import('./MusicAnalysis.ts').MusicAnalysisSnapshot
+          | null
         isSilent?: () => boolean
         setFadeVolume?: (volume: number) => void
         fadeTo?: (volume: number, durationMs: number, curve?: string) => void
@@ -824,6 +828,7 @@ class BaseAudioResource {
       this.checkScratchEffectCompleted()
     voiceStream.getEffectiveRate = () => this.getEffectiveRate()
     voiceStream.getRMS = () => this.getRMS()
+    voiceStream.getMusicAnalysis = () => this.getMusicAnalysis()
     voiceStream.isSilent = () => this.isSilent()
     voiceStream.setFadeVolume = (volume: number) => this.setFadeVolume(volume)
     voiceStream.fadeTo = (volume: number, durationMs: number, curve?: string) =>
@@ -933,6 +938,13 @@ class BaseAudioResource {
 
   getEffectiveRate(): number {
     return 1.0
+  }
+
+  getMusicAnalysis():
+    | import('./MusicAnalysis.ts').MusicAnalysisSnapshot
+    | null {
+    const observer = this.pipes?.find((pipe) => pipe instanceof MusicAnalysis)
+    return observer instanceof MusicAnalysis ? observer.snapshot() : null
   }
 
   getRMS(): number {
@@ -2412,9 +2424,7 @@ class WebmOpusSeekTrimTransform extends Transform {
 
     const timing = this.timings[this.timingIndex]
     if (!timing) {
-      callback(
-        new Error('Missing WebM packet timestamp for decoded Opus PCM')
-      )
+      callback(new Error('Missing WebM packet timestamp for decoded Opus PCM'))
       return
     }
     if (!Number.isFinite(timing.timestampMs)) {
@@ -2429,9 +2439,10 @@ class WebmOpusSeekTrimTransform extends Transform {
       packetStartSample,
       this.targetSampleFrame
     )
-    const clippedEndSample = this.endSampleFrame === null
-      ? packetEndSample
-      : Math.min(packetEndSample, this.endSampleFrame)
+    const clippedEndSample =
+      this.endSampleFrame === null
+        ? packetEndSample
+        : Math.min(packetEndSample, this.endSampleFrame)
 
     // Only fill gaps between packets. Never pad the tail: a missing final
     // packet must remain visible as an early EOF instead of being hidden.
@@ -2451,10 +2462,7 @@ class WebmOpusSeekTrimTransform extends Transform {
         clippedStartSample,
         this.nextOutputSampleFrame
       )
-      const outputEndSample = Math.max(
-        outputStartSample,
-        clippedEndSample
-      )
+      const outputEndSample = Math.max(outputStartSample, clippedEndSample)
       const framesToKeep = outputEndSample - outputStartSample
 
       if (framesToKeep > 0) {
@@ -2941,8 +2949,21 @@ class StreamAudioResource extends BaseAudioResource {
       streams.push(protectedOutput)
     }
 
-    streams.push(opusEncoder)
     if (protectedOutput) this.pipes?.push(protectedOutput)
+    if (nodelink.options.playback.audio?.musicAnalysis === true) {
+      const observer = new MusicAnalysis()
+      observer.once('analysisFailure', (error: unknown) => {
+        logger(
+          'warn',
+          'MusicAnalysis',
+          'Output analysis disabled for this resource',
+          error
+        )
+      })
+      streams.push(observer)
+      this.pipes?.push(observer)
+    }
+    streams.push(opusEncoder)
     this.pipes?.push(opusEncoder)
 
     pipeline(streams as unknown as Readable[], (err: Error | null): void => {
