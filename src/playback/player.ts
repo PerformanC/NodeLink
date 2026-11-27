@@ -3028,7 +3028,6 @@ export class Player {
         if (this.nextResourceIsCrossfade) {
           this._getAudioStream()?.clearCrossfade?.()
           this._clearCrossfadeTimer()
-          this._cancelOutroAnalysis()
           this._crossfadeToken += 1
         }
         this.nextResource?.destroy()
@@ -3195,7 +3194,6 @@ export class Player {
     this._cancelOutroAnalysis()
 
     if (this.nextResourceIsCrossfade) {
-      this._cancelOutroAnalysis()
       this._crossfadeToken += 1
       this._clearCrossfadeTimer()
       this._getAudioStream()?.clearCrossfade?.()
@@ -5278,7 +5276,6 @@ export class Player {
       this.nextResourceIsCrossfade &&
       this.nextTrack !== null
     this._clearCrossfadeTimer()
-    this._cancelOutroAnalysis()
     this._crossfadeToken += 1
     this._getAudioStream()?.clearCrossfade?.()
     if (this._crossfadeCurrentResource) {

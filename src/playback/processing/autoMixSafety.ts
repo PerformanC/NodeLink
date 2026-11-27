@@ -63,6 +63,8 @@ export function safeAutoMixEnd(
   if (!Number.isFinite(end) || end <= 0 || end >= total || total - end > 15000)
     return total
   if (
+    !Number.isFinite(outro.analyzedWindowStartMs) ||
+    !Number.isFinite(outro.analyzedWindowEndMs) ||
     outro.analyzedWindowStartMs > end ||
     outro.analyzedWindowEndMs < total
   )

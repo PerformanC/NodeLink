@@ -191,3 +191,24 @@ test('initial requester callback is delivered exactly once', async () => {
   assert.ok(await result)
   assert.equal(calls, 1)
 })
+
+test('clean but incomplete EOF cannot produce a reusable profile', async () => {
+  const f = fixture('short-eof')
+  const result = registry.requestOutroAnalysis(f.options)
+  await nextTurn()
+  f.stream.end(Buffer.alloc(500 * 192))
+  assert.equal(await result, null)
+  assert.equal(TransitionProfileCache.get(f.key), null)
+})
+
+test('an already aborted consumer never starts a fetch', async () => {
+  const f = fixture('pre-abort')
+  const controller = new AbortController()
+  controller.abort()
+  assert.equal(
+    await registry.requestOutroAnalysis({ ...f.options, signal: controller.signal }),
+    null
+  )
+  assert.equal(f.fetches(), 0)
+  f.stream.destroy()
+})

@@ -485,11 +485,11 @@ export class AutoMixRegistry {
       priority: job.priority,
       startedAt: performance.now(),
       abortController,
-      promise: this._executeJob(job, abortController)
+      promise: job.promise
     }
     this.inFlightJobs.set(job.deduplicationKey, inFlight)
 
-    inFlight.promise
+    this._executeJob(job, abortController)
       .then((profile) => {
         job.resolve(profile)
       })
@@ -576,7 +576,9 @@ export class AutoMixRegistry {
       }, 50)
       jobLagMonitor.unref?.()
 
-      AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando')
+      if (!TransitionProfileCache.get(trackId)) {
+        AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando')
+      }
 
       const resultPromise = new Promise<TrackPreAnalysisProfile | null>(
         (resolve) => {
@@ -635,7 +637,10 @@ export class AutoMixRegistry {
             } catch {}
             if (profile && !abortController.signal.aborted) {
               AutoMixCacheManager.getInstance().setProfile(trackId, profile)
-            } else if (!abortController.signal.aborted) {
+            } else if (
+              !abortController.signal.aborted &&
+              !TransitionProfileCache.get(trackId)
+            ) {
               AutoMixCacheManager.getInstance().setAnalysisStatus(
                 trackId,
                 'falha'
@@ -671,6 +676,14 @@ export class AutoMixRegistry {
 
             const actualWindowEndMs =
               windowStartMs + framesToMediaMs(Math.floor(bytesRead / 4), 48000)
+            // A clean but short EOF must not make an incomplete window reusable.
+            if (
+              bytesRead < expectedBytes &&
+              (trackLength <= 0 || actualWindowEndMs < trackLength)
+            ) {
+              finish(null)
+              return
+            }
 
             const points = featureMap.points
             const confirmedTail =
