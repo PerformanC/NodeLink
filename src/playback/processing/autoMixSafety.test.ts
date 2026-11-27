@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
+import { createServer } from 'node:http'
+import { once } from 'node:events'
+import type { AddressInfo } from 'node:net'
+import SourcesManager from '../../managers/sourceManager.ts'
+import { http1makeRequest } from '../../utils.ts'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { test } from 'node:test'
 import type { TemporalFeaturePoint } from '../../typings/playback/progressiveAnalysis.types.ts'
@@ -211,4 +216,85 @@ test('an already aborted consumer never starts a fetch', async () => {
   )
   assert.equal(f.fetches(), 0)
   f.stream.destroy()
+})
+
+test('last subscriber abort closes a pending source request and releases the worker', async () => {
+  const first = new AbortController()
+  const last = new AbortController()
+  const f = fixture('pending-acquisition')
+  const state = registry as unknown as { activeWorkers: number; pendingResourceFetches: number }
+  const idle = async () => {
+    const deadline = Date.now() + 2000
+    while (state.activeWorkers !== 0 || state.pendingResourceFetches !== 0) {
+      if (Date.now() > deadline) throw new Error('analysis worker not released')
+      await nextTurn()
+    }
+  }
+  await idle()
+  let notifyRequest!: () => void
+  let notifyClosed!: () => void
+  const requested = new Promise<void>(resolve => { notifyRequest = resolve })
+  const closed = new Promise<void>(resolve => { notifyClosed = resolve })
+  let requests = 0
+  const server = createServer((_req, res) => {
+    requests++
+    if (requests === 1) {
+      res.once('close', notifyClosed)
+      notifyRequest()
+      // Deliberately send no headers until the client cancels.
+      return
+    }
+    res.end(Buffer.alloc(16))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const url = 'http://127.0.0.1:' + (server.address() as AddressInfo).port
+  const manager = new SourcesManager({ options: {} } as ConstructorParameters<typeof SourcesManager>[0])
+  let sourceSignal: AbortSignal | undefined
+  const source = {
+    loadStream: async (_track: unknown, input: string, _protocol: unknown, data: Record<string, unknown>) => {
+      sourceSignal = data.signal as AbortSignal
+      const response = await http1makeRequest(input, { streamOnly: true, maxRetries: 0 })
+      return { stream: response.stream, type: 'pcm' }
+    }
+  } as unknown as NonNullable<ReturnType<typeof manager.sourceMap.get>>
+  manager.sourceMap.set('test', source)
+  const fetchResource: AnalysisRequestOptions['fetchResource'] = async (track, _data, _position, _pcm, _background, signal) => {
+    const result = await manager.getTrackStream(track, url, undefined, {}, signal)
+    result.stream?.destroy()
+    return { exception: { message: 'fixture completed' } }
+  }
+  try {
+    const a = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: first.signal })
+    const b = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: last.signal })
+    await Promise.race([requested, new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('source did not receive request')), 2000)
+      timer.unref?.()
+    })])
+    assert.equal(state.activeWorkers, 1)
+    assert.equal(requests, 1)
+    first.abort()
+    assert.equal(await a, null)
+    assert.equal(sourceSignal?.aborted, false)
+    last.abort()
+    assert.equal(await b, null)
+    assert.equal(sourceSignal?.aborted, true)
+    await Promise.race([closed, new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('upstream connection remained open')), 2000)
+      timer.unref?.()
+    })])
+    await idle()
+    assert.equal(state.activeWorkers, 0)
+    assert.equal(state.pendingResourceFetches, 0)
+    // Same key may be requested again only after the cancelled fetch is released.
+    assert.equal(await registry.requestOutroAnalysis({ ...f.options, fetchResource }), null)
+    await idle()
+    assert.equal(requests, 2)
+  } finally {
+    first.abort()
+    last.abort()
+    f.stream.destroy()
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
 })

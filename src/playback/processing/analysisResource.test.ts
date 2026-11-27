@@ -50,3 +50,20 @@ test('already aborted acquisition does not invoke the source', async () => {
 test('rejected acquisition settles without an unhandled rejection', async () => {
   assert.equal(await acquireAnalysisResource(async () => { throw new Error('source') }, () => {}, new AbortController().signal, 100), null)
 })
+
+test('acquisition timeout aborts the actual signal passed to the source', async () => {
+  let cancelled = false
+  const result = await acquireAnalysisResource(
+    (signal) => new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        cancelled = true
+        reject(signal.reason)
+      }, { once: true })
+    }),
+    () => {},
+    new AbortController().signal,
+    10
+  )
+  assert.equal(result, null)
+  assert.equal(cancelled, true)
+})
