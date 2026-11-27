@@ -363,6 +363,7 @@ export const config: NodelinkConfig = {
     },
     audio: {
       processingMode: 'legacy',
+      visualization: false,
       quality: 'high',
       encryption: 'aead_xchacha20_poly1305_rtpsize',
       resamplingQuality: 'best',

@@ -1416,6 +1416,8 @@ export interface NodelinkConfig {
     audio: {
       /** Audio processing path; defaults to the unchanged legacy pipeline. */
       processingMode?: AudioProcessingMode
+      /** Optional bounded PCM visualization snapshots. */
+      visualization?: boolean
       quality: string
       encryption: string
       resamplingQuality: string
