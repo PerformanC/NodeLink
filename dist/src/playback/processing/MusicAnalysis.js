@@ -17,6 +17,7 @@ export class MusicAnalysis extends Transform {
     windowFrames = 0;
     totalFrames = 0;
     latest = null;
+    failed = false;
     consume(frame) {
         if (this.windowFrames === WINDOW_FRAMES) {
             this.musical = new MusicalAnalyzer();
@@ -64,6 +65,22 @@ export class MusicAnalysis extends Transform {
         };
     }
     _transform(chunk, _encoding, callback) {
+        if (this.failed) {
+            callback(null, chunk);
+            return;
+        }
+        try {
+            this.observe(chunk);
+        }
+        catch (error) {
+            this.failed = true;
+            this.latest = null;
+            this.pendingBytes = 0;
+            this.emit('analysisFailure', error);
+        }
+        callback(null, chunk);
+    }
+    observe(chunk) {
         let offset = 0;
         while (offset < chunk.length) {
             if (this.pendingBytes === 0 && offset + FRAME_BYTES <= chunk.length) {
@@ -80,7 +97,6 @@ export class MusicAnalysis extends Transform {
                 this.pendingBytes = 0;
             }
         }
-        callback(null, chunk);
     }
     snapshot() {
         return this.latest && Date.now() - this.latest.capturedAt <= 8000
