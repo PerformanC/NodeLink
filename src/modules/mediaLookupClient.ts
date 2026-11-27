@@ -42,11 +42,12 @@ export class MediaLookupClient {
         await response.body?.cancel()
         if (response.status === 429 || response.status === 503) {
           const retry = response.headers.get('retry-after')
-          const seconds = retry && /^\d+$/.test(retry)
-            ? Number(retry)
-            : retry && Number.isFinite(Date.parse(retry))
-              ? Math.ceil((Date.parse(retry) - Date.now()) / 1000)
-              : 60
+          const seconds =
+            retry && /^\d+$/.test(retry)
+              ? Number(retry)
+              : retry && Number.isFinite(Date.parse(retry))
+                ? Math.ceil((Date.parse(retry) - Date.now()) / 1000)
+                : 60
           this.nextRequest = Math.max(
             this.nextRequest,
             Date.now() + Math.min(3600, Math.max(1, seconds)) * 1000
