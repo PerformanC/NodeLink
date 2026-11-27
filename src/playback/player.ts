@@ -129,6 +129,7 @@ export class Player {
   private nextStreamInfo: StreamInfo = null
   private nextResourceIsCrossfade = false
   private _crossfadeToken = 0
+  private _outroAnalysisController: AbortController | null = null
   private _crossfadeTimer: NodeJS.Timeout | null = null
   private _crossfadePrepareTimer: NodeJS.Timeout | null = null
   private _crossfadeCurrentResource: AudioResource | null = null
@@ -797,6 +798,7 @@ export class Player {
 
         this._emitTrackEnd(EndReasons.GAPLESS)
 
+        this._cancelOutroAnalysis()
         this.track = nextTrack
         this._isRecovering = false
         this._isSeeking = false
@@ -2250,6 +2252,7 @@ export class Player {
         /* INFO: New tracks start with their own operation state; stale callbacks no longer reset these flags. */
         this._isRecovering = false
         this._isSeeking = false
+        this._cancelOutroAnalysis()
         this.track = {
           encoded,
           info,
@@ -2476,6 +2479,7 @@ export class Player {
                 remainingMs,
                 priority: 'IMMINENT_TRANSITION',
                 triggerSource: `player:${this.guildId}:seekImminent`,
+                signal: this._outroAnalysisSignal(),
                 fetchResource: (info, uData, wStart, returnPcm) =>
                   this._fetchResource(
                     info,
@@ -3019,10 +3023,12 @@ export class Player {
         return false
       }
 
+      this._cancelOutroAnalysis()
       if (this.nextResource || this.nextResourceIsCrossfade) {
         if (this.nextResourceIsCrossfade) {
           this._getAudioStream()?.clearCrossfade?.()
           this._clearCrossfadeTimer()
+          this._cancelOutroAnalysis()
           this._crossfadeToken += 1
         }
         this.nextResource?.destroy()
@@ -3103,6 +3109,7 @@ export class Player {
     if (this.nextResourceIsCrossfade) {
       this._getAudioStream()?.clearCrossfade?.()
       this._clearCrossfadeTimer()
+      this._cancelOutroAnalysis()
       this._crossfadeToken += 1
     }
     if (this.nextResource) {
@@ -3127,6 +3134,7 @@ export class Player {
         !!audioStream?.prepareCrossfade
 
       if (shouldCrossfade) {
+        this._cancelOutroAnalysis()
         this._crossfadeToken += 1
         this.nextTrack = payload
         this.nextResourceIsCrossfade = true
@@ -3184,9 +3192,10 @@ export class Player {
     )
     if (this.destroying) return false
 
-    // Analysis jobs are shared across players; clearing one queue must not abort another player's job.
+    this._cancelOutroAnalysis()
 
     if (this.nextResourceIsCrossfade) {
+      this._cancelOutroAnalysis()
       this._crossfadeToken += 1
       this._clearCrossfadeTimer()
       this._getAudioStream()?.clearCrossfade?.()
@@ -3239,6 +3248,7 @@ export class Player {
         this.nextResourceIsCrossfade &&
         !audioStream?.getCrossfadeState?.().active
       ) {
+        this._cancelOutroAnalysis()
         this._crossfadeToken += 1
         audioStream?.clearCrossfade?.()
         this.nextResource?.destroy()
@@ -3773,6 +3783,7 @@ export class Player {
     )
     if (this.destroying) return
     this.destroying = true
+    this._cancelOutroAnalysis()
     if (this.connection) {
       try {
         this.connection.removeListener('stateChange', this._connStateHandler)
@@ -4857,6 +4868,16 @@ export class Player {
     }
   }
 
+  private _outroAnalysisSignal(): AbortSignal {
+    this._outroAnalysisController ??= new AbortController()
+    return this._outroAnalysisController.signal
+  }
+
+  private _cancelOutroAnalysis(): void {
+    this._outroAnalysisController?.abort()
+    this._outroAnalysisController = null
+  }
+
   private _clearCrossfadeTimer(): void {
     if (this._crossfadeTimer) clearTimeout(this._crossfadeTimer)
     if (this._crossfadePrepareTimer) clearTimeout(this._crossfadePrepareTimer)
@@ -4919,6 +4940,7 @@ export class Player {
     this._crossfadePrepareTimer = setTimeout(() => {
       this._crossfadePrepareTimer = null
       this._prepareCrossfadeResource(token, payload).catch((error) => {
+        if (token === this._crossfadeToken) this._cancelOutroAnalysis()
         logger(
           'error',
           'Crossfade',
@@ -4987,6 +5009,7 @@ export class Player {
           remainingMs,
           priority,
           triggerSource: `player:${this.guildId}:nextTrack`,
+          signal: this._outroAnalysisSignal(),
           fetchResource: (info, uData, wStart, returnPcm) =>
             this._fetchResource(info, uData, wStart, returnPcm, false, true)
         })
@@ -5022,7 +5045,10 @@ export class Player {
       `Preparing ${payload.info.identifier} for guild ${this.guildId}`
     )
     const urlData = await this.nodelink.sources.getTrackUrl(trackInfo)
-    if (urlData.exception || token !== this._crossfadeToken) return
+    if (urlData.exception || token !== this._crossfadeToken) {
+      if (token === this._crossfadeToken) this._cancelOutroAnalysis()
+      return
+    }
 
     const fetched = await this._fetchResource(
       payload.info,
@@ -5033,10 +5059,12 @@ export class Player {
     )
     if ('exception' in fetched || token !== this._crossfadeToken) {
       if (!('exception' in fetched)) fetched.stream.destroy()
+      if (token === this._crossfadeToken) this._cancelOutroAnalysis()
       return
     }
     if (!fetched.stream.stream) {
       fetched.stream.destroy()
+      this._cancelOutroAnalysis()
       return
     }
 
@@ -5067,6 +5095,7 @@ export class Player {
     )
     if (!prepared || token !== this._crossfadeToken) {
       fetched.stream.destroy()
+      if (token === this._crossfadeToken) this._cancelOutroAnalysis()
       return
     }
 
@@ -5210,6 +5239,7 @@ export class Player {
       this._crossfadeCurrentResource.destroy()
     }
 
+    this._cancelOutroAnalysis()
     this.track = promotedTrack
     this._isRecovering = false
     this._isSeeking = false
@@ -5242,12 +5272,13 @@ export class Player {
   }
 
   private _destroyCrossfadeResources(preserveQueuedTrack = false): void {
-    // Analysis jobs are shared across players; clearing one queue must not abort another player's job.
+    this._cancelOutroAnalysis()
     const keepQueuedTrack =
       preserveQueuedTrack &&
       this.nextResourceIsCrossfade &&
       this.nextTrack !== null
     this._clearCrossfadeTimer()
+    this._cancelOutroAnalysis()
     this._crossfadeToken += 1
     this._getAudioStream()?.clearCrossfade?.()
     if (this._crossfadeCurrentResource) {

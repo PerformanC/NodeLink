@@ -487,9 +487,3 @@ NodeLink is open-source software released under the **GNU General Public License
 <p align="center">
   <sub>GIFs by Pudgy Penguins, embedded from Tenor. Click a GIF to visit its source.</sub>
 </p>
-
-### Smart AutoMix reliability
-
-AutoMix profiles are keyed by source, track identifier, rendition and duration to avoid cross-provider collisions. Version 3 profiles only shorten an untrimmed track when the analyzed window reaches the ending and contains an observed contiguous silent tail; low energy alone cannot authorize an earlier end. Unknown final beat/phrase markers remain unknown. A player's queue clear does not cancel shared analysis jobs, and stale completion callbacks are ignored. Existing queue and CPU budgets remain in place, with background analysis windows capped at 60 seconds. Synthetic tests cover identity and boundary logic; audible transitions, real Discord seek/crossfade behavior and load testing remain unverified.
-
-Validation (2026-11-26): TypeScript checking, build and automated tests passed (26 passed, 3 skipped, 0 failed). Synthetic cache-identity, trailing-silence and end-boundary tests passed. Live transitions, Discord playback, multi-player cancellation behavior, and production load were not tested.

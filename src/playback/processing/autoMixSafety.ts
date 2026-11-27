@@ -54,7 +54,7 @@ export function safeAutoMixEnd(
   const outro = profile?.outroProfile
   if (
     !outro ||
-    profile?.analysisVersion !== 3 ||
+    profile?.analysisVersion !== 4 ||
     !Number.isFinite(outro.analysisConfidence) ||
     outro.analysisConfidence < 0.75
   )
@@ -64,7 +64,7 @@ export function safeAutoMixEnd(
     return total
   if (
     outro.analyzedWindowStartMs > end ||
-    outro.analyzedWindowEndMs < total - 1000
+    outro.analyzedWindowEndMs < total
   )
     return total
   if (

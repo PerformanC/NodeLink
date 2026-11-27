@@ -1,0 +1,22 @@
+name: AutoMix regression
+on:
+  push:
+    branches: [feat/smart-automix]
+  pull_request:
+    paths:
+      - 'src/playback/**'
+      - '.github/workflows/automix-regression.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - run: npm install --no-package-lock
+      - run: npm run type-check
+      - run: npm run build
+      - run: node --experimental-strip-types --test src/playback/processing/autoMixSafety.test.ts
