@@ -25,7 +25,9 @@
 import { performance } from 'node:perf_hooks';
 import { framesToMediaMs, mediaMsToFrames } from '../../typings/playback/progressiveAnalysis.types.js';
 import { logger } from '../../utils.js';
+import { acquireAnalysisResource } from './analysisResource.js';
 import { AutoMixCacheManager } from './AutoMixCacheManager.js';
+import { autoMixTrackKey, trailingSilenceStart } from './autoMixSafety.js';
 import { IncrementalAnalysisEngine } from './IncrementalAnalysisEngine.js';
 import { MusicalAnalyzer, TransitionProfileCache } from './MusicalAnalyzer.js';
 const PRIORITY_ORDER = {
@@ -48,6 +50,8 @@ export class AutoMixRegistry {
     MAX_QUEUE_SIZE = 30;
     maxConcurrent = 2;
     activeWorkers = 0;
+    pendingResourceFetches = 0;
+    pendingResourceKeys = new Set();
     lastTickTime = performance.now();
     currentEventLoopLagMs = 0;
     maxEventLoopLagMs = 0;
@@ -90,7 +94,7 @@ export class AutoMixRegistry {
      */
     isProfileReusable(cached, windowStartMs, windowDurationMs, priority) {
         const profile = cached.outroProfile;
-        if (!profile || windowDurationMs <= 0)
+        if (cached.analysisVersion !== 4 || !profile || windowDurationMs <= 0)
             return false;
         const requestedEnd = windowStartMs + windowDurationMs;
         const overlapStart = Math.max(profile.analyzedWindowStartMs, windowStartMs);
@@ -126,22 +130,23 @@ export class AutoMixRegistry {
      * budget enforcement.
      */
     async requestOutroAnalysis(options) {
-        const trackId = options.track.info.identifier;
-        const windowDurationMs = Math.max(1, options.windowDurationMs ?? 25000);
+        const trackId = autoMixTrackKey(options.track);
+        if (options.signal?.aborted)
+            return null;
+        const requestedWindow = options.windowDurationMs ?? 25000;
+        if (!Number.isFinite(requestedWindow) || requestedWindow <= 0)
+            return null;
+        const windowDurationMs = Math.min(60000, Math.max(1, requestedWindow));
         const trackLength = options.track.info.length || 0;
         const windowStartMs = options.windowStartMs ?? Math.max(0, trackLength - windowDurationMs);
+        if (!Number.isFinite(windowStartMs) || windowStartMs < 0)
+            return null;
         const deduplicationKey = [
             trackId,
             Math.round(windowStartMs),
             Math.round(windowDurationMs)
         ].join(':');
-        const attachCompletion = (promise) => options.onComplete
-            ? promise.then((profile) => {
-                if (profile)
-                    options.onComplete?.(profile);
-                return profile;
-            })
-            : promise;
+        const subscribe = (job) => this._subscribe(job, options);
         const cached = TransitionProfileCache.get(trackId);
         if (cached &&
             this.isProfileReusable(cached, windowStartMs, windowDurationMs, options.priority)) {
@@ -158,8 +163,7 @@ export class AutoMixRegistry {
                     100) / 100,
                 reusedForDecision: true
             });
-            options.onComplete?.(cached);
-            return cached;
+            return this._deliver(cached, options);
         }
         const inFlight = this.inFlightJobs.get(deduplicationKey);
         if (inFlight) {
@@ -174,7 +178,7 @@ export class AutoMixRegistry {
             if (PRIORITY_ORDER[options.priority] < PRIORITY_ORDER[inFlight.priority]) {
                 inFlight.priority = options.priority;
             }
-            return attachCompletion(inFlight.promise);
+            return subscribe(inFlight);
         }
         const queued = this.queuedJobs.get(deduplicationKey);
         if (queued) {
@@ -185,7 +189,7 @@ export class AutoMixRegistry {
                     a.createdAt - b.createdAt);
             }
             logger('debug', 'AutoMix', `[AutoMix][BackgroundAnalysis] Deduplicated queued job for ${trackId}`, { trackId, jobId: queued.jobId, priority: queued.priority });
-            return attachCompletion(queued.promise);
+            return subscribe(queued);
         }
         if (this.queue.length >= this.MAX_QUEUE_SIZE) {
             if (options.priority === 'PASSIVE_REFINEMENT') {
@@ -223,6 +227,7 @@ export class AutoMixRegistry {
             rejectJob = reject;
         });
         const queuedJob = {
+            consumers: { count: 0 },
             jobId,
             deduplicationKey,
             trackIdentifier: trackId,
@@ -239,8 +244,67 @@ export class AutoMixRegistry {
         };
         this.queuedJobs.set(deduplicationKey, queuedJob);
         this._enqueueJob(queuedJob);
+        const subscription = subscribe(queuedJob);
         this._processQueue();
-        return promise;
+        return subscription;
+    }
+    _deliver(profile, options) {
+        if (options.signal?.aborted)
+            return null;
+        if (profile)
+            options.onComplete?.(profile);
+        return profile;
+    }
+    _subscribe(job, options) {
+        const { signal } = options;
+        job.consumers.count++;
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const release = () => {
+                if (settled)
+                    return false;
+                settled = true;
+                signal?.removeEventListener('abort', onAbort);
+                job.consumers.count--;
+                return true;
+            };
+            const onAbort = () => {
+                if (!release())
+                    return;
+                if (job.consumers.count === 0) {
+                    const queued = this.queuedJobs.get(job.deduplicationKey);
+                    if (queued?.jobId === job.jobId) {
+                        this.queuedJobs.delete(job.deduplicationKey);
+                        const index = this.queue.indexOf(queued);
+                        if (index >= 0)
+                            this.queue.splice(index, 1);
+                        queued.resolve(null);
+                    }
+                    const running = this.inFlightJobs.get(job.deduplicationKey);
+                    if (running?.jobId === job.jobId) {
+                        this.inFlightJobs.delete(job.deduplicationKey);
+                        running.abortController.abort();
+                    }
+                }
+                resolve(null);
+            };
+            job.promise.then((profile) => {
+                if (!release())
+                    return;
+                try {
+                    resolve(this._deliver(profile, options));
+                }
+                catch (error) {
+                    reject(error);
+                }
+            }, (error) => {
+                if (release())
+                    reject(error);
+            });
+            signal?.addEventListener('abort', onAbort, { once: true });
+            if (signal?.aborted)
+                onAbort();
+        });
     }
     _enqueueJob(job) {
         const index = this.queue.findIndex((j) => PRIORITY_ORDER[j.priority] > PRIORITY_ORDER[job.priority]);
@@ -262,16 +326,17 @@ export class AutoMixRegistry {
         this.queuedJobs.delete(job.deduplicationKey);
         const abortController = new AbortController();
         const inFlight = {
+            consumers: job.consumers,
             jobId: job.jobId,
             deduplicationKey: job.deduplicationKey,
             trackIdentifier: job.trackIdentifier,
             priority: job.priority,
             startedAt: performance.now(),
             abortController,
-            promise: this._executeJob(job, abortController)
+            promise: job.promise
         };
         this.inFlightJobs.set(job.deduplicationKey, inFlight);
-        inFlight.promise
+        this._executeJob(job, abortController)
             .then((profile) => {
             job.resolve(profile);
         })
@@ -279,7 +344,9 @@ export class AutoMixRegistry {
             job.reject(err);
         })
             .finally(() => {
-            this.inFlightJobs.delete(inFlight.deduplicationKey);
+            if (this.inFlightJobs.get(inFlight.deduplicationKey) === inFlight) {
+                this.inFlightJobs.delete(inFlight.deduplicationKey);
+            }
             this.activeWorkers--;
             setImmediate(() => this._processQueue());
         });
@@ -293,14 +360,6 @@ export class AutoMixRegistry {
         const windowStartMs = options.windowStartMs ?? 0;
         const windowDurationMs = options.windowDurationMs ?? 25000;
         const trackLength = track.info.length || 0;
-        if (options.signal) {
-            if (options.signal.aborted) {
-                abortController.abort();
-            }
-            else {
-                options.signal.addEventListener('abort', () => abortController.abort(), { once: true });
-            }
-        }
         if (abortController.signal.aborted) {
             return null;
         }
@@ -314,13 +373,34 @@ export class AutoMixRegistry {
                 ...track.info,
                 audioTrackId: track.audioTrackId
             };
-            const fetched = await options.fetchResource(trackInfo, options.urlData, windowStartMs, true, false);
+            // A source that ignores cancellation must not cause unbounded orphan fetches.
+            if (this.pendingResourceFetches >= 2 ||
+                this.pendingResourceKeys.has(job.deduplicationKey))
+                return null;
+            const fetched = await acquireAnalysisResource(async (signal) => {
+                this.pendingResourceFetches++;
+                this.pendingResourceKeys.add(job.deduplicationKey);
+                try {
+                    return await options.fetchResource(trackInfo, options.urlData, windowStartMs, true, true, signal);
+                }
+                finally {
+                    this.pendingResourceFetches--;
+                    this.pendingResourceKeys.delete(job.deduplicationKey);
+                }
+            }, (late) => {
+                if (!('exception' in late))
+                    late.stream.destroy();
+            }, abortController.signal, 15000);
+            if (!fetched)
+                return null;
             if ('exception' in fetched || !fetched.stream.stream) {
                 if (!('exception' in fetched))
                     fetched.stream.destroy();
                 return null;
             }
             streamResource = fetched.stream;
+            if (abortController.signal.aborted)
+                return null;
             const stream = fetched.stream.stream;
             const fetchMs = performance.now() - startFetchTime;
             decodeStart = performance.now();
@@ -341,11 +421,14 @@ export class AutoMixRegistry {
                 }
             }, 50);
             jobLagMonitor.unref?.();
-            AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando');
+            if (!TransitionProfileCache.get(trackId)) {
+                AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando');
+            }
             const resultPromise = new Promise((resolve) => {
                 let finished = false;
                 let analysisStarted = false;
                 let streamEnd;
+                let pendingBytes = Buffer.alloc(0);
                 let streamSafetyTimer = null;
                 let resumeTimer = null;
                 // Dynamic mathematical pacing:
@@ -370,6 +453,7 @@ export class AutoMixRegistry {
                     stream.removeListener('data', onData);
                     stream.removeListener('end', onEnd);
                     stream.removeListener('error', onError);
+                    stream.removeListener('close', onClose);
                     abortController.signal.removeEventListener('abort', onAbort);
                 };
                 const finish = (profile) => {
@@ -383,10 +467,11 @@ export class AutoMixRegistry {
                         streamResource?.destroy();
                     }
                     catch { }
-                    if (profile) {
+                    if (profile && !abortController.signal.aborted) {
                         AutoMixCacheManager.getInstance().setProfile(trackId, profile);
                     }
-                    else {
+                    else if (!abortController.signal.aborted &&
+                        !TransitionProfileCache.get(trackId)) {
                         AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'falha');
                     }
                     resolve(profile);
@@ -405,14 +490,25 @@ export class AutoMixRegistry {
                     catch { }
                     stoppedEarly = streamEnd === undefined && bytesRead >= expectedBytes;
                     analyzeStart = performance.now();
-                    if (bytesRead === 0) {
+                    if (abortController.signal.aborted ||
+                        bytesRead === 0 ||
+                        (streamEnd !== 'eof' && bytesRead < expectedBytes)) {
                         finish(null);
                         return;
                     }
                     const featureMap = engine.finalize();
                     const musicalProfile = musicalAnalyzer.getProfile();
                     const actualWindowEndMs = windowStartMs + framesToMediaMs(Math.floor(bytesRead / 4), 48000);
+                    // A clean but short EOF must not make an incomplete window reusable.
+                    if (bytesRead < expectedBytes &&
+                        (trackLength <= 0 || actualWindowEndMs < trackLength)) {
+                        finish(null);
+                        return;
+                    }
                     const points = featureMap.points;
+                    const confirmedTail = trackLength > 0 && actualWindowEndMs >= trackLength
+                        ? trailingSilenceStart(points)
+                        : null;
                     let avgEnergy = musicalProfile.energy;
                     let energyProfileType = 'sustained';
                     if (points.length > 0) {
@@ -461,16 +557,12 @@ export class AutoMixRegistry {
                                 lastPhraseEndMs = p.timestampMs;
                             }
                         }
-                        if (finalBeatMs === 0)
-                            finalBeatMs = Math.round(naturalPoint);
-                        if (lastPhraseEndMs === 0)
-                            lastPhraseEndMs = Math.round(naturalPoint);
                     }
                     const profileConfidence = Math.max(musicalProfile.confidence, featureMap.confidence);
                     const profile = {
                         trackId,
                         timestamp: Date.now(),
-                        analysisVersion: 2,
+                        analysisVersion: 4,
                         confidence: profileConfidence,
                         bpm: musicalProfile.bpm,
                         bpmConfidence: musicalProfile.confidence,
@@ -483,10 +575,11 @@ export class AutoMixRegistry {
                         bands: { ...musicalProfile.bands },
                         outroProfile: {
                             analyzedWindowStartMs: Math.round(windowStartMs),
-                            analyzedWindowEndMs: Math.round(actualWindowEndMs),
+                            analyzedWindowEndMs: Math.floor(actualWindowEndMs),
                             analysisConfidence: profileConfidence,
                             energyDecayStartMs: Math.round(featureMap.energyDecayStartMs ?? windowStartMs),
-                            naturalOutroPointMs: Math.round(featureMap.naturalOutroPointMs ?? actualWindowEndMs),
+                            naturalOutroPointMs: Math.round(confirmedTail ??
+                                (trackLength > 0 ? trackLength : actualWindowEndMs)),
                             vocalEndMs: Math.round(vocalEndMs),
                             lastPhraseEndMs: Math.round(lastPhraseEndMs),
                             finalBeatMs: Math.round(finalBeatMs),
@@ -497,7 +590,6 @@ export class AutoMixRegistry {
                         introProfile: null,
                         durationMs: trackLength
                     };
-                    TransitionProfileCache.set(trackId, profile);
                     finish(profile);
                 };
                 const onData = (chunk) => {
@@ -507,9 +599,13 @@ export class AutoMixRegistry {
                         finish(null);
                         return;
                     }
+                    if (pendingBytes.length > 0) {
+                        chunk = Buffer.concat([pendingBytes, chunk]);
+                    }
                     const remainingBytes = Math.max(0, expectedBytes - bytesRead);
                     const bytesToTake = Math.min(chunk.length, remainingBytes);
                     const alignedBytes = bytesToTake - (bytesToTake % 4);
+                    pendingBytes = Buffer.from(chunk.subarray(alignedBytes, bytesToTake));
                     if (alignedBytes > 0) {
                         const alignedChunk = alignedBytes === chunk.length
                             ? chunk
@@ -559,26 +655,26 @@ export class AutoMixRegistry {
                     streamEnd = 'eof';
                     completeAnalysis();
                 };
-                const onError = () => {
-                    streamEnd = 'error';
-                    completeAnalysis();
-                };
+                const onError = () => finish(null);
+                const onClose = () => finish(null);
                 const onAbort = () => finish(null);
                 stream.on('data', onData);
                 stream.once('end', onEnd);
                 stream.once('error', onError);
+                stream.once('close', onClose);
                 abortController.signal.addEventListener('abort', onAbort, {
                     once: true
                 });
-                streamSafetyTimer = setTimeout(completeAnalysis, paceDelayMs <= 0 ? 7000 : 25000);
+                streamSafetyTimer = setTimeout(() => finish(null), paceDelayMs <= 0 ? 7000 : 25000);
                 streamSafetyTimer.unref?.();
+                if (abortController.signal.aborted || stream.destroyed)
+                    finish(null);
             });
             const finalProfile = await resultPromise;
             const totalMs = performance.now() - startFetchTime;
             const decodeMs = analyzeStart > 0 ? analyzeStart - decodeStart : 0;
             const analyzeMs = analyzeStart > 0 ? performance.now() - analyzeStart : 0;
             if (finalProfile) {
-                options.onComplete?.(finalProfile);
                 logger('info', 'AutoMix', `[AutoMix][Performance] Analysis completed for ${trackId}`, {
                     jobId: job.jobId,
                     trackId,
@@ -619,6 +715,7 @@ export class AutoMixRegistry {
                 streamResource?.destroy();
             }
             catch { }
+            abortController.abort();
         }
     }
 }

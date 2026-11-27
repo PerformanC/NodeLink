@@ -81,7 +81,7 @@ export class IncrementalAnalysisEngine {
             chunkStartFrame =
                 startFrame ??
                     attachedStartFrame ??
-                    (this.lastProcessedFrame !== null ? this.lastProcessedFrame : 0);
+                    (this.currentTimelineFrame !== null ? this.currentTimelineFrame : 0);
         }
         else {
             data = chunk.data;
@@ -90,6 +90,10 @@ export class IncrementalAnalysisEngine {
         if (data.length === 0)
             return;
         const incomingFrames = Math.floor(data.length / this.format.bytesPerFrame);
+        // A backward discontinuity (seek/restart) invalidates the old analysis timeline.
+        if (this.currentTimelineFrame !== null &&
+            chunkStartFrame < this.currentTimelineFrame)
+            this.reset();
         // Discontinuity detection: true timeline gap between end of previous ingested audio and incoming chunk
         if (this.currentTimelineFrame !== null &&
             chunkStartFrame > this.currentTimelineFrame) {

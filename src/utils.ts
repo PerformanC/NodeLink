@@ -44,6 +44,7 @@ import type {
   VoiceConnectionStats
 } from './typings/utils.types.ts'
 import { defaultSanitizer, LogSanitizer } from './utils/sanitizer.ts'
+import { streamAcquisitionSignal } from './utils/streamAcquisitionSignal.ts'
 
 declare const __BUILD_GIT_INFO__: GitInfo | undefined
 
@@ -1817,7 +1818,8 @@ async function _internalHttp1Request(
     port: currentUrl.port || (isHttps ? 443 : 80),
     path: currentUrl.pathname + currentUrl.search,
     headers: reqHeaders,
-    localAddress: actualLocalAddress
+    localAddress: actualLocalAddress,
+    signal: options.signal
   }
 
   return new Promise((resolve, reject) => {
@@ -2068,11 +2070,13 @@ async function http1makeRequest(
   urlString: string,
   options: HttpRequestOptions = {}
 ): Promise<HttpRequestResult> {
+  options = { ...options, signal: streamAcquisitionSignal(options.signal) }
   const { maxRetries = 3, proxy } = options
   let attempt = 0
 
   while (true) {
     try {
+      options.signal?.throwIfAborted()
       let finalUrl = urlString
       const useReverseProxy = shouldUseReverseProxy(proxy)
       if (useReverseProxy && proxy?.url) {
@@ -2126,6 +2130,7 @@ async function http1makeRequest(
 
       return await _internalHttp1Request(finalUrl, newOptions)
     } catch (err) {
+      options.signal?.throwIfAborted()
       const error = err as NodeJS.ErrnoException
       const code = error.code ? String(error.code) : ''
       const isRetryable = [
@@ -2144,7 +2149,9 @@ async function http1makeRequest(
           'Network',
           `Request for ${urlString} failed with ${code}. Retrying in ${delay}ms... (Attempt ${attempt}/${maxRetries})`
         )
-        await new Promise((resolve) => setTimeout(resolve, delay))
+        await import('node:timers/promises').then(({ setTimeout }) =>
+          setTimeout(delay, undefined, { signal: options.signal })
+        )
       } else {
         throw error
       }
@@ -2172,6 +2179,8 @@ async function makeRequest(
   options: HttpRequestOptions = {},
   nodelink?: NodelinkRuntime
 ): Promise<HttpRequestResult> {
+  options = { ...options, signal: streamAcquisitionSignal(options.signal) }
+  options.signal?.throwIfAborted()
   const {
     method = 'GET',
     headers: customHeaders = {},
@@ -2239,7 +2248,9 @@ async function makeRequest(
       const res = await fetch(urlString, {
         method,
         headers: customHeaders as never,
-        signal: ac.signal
+        signal: options.signal
+          ? AbortSignal.any([ac.signal, options.signal])
+          : ac.signal
       })
       if (t) {
         clearTimeout(t)
@@ -2269,6 +2280,7 @@ async function makeRequest(
       }
     } catch (e) {
       if (t) clearTimeout(t)
+      options.signal?.throwIfAborted()
       const msg = (e as Error).message
       if (msg === 'body too large' || e instanceof SyntaxError) throw e as Error
     }
@@ -2316,6 +2328,12 @@ async function makeRequest(
       // After response headers the caller owns this stream. Its source-specific
       // recovery path, if any, must handle a later body interruption.
       if (responseHeadersReceived || fallbackStarted) return
+      if (options.signal?.aborted) {
+        fallbackStarted = true
+        releaseStream()
+        reject(options.signal.reason)
+        return
+      }
       fallbackStarted = true
       releaseStream()
       if (isProtocolOrAlpnFailure(error)) {
@@ -2329,6 +2347,7 @@ async function makeRequest(
 
     const trySendHttp2Request = (retryCount = 0): void => {
       try {
+        options.signal?.throwIfAborted()
         currentUrl = new URL(urlString)
         pooledEntry = getOrCreateHttp2Session(currentUrl.origin, localAddress)
         session = pooledEntry.session
@@ -2386,7 +2405,7 @@ async function makeRequest(
         }
 
         try {
-          req = session.request(h2Headers)
+          req = session.request(h2Headers, { signal: options.signal })
         } catch (reqErr) {
           if (pooledEntry) {
             pooledEntry.closed = true
@@ -2435,6 +2454,10 @@ async function makeRequest(
         req.on('error', (err) => {
           releaseStream()
           if (responseHeadersReceived) return
+          if (options.signal?.aborted) {
+            reject(options.signal.reason)
+            return
+          }
           if (!reqClosed) reqClosed = true
           if (isRetryableHttp2Error(err) && retryCount < 2) {
             if (pooledEntry) {
@@ -3131,23 +3154,25 @@ export function getBestMatch<T extends BestMatchCandidate>(
 
   const normalize = (str: string): string => {
     if (!str) return ''
-    return str
-      .toLowerCase()
-      .replace(/feat\.?/g, '')
-      .replace(/ft\.?/g, '')
-      .replace(
-        /\s*\([^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi,
-        ''
-      )
-      .replace(
-        /\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi,
-        ''
-      )
-      // Preserves letters and numbers across all Unicode scripts (\p{L}\p{N}), ensuring
-      // non-Latin titles (Japanese, Chinese, Cyrillic, etc.) are not erased during normalization.
-      // Ref: https://github.com/PerformanC/NodeLink/commit/7ee75784
-      .replace(/[^\p{L}\p{N}\s]/gu, '')
-      .trim()
+    return (
+      str
+        .toLowerCase()
+        .replace(/feat\.?/g, '')
+        .replace(/ft\.?/g, '')
+        .replace(
+          /\s*\([^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi,
+          ''
+        )
+        .replace(
+          /\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi,
+          ''
+        )
+        // Preserves letters and numbers across all Unicode scripts (\p{L}\p{N}), ensuring
+        // non-Latin titles (Japanese, Chinese, Cyrillic, etc.) are not erased during normalization.
+        // Ref: https://github.com/PerformanC/NodeLink/commit/7ee75784
+        .replace(/[^\p{L}\p{N}\s]/gu, '')
+        .trim()
+    )
   }
 
   const specKeywords = [
@@ -3197,9 +3222,7 @@ export function getBestMatch<T extends BestMatchCandidate>(
     if (stripped.length >= 2) cleanTitleForWords = stripped
   }
   const originalWords = new Set(
-    cleanTitleForWords
-      .split(/\s+/)
-      .filter((w) => w.length > 0)
+    cleanTitleForWords.split(/\s+/).filter((w) => w.length > 0)
   )
   // Split multiple artists (e.g. "ぴーなた, 重音テト") to match individual artist aliases/channels.
   const originalArtists = original.author
@@ -3441,8 +3464,7 @@ export function getBestMatch<T extends BestMatchCandidate>(
     }
 
     const isEpisode =
-      original.uri?.includes('/episode/') ||
-      original.uri?.includes('/chapter/')
+      original.uri?.includes('/episode/') || original.uri?.includes('/chapter/')
 
     if (targetDuration > 0) {
       const diff = Math.abs(item.info.length - targetDuration)

@@ -701,7 +701,8 @@ export interface SourceManager {
     track: TrackInfo | TrackInfoExtended,
     url: string,
     protocol?: string,
-    additionalData?: Record<string, unknown>
+    additionalData?: Record<string, unknown>,
+    signal?: AbortSignal
   ) => Promise<
     TrackStreamResult & { type?: string; exception?: { message: string } }
   >

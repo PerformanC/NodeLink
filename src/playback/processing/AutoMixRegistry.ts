@@ -37,7 +37,9 @@ import {
 } from '../../typings/playback/progressiveAnalysis.types.ts'
 import type { TrackUrlResult } from '../../typings/sources/source.types.ts'
 import { logger } from '../../utils.ts'
+import { acquireAnalysisResource } from './analysisResource.ts'
 import { AutoMixCacheManager } from './AutoMixCacheManager.ts'
+import { autoMixTrackKey, trailingSilenceStart } from './autoMixSafety.ts'
 import { IncrementalAnalysisEngine } from './IncrementalAnalysisEngine.ts'
 import {
   MusicalAnalyzer,
@@ -79,13 +81,19 @@ export interface AnalysisRequestOptions {
     urlData: TrackUrlResult & { protocol?: string; format?: TrackFormat },
     startTime?: number,
     returnPCM?: boolean,
-    isBackgroundAnalysis?: boolean
+    isBackgroundAnalysis?: boolean,
+    signal?: AbortSignal
   ) => Promise<{ stream: AudioResource } | { exception: { message: string } }>
   onComplete?: (profile: TrackPreAnalysisProfile) => void
   signal?: AbortSignal
 }
 
+interface AnalysisConsumers {
+  count: number
+}
+
 interface QueuedJob {
+  consumers: AnalysisConsumers
   jobId: string
   deduplicationKey: string
   trackIdentifier: string
@@ -98,6 +106,7 @@ interface QueuedJob {
 }
 
 interface InFlightJob {
+  consumers: AnalysisConsumers
   jobId: string
   deduplicationKey: string
   trackIdentifier: string
@@ -122,6 +131,8 @@ export class AutoMixRegistry {
   private readonly MAX_QUEUE_SIZE = 30
   private maxConcurrent = 2
   private activeWorkers = 0
+  private pendingResourceFetches = 0
+  private readonly pendingResourceKeys = new Set<string>()
 
   private lastTickTime = performance.now()
   private currentEventLoopLagMs = 0
@@ -173,7 +184,8 @@ export class AutoMixRegistry {
     priority: AnalysisJobPriority
   ): boolean {
     const profile = cached.outroProfile
-    if (!profile || windowDurationMs <= 0) return false
+    if (cached.analysisVersion !== 4 || !profile || windowDurationMs <= 0)
+      return false
     const requestedEnd = windowStartMs + windowDurationMs
     const overlapStart = Math.max(profile.analyzedWindowStartMs, windowStartMs)
     const overlapEnd = Math.min(profile.analyzedWindowEndMs, requestedEnd)
@@ -214,25 +226,22 @@ export class AutoMixRegistry {
   public async requestOutroAnalysis(
     options: AnalysisRequestOptions
   ): Promise<TrackPreAnalysisProfile | null> {
-    const trackId = options.track.info.identifier
-    const windowDurationMs = Math.max(1, options.windowDurationMs ?? 25000)
+    const trackId = autoMixTrackKey(options.track)
+    if (options.signal?.aborted) return null
+    const requestedWindow = options.windowDurationMs ?? 25000
+    if (!Number.isFinite(requestedWindow) || requestedWindow <= 0) return null
+    const windowDurationMs = Math.min(60000, Math.max(1, requestedWindow))
     const trackLength = options.track.info.length || 0
     const windowStartMs =
       options.windowStartMs ?? Math.max(0, trackLength - windowDurationMs)
+    if (!Number.isFinite(windowStartMs) || windowStartMs < 0) return null
     const deduplicationKey = [
       trackId,
       Math.round(windowStartMs),
       Math.round(windowDurationMs)
     ].join(':')
-    const attachCompletion = (
-      promise: Promise<TrackPreAnalysisProfile | null>
-    ): Promise<TrackPreAnalysisProfile | null> =>
-      options.onComplete
-        ? promise.then((profile) => {
-            if (profile) options.onComplete?.(profile)
-            return profile
-          })
-        : promise
+    const subscribe = (job: QueuedJob | InFlightJob) =>
+      this._subscribe(job, options)
 
     const cached = TransitionProfileCache.get(trackId)
     if (
@@ -269,8 +278,7 @@ export class AutoMixRegistry {
           reusedForDecision: true
         }
       )
-      options.onComplete?.(cached)
-      return cached
+      return this._deliver(cached, options)
     }
     const inFlight = this.inFlightJobs.get(deduplicationKey)
     if (inFlight) {
@@ -292,7 +300,7 @@ export class AutoMixRegistry {
       ) {
         inFlight.priority = options.priority
       }
-      return attachCompletion(inFlight.promise)
+      return subscribe(inFlight)
     }
     const queued = this.queuedJobs.get(deduplicationKey)
     if (queued) {
@@ -311,7 +319,7 @@ export class AutoMixRegistry {
         `[AutoMix][BackgroundAnalysis] Deduplicated queued job for ${trackId}`,
         { trackId, jobId: queued.jobId, priority: queued.priority }
       )
-      return attachCompletion(queued.promise)
+      return subscribe(queued)
     }
 
     if (this.queue.length >= this.MAX_QUEUE_SIZE) {
@@ -368,6 +376,7 @@ export class AutoMixRegistry {
       }
     )
     const queuedJob: QueuedJob = {
+      consumers: { count: 0 },
       jobId,
       deduplicationKey,
       trackIdentifier: trackId,
@@ -384,8 +393,69 @@ export class AutoMixRegistry {
     }
     this.queuedJobs.set(deduplicationKey, queuedJob)
     this._enqueueJob(queuedJob)
+    const subscription = subscribe(queuedJob)
     this._processQueue()
-    return promise
+    return subscription
+  }
+
+  private _deliver(
+    profile: TrackPreAnalysisProfile | null,
+    options: AnalysisRequestOptions
+  ): TrackPreAnalysisProfile | null {
+    if (options.signal?.aborted) return null
+    if (profile) options.onComplete?.(profile)
+    return profile
+  }
+
+  private _subscribe(
+    job: QueuedJob | InFlightJob,
+    options: AnalysisRequestOptions
+  ): Promise<TrackPreAnalysisProfile | null> {
+    const { signal } = options
+    job.consumers.count++
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const release = () => {
+        if (settled) return false
+        settled = true
+        signal?.removeEventListener('abort', onAbort)
+        job.consumers.count--
+        return true
+      }
+      const onAbort = () => {
+        if (!release()) return
+        if (job.consumers.count === 0) {
+          const queued = this.queuedJobs.get(job.deduplicationKey)
+          if (queued?.jobId === job.jobId) {
+            this.queuedJobs.delete(job.deduplicationKey)
+            const index = this.queue.indexOf(queued)
+            if (index >= 0) this.queue.splice(index, 1)
+            queued.resolve(null)
+          }
+          const running = this.inFlightJobs.get(job.deduplicationKey)
+          if (running?.jobId === job.jobId) {
+            this.inFlightJobs.delete(job.deduplicationKey)
+            running.abortController.abort()
+          }
+        }
+        resolve(null)
+      }
+      job.promise.then(
+        (profile) => {
+          if (!release()) return
+          try {
+            resolve(this._deliver(profile, options))
+          } catch (error) {
+            reject(error)
+          }
+        },
+        (error: unknown) => {
+          if (release()) reject(error)
+        }
+      )
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted) onAbort()
+    })
   }
 
   private _enqueueJob(job: QueuedJob): void {
@@ -412,17 +482,18 @@ export class AutoMixRegistry {
     const abortController = new AbortController()
 
     const inFlight: InFlightJob = {
+      consumers: job.consumers,
       jobId: job.jobId,
       deduplicationKey: job.deduplicationKey,
       trackIdentifier: job.trackIdentifier,
       priority: job.priority,
       startedAt: performance.now(),
       abortController,
-      promise: this._executeJob(job, abortController)
+      promise: job.promise
     }
     this.inFlightJobs.set(job.deduplicationKey, inFlight)
 
-    inFlight.promise
+    this._executeJob(job, abortController)
       .then((profile) => {
         job.resolve(profile)
       })
@@ -430,7 +501,9 @@ export class AutoMixRegistry {
         job.reject(err as Error)
       })
       .finally(() => {
-        this.inFlightJobs.delete(inFlight.deduplicationKey)
+        if (this.inFlightJobs.get(inFlight.deduplicationKey) === inFlight) {
+          this.inFlightJobs.delete(inFlight.deduplicationKey)
+        }
         this.activeWorkers--
         setImmediate(() => this._processQueue())
       })
@@ -449,18 +522,6 @@ export class AutoMixRegistry {
     const windowDurationMs = options.windowDurationMs ?? 25000
     const trackLength = track.info.length || 0
 
-    if (options.signal) {
-      if (options.signal.aborted) {
-        abortController.abort()
-      } else {
-        options.signal.addEventListener(
-          'abort',
-          () => abortController.abort(),
-          { once: true }
-        )
-      }
-    }
-
     if (abortController.signal.aborted) {
       return null
     }
@@ -477,13 +538,37 @@ export class AutoMixRegistry {
         audioTrackId: track.audioTrackId
       }
 
-      const fetched = await options.fetchResource(
-        trackInfo,
-        options.urlData,
-        windowStartMs,
-        true,
-        false
+      // A source that ignores cancellation must not cause unbounded orphan fetches.
+      if (
+        this.pendingResourceFetches >= 2 ||
+        this.pendingResourceKeys.has(job.deduplicationKey)
       )
+        return null
+      const fetched = await acquireAnalysisResource(
+        async (signal) => {
+          this.pendingResourceFetches++
+          this.pendingResourceKeys.add(job.deduplicationKey)
+          try {
+            return await options.fetchResource(
+              trackInfo,
+              options.urlData,
+              windowStartMs,
+              true,
+              true,
+              signal
+            )
+          } finally {
+            this.pendingResourceFetches--
+            this.pendingResourceKeys.delete(job.deduplicationKey)
+          }
+        },
+        (late) => {
+          if (!('exception' in late)) late.stream.destroy()
+        },
+        abortController.signal,
+        15000
+      )
+      if (!fetched) return null
 
       if ('exception' in fetched || !fetched.stream.stream) {
         if (!('exception' in fetched)) fetched.stream.destroy()
@@ -491,6 +576,7 @@ export class AutoMixRegistry {
       }
 
       streamResource = fetched.stream
+      if (abortController.signal.aborted) return null
       const stream = fetched.stream.stream as unknown as Readable
       const fetchMs = performance.now() - startFetchTime
 
@@ -518,13 +604,19 @@ export class AutoMixRegistry {
       }, 50)
       jobLagMonitor.unref?.()
 
-      AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando')
+      if (!TransitionProfileCache.get(trackId)) {
+        AutoMixCacheManager.getInstance().setAnalysisStatus(
+          trackId,
+          'preparando'
+        )
+      }
 
       const resultPromise = new Promise<TrackPreAnalysisProfile | null>(
         (resolve) => {
           let finished = false
           let analysisStarted = false
-          let streamEnd: 'eof' | 'error' | undefined
+          let streamEnd: 'eof' | undefined
+          let pendingBytes = Buffer.alloc(0)
           let streamSafetyTimer: NodeJS.Timeout | null = null
           let resumeTimer: NodeJS.Timeout | null = null
 
@@ -562,6 +654,7 @@ export class AutoMixRegistry {
             stream.removeListener('data', onData)
             stream.removeListener('end', onEnd)
             stream.removeListener('error', onError)
+            stream.removeListener('close', onClose)
             abortController.signal.removeEventListener('abort', onAbort)
           }
 
@@ -573,9 +666,12 @@ export class AutoMixRegistry {
             try {
               streamResource?.destroy()
             } catch {}
-            if (profile) {
+            if (profile && !abortController.signal.aborted) {
               AutoMixCacheManager.getInstance().setProfile(trackId, profile)
-            } else {
+            } else if (
+              !abortController.signal.aborted &&
+              !TransitionProfileCache.get(trackId)
+            ) {
               AutoMixCacheManager.getInstance().setAnalysisStatus(
                 trackId,
                 'falha'
@@ -597,7 +693,11 @@ export class AutoMixRegistry {
             stoppedEarly = streamEnd === undefined && bytesRead >= expectedBytes
             analyzeStart = performance.now()
 
-            if (bytesRead === 0) {
+            if (
+              abortController.signal.aborted ||
+              bytesRead === 0 ||
+              (streamEnd !== 'eof' && bytesRead < expectedBytes)
+            ) {
               finish(null)
               return
             }
@@ -607,8 +707,20 @@ export class AutoMixRegistry {
 
             const actualWindowEndMs =
               windowStartMs + framesToMediaMs(Math.floor(bytesRead / 4), 48000)
+            // A clean but short EOF must not make an incomplete window reusable.
+            if (
+              bytesRead < expectedBytes &&
+              (trackLength <= 0 || actualWindowEndMs < trackLength)
+            ) {
+              finish(null)
+              return
+            }
 
             const points = featureMap.points
+            const confirmedTail =
+              trackLength > 0 && actualWindowEndMs >= trackLength
+                ? trailingSilenceStart(points)
+                : null
             let avgEnergy = musicalProfile.energy
             let energyProfileType: 'sustained' | 'decay' | 'cliff' | 'fade' =
               'sustained'
@@ -664,10 +776,6 @@ export class AutoMixRegistry {
                   lastPhraseEndMs = p.timestampMs
                 }
               }
-
-              if (finalBeatMs === 0) finalBeatMs = Math.round(naturalPoint)
-              if (lastPhraseEndMs === 0)
-                lastPhraseEndMs = Math.round(naturalPoint)
             }
 
             const profileConfidence = Math.max(
@@ -678,7 +786,7 @@ export class AutoMixRegistry {
             const profile: TrackPreAnalysisProfile = {
               trackId,
               timestamp: Date.now(),
-              analysisVersion: 2,
+              analysisVersion: 4,
               confidence: profileConfidence,
               bpm: musicalProfile.bpm,
               bpmConfidence: musicalProfile.confidence,
@@ -691,13 +799,14 @@ export class AutoMixRegistry {
               bands: { ...musicalProfile.bands },
               outroProfile: {
                 analyzedWindowStartMs: Math.round(windowStartMs),
-                analyzedWindowEndMs: Math.round(actualWindowEndMs),
+                analyzedWindowEndMs: Math.floor(actualWindowEndMs),
                 analysisConfidence: profileConfidence,
                 energyDecayStartMs: Math.round(
                   featureMap.energyDecayStartMs ?? windowStartMs
                 ),
                 naturalOutroPointMs: Math.round(
-                  featureMap.naturalOutroPointMs ?? actualWindowEndMs
+                  confirmedTail ??
+                    (trackLength > 0 ? trackLength : actualWindowEndMs)
                 ),
                 vocalEndMs: Math.round(vocalEndMs),
                 lastPhraseEndMs: Math.round(lastPhraseEndMs),
@@ -710,7 +819,6 @@ export class AutoMixRegistry {
               durationMs: trackLength
             }
 
-            TransitionProfileCache.set(trackId, profile)
             finish(profile)
           }
 
@@ -721,9 +829,15 @@ export class AutoMixRegistry {
               return
             }
 
+            if (pendingBytes.length > 0) {
+              chunk = Buffer.concat([pendingBytes, chunk])
+            }
             const remainingBytes = Math.max(0, expectedBytes - bytesRead)
             const bytesToTake = Math.min(chunk.length, remainingBytes)
             const alignedBytes = bytesToTake - (bytesToTake % 4)
+            pendingBytes = Buffer.from(
+              chunk.subarray(alignedBytes, bytesToTake)
+            )
 
             if (alignedBytes > 0) {
               const alignedChunk =
@@ -784,24 +898,23 @@ export class AutoMixRegistry {
             completeAnalysis()
           }
 
-          const onError = () => {
-            streamEnd = 'error'
-            completeAnalysis()
-          }
-
+          const onError = () => finish(null)
+          const onClose = () => finish(null)
           const onAbort = () => finish(null)
 
           stream.on('data', onData)
           stream.once('end', onEnd)
           stream.once('error', onError)
+          stream.once('close', onClose)
           abortController.signal.addEventListener('abort', onAbort, {
             once: true
           })
           streamSafetyTimer = setTimeout(
-            completeAnalysis,
+            () => finish(null),
             paceDelayMs <= 0 ? 7000 : 25000
           )
           streamSafetyTimer.unref?.()
+          if (abortController.signal.aborted || stream.destroyed) finish(null)
         }
       )
 
@@ -811,8 +924,6 @@ export class AutoMixRegistry {
       const analyzeMs = analyzeStart > 0 ? performance.now() - analyzeStart : 0
 
       if (finalProfile) {
-        options.onComplete?.(finalProfile)
-
         logger(
           'info',
           'AutoMix',
@@ -861,6 +972,7 @@ export class AutoMixRegistry {
       try {
         streamResource?.destroy()
       } catch {}
+      abortController.abort()
     }
   }
 }

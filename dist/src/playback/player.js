@@ -7,6 +7,7 @@ import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.js';
 import { logger } from '../utils.js';
 import { AutoMixRegistry } from './processing/AutoMixRegistry.js';
 import { resolveAudioProcessingMode } from './processing/audioContract.js';
+import { autoMixTrackKey, safeAutoMixEnd } from './processing/autoMixSafety.js';
 import { DuckingController } from './processing/DuckingController.js';
 import { TransitionProfileCache } from './processing/MusicalAnalyzer.js';
 let createAudioResource = null;
@@ -72,6 +73,7 @@ export class Player {
     nextStreamInfo = null;
     nextResourceIsCrossfade = false;
     _crossfadeToken = 0;
+    _outroAnalysisController = null;
     _crossfadeTimer = null;
     _crossfadePrepareTimer = null;
     _crossfadeCurrentResource = null;
@@ -549,6 +551,7 @@ export class Player {
                 const nextTrack = this.nextTrack;
                 const nextStreamInfo = this.nextStreamInfo;
                 this._emitTrackEnd(EndReasons.GAPLESS);
+                this._cancelOutroAnalysis();
                 this.track = nextTrack;
                 this._isRecovering = false;
                 this._isSeeking = false;
@@ -942,11 +945,14 @@ export class Player {
     /**
      * Fetches an audio resource for playback.
      */
-    async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false, isBackgroundAnalysis = false) {
-        if (this.nodelink.options?.playback.mix?.enabled !== false) {
+    async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false, isBackgroundAnalysis = false, signal) {
+        signal?.throwIfAborted();
+        if (!isBackgroundAnalysis &&
+            this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
         }
         await getStreamProcessor();
+        signal?.throwIfAborted();
         const audioResourceFactory = createAudioResource;
         if (!audioResourceFactory) {
             return { exception: { message: 'Stream processor not initialized' } };
@@ -985,14 +991,19 @@ export class Player {
             !extraData.__resolvedFormat) {
             extraData.__resolvedFormat = resolvedUrlData.format;
         }
-        if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+        if (resolvedUrlData.isLive !== undefined &&
+            extraData.isLive === undefined) {
             extraData.isLive = resolvedUrlData.isLive;
         }
         if (resolvedUrlData.isEncrypted !== undefined &&
             extraData.isEncrypted === undefined) {
             extraData.isEncrypted = resolvedUrlData.isEncrypted;
         }
-        const fetched = await this.nodelink.sources.getTrackStream(track, resolvedUrlData.url, resolvedUrlData.protocol, additionalData);
+        const fetched = await this.nodelink.sources.getTrackStream(track, resolvedUrlData.url, resolvedUrlData.protocol, additionalData, signal);
+        if (signal?.aborted) {
+            fetched.stream?.destroy();
+            signal.throwIfAborted();
+        }
         if (fetched.exception) {
             logger('error', 'Player', `Stream resource fetch failed for guild ${this.guildId}`, fetched.exception);
             return fetched;
@@ -1528,6 +1539,7 @@ export class Player {
                 /* INFO: New tracks start with their own operation state; stale callbacks no longer reset these flags. */
                 this._isRecovering = false;
                 this._isSeeking = false;
+                this._cancelOutroAnalysis();
                 this.track = {
                     encoded,
                     info,
@@ -1685,7 +1697,8 @@ export class Player {
                             remainingMs,
                             priority: 'IMMINENT_TRANSITION',
                             triggerSource: `player:${this.guildId}:seekImminent`,
-                            fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
+                            signal: this._outroAnalysisSignal(),
+                            fetchResource: (info, uData, wStart, returnPcm, _background, signal) => this._fetchResource(info, uData, wStart, returnPcm, false, true, signal)
                         })
                             .catch(() => { });
                     }
@@ -2013,6 +2026,7 @@ export class Player {
                 logger('debug', 'Player', `[Action: stop] Aborted for guild ${this.guildId}: destroying=${this.destroying}, hasTrack=${!!this.track}`);
                 return false;
             }
+            this._cancelOutroAnalysis();
             if (this.nextResource || this.nextResourceIsCrossfade) {
                 if (this.nextResourceIsCrossfade) {
                     this._getAudioStream()?.clearCrossfade?.();
@@ -2081,6 +2095,7 @@ export class Player {
         if (this.nextResourceIsCrossfade) {
             this._getAudioStream()?.clearCrossfade?.();
             this._clearCrossfadeTimer();
+            this._cancelOutroAnalysis();
             this._crossfadeToken += 1;
         }
         if (this.nextResource) {
@@ -2102,6 +2117,7 @@ export class Player {
                 currentLength > 0 &&
                 !!audioStream?.prepareCrossfade;
             if (shouldCrossfade) {
+                this._cancelOutroAnalysis();
                 this._crossfadeToken += 1;
                 this.nextTrack = payload;
                 this.nextResourceIsCrossfade = true;
@@ -2147,9 +2163,7 @@ export class Player {
         logger('debug', 'Player', `[Action: clearNextTrack] Method invoked for guild ${this.guildId}`);
         if (this.destroying)
             return false;
-        if (this.nextTrack?.info.identifier) {
-            AutoMixRegistry.getInstance().cancelTrackAnalysis(this.nextTrack.info.identifier);
-        }
+        this._cancelOutroAnalysis();
         if (this.nextResourceIsCrossfade) {
             this._crossfadeToken += 1;
             this._clearCrossfadeTimer();
@@ -2184,6 +2198,7 @@ export class Player {
             this._clearCrossfadeTimer();
             if (this.nextResourceIsCrossfade &&
                 !audioStream?.getCrossfadeState?.().active) {
+                this._cancelOutroAnalysis();
                 this._crossfadeToken += 1;
                 audioStream?.clearCrossfade?.();
                 this.nextResource?.destroy();
@@ -2595,6 +2610,7 @@ export class Player {
         if (this.destroying)
             return;
         this.destroying = true;
+        this._cancelOutroAnalysis();
         if (this.connection) {
             try {
                 this.connection.removeListener('stateChange', this._connStateHandler);
@@ -2681,10 +2697,12 @@ export class Player {
         const mixAdditionalData = {
             ...(urlData.additionalData ?? {})
         };
-        if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+        if (typeof urlData.format === 'string' &&
+            !mixAdditionalData.__resolvedFormat) {
             mixAdditionalData.__resolvedFormat = urlData.format;
         }
-        if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+        if (urlData.isLive !== undefined &&
+            mixAdditionalData.isLive === undefined) {
             mixAdditionalData.isLive = urlData.isLive;
         }
         if (urlData.isEncrypted !== undefined &&
@@ -3422,6 +3440,14 @@ export class Player {
             bufferMs
         };
     }
+    _outroAnalysisSignal() {
+        this._outroAnalysisController ??= new AbortController();
+        return this._outroAnalysisController.signal;
+    }
+    _cancelOutroAnalysis() {
+        this._outroAnalysisController?.abort();
+        this._outroAnalysisController = null;
+    }
     _clearCrossfadeTimer() {
         if (this._crossfadeTimer)
             clearTimeout(this._crossfadeTimer);
@@ -3451,13 +3477,8 @@ export class Player {
             : this.track.info.length;
         if (!Number.isFinite(total) || total <= 0)
             return false;
-        const cachedProfile = TransitionProfileCache.get(this.track.info.identifier);
-        if (cachedProfile?.outroProfile?.naturalOutroPointMs &&
-            cachedProfile.outroProfile.naturalOutroPointMs > 0 &&
-            cachedProfile.outroProfile.naturalOutroPointMs < total &&
-            !(this.track.endTime && this.track.endTime > 0)) {
-            total = cachedProfile.outroProfile.naturalOutroPointMs;
-        }
+        const cachedProfile = TransitionProfileCache.get(autoMixTrackKey(this.track));
+        total = safeAutoMixEnd(total, cachedProfile, Boolean(this.track.endTime && this.track.endTime > 0));
         const currentPosition = _startPosition ?? this._realPosition();
         const remainingMs = Math.max(0, total - currentPosition);
         const crossfadeDurationMs = config.duration || 6000;
@@ -3469,6 +3490,8 @@ export class Player {
         this._crossfadePrepareTimer = setTimeout(() => {
             this._crossfadePrepareTimer = null;
             this._prepareCrossfadeResource(token, payload).catch((error) => {
+                if (token === this._crossfadeToken)
+                    this._cancelOutroAnalysis();
                 logger('error', 'Crossfade', `Crossfade preload failed for guild ${this.guildId}: ${error.message}`);
             });
         }, delay);
@@ -3513,9 +3536,14 @@ export class Player {
                 remainingMs,
                 priority,
                 triggerSource: `player:${this.guildId}:nextTrack`,
-                fetchResource: (info, uData, wStart, returnPcm) => this._fetchResource(info, uData, wStart, returnPcm, false, true)
+                signal: this._outroAnalysisSignal(),
+                fetchResource: (info, uData, wStart, returnPcm, _background, signal) => this._fetchResource(info, uData, wStart, returnPcm, false, true, signal)
             })
                 .then((profile) => {
+                if (this.track !== currentTrack ||
+                    this._crossfadeToken !== token ||
+                    this.nextTrack !== payload)
+                    return;
                 outgoingTailRms = profile?.outroProfile?.sourceEndRms;
                 if (profile?.outroProfile?.naturalOutroPointMs && this.nextResource) {
                     this._scheduleCrossfade();
@@ -3531,31 +3559,39 @@ export class Player {
         };
         logger('debug', 'Crossfade', `Preparing ${payload.info.identifier} for guild ${this.guildId}`);
         const urlData = await this.nodelink.sources.getTrackUrl(trackInfo);
-        if (urlData.exception || token !== this._crossfadeToken)
+        if (urlData.exception || token !== this._crossfadeToken) {
+            if (token === this._crossfadeToken)
+                this._cancelOutroAnalysis();
             return;
+        }
         const fetched = await this._fetchResource(payload.info, urlData, 0, true, this.getAudioProcessingMode() === 'protected');
         if ('exception' in fetched || token !== this._crossfadeToken) {
             if (!('exception' in fetched))
                 fetched.stream.destroy();
+            if (token === this._crossfadeToken)
+                this._cancelOutroAnalysis();
             return;
         }
         if (!fetched.stream.stream) {
             fetched.stream.destroy();
+            this._cancelOutroAnalysis();
             return;
         }
         const prepared = audioStream.prepareCrossfade(fetched.stream.stream, {
             durationMs: config.duration,
-            outgoingTrackId: currentTrack.info.identifier,
-            incomingTrackId: payload.info.identifier,
-            getOutgoingTailRms: () => TransitionProfileCache.get(currentTrack.info.identifier)?.outroProfile
-                ?.sourceEndRms ?? outgoingTailRms,
-            getOutgoingProfile: () => TransitionProfileCache.get(currentTrack.info.identifier) ?? null,
-            getIncomingProfile: () => TransitionProfileCache.get(payload.info.identifier) ?? null,
+            outgoingTrackId: autoMixTrackKey(currentTrack),
+            incomingTrackId: autoMixTrackKey(payload),
+            getOutgoingTailRms: () => TransitionProfileCache.get(autoMixTrackKey(currentTrack))
+                ?.outroProfile?.sourceEndRms ?? outgoingTailRms,
+            getOutgoingProfile: () => TransitionProfileCache.get(autoMixTrackKey(currentTrack)) ?? null,
+            getIncomingProfile: () => TransitionProfileCache.get(autoMixTrackKey(payload)) ?? null,
             minBufferMs: config.minBufferMs,
             bufferMs: Math.min(30000, Math.max(config.bufferMs, Math.min(16000, config.duration * 2 + 4000), this._crossfadePreparationSafetyMs + config.minBufferMs))
         }, (consumedMs) => this._completeCrossfade(token, consumedMs));
         if (!prepared || token !== this._crossfadeToken) {
             fetched.stream.destroy();
+            if (token === this._crossfadeToken)
+                this._cancelOutroAnalysis();
             return;
         }
         this.nextResource = fetched.stream;
@@ -3584,13 +3620,8 @@ export class Player {
             : this.track.info.length;
         if (!Number.isFinite(total) || total <= 0)
             return false;
-        const cachedProfile = TransitionProfileCache.get(this.track.info.identifier);
-        if (cachedProfile?.outroProfile?.naturalOutroPointMs &&
-            cachedProfile.outroProfile.naturalOutroPointMs > 0 &&
-            cachedProfile.outroProfile.naturalOutroPointMs < total &&
-            !(this.track.endTime && this.track.endTime > 0)) {
-            total = cachedProfile.outroProfile.naturalOutroPointMs;
-        }
+        const cachedProfile = TransitionProfileCache.get(autoMixTrackKey(this.track));
+        total = safeAutoMixEnd(total, cachedProfile, Boolean(this.track.endTime && this.track.endTime > 0));
         const position = startPosition ?? this._realPosition();
         const duration = Math.min(config.duration, Math.max(1, total - position));
         const selectionWindow = getCrossfadeSelectionWindowMs(duration);
@@ -3661,6 +3692,7 @@ export class Player {
         if (this._crossfadeCurrentResource) {
             this._crossfadeCurrentResource.destroy();
         }
+        this._cancelOutroAnalysis();
         this.track = promotedTrack;
         this._isRecovering = false;
         this._isSeeking = false;
@@ -3684,9 +3716,7 @@ export class Player {
         this._fading('trackEndSchedule', { startPosition: consumedMs });
     }
     _destroyCrossfadeResources(preserveQueuedTrack = false) {
-        if (this.nextTrack?.info.identifier) {
-            AutoMixRegistry.getInstance().cancelTrackAnalysis(this.nextTrack.info.identifier);
-        }
+        this._cancelOutroAnalysis();
         const keepQueuedTrack = preserveQueuedTrack &&
             this.nextResourceIsCrossfade &&
             this.nextTrack !== null;
