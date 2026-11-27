@@ -132,6 +132,7 @@ export class AutoMixRegistry {
   private maxConcurrent = 2
   private activeWorkers = 0
   private pendingResourceFetches = 0
+  private readonly pendingResourceKeys = new Set<string>()
 
   private lastTickTime = performance.now()
   private currentEventLoopLagMs = 0
@@ -538,16 +539,21 @@ export class AutoMixRegistry {
       }
 
       // A source that ignores cancellation must not cause unbounded orphan fetches.
-      if (this.pendingResourceFetches >= 2) return null
+      if (
+        this.pendingResourceFetches >= 2 ||
+        this.pendingResourceKeys.has(job.deduplicationKey)
+      ) return null
       const fetched = await acquireAnalysisResource(
         async (signal) => {
           this.pendingResourceFetches++
+          this.pendingResourceKeys.add(job.deduplicationKey)
           try {
             return await options.fetchResource(
               trackInfo, options.urlData, windowStartMs, true, true, signal
             )
           } finally {
             this.pendingResourceFetches--
+            this.pendingResourceKeys.delete(job.deduplicationKey)
           }
         },
         (late) => {

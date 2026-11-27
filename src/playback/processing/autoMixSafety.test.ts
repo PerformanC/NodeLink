@@ -298,3 +298,36 @@ test('last subscriber abort closes a pending source request and releases the wor
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
 })
+
+test('an uncooperative source cannot start a duplicate acquisition for the cancelled key', async () => {
+  const f = fixture('pending-duplicate')
+  const controller = new AbortController()
+  let calls = 0
+  let release!: () => void
+  let started!: () => void
+  const ready = new Promise<void>(resolve => { started = resolve })
+  const fetchResource: AnalysisRequestOptions['fetchResource'] = async () => {
+    calls++
+    await new Promise<void>(resolve => { release = resolve; started() })
+    return { exception: { message: 'fixture complete' } }
+  }
+  const state = registry as unknown as { activeWorkers: number; pendingResourceFetches: number }
+  const deadline = Date.now() + 2000
+  while (state.activeWorkers !== 0 || state.pendingResourceFetches !== 0) {
+    if (Date.now() > deadline) throw new Error('previous worker not released')
+    await nextTurn()
+  }
+  try {
+    const result = registry.requestOutroAnalysis({ ...f.options, fetchResource, signal: controller.signal })
+    await ready
+    controller.abort()
+    assert.equal(await result, null)
+    assert.equal(await registry.requestOutroAnalysis({ ...f.options, fetchResource }), null)
+    assert.equal(calls, 1)
+  } finally {
+    controller.abort()
+    release?.()
+    f.stream.destroy()
+    await nextTurn()
+  }
+})
