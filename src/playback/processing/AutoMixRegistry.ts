@@ -37,6 +37,7 @@ import {
 } from '../../typings/playback/progressiveAnalysis.types.ts'
 import type { TrackUrlResult } from '../../typings/sources/source.types.ts'
 import { logger } from '../../utils.ts'
+import { acquireAnalysisResource } from './analysisResource.ts'
 import { AutoMixCacheManager } from './AutoMixCacheManager.ts'
 import { autoMixTrackKey, trailingSilenceStart } from './autoMixSafety.ts'
 import { IncrementalAnalysisEngine } from './IncrementalAnalysisEngine.ts'
@@ -129,6 +130,7 @@ export class AutoMixRegistry {
   private readonly MAX_QUEUE_SIZE = 30
   private maxConcurrent = 2
   private activeWorkers = 0
+  private pendingResourceFetches = 0
 
   private lastTickTime = performance.now()
   private currentEventLoopLagMs = 0
@@ -534,13 +536,26 @@ export class AutoMixRegistry {
         audioTrackId: track.audioTrackId
       }
 
-      const fetched = await options.fetchResource(
-        trackInfo,
-        options.urlData,
-        windowStartMs,
-        true,
-        false
+      // A source that ignores cancellation must not cause unbounded orphan fetches.
+      if (this.pendingResourceFetches >= 2) return null
+      const fetched = await acquireAnalysisResource(
+        async () => {
+          this.pendingResourceFetches++
+          try {
+            return await options.fetchResource(
+              trackInfo, options.urlData, windowStartMs, true, false
+            )
+          } finally {
+            this.pendingResourceFetches--
+          }
+        },
+        (late) => {
+          if (!('exception' in late)) late.stream.destroy()
+        },
+        abortController.signal,
+        15000
       )
+      if (!fetched) return null
 
       if ('exception' in fetched || !fetched.stream.stream) {
         if (!('exception' in fetched)) fetched.stream.destroy()
