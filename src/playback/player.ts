@@ -4447,11 +4447,19 @@ export class Player {
 
     if (action === 'trackEndSchedule') {
       if (!this.track?.info) return false
-      const total =
-        this.track.endTime && this.track.endTime > 0
-          ? this.track.endTime
-          : this.track.info.length || 0
+      const endTime = this.track.endTime
+      const hasEndTime = endTime !== undefined && endTime > 0
+      const total = hasEndTime ? endTime : this.track.info.length || 0
       if (!Number.isFinite(total) || total <= 0) return false
+
+      const teSection = this.fading?.trackEnd
+      const hasFade =
+        teSection &&
+        Number.isFinite(teSection.duration) &&
+        teSection.duration > 0
+
+      /* INFO: Metadata describes media duration, so let the voice stream drain on ordinary tracks. */
+      if (!hasFade && !hasEndTime && !this.track.info.isStream) return false
 
       const startPosition = payload.startPosition || 0
       const playbackSpeed =
@@ -4460,11 +4468,6 @@ export class Player {
       const remaining =
         Math.max(0, total - startPosition) /
         (playbackSpeed > 0 ? playbackSpeed : 1)
-      const teSection = this.fading?.trackEnd as FadingSection | undefined
-      const hasFade =
-        teSection &&
-        Number.isFinite(teSection.duration) &&
-        teSection.duration > 0
       const fadeDuration = hasFade ? Math.min(teSection.duration, remaining) : 0
       const fadeType = hasFade ? teSection.type || 'volume' : 'volume'
       const delay = Math.max(0, remaining - fadeDuration)

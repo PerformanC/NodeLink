@@ -991,13 +991,6 @@ export const config: NodelinkConfig = {
     }
   },
 
-  mix: {
-    enabled: true,
-    defaultVolume: 0.8,
-    maxLayersMix: 5,
-    autoCleanup: true
-  },
-
   cache: {
     diskEnabled: true
   },
