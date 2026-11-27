@@ -1053,6 +1053,22 @@ export default class SpotifySource {
         const maxTracks = this.nodelink.options.playback?.maxPlaylistLength || 1000;
         const tracks = [];
         let name = 'Unknown Album';
+        let author = '';
+        let authorUrl = '';
+        let thumbnail = '';
+        let totalTracks = 0;
+        let releaseDate = '';
+        const buildAlbumPluginInfo = () => ({
+            type: 'album',
+            identifier: id,
+            url: `https://open.spotify.com/album/${id}`,
+            artworkUrl: thumbnail || null,
+            author: author || null,
+            authorUrl: authorUrl || null,
+            totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks),
+            isAlbum: true,
+            createdAt: releaseDate || null
+        });
         if (this.anonymousToken || this.config.sp_dc) {
             let offset = 0;
             const limit = 300;
@@ -1069,6 +1085,21 @@ export default class SpotifySource {
                 if (offset === 0) {
                     name = data.albumUnion.name;
                     total = data.albumUnion.tracksV2?.totalCount || 0;
+                    totalTracks = total;
+                    const rawAlbum = data.albumUnion;
+                    const rawArtists = rawAlbum.artists;
+                    author =
+                        rawArtists?.items
+                            ?.map((a) => a.profile?.name)
+                            .filter(Boolean)
+                            .join(', ') || '';
+                    const artistUri = rawArtists?.items?.[0]?.uri;
+                    authorUrl = artistUri
+                        ? `https://open.spotify.com/artist/${artistUri.split(':').pop()}`
+                        : '';
+                    thumbnail = this._pickLargestImage(data.albumUnion.coverArt?.sources);
+                    const rawDate = rawAlbum.date;
+                    releaseDate = rawDate?.isoString || '';
                 }
                 const items = data.albumUnion.tracksV2?.items || [];
                 if (items.length === 0)
@@ -1091,7 +1122,7 @@ export default class SpotifySource {
                     data: {
                         info: { name, selectedTrack: 0 },
                         tracks,
-                        pluginInfo: {}
+                        pluginInfo: buildAlbumPluginInfo()
                     }
                 };
             }
@@ -1101,8 +1132,15 @@ export default class SpotifySource {
             const res = await this._apiRequest(nextUrl);
             if (!res)
                 break;
-            if (tracks.length === 0)
+            if (tracks.length === 0) {
+                const rawRes = res;
                 name = res.name;
+                author = res.artists?.map((a) => a.name).join(', ') || '';
+                authorUrl = res.artists?.[0]?.external_urls?.spotify || '';
+                thumbnail = res.images?.[0]?.url || '';
+                releaseDate = rawRes.release_date || '';
+                totalTracks = rawRes.total_tracks || 0;
+            }
             const items = res.tracks?.items || [];
             if (items.length === 0)
                 break;
@@ -1123,7 +1161,7 @@ export default class SpotifySource {
                 data: {
                     info: { name, selectedTrack: 0 },
                     tracks,
-                    pluginInfo: {}
+                    pluginInfo: buildAlbumPluginInfo()
                 }
             }
             : { loadType: 'empty', data: {} };
@@ -1161,6 +1199,8 @@ export default class SpotifySource {
         const tracks = [];
         let name = 'Unknown Playlist';
         let author = '';
+        let authorUrl = '';
+        let description = '';
         let thumbnail = '';
         let totalTracks = 0;
         const buildPluginInfo = () => ({
@@ -1169,6 +1209,8 @@ export default class SpotifySource {
             url: `https://open.spotify.com/playlist/${id}`,
             artworkUrl: thumbnail,
             author,
+            authorUrl: authorUrl || null,
+            description: description || null,
             totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
         });
         if (this.anonymousToken || id.startsWith('37i9dQZ')) {
@@ -1187,6 +1229,11 @@ export default class SpotifySource {
                 if (offset === 0) {
                     name = data.playlistV2.name;
                     author = data.playlistV2.ownerV2?.data?.name?.trim() || '';
+                    const rawOwner = data.playlistV2.ownerV2?.data;
+                    const username = rawOwner?.username;
+                    authorUrl = username ? `https://open.spotify.com/user/${username}` : '';
+                    const rawPlaylist = data.playlistV2;
+                    description = rawPlaylist.description?.trim() || '';
                     thumbnail = this._pickLargestImage(data.playlistV2.images?.items?.[0]?.sources);
                     total = data.playlistV2.content?.totalCount || 0;
                     totalTracks = total;
@@ -1225,6 +1272,8 @@ export default class SpotifySource {
         if (metaRes) {
             name = metaRes.name;
             author = metaRes.owner?.display_name?.trim() || author;
+            authorUrl = metaRes.owner?.external_urls?.spotify || authorUrl;
+            description = metaRes.description?.trim() || description;
             thumbnail = metaRes.images?.[0]?.url || thumbnail;
         }
         let nextUrl = `/playlists/${id}/items?market=${this.market}`;

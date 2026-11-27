@@ -251,12 +251,25 @@ export default class BandcampSource {
                 if (tracks.length === 0) {
                     return { loadType: 'empty', data: {} };
                 }
+                const rawTralbum = tralbum;
+                const rawCurrent = (tralbum.current ?? {});
+                const isAlbum = rawCurrent.type === 'album' || rawTralbum.item_type === 'album';
                 const playlist = {
                     info: {
                         name: this.normalizeText(tralbum.current?.title) ?? 'BandCamp Playlist',
                         selectedTrack: 0
                     },
-                    pluginInfo: {},
+                    pluginInfo: {
+                        type: isAlbum ? 'album' : 'playlist',
+                        identifier: String(rawTralbum.id ?? rawCurrent.id ?? ''),
+                        url: rawTralbum.url ?? url,
+                        artworkUrl: artworkUrl || null,
+                        author: author || this.normalizeText(tralbum.artist) || null,
+                        description: this.normalizeText(rawCurrent.about) || null,
+                        isAlbum,
+                        createdAt: rawCurrent.release_date || null,
+                        totalTracks: tracks.length
+                    },
                     tracks
                 };
                 return { loadType: 'playlist', data: playlist };

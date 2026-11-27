@@ -11,6 +11,7 @@ import type {
   LoadTracksWorkerRequest
 } from '../typings/api/loadTracks.types.ts'
 import { logger, sendErrorResponse } from '../utils.ts'
+import { normalizePlaylistResult } from '../utils/playlistNormalizer.ts'
 import { validator } from '../validators.ts'
 
 /**
@@ -230,6 +231,13 @@ async function handler(
       } else {
         result = await sources.search(target.source, target.query)
       }
+    }
+
+    if (result && typeof result === 'object' && 'loadType' in result) {
+      normalizePlaylistResult(result, {
+        sourceName: target.kind === 'search' ? target.source : undefined,
+        url: target.kind === 'url' ? target.url : undefined
+      })
     }
 
     return sendResponse(req, res, result, 200)

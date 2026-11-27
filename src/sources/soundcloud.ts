@@ -847,6 +847,10 @@ export default class SoundCloudSource
               tracks.find((track) => track.info.artworkUrl)?.info.artworkUrl
           ),
           author: body.user?.username?.trim() || '',
+          authorUrl: body.user?.permalink_url || null,
+          description: body.description?.trim() || null,
+          isAlbum: body.set_type === 'album',
+          createdAt: body.created_at || null,
           totalTracks: capTotalTracks(
             body.track_count ?? body.tracks?.length ?? tracks.length,
             limit

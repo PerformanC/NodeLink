@@ -33,6 +33,7 @@ import type {
   SourceTestMatcher
 } from '../typings/sources/test.types.ts'
 import { getBestMatch, logger } from '../utils.ts'
+import { normalizePlaylistResult } from '../utils/playlistNormalizer.ts'
 
 /**
  * Context object required by the SourcesManager for operation.
@@ -546,7 +547,23 @@ export default class SourcesManager implements SourceManagerLike {
       const result = await fn.apply(instance, args)
       const duration = Math.round(performance.now() - start)
 
-      if (result.loadType === 'search') {
+      if (
+        result.loadType === 'playlist' ||
+        (result.loadType !== 'empty' &&
+          result.loadType !== 'error' &&
+          result.data &&
+          typeof result.data === 'object' &&
+          'tracks' in result.data &&
+          'info' in result.data)
+      ) {
+        normalizePlaylistResult(result, {
+          sourceName,
+          url:
+            method === 'resolve' && typeof args[0] === 'string'
+              ? args[0]
+              : undefined
+        })
+      } else if (result.loadType === 'search') {
         for (const track of result.data) track.userData ??= {}
       } else if (result.loadType === 'track' || result.loadType === 'episode') {
         result.data.userData ??= {}
@@ -730,10 +747,10 @@ export default class SourcesManager implements SourceManagerLike {
       tracks: allTracks
     }
 
-    return {
+    return normalizePlaylistResult({
       loadType: 'playlist',
       data: playlistData
-    }
+    })
   }
 
   /**

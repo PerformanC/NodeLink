@@ -410,6 +410,12 @@ export default class AppleMusicSource {
                         `https://music.apple.com/${country}/album/${id}`,
                     artworkUrl: this.parseArtwork(album.attributes?.artwork) || '',
                     author: album.attributes?.artistName?.trim() || '',
+                    authorUrl: album.attributes?.artistUrl || null,
+                    description: album.attributes?.editorialNotes?.standard ||
+                        album.attributes?.editorialNotes?.short ||
+                        null,
+                    isAlbum: true,
+                    createdAt: album.attributes?.releaseDate || null,
                     totalTracks: capTotalTracks(album.attributes?.trackCount ?? tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
                 }
             }
@@ -443,6 +449,10 @@ export default class AppleMusicSource {
                         `https://music.apple.com/${country}/playlist/${id}`,
                     artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
                     author: playlist.attributes?.curatorName?.trim() || '',
+                    description: playlist.attributes?.description?.standard ||
+                        playlist.attributes?.description?.short ||
+                        null,
+                    updatedAt: playlist.attributes?.lastModifiedDate || null,
                     totalTracks: capTotalTracks(playlist.relationships?.tracks?.meta?.total ?? tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
                 }
             }

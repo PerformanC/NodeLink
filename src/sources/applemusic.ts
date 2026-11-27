@@ -583,6 +583,13 @@ export default class AppleMusicSource implements SourceInstance {
             `https://music.apple.com/${country}/album/${id}`,
           artworkUrl: this.parseArtwork(album.attributes?.artwork) || '',
           author: album.attributes?.artistName?.trim() || '',
+          authorUrl: (album.attributes as any)?.artistUrl || null,
+          description:
+            (album.attributes as any)?.editorialNotes?.standard ||
+            (album.attributes as any)?.editorialNotes?.short ||
+            null,
+          isAlbum: true,
+          createdAt: (album.attributes as any)?.releaseDate || null,
           totalTracks: capTotalTracks(
             album.attributes?.trackCount ?? tracks.length,
             this.nodelink.options.playback?.maxPlaylistLength
@@ -629,6 +636,11 @@ export default class AppleMusicSource implements SourceInstance {
             `https://music.apple.com/${country}/playlist/${id}`,
           artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
           author: playlist.attributes?.curatorName?.trim() || '',
+          description:
+            (playlist.attributes as any)?.description?.standard ||
+            (playlist.attributes as any)?.description?.short ||
+            null,
+          updatedAt: (playlist.attributes as any)?.lastModifiedDate || null,
           totalTracks: capTotalTracks(
             playlist.relationships?.tracks?.meta?.total ?? tracks.length,
             this.nodelink.options.playback?.maxPlaylistLength

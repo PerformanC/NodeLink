@@ -425,6 +425,10 @@ export default class DeezerSource {
                             url: entity.link ?? `https://www.deezer.com/${type}/${id}`,
                             artworkUrl: thumbnail,
                             author,
+                            authorUrl: entity.creator?.link ?? entity.artist?.link ?? null,
+                            description: entity.description ?? null,
+                            isAlbum: type === 'album',
+                            createdAt: entity.release_date ?? null,
                             totalTracks: capTotalTracks(entity.nb_tracks ?? tracks.length, this.config.playback?.maxPlaylistLength)
                         },
                         tracks

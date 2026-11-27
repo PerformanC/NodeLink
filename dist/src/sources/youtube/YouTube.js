@@ -1389,13 +1389,17 @@ export default class YouTubeSource {
         const meta = current.author && current.artworkUrl
             ? { author: '', thumbnail: '' }
             : await this._fetchPlaylistMeta(playlistId);
+        const isAlbum = playlistId.startsWith('OLAK');
         playlist.pluginInfo = {
             ...current,
-            type: current.type ?? 'playlist',
+            type: current.type ?? (isAlbum ? 'album' : 'playlist'),
             identifier: current.identifier ?? playlistId,
             url: current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
             artworkUrl: current.artworkUrl || meta.thumbnail,
             author: current.author || meta.author,
+            authorUrl: current.authorUrl || meta.authorUrl || null,
+            description: current.description || meta.description || null,
+            isAlbum: current.isAlbum ?? isAlbum,
             totalTracks: capTotalTracks(current.totalTracks ?? playlist.tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
         };
     }

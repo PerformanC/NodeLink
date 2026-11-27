@@ -367,13 +367,26 @@ export default class BandcampSource {
           return { loadType: 'empty', data: {} }
         }
 
+        const rawTralbum = tralbum as unknown as Record<string, unknown>
+        const rawCurrent = (tralbum.current ?? {}) as Record<string, unknown>
+        const isAlbum = rawCurrent.type === 'album' || rawTralbum.item_type === 'album'
         const playlist: PlaylistData = {
           info: {
             name:
               this.normalizeText(tralbum.current?.title) ?? 'BandCamp Playlist',
             selectedTrack: 0
           },
-          pluginInfo: {} as Record<string, unknown>,
+          pluginInfo: {
+            type: isAlbum ? 'album' : 'playlist',
+            identifier: String(rawTralbum.id ?? rawCurrent.id ?? ''),
+            url: (rawTralbum.url as string | undefined) ?? url,
+            artworkUrl: artworkUrl || null,
+            author: author || this.normalizeText(tralbum.artist) || null,
+            description: this.normalizeText(rawCurrent.about as string | undefined) || null,
+            isAlbum,
+            createdAt: (rawCurrent.release_date as string | undefined) || null,
+            totalTracks: tracks.length
+          },
           tracks
         }
 

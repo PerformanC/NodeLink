@@ -1,4 +1,5 @@
 import { logger, sendErrorResponse } from '../utils.js';
+import { normalizePlaylistResult } from '../utils/playlistNormalizer.js';
 import { validator } from '../validators.js';
 /**
  * Quick protocol matcher for absolute URLs.
@@ -161,6 +162,12 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
             else {
                 result = await sources.search(target.source, target.query);
             }
+        }
+        if (result && typeof result === 'object' && 'loadType' in result) {
+            normalizePlaylistResult(result, {
+                sourceName: target.kind === 'search' ? target.source : undefined,
+                url: target.kind === 'url' ? target.url : undefined
+            });
         }
         return sendResponse(req, res, result, 200);
     }
