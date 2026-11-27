@@ -9,8 +9,12 @@ test('an estimator failure does not interrupt PCM output', async () => {
   const output: Buffer[] = []
   observer.on('analysisFailure', (error) => errors.push(error))
   observer.on('data', (chunk: Buffer) => output.push(chunk))
-  const internals = observer as unknown as { musical: { pushPcm: (frame: Buffer) => void } }
-  internals.musical.pushPcm = () => { throw new Error('fixture failure') }
+  const internals = observer as unknown as {
+    musical: { pushPcm: (frame: Buffer) => void }
+  }
+  internals.musical.pushPcm = () => {
+    throw new Error('fixture failure')
+  }
   const done = once(observer, 'end')
   const first = Buffer.alloc(3840, 1)
   const second = Buffer.alloc(3840, 2)
@@ -25,7 +29,9 @@ test('an estimator failure does not interrupt PCM output', async () => {
 test('output clock rolls over bounded analysis windows without dropping PCM', async () => {
   const observer = new MusicAnalysis()
   let bytes = 0
-  observer.on('data', (chunk: Buffer) => { bytes += chunk.length })
+  observer.on('data', (chunk: Buffer) => {
+    bytes += chunk.length
+  })
   const frame = Buffer.alloc(3840)
   const done = once(observer, 'end')
   for (let i = 0; i < 800; i++) observer.write(frame)
