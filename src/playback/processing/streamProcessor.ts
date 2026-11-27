@@ -2952,6 +2952,9 @@ class StreamAudioResource extends BaseAudioResource {
     if (protectedOutput) this.pipes?.push(protectedOutput)
     if (nodelink.options.playback.audio?.musicAnalysis === true) {
       const observer = new MusicAnalysis()
+      observer.once('analysisFailure', (error: unknown) => {
+        logger('warn', 'MusicAnalysis', 'Output analysis disabled for this resource', error)
+      })
       streams.push(observer)
       this.pipes?.push(observer)
     }

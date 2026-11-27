@@ -40,6 +40,7 @@ export class MusicAnalysis extends Transform {
   private windowFrames = 0
   private totalFrames = 0
   private latest: MusicAnalysisSnapshot | null = null
+  private failed = false
 
   private consume(frame: Buffer): void {
     if (this.windowFrames === WINDOW_FRAMES) {
@@ -92,6 +93,22 @@ export class MusicAnalysis extends Transform {
     _encoding: BufferEncoding,
     callback: TransformCallback
   ): void {
+    if (this.failed) {
+      callback(null, chunk)
+      return
+    }
+    try {
+      this.observe(chunk)
+    } catch (error) {
+      this.failed = true
+      this.latest = null
+      this.pendingBytes = 0
+      this.emit('analysisFailure', error)
+    }
+    callback(null, chunk)
+  }
+
+  private observe(chunk: Buffer): void {
     let offset = 0
     while (offset < chunk.length) {
       if (this.pendingBytes === 0 && offset + FRAME_BYTES <= chunk.length) {
@@ -111,7 +128,6 @@ export class MusicAnalysis extends Transform {
         this.pendingBytes = 0
       }
     }
-    callback(null, chunk)
   }
 
   snapshot(): MusicAnalysisSnapshot | null {
