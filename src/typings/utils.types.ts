@@ -91,6 +91,8 @@ export interface SponsorBlockSegment {
  * @public
  */
 export interface HttpRequestOptions {
+  /** Optional cancellation for an outbound request and its response stream. */
+  signal?: AbortSignal
   /** HTTP method (GET, POST, etc.). */
   method?: string
   /** Request headers. */

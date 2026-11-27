@@ -33,6 +33,7 @@ import type {
   SourceTestMatcher
 } from '../typings/sources/test.types.ts'
 import { getBestMatch, logger } from '../utils.ts'
+import { withStreamAcquisitionSignal } from '../utils/streamAcquisitionSignal.ts'
 
 /**
  * Context object required by the SourcesManager for operation.
@@ -961,10 +962,12 @@ export default class SourcesManager implements SourceManagerLike {
     track: TrackInfo | TrackInfoExtended,
     url: string,
     protocol?: string,
-    additionalData?: Record<string, unknown>
+    additionalData?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<
     TrackStreamResult & { type?: string; exception?: { message: string } }
   > {
+    signal?.throwIfAborted()
     const instance = this.sourceMap.get(track.sourceName)
     if (!instance?.loadStream) {
       throw new Error(
@@ -987,6 +990,24 @@ export default class SourcesManager implements SourceManagerLike {
       typeof normalizedAdditionalData.startTime !== 'number'
     ) {
       normalizedAdditionalData.startTime = normalizedAdditionalData.position
+    }
+
+    // Analysis acquisitions require a local cancellable source call. An
+    // AbortSignal cannot be serialized through the worker transport protocol.
+    if (signal) {
+      const result = await withStreamAcquisitionSignal(signal, () =>
+        instance.loadStream!(
+          track,
+          url,
+          protocol,
+          { ...normalizedAdditionalData, signal }
+        )
+      ) as TrackStreamResult
+      if (signal.aborted) {
+        result.stream?.destroy()
+        signal.throwIfAborted()
+      }
+      return result
     }
 
     const transportConfig = this.nodelink.options?.cluster?.streamTransport

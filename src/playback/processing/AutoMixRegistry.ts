@@ -81,7 +81,8 @@ export interface AnalysisRequestOptions {
     urlData: TrackUrlResult & { protocol?: string; format?: TrackFormat },
     startTime?: number,
     returnPCM?: boolean,
-    isBackgroundAnalysis?: boolean
+    isBackgroundAnalysis?: boolean,
+    signal?: AbortSignal
   ) => Promise<{ stream: AudioResource } | { exception: { message: string } }>
   onComplete?: (profile: TrackPreAnalysisProfile) => void
   signal?: AbortSignal
@@ -539,11 +540,11 @@ export class AutoMixRegistry {
       // A source that ignores cancellation must not cause unbounded orphan fetches.
       if (this.pendingResourceFetches >= 2) return null
       const fetched = await acquireAnalysisResource(
-        async () => {
+        async (signal) => {
           this.pendingResourceFetches++
           try {
             return await options.fetchResource(
-              trackInfo, options.urlData, windowStartMs, true, false
+              trackInfo, options.urlData, windowStartMs, true, true, signal
             )
           } finally {
             this.pendingResourceFetches--
@@ -954,6 +955,7 @@ export class AutoMixRegistry {
       try {
         streamResource?.destroy()
       } catch {}
+      abortController.abort()
     }
   }
 }

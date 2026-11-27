@@ -1365,13 +1365,16 @@ export class Player {
     startTime?: number,
     returnPCM = false,
     float32PCMOutput = false,
-    isBackgroundAnalysis = false
+    isBackgroundAnalysis = false,
+    signal?: AbortSignal
   ): Promise<{ stream: AudioResource } | { exception: { message: string } }> {
-    if (this.nodelink.options?.playback.mix?.enabled !== false) {
+    signal?.throwIfAborted()
+    if (!isBackgroundAnalysis && this.nodelink.options?.playback.mix?.enabled !== false) {
       await this._ensureAudioMixer()
     }
 
     await getStreamProcessor()
+    signal?.throwIfAborted()
     const audioResourceFactory = createAudioResource
     if (!audioResourceFactory) {
       return { exception: { message: 'Stream processor not initialized' } }
@@ -1439,8 +1442,13 @@ export class Player {
       track,
       resolvedUrlData.url as string,
       resolvedUrlData.protocol as string,
-      additionalData
+      additionalData,
+      signal
     )
+    if (signal?.aborted) {
+      fetched.stream?.destroy()
+      signal.throwIfAborted()
+    }
     if (fetched.exception) {
       logger(
         'error',
@@ -2480,14 +2488,15 @@ export class Player {
                 priority: 'IMMINENT_TRANSITION',
                 triggerSource: `player:${this.guildId}:seekImminent`,
                 signal: this._outroAnalysisSignal(),
-                fetchResource: (info, uData, wStart, returnPcm) =>
+                fetchResource: (info, uData, wStart, returnPcm, _background, signal) =>
                   this._fetchResource(
                     info,
                     uData,
                     wStart,
                     returnPcm,
                     false,
-                    true
+                    true,
+                    signal
                   )
               })
               .catch(() => {})
@@ -5008,8 +5017,8 @@ export class Player {
           priority,
           triggerSource: `player:${this.guildId}:nextTrack`,
           signal: this._outroAnalysisSignal(),
-          fetchResource: (info, uData, wStart, returnPcm) =>
-            this._fetchResource(info, uData, wStart, returnPcm, false, true)
+          fetchResource: (info, uData, wStart, returnPcm, _background, signal) =>
+            this._fetchResource(info, uData, wStart, returnPcm, false, true, signal)
         })
         .then((profile) => {
           if (
