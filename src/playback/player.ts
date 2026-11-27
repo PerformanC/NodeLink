@@ -3707,19 +3707,18 @@ export class Player {
         )
       }
       if (!this.connection) this._initConnection()
-      this.connection?.voiceStateUpdate({
+      const connection = this.connection
+      if (!connection) return
+      connection.voiceStateUpdate({
         session_id: this.voice.sessionId,
         channel_id: this.voice.channelId ?? undefined
       })
-      if (force && this.connection?.voiceServer) {
-        this.connection.voiceServer = null
-      }
-      this.connection?.voiceServerUpdate({
+      /* INFO: voiceServerUpdate() can start its own handshake. Connect once here with the playback callback. */
+      connection.voiceServer = {
         token: this.voice.token,
-        endpoint: this.voice.endpoint,
-        channel_id: this.voice.channelId ?? undefined
-      })
-      this.connection?.connect(async () => {
+        endpoint: this.voice.endpoint
+      }
+      connection.connect(async () => {
         if (this.destroying) return
         if (this.connection?.audioStream) {
           if (!this.isPaused) {
