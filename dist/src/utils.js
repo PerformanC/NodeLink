@@ -1826,7 +1826,9 @@ async function makeRequest(urlString, options = {}, nodelink) {
             const res = await fetch(urlString, {
                 method,
                 headers: customHeaders,
-                signal: options.signal ? AbortSignal.any([ac.signal, options.signal]) : ac.signal
+                signal: options.signal
+                    ? AbortSignal.any([ac.signal, options.signal])
+                    : ac.signal
             });
             if (t) {
                 clearTimeout(t);
@@ -2564,7 +2566,7 @@ export function getBestMatch(list, original, options = {}) {
     const normalize = (str) => {
         if (!str)
             return '';
-        return str
+        return (str
             .toLowerCase()
             .replace(/feat\.?/g, '')
             .replace(/ft\.?/g, '')
@@ -2574,7 +2576,7 @@ export function getBestMatch(list, original, options = {}) {
             // non-Latin titles (Japanese, Chinese, Cyrillic, etc.) are not erased during normalization.
             // Ref: https://github.com/PerformanC/NodeLink/commit/7ee75784
             .replace(/[^\p{L}\p{N}\s]/gu, '')
-            .trim();
+            .trim());
     };
     const specKeywords = [
         'remix',
@@ -2614,9 +2616,7 @@ export function getBestMatch(list, original, options = {}) {
         if (stripped.length >= 2)
             cleanTitleForWords = stripped;
     }
-    const originalWords = new Set(cleanTitleForWords
-        .split(/\s+/)
-        .filter((w) => w.length > 0));
+    const originalWords = new Set(cleanTitleForWords.split(/\s+/).filter((w) => w.length > 0));
     // Split multiple artists (e.g. "ぴーなた, 重音テト") to match individual artist aliases/channels.
     const originalArtists = original.author
         ? original.author
@@ -2821,8 +2821,7 @@ export function getBestMatch(list, original, options = {}) {
                 authorMatched = true;
             }
         }
-        const isEpisode = original.uri?.includes('/episode/') ||
-            original.uri?.includes('/chapter/');
+        const isEpisode = original.uri?.includes('/episode/') || original.uri?.includes('/chapter/');
         if (targetDuration > 0) {
             const diff = Math.abs(item.info.length - targetDuration);
             if (diff <= allowedDiff) {

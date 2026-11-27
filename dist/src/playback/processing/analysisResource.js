@@ -24,11 +24,13 @@ export function acquireAnalysisResource(acquire, dispose, signal, timeoutMs) {
             abort();
             return;
         }
-        Promise.resolve().then(() => {
+        Promise.resolve()
+            .then(() => {
             if (finished)
                 return null;
             return acquire(acquisitionSignal);
-        }).then((value) => {
+        })
+            .then((value) => {
             if (value === null)
                 return finish(null);
             if (finished) {

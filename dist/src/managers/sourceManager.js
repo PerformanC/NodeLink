@@ -658,7 +658,10 @@ export default class SourcesManager {
         // Analysis acquisitions require a local cancellable source call. An
         // AbortSignal cannot be serialized through the worker transport protocol.
         if (signal) {
-            const result = await withStreamAcquisitionSignal(signal, () => instance.loadStream(track, url, protocol, { ...normalizedAdditionalData, signal }));
+            const result = (await withStreamAcquisitionSignal(signal, () => instance.loadStream(track, url, protocol, {
+                ...normalizedAdditionalData,
+                signal
+            })));
             if (signal.aborted) {
                 result.stream?.destroy();
                 signal.throwIfAborted();

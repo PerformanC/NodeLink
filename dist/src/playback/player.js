@@ -947,7 +947,8 @@ export class Player {
      */
     async _fetchResource(info, urlData, startTime, returnPCM = false, float32PCMOutput = false, isBackgroundAnalysis = false, signal) {
         signal?.throwIfAborted();
-        if (!isBackgroundAnalysis && this.nodelink.options?.playback.mix?.enabled !== false) {
+        if (!isBackgroundAnalysis &&
+            this.nodelink.options?.playback.mix?.enabled !== false) {
             await this._ensureAudioMixer();
         }
         await getStreamProcessor();
