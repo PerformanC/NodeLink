@@ -56,3 +56,22 @@ test('interval statistics reset after a loud interval', async () => {
   assert.deepEqual(snapshot.peak, [0, 0])
   assert.deepEqual(snapshot.rms, [0, 0])
 })
+
+test('snapshot expiry and caller mutation do not leak observer state', async () => {
+  const observer = new AudioVisualization()
+  observer.resume()
+  const done = once(observer, 'end')
+  observer.end(Buffer.alloc(4800 * 4))
+  await done
+  const snapshot = observer.snapshot()
+  assert.ok(snapshot)
+  snapshot.waveform[0] = 1
+  assert.equal(observer.snapshot()?.waveform[0], 0)
+  const clock = Date.now
+  try {
+    Date.now = () => snapshot.capturedAt + 1001
+    assert.equal(observer.snapshot(), null)
+  } finally {
+    Date.now = clock
+  }
+})
