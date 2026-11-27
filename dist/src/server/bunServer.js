@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { isLoopbackRequest } from '../utils/clientAddress.js';
 import { logger, parseClient, verifyDiscordID } from '../utils.js';
+import { BunResponseShim } from './bunResponse.js';
 const VOICE_PATH_RE = /^\/v4\/websocket\/voice\/([A-Za-z0-9]+)\/?$/;
 const LIVE_PATH_RE = /^\/v4\/websocket\/youtube\/live\/([^/]+)\/?$/;
 /**
@@ -400,56 +401,17 @@ export function createBunServer(context, getRequestHandler) {
                         }
                     }
                 };
-                const resShim = {
-                    _status: 200,
-                    _headers: {},
-                    _body: [],
-                    writeHead(status, headers) {
-                        this._status = status;
-                        if (headers)
-                            Object.assign(this._headers, headers);
-                    },
-                    setHeader(name, value) {
-                        this._headers[name] = value;
-                    },
-                    getHeader(name) {
-                        return this._headers[name];
-                    },
-                    end(data) {
-                        if (data)
-                            this._body.push(data);
-                        let finalBody;
-                        if (this._body.length === 0) {
-                            finalBody = '';
-                        }
-                        else if (this._body.length === 1 &&
-                            Buffer.isBuffer(this._body[0])) {
-                            finalBody = this._body[0];
-                        }
-                        else {
-                            finalBody = Buffer.concat(this._body.map((chunk) => Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-                        }
-                        const headers = new Headers();
-                        for (const [key, value] of Object.entries(this._headers)) {
-                            if (Array.isArray(value)) {
-                                for (const v of value)
-                                    headers.append(key, v);
-                            }
-                            else if (value !== undefined) {
-                                headers.set(key, String(value));
-                            }
-                        }
-                        const response = new Response(finalBody, {
-                            status: this._status,
-                            headers
-                        });
-                        resolve(response);
-                    },
-                    write(data) {
-                        if (data)
-                            this._body.push(data);
-                    }
-                };
+                const resShim = new BunResponseShim({
+                    resolve,
+                    // Long-lived audio streams must not be cut by Bun's idle timeout.
+                    onStreamStart: () => server.timeout(req, 0)
+                });
+                // Mirror http.ServerResponse: a client disconnect emits 'close' on the
+                // response so handlers can release upstream resources.
+                req.signal.addEventListener('abort', () => {
+                    if (!resShim.writableEnded && !resShim.destroyed)
+                        resShim.destroy();
+                }, { once: true });
                 void getRequestHandler()
                     .then((handler) => handler(context, reqShim, resShim))
                     .catch((error) => {

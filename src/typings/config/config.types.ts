@@ -1557,14 +1557,6 @@ export interface NodelinkConfig {
     }
   }
 
-  /** Multi-audio layering mixer. */
-  mix: {
-    enabled: boolean
-    defaultVolume: number
-    maxLayersMix: number
-    autoCleanup: boolean
-  }
-
   /** Registry of addons to load. */
   plugins: Array<{
     name: string
