@@ -38,3 +38,15 @@ test('normal completion does not dispose a returned resource', async () => {
   controller.abort()
   assert.equal(disposed, 0)
 })
+
+test('already aborted acquisition does not invoke the source', async () => {
+  const controller = new AbortController()
+  controller.abort()
+  let calls = 0
+  assert.equal(await acquireAnalysisResource(async () => { calls++; return {} }, () => {}, controller.signal, 100), null)
+  assert.equal(calls, 0)
+})
+
+test('rejected acquisition settles without an unhandled rejection', async () => {
+  assert.equal(await acquireAnalysisResource(async () => { throw new Error('source') }, () => {}, new AbortController().signal, 100), null)
+})
