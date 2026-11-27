@@ -10,8 +10,11 @@ export function hasCompleteLyricsTiming(data: {
   synced?: boolean
   lines?: ReadonlyArray<{ time?: unknown }>
 }): boolean {
-  return data.synced === true && !!data.lines?.length &&
+  return (
+    data.synced === true &&
+    !!data.lines?.length &&
     data.lines.every((line) => readLyricsTimestamp(line.time) !== undefined)
+  )
 }
 
 /** Build the existing event payload while retaining provider timing and annotations. */
