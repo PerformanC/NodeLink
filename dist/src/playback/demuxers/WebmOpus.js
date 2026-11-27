@@ -218,8 +218,8 @@ const getOpusPacketDurationMs = (packet) => {
         frameCount = 2;
     }
     else if (frameCode === 3) {
-        // Code 3: bits 2-7 contain M (frame count); bits 0-1 are VBR/padding.
-        frameCount = packet[1] === undefined ? 0 : (packet[1] >> 2) & 0x3f;
+        /* INFO: RFC 6716 §3.2.5 puts the frame count in the low six bits. */
+        frameCount = (packet[1] ?? 0) & 0x3f;
     }
     const duration = frameDurationMs * frameCount;
     return frameCount > 0 && duration <= 120 ? duration : 20;

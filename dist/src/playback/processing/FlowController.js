@@ -185,8 +185,11 @@ export class FlowController extends Transform {
             this.pendingLength += toCopy;
             offset += toCopy;
             if (this.pendingLength === this.frameSize) {
-                this._processFrame(this.pendingBuffer);
+                /* INFO: Downstream may keep the assembled frame while more input arrives. */
+                const frame = this.pendingBuffer;
+                this.pendingBuffer = Buffer.allocUnsafe(this.frameSize);
                 this.pendingLength = 0;
+                this._processFrame(frame);
             }
         }
         const remaining = chunk.length - offset;
