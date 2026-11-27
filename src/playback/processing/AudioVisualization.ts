@@ -29,31 +29,33 @@ export class AudioVisualization extends Transform {
   private readonly carry = Buffer.alloc(4)
   private carryLength = 0
   private frame = 0
+  private sumL = 0
+  private sumR = 0
+  private peakL = 0
+  private peakR = 0
+  private readonly envelope = new Float32Array(32)
   private latest: AudioVisualizationSnapshot | null = null
 
   private ingest(l: number, r: number): void {
     const slot = this.frame % HOP
-    if (slot < WINDOW) {
-      this.left[slot] = l / 32768
-      this.right[slot] = r / 32768
+    const left = l / 32768
+    const right = r / 32768
+    this.sumL += left * left
+    this.sumR += right * right
+    this.peakL = Math.max(this.peakL, Math.abs(left))
+    this.peakR = Math.max(this.peakR, Math.abs(right))
+    const group = Math.floor((slot * this.envelope.length) / HOP)
+    this.envelope[group] = Math.max(
+      this.envelope[group] ?? 0, Math.abs(left), Math.abs(right)
+    )
+    // Spectrum uses the most recent contiguous 1024 frames. Level and
+    // envelope statistics cover every frame in the 100 ms reporting interval.
+    if (slot >= HOP - WINDOW) {
+      this.left[slot - (HOP - WINDOW)] = left
+      this.right[slot - (HOP - WINDOW)] = right
     }
     this.frame++
-    if (slot !== WINDOW - 1) return
-    let sumL = 0,
-      sumR = 0,
-      peakL = 0,
-      peakR = 0
-    const waveform = Array<number>(32).fill(0)
-    for (let i = 0; i < WINDOW; i++) {
-      const l = this.left[i] ?? 0,
-        r = this.right[i] ?? 0
-      sumL += l * l
-      sumR += r * r
-      peakL = Math.max(peakL, Math.abs(l))
-      peakR = Math.max(peakR, Math.abs(r))
-      const group = Math.floor(i / 32)
-      waveform[group] = Math.max(waveform[group] ?? 0, Math.abs(l), Math.abs(r))
-    }
+    if (slot !== HOP - 1) return
     const spectrum = frequencies.map((hz, j) => {
       // Channel-separated probes avoid cancellation of anti-phase material.
       let al = 0,
@@ -78,11 +80,13 @@ export class AudioVisualization extends Transform {
       capturedAt: Date.now(),
       outputFrame: this.frame,
       sampleRate: SAMPLE_RATE,
-      rms: [Math.sqrt(sumL / WINDOW), Math.sqrt(sumR / WINDOW)],
-      peak: [peakL, peakR],
-      waveform,
+      rms: [Math.sqrt(this.sumL / HOP), Math.sqrt(this.sumR / HOP)],
+      peak: [this.peakL, this.peakR],
+      waveform: Array.from(this.envelope),
       spectrum
     }
+    this.sumL = this.sumR = this.peakL = this.peakR = 0
+    this.envelope.fill(0)
   }
 
   override _transform(
