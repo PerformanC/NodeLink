@@ -285,6 +285,37 @@ export default class ConfigValidationManager {
                         type: 'object',
                         optional: true,
                         props: {
+                            protected: {
+                                type: 'object',
+                                optional: true,
+                                props: {
+                                    targetLoudnessLufs: {
+                                        type: 'number',
+                                        min: -30,
+                                        max: -8,
+                                        optional: true
+                                    },
+                                    ceilingDbTP: {
+                                        type: 'number',
+                                        min: -12,
+                                        max: -1,
+                                        optional: true
+                                    },
+                                    lookaheadMs: {
+                                        type: 'number',
+                                        min: 2,
+                                        max: 20,
+                                        optional: true
+                                    },
+                                    releaseMs: {
+                                        type: 'number',
+                                        min: 20,
+                                        max: 500,
+                                        optional: true
+                                    },
+                                    telemetry: { type: 'boolean', optional: true }
+                                }
+                            },
                             processingMode: {
                                 type: 'string',
                                 enum: ['legacy', 'protected'],

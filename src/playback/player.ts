@@ -4314,7 +4314,13 @@ export class Player {
       'Player',
       `[Action: toJSON] Method invoked for guild ${this.guildId}`
     )
+    const audioProcessing =
+      this.track &&
+      this.nodelink.options.playback.audio?.protected?.telemetry === true
+        ? this._getAudioStream()?.getAudioProcessingTelemetry?.()
+        : null
     return {
+      ...(audioProcessing ? { audioProcessing } : {}),
       guildId: this.guildId,
       track: this.track,
       volume: this.volumePercent,

@@ -56,6 +56,8 @@ export interface VolumeTransformerOptions extends TransformOptions {
   lookaheadMs?: number
   /** Noise gate threshold in LUFS. */
   gateThresholdLUFS?: number
+  /** Target loudness for the optional normalizer. */
+  targetLoudnessLufs?: number
   /** Stream type (e.g., 's16le'). */
   type?: string
 }

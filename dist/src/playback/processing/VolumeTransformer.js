@@ -35,12 +35,14 @@ export class VolumeTransformer extends Transform {
     _thresholdValue;
     _limitHeadroom;
     agc;
+    targetLoudness;
+    gateThresholdLUFS;
     /**
      * Creates a new VolumeTransformer.
      * @param options - Transformation options.
      */
     constructor(options = {}) {
-        const { volume = 1, fadeDurationMs = 1000, fadeCurve = DEFAULT_CURVE, sampleRate = 48000, channels = 2, limiterThreshold = 0.95, limiterSoftness = 0.4, enableAGC = true, lookaheadMs = 5, ...rest } = options;
+        const { volume = 1, fadeDurationMs = 1000, fadeCurve = DEFAULT_CURVE, sampleRate = 48000, channels = 2, limiterThreshold = 0.95, limiterSoftness = 0.4, enableAGC = true, lookaheadMs = 5, targetLoudnessLufs = -14, gateThresholdLUFS, ...rest } = options;
         super({ highWaterMark: 3840, ...rest });
         this.sampleRate =
             Number.isFinite(sampleRate) && sampleRate > 0
@@ -73,12 +75,16 @@ export class VolumeTransformer extends Transform {
         this.limiterSoftness = Math.max(0.01, Number.isFinite(limiterSoftness) ? limiterSoftness : 0.4);
         this._thresholdValue = this.limiterThreshold * INT16_MAX;
         this._limitHeadroom = INT16_MAX - this._thresholdValue;
+        this.targetLoudness = Number.isFinite(targetLoudnessLufs)
+            ? targetLoudnessLufs
+            : -14;
+        this.gateThresholdLUFS = gateThresholdLUFS;
         this.agc = enableAGC
             ? new LoudnessNormalizer({
                 sampleRate: this.sampleRate,
                 channels: this.channels,
-                targetLoudness: -14,
-                gateThresholdLUFS: options.gateThresholdLUFS
+                targetLoudness: this.targetLoudness,
+                gateThresholdLUFS: this.gateThresholdLUFS
             })
             : null;
     }
@@ -87,10 +93,12 @@ export class VolumeTransformer extends Transform {
             this.agc = new LoudnessNormalizer({
                 sampleRate: this.sampleRate,
                 channels: this.channels,
-                targetLoudness: -14
+                targetLoudness: this.targetLoudness,
+                gateThresholdLUFS: this.gateThresholdLUFS
             });
         }
         else if (!enabled && this.agc) {
+            this.agc.destroy();
             this.agc = null;
         }
     }
@@ -265,15 +273,29 @@ export class VolumeTransformer extends Transform {
             return chunk;
         if (this.agc)
             this.agc.processFloat32(chunk);
-        const { gainStart, gainEnd } = this._computeFadeGains(sampleCount);
-        const step = sampleCount > 1 ? (gainEnd - gainStart) / (sampleCount - 1) : 0;
-        for (let i = 0; i < sampleCount; i++) {
-            const offset = i * 4;
-            const value = chunk.readFloatLE(offset) * (gainStart + step * i);
-            if (!Number.isFinite(value) || Math.abs(value) > 3.4028234663852886e38) {
-                throw new RangeError(`Protected volume overflow at sample ${i}`);
+        // Advance gain once per audio frame, not once per sample/channel.
+        // The ramp reaches its target at the same frame regardless of chunking.
+        for (let frame = 0; frame < sampleCount / this.channels; frame++) {
+            if (this.fadeActive && this.fadeFramesTotal > 0) {
+                this.fadeFramesElapsed = Math.min(this.fadeFramesTotal, this.fadeFramesElapsed + 1);
+                const progress = this._getFadeCurveValue(this.fadeFramesElapsed / this.fadeFramesTotal);
+                this.currentVolume =
+                    this.startVolume + (this.targetVolume - this.startVolume) * progress;
+                if (this.fadeFramesElapsed === this.fadeFramesTotal) {
+                    this.fadeActive = false;
+                    this.currentVolume = this.targetVolume;
+                    this.startVolume = this.targetVolume;
+                }
             }
-            chunk.writeFloatLE(value, offset);
+            else
+                this.currentVolume = this.targetVolume;
+            for (let ch = 0; ch < this.channels; ch++) {
+                const offset = (frame * this.channels + ch) * 4;
+                const value = chunk.readFloatLE(offset) * this.currentVolume;
+                if (!Number.isFinite(value) || Math.abs(value) > 3.4028234663852886e38)
+                    throw new RangeError(`Protected volume overflow at byte ${offset}`);
+                chunk.writeFloatLE(value, offset);
+            }
         }
         return chunk;
     }
