@@ -268,6 +268,8 @@ export function buildPlaylistInfo(
 
   // 10. Total Tracks & 11. isPartial
   let totalTracksRaw: number | null = null
+  let hasExplicitNullTotal = false
+
   const candidateTotals = [
     rawInfo.totalTracks,
     pluginInfo.totalTracks,
@@ -282,22 +284,40 @@ export function buildPlaylistInfo(
       Number.isFinite(candidate) &&
       candidate >= 0
     ) {
-      totalTracksRaw = Math.floor(candidate)
-      break
+      if (totalTracksRaw === null) {
+        totalTracksRaw = Math.floor(candidate)
+      }
+    } else if (candidate === null) {
+      hasExplicitNullTotal = true
     }
   }
+
+  const isExplicitlyUnknownTotal =
+    totalTracksRaw === null && hasExplicitNullTotal
 
   const explicitPartial =
     rawInfo.isPartial === true || pluginInfo.isPartial === true
 
-  const isPartial =
+  const isConfirmedPartial =
     explicitPartial ||
     (totalTracksRaw !== null && totalTracksRaw > loadedTracks)
+
+  const isConfirmedComplete =
+    !isConfirmedPartial &&
+    !isExplicitlyUnknownTotal &&
+    (
+      (totalTracksRaw !== null && totalTracksRaw <= loadedTracks) ||
+      rawInfo.isPartial === false ||
+      pluginInfo.isPartial === false ||
+      (totalTracksRaw === null && !hasExplicitNullTotal)
+    )
+
+  const isPartial = isConfirmedPartial
 
   let totalTracks: number | null
   if (totalTracksRaw !== null) {
     totalTracks = totalTracksRaw
-  } else if (!isPartial) {
+  } else if (isConfirmedComplete) {
     totalTracks = loadedTracks
   } else {
     totalTracks = null
@@ -341,8 +361,9 @@ export function buildPlaylistInfo(
   let totalDuration: number | null = null
   if (explicitTotalDuration !== null) {
     totalDuration = explicitTotalDuration
-  } else if (isPartial) {
-    // When partially loaded, do not report loaded duration as total duration
+  } else if (!isConfirmedComplete) {
+    // When completeness cannot be confirmed (partial or unknown completeness),
+    // do not report loaded duration as total duration
     totalDuration = null
   } else if (loadedTracks === 0) {
     totalDuration = 0
@@ -410,7 +431,11 @@ export function buildPlaylistInfo(
     isExplicit = true
   } else if (authoritativeExplicit !== null) {
     isExplicit = authoritativeExplicit
-  } else if (!isPartial && loadedTracks > 0 && determinableCount === loadedTracks) {
+  } else if (
+    isConfirmedComplete &&
+    loadedTracks > 0 &&
+    determinableCount === loadedTracks
+  ) {
     isExplicit = false
   } else {
     isExplicit = null

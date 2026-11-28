@@ -221,6 +221,7 @@ export function buildPlaylistInfo(rawInfo = {}, pluginInfo = {}, tracks = [], co
         null;
     // 10. Total Tracks & 11. isPartial
     let totalTracksRaw = null;
+    let hasExplicitNullTotal = false;
     const candidateTotals = [
         rawInfo.totalTracks,
         pluginInfo.totalTracks,
@@ -232,18 +233,30 @@ export function buildPlaylistInfo(rawInfo = {}, pluginInfo = {}, tracks = [], co
         if (typeof candidate === 'number' &&
             Number.isFinite(candidate) &&
             candidate >= 0) {
-            totalTracksRaw = Math.floor(candidate);
-            break;
+            if (totalTracksRaw === null) {
+                totalTracksRaw = Math.floor(candidate);
+            }
+        }
+        else if (candidate === null) {
+            hasExplicitNullTotal = true;
         }
     }
+    const isExplicitlyUnknownTotal = totalTracksRaw === null && hasExplicitNullTotal;
     const explicitPartial = rawInfo.isPartial === true || pluginInfo.isPartial === true;
-    const isPartial = explicitPartial ||
+    const isConfirmedPartial = explicitPartial ||
         (totalTracksRaw !== null && totalTracksRaw > loadedTracks);
+    const isConfirmedComplete = !isConfirmedPartial &&
+        !isExplicitlyUnknownTotal &&
+        ((totalTracksRaw !== null && totalTracksRaw <= loadedTracks) ||
+            rawInfo.isPartial === false ||
+            pluginInfo.isPartial === false ||
+            (totalTracksRaw === null && !hasExplicitNullTotal));
+    const isPartial = isConfirmedPartial;
     let totalTracks;
     if (totalTracksRaw !== null) {
         totalTracks = totalTracksRaw;
     }
-    else if (!isPartial) {
+    else if (isConfirmedComplete) {
         totalTracks = loadedTracks;
     }
     else {
@@ -281,8 +294,9 @@ export function buildPlaylistInfo(rawInfo = {}, pluginInfo = {}, tracks = [], co
     if (explicitTotalDuration !== null) {
         totalDuration = explicitTotalDuration;
     }
-    else if (isPartial) {
-        // When partially loaded, do not report loaded duration as total duration
+    else if (!isConfirmedComplete) {
+        // When completeness cannot be confirmed (partial or unknown completeness),
+        // do not report loaded duration as total duration
         totalDuration = null;
     }
     else if (loadedTracks === 0) {
@@ -346,7 +360,9 @@ export function buildPlaylistInfo(rawInfo = {}, pluginInfo = {}, tracks = [], co
     else if (authoritativeExplicit !== null) {
         isExplicit = authoritativeExplicit;
     }
-    else if (!isPartial && loadedTracks > 0 && determinableCount === loadedTracks) {
+    else if (isConfirmedComplete &&
+        loadedTracks > 0 &&
+        determinableCount === loadedTracks) {
         isExplicit = false;
     }
     else {
