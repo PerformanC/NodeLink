@@ -314,43 +314,43 @@ export function buildPlaylistInfo(rawInfo = {}, pluginInfo = {}, tracks = [], co
     }
     // 15. isExplicit
     let isExplicit = null;
-    if (typeof rawInfo.isExplicit === 'boolean') {
-        isExplicit = rawInfo.isExplicit;
-    }
-    else if (typeof pluginInfo.isExplicit === 'boolean') {
-        isExplicit = pluginInfo.isExplicit;
-    }
-    else {
-        let anyExplicit = false;
-        let determinableCount = 0;
-        for (const track of tracks) {
-            const trackRecord = track;
-            const infoRecord = trackRecord.info;
-            const pluginRecord = trackRecord.pluginInfo;
-            const trackExplicit = typeof infoRecord?.isExplicit === 'boolean'
-                ? infoRecord.isExplicit
-                : typeof pluginRecord?.isExplicit === 'boolean'
-                    ? pluginRecord.isExplicit
-                    : typeof pluginRecord?.explicit === 'boolean'
-                        ? pluginRecord.explicit
-                        : null;
-            if (trackExplicit !== null) {
-                determinableCount++;
-                if (trackExplicit === true) {
-                    anyExplicit = true;
-                    break;
-                }
+    const authoritativeExplicit = typeof rawInfo.isExplicit === 'boolean'
+        ? rawInfo.isExplicit
+        : typeof pluginInfo.isExplicit === 'boolean'
+            ? pluginInfo.isExplicit
+            : null;
+    let anyExplicit = false;
+    let determinableCount = 0;
+    for (const track of tracks) {
+        const trackRecord = track;
+        const infoRecord = trackRecord.info;
+        const pluginRecord = trackRecord.pluginInfo;
+        const trackExplicit = typeof infoRecord?.isExplicit === 'boolean'
+            ? infoRecord.isExplicit
+            : typeof pluginRecord?.isExplicit === 'boolean'
+                ? pluginRecord.isExplicit
+                : typeof pluginRecord?.explicit === 'boolean'
+                    ? pluginRecord.explicit
+                    : null;
+        if (trackExplicit !== null) {
+            determinableCount++;
+            if (trackExplicit === true) {
+                anyExplicit = true;
+                break;
             }
         }
-        if (anyExplicit) {
-            isExplicit = true;
-        }
-        else if (determinableCount > 0 && determinableCount === loadedTracks && loadedTracks > 0) {
-            isExplicit = false;
-        }
-        else {
-            isExplicit = null;
-        }
+    }
+    if (anyExplicit) {
+        isExplicit = true;
+    }
+    else if (authoritativeExplicit !== null) {
+        isExplicit = authoritativeExplicit;
+    }
+    else if (!isPartial && loadedTracks > 0 && determinableCount === loadedTracks) {
+        isExplicit = false;
+    }
+    else {
+        isExplicit = null;
     }
     // 16. createdAt
     const createdAt = parseIsoDate(rawInfo.createdAt) ??

@@ -11,7 +11,6 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -445,6 +444,13 @@ export default class QobuzSource {
       return this.buildTrack(item)
     })
 
+    const albumArtist = this.asRecord(data.artist)
+    const albumImage = this.asRecord(data.image)
+    const rawAlbumTotal =
+      this.asNumber(data.tracks_count) ??
+      this.asNumber(tracksBlock.total) ??
+      tracks.length
+
     return {
       loadType: 'playlist',
       data: {
@@ -453,7 +459,27 @@ export default class QobuzSource {
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'album',
+          identifier: String(data.id ?? id),
+          url: this.asString(data.url) ?? `https://open.qobuz.com/album/${id}`,
+          artworkUrl:
+            this.asString(albumImage?.large) ||
+            this.asString(albumImage?.small) ||
+            this.asString(albumImage?.thumbnail) ||
+            null,
+          author: this.asString(albumArtist?.name)?.trim() || '',
+          authorUrl: albumArtist?.id
+            ? `https://open.qobuz.com/artist/${albumArtist.id}`
+            : null,
+          totalTracks: rawAlbumTotal,
+          isPartial: rawAlbumTotal > tracks.length,
+          isAlbum: true,
+          createdAt:
+            this.asString(data.released_at) ||
+            this.asString(data.release_date_original) ||
+            null
+        }
       }
     }
   }
@@ -496,12 +522,14 @@ export default class QobuzSource {
           url: `https://open.qobuz.com/playlist/${id}`,
           artworkUrl: this.getPlaylistCoverUrl(data),
           author: this.asString(this.asRecord(data.owner)?.name)?.trim() || '',
-          totalTracks: capTotalTracks(
+          totalTracks:
             this.asNumber(data.tracks_count) ??
+            this.asNumber(tracksBlock.total) ??
+            tracks.length,
+          isPartial:
+            (this.asNumber(data.tracks_count) ??
               this.asNumber(tracksBlock.total) ??
-              tracks.length,
-            max
-          )
+              tracks.length) > tracks.length
         }
       }
     }
