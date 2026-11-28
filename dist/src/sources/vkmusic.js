@@ -371,12 +371,22 @@ export default class VKMusicSource {
                     params.access_key = accessKey;
                 const res = await this._apiRequest('audio.get', params);
                 if (res?.items?.length) {
+                    const rawTotal = typeof res.count === 'number' &&
+                        Number.isFinite(res.count) &&
+                        res.count >= 0
+                        ? res.count
+                        : null;
+                    const tracks = res.items.map((item) => this.buildTrack(item));
+                    const isPartial = rawTotal !== null ? tracks.length < rawTotal : undefined;
                     return {
                         loadType: 'playlist',
                         data: {
                             info: { name: 'VK Playlist', selectedTrack: 0 },
-                            tracks: res.items.map((item) => this.buildTrack(item)),
-                            pluginInfo: {}
+                            tracks,
+                            pluginInfo: {
+                                totalTracks: rawTotal,
+                                ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+                            }
                         }
                     };
                 }

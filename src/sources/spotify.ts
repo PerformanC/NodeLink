@@ -30,7 +30,6 @@ import type {
 } from '../typings/sources/spotify.types.ts'
 import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -1287,6 +1286,27 @@ export default class SpotifySource implements SourceInstance {
       (this.nodelink.options.playback?.maxPlaylistLength as number) || 1000
     const tracks: TrackData[] = []
     let name = 'Unknown Album'
+    let author = ''
+    let authorUrl = ''
+    let thumbnail = ''
+    let totalTracks = 0
+    let releaseDate = ''
+
+    const buildAlbumPluginInfo = (): PlaylistPluginInfo => {
+      const rawTotal = totalTracks || tracks.length
+      return {
+        type: 'album',
+        identifier: id,
+        url: `https://open.spotify.com/album/${id}`,
+        artworkUrl: thumbnail || null,
+        author: author || null,
+        authorUrl: authorUrl || null,
+        totalTracks: rawTotal,
+        isPartial: rawTotal > tracks.length,
+        isAlbum: true,
+        createdAt: releaseDate || null
+      }
+    }
 
     if (this.anonymousToken || this.config.sp_dc) {
       let offset = 0
@@ -1311,6 +1331,25 @@ export default class SpotifySource implements SourceInstance {
         if (offset === 0) {
           name = data.albumUnion.name
           total = data.albumUnion.tracksV2?.totalCount || 0
+          totalTracks = total
+          const rawAlbum = data.albumUnion as unknown as Record<string, unknown>
+          const rawArtists = rawAlbum.artists as
+            | { items?: Array<{ profile?: { name?: string }; uri?: string }> }
+            | undefined
+          author =
+            rawArtists?.items
+              ?.map((a: { profile?: { name?: string } }) => a.profile?.name)
+              .filter(Boolean)
+              .join(', ') || ''
+          const artistUri = rawArtists?.items?.[0]?.uri
+          authorUrl = artistUri
+            ? `https://open.spotify.com/artist/${artistUri.split(':').pop()}`
+            : ''
+          thumbnail = this._pickLargestImage(
+            data.albumUnion.coverArt?.sources
+          )
+          const rawDate = rawAlbum.date as { isoString?: string } | undefined
+          releaseDate = rawDate?.isoString || ''
         }
 
         const items = data.albumUnion.tracksV2?.items || []
@@ -1333,7 +1372,7 @@ export default class SpotifySource implements SourceInstance {
           data: {
             info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildAlbumPluginInfo()
           }
         }
       }
@@ -1345,7 +1384,15 @@ export default class SpotifySource implements SourceInstance {
         await this._apiRequest<SpotifyAlbum>(nextUrl)
       if (!res) break
 
-      if (tracks.length === 0) name = res.name
+      if (tracks.length === 0) {
+        const rawRes = res as unknown as Record<string, unknown>
+        name = res.name
+        author = res.artists?.map((a) => a.name).join(', ') || ''
+        authorUrl = res.artists?.[0]?.external_urls?.spotify || ''
+        thumbnail = res.images?.[0]?.url || ''
+        releaseDate = (rawRes.release_date as string | undefined) || ''
+        totalTracks = (rawRes.total_tracks as number | undefined) || 0
+      }
 
       const items = res.tracks?.items || []
       if (items.length === 0) break
@@ -1370,7 +1417,7 @@ export default class SpotifySource implements SourceInstance {
           data: {
             info: { name, selectedTrack: 0 },
             tracks,
-            pluginInfo: {}
+            pluginInfo: buildAlbumPluginInfo()
           }
         }
       : { loadType: 'empty', data: {} }
@@ -1413,17 +1460,23 @@ export default class SpotifySource implements SourceInstance {
     const tracks: TrackData[] = []
     let name = 'Unknown Playlist'
     let author = ''
+    let authorUrl = ''
     let thumbnail = ''
     let totalTracks = 0
 
-    const buildPluginInfo = (): PlaylistPluginInfo => ({
-      type: 'playlist',
-      identifier: id,
-      url: `https://open.spotify.com/playlist/${id}`,
-      artworkUrl: thumbnail,
-      author,
-      totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
-    })
+    const buildPluginInfo = (): PlaylistPluginInfo => {
+      const rawTotal = totalTracks || tracks.length
+      return {
+        type: 'playlist',
+        identifier: id,
+        url: `https://open.spotify.com/playlist/${id}`,
+        artworkUrl: thumbnail,
+        author,
+        authorUrl: authorUrl || null,
+        totalTracks: rawTotal,
+        isPartial: rawTotal > tracks.length
+      }
+    }
 
     if (this.anonymousToken || id.startsWith('37i9dQZ')) {
       let offset = 0
@@ -1448,6 +1501,12 @@ export default class SpotifySource implements SourceInstance {
         if (offset === 0) {
           name = data.playlistV2.name
           author = data.playlistV2.ownerV2?.data?.name?.trim() || ''
+          const rawOwner = data.playlistV2.ownerV2?.data as
+            | Record<string, unknown>
+            | undefined
+          const username = rawOwner?.username as string | undefined
+          authorUrl = username ? `https://open.spotify.com/user/${username}` : ''
+          const rawPlaylist = data.playlistV2 as unknown as Record<string, unknown>
           thumbnail = this._pickLargestImage(
             data.playlistV2.images?.items?.[0]?.sources
           )
@@ -1485,11 +1544,12 @@ export default class SpotifySource implements SourceInstance {
     }
 
     const metaRes = await this._apiRequest<
-      Pick<SpotifyPlaylist, 'name' | 'owner' | 'images'>
+      Pick<SpotifyPlaylist, 'name' | 'owner' | 'images'> & { description?: string }
     >(`/playlists/${id}?market=${this.market}`)
     if (metaRes) {
       name = metaRes.name
       author = metaRes.owner?.display_name?.trim() || author
+      authorUrl = (metaRes.owner as any)?.external_urls?.spotify || authorUrl
       thumbnail = metaRes.images?.[0]?.url || thumbnail
     }
 

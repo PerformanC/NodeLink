@@ -25,7 +25,6 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   logger,
@@ -1123,10 +1122,11 @@ export default class DeezerSource implements SourceVariantHandler {
               url: entity.link ?? `https://www.deezer.com/${type}/${id}`,
               artworkUrl: thumbnail,
               author,
-              totalTracks: capTotalTracks(
-                entity.nb_tracks ?? tracks.length,
-                this.config.playback?.maxPlaylistLength
-              )
+              authorUrl: (entity.creator as any)?.link ?? (entity.artist as any)?.link ?? null,
+              isAlbum: type === 'album',
+              createdAt: (entity as any).release_date ?? null,
+              totalTracks: entity.nb_tracks ?? tracks.length,
+              isPartial: (entity.nb_tracks ?? tracks.length) > tracks.length
             },
             tracks
           } satisfies DeezerPlaylistData

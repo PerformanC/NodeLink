@@ -850,11 +850,24 @@ export default class YandexMusicSource implements SourceInstance {
 
     if (!tracks.length) return { loadType: 'empty', data: {} }
 
+    const albumTotal =
+      typeof album.trackCount === 'number' &&
+      Number.isFinite(album.trackCount) &&
+      album.trackCount >= 0
+        ? album.trackCount
+        : null
+    const isPartial =
+      albumTotal !== null ? tracks.length < albumTotal : undefined
+
     return {
       loadType: 'playlist',
       data: {
         info: { name: album.title || 'Yandex Music Album', selectedTrack: 0 },
-        pluginInfo: { type: 'album' },
+        pluginInfo: {
+          type: 'album',
+          totalTracks: albumTotal,
+          ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+        },
         tracks
       }
     }
@@ -1003,11 +1016,23 @@ export default class YandexMusicSource implements SourceInstance {
         ? `${ownerName}'s Liked Songs`
         : result.title || 'Yandex Music Playlist'
 
+    const rawTotal =
+      typeof result.trackCount === 'number' &&
+      Number.isFinite(result.trackCount) &&
+      result.trackCount >= 0
+        ? result.trackCount
+        : null
+    const isPartial = rawTotal !== null ? tracks.length < rawTotal : undefined
+
     return {
       loadType: 'playlist',
       data: {
         info: { name: title, selectedTrack: 0 },
-        pluginInfo: { type: 'playlist' },
+        pluginInfo: {
+          type: 'playlist',
+          totalTracks: rawTotal,
+          ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+        },
         tracks
       }
     }

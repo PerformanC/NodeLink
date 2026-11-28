@@ -31,7 +31,6 @@ import type {
 } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   http1makeRequest,
   logger,
@@ -847,10 +846,13 @@ export default class SoundCloudSource
               tracks.find((track) => track.info.artworkUrl)?.info.artworkUrl
           ),
           author: body.user?.username?.trim() || '',
-          totalTracks: capTotalTracks(
-            body.track_count ?? body.tracks?.length ?? tracks.length,
-            limit
-          )
+          authorUrl: body.user?.permalink_url || null,
+          isAlbum: body.set_type === 'album',
+          createdAt: body.created_at || null,
+          totalTracks: body.track_count ?? body.tracks?.length ?? tracks.length,
+          isPartial:
+            (body.track_count ?? body.tracks?.length ?? tracks.length) >
+            tracks.length
         },
         tracks
       }

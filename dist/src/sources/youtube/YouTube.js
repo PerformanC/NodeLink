@@ -1,7 +1,7 @@
 import { PassThrough, Readable } from 'node:stream';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
 import { openMp4HttpAudio } from '../../playback/processing/streamProcessor.js';
-import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
 import CipherManager from './CipherManager.js';
 import { checkURLType, YOUTUBE_CONSTANTS, YOUTUBE_WEBM_ITAGS } from './common.js';
 import YouTubeLiveChat from './LiveChat.js';
@@ -1386,17 +1386,40 @@ export default class YouTubeSource {
         if (!playlistId)
             return;
         const current = playlist.pluginInfo ?? {};
-        const meta = current.author && current.artworkUrl
-            ? { author: '', thumbnail: '' }
-            : await this._fetchPlaylistMeta(playlistId);
+        const hasValidTotal = typeof current.totalTracks === 'number' &&
+            Number.isFinite(current.totalTracks) &&
+            current.totalTracks >= 0;
+        const needsMeta = !current.author ||
+            !current.artworkUrl ||
+            !current.authorUrl ||
+            !hasValidTotal;
+        const meta = needsMeta
+            ? await this._fetchPlaylistMeta(playlistId)
+            : { author: '', thumbnail: '' };
+        const isAlbum = playlistId.startsWith('OLAK');
+        const rawTotalTracks = hasValidTotal
+            ? current.totalTracks
+            : typeof meta.totalTracks === 'number' &&
+                Number.isFinite(meta.totalTracks) &&
+                meta.totalTracks >= 0
+                ? meta.totalTracks
+                : null;
+        const isPartial = typeof current.isPartial === 'boolean'
+            ? current.isPartial
+            : rawTotalTracks !== null
+                ? rawTotalTracks > playlist.tracks.length
+                : undefined;
         playlist.pluginInfo = {
             ...current,
-            type: current.type ?? 'playlist',
+            type: current.type ?? (isAlbum ? 'album' : 'playlist'),
             identifier: current.identifier ?? playlistId,
             url: current.url ?? `https://www.youtube.com/playlist?list=${playlistId}`,
             artworkUrl: current.artworkUrl || meta.thumbnail,
             author: current.author || meta.author,
-            totalTracks: capTotalTracks(current.totalTracks ?? playlist.tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
+            authorUrl: current.authorUrl || meta.authorUrl || null,
+            isAlbum: current.isAlbum ?? isAlbum,
+            totalTracks: rawTotalTracks,
+            ...(typeof isPartial === 'boolean' ? { isPartial } : {})
         };
     }
     /**

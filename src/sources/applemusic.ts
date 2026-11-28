@@ -10,7 +10,6 @@ import type {
 } from '../typings/sources/source.types.ts'
 import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest
@@ -583,10 +582,11 @@ export default class AppleMusicSource implements SourceInstance {
             `https://music.apple.com/${country}/album/${id}`,
           artworkUrl: this.parseArtwork(album.attributes?.artwork) || '',
           author: album.attributes?.artistName?.trim() || '',
-          totalTracks: capTotalTracks(
-            album.attributes?.trackCount ?? tracks.length,
-            this.nodelink.options.playback?.maxPlaylistLength
-          )
+          authorUrl: (album.attributes as any)?.artistUrl || null,
+          isAlbum: true,
+          createdAt: (album.attributes as any)?.releaseDate || null,
+          totalTracks: album.attributes?.trackCount ?? tracks.length,
+          isPartial: (album.attributes?.trackCount ?? tracks.length) > tracks.length
         }
       }
     }
@@ -629,10 +629,11 @@ export default class AppleMusicSource implements SourceInstance {
             `https://music.apple.com/${country}/playlist/${id}`,
           artworkUrl: this.parseArtwork(playlist.attributes?.artwork) || '',
           author: playlist.attributes?.curatorName?.trim() || '',
-          totalTracks: capTotalTracks(
-            playlist.relationships?.tracks?.meta?.total ?? tracks.length,
-            this.nodelink.options.playback?.maxPlaylistLength
-          )
+          updatedAt: (playlist.attributes as any)?.lastModifiedDate || null,
+          totalTracks: playlist.relationships?.tracks?.meta?.total ?? tracks.length,
+          isPartial:
+            (playlist.relationships?.tracks?.meta?.total ?? tracks.length) >
+            tracks.length
         }
       }
     }

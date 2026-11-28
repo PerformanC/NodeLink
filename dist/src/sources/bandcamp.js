@@ -1,5 +1,5 @@
 import { PassThrough, pipeline } from 'node:stream';
-import { capTotalTracks, encodeTrack, logger, makeRequest } from '../utils.js';
+import { encodeTrack, logger, makeRequest } from '../utils.js';
 const BANDCAMP_BASE_URL = 'https://bandcamp.com';
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`;
 const BANDCAMP_TRACK_PATTERN = /^https?:\/\/([^/]+)\.bandcamp\.com\/(track|album)\/([^/?]+)/;
@@ -251,12 +251,24 @@ export default class BandcampSource {
                 if (tracks.length === 0) {
                     return { loadType: 'empty', data: {} };
                 }
+                const rawTralbum = tralbum;
+                const rawCurrent = (tralbum.current ?? {});
+                const isAlbum = rawCurrent.type === 'album' || rawTralbum.item_type === 'album';
                 const playlist = {
                     info: {
                         name: this.normalizeText(tralbum.current?.title) ?? 'BandCamp Playlist',
                         selectedTrack: 0
                     },
-                    pluginInfo: {},
+                    pluginInfo: {
+                        type: isAlbum ? 'album' : 'playlist',
+                        identifier: String(rawTralbum.id ?? rawCurrent.id ?? ''),
+                        url: rawTralbum.url ?? url,
+                        artworkUrl: artworkUrl || null,
+                        author: author || this.normalizeText(tralbum.artist) || null,
+                        isAlbum,
+                        createdAt: rawCurrent.release_date || null,
+                        totalTracks: tracks.length
+                    },
                     tracks
                 };
                 return { loadType: 'playlist', data: playlist };
@@ -353,7 +365,9 @@ export default class BandcampSource {
                 url: firstPage.itemUrl ?? url,
                 artworkUrl: this.createPlaylistArtworkUrl(firstPage.imageId, firstPage.isArt),
                 author: this.normalizeText(firstPage.attribution?.name),
-                totalTracks: capTotalTracks(firstPage.tracksSummary?.totalCount ?? tracks.length, max)
+                totalTracks: firstPage.tracksSummary?.totalCount ?? tracks.length,
+                isPartial: (firstPage.tracksSummary?.totalCount ?? tracks.length) >
+                    tracks.length
             },
             tracks
         };

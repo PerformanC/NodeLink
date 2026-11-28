@@ -18,7 +18,6 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -633,6 +632,9 @@ export default class TidalSource {
         } => item !== null
       )
 
+    const albumArtist = this.asRecord(albumData.artist)
+    const albumCover = this.asString(albumData.cover)
+
     return {
       loadType: 'playlist',
       data: {
@@ -641,7 +643,20 @@ export default class TidalSource {
           selectedTrack: 0
         },
         tracks,
-        pluginInfo: {} as Record<string, unknown>
+        pluginInfo: {
+          type: 'album',
+          identifier: id,
+          url: `https://tidal.com/album/${id}`,
+          artworkUrl: albumCover ? this.buildImageUrl(albumCover, '1280x1280') : null,
+          author: this.asString(albumArtist?.name) ?? '',
+          authorUrl: this.asString(albumArtist?.url) ?? null,
+          totalTracks: this.asNumber(albumData.numberOfTracks) ?? tracks.length,
+          isPartial:
+            (this.asNumber(albumData.numberOfTracks) ?? tracks.length) >
+            tracks.length,
+          isAlbum: true,
+          createdAt: this.asString(albumData.releaseDate) ?? null
+        }
       }
     }
   }
@@ -718,6 +733,8 @@ export default class TidalSource {
       `Loaded ${tracks.length} of ${totalTracks} tracks from playlist "${this.asString(playlistData.title) || 'Unknown Playlist'}".`
     )
 
+    const playlistCreator = this.asRecord(playlistData.creator)
+
     return {
       loadType: 'playlist',
       data: {
@@ -731,12 +748,11 @@ export default class TidalSource {
           identifier: id,
           url: `https://tidal.com/playlist/${id}`,
           artworkUrl: this.getPlaylistCoverUrl(playlistData),
-          // The playlist endpoint only exposes `creator.id`, not a name.
-          author: '',
-          totalTracks: capTotalTracks(
-            totalTracks,
-            this.nodelink.options.playback?.maxPlaylistLength
-          )
+          author: this.asString(playlistCreator?.name) ?? '',
+          createdAt: this.asString(playlistData.created) ?? null,
+          updatedAt: this.asString(playlistData.lastUpdated) ?? null,
+          totalTracks,
+          isPartial: totalTracks > tracks.length
         }
       }
     }

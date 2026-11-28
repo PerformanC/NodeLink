@@ -20,7 +20,7 @@ import type {
   HttpRequestResult,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
-import { capTotalTracks, encodeTrack, logger, makeRequest } from '../utils.ts'
+import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
 const BANDCAMP_BASE_URL = 'https://bandcamp.com'
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
@@ -367,13 +367,25 @@ export default class BandcampSource {
           return { loadType: 'empty', data: {} }
         }
 
+        const rawTralbum = tralbum as unknown as Record<string, unknown>
+        const rawCurrent = (tralbum.current ?? {}) as Record<string, unknown>
+        const isAlbum = rawCurrent.type === 'album' || rawTralbum.item_type === 'album'
         const playlist: PlaylistData = {
           info: {
             name:
               this.normalizeText(tralbum.current?.title) ?? 'BandCamp Playlist',
             selectedTrack: 0
           },
-          pluginInfo: {} as Record<string, unknown>,
+          pluginInfo: {
+            type: isAlbum ? 'album' : 'playlist',
+            identifier: String(rawTralbum.id ?? rawCurrent.id ?? ''),
+            url: (rawTralbum.url as string | undefined) ?? url,
+            artworkUrl: artworkUrl || null,
+            author: author || this.normalizeText(tralbum.artist) || null,
+            isAlbum,
+            createdAt: (rawCurrent.release_date as string | undefined) || null,
+            totalTracks: tracks.length
+          },
           tracks
         }
 
@@ -496,10 +508,10 @@ export default class BandcampSource {
           firstPage.isArt
         ),
         author: this.normalizeText(firstPage.attribution?.name),
-        totalTracks: capTotalTracks(
-          firstPage.tracksSummary?.totalCount ?? tracks.length,
-          max
-        )
+        totalTracks: firstPage.tracksSummary?.totalCount ?? tracks.length,
+        isPartial:
+          (firstPage.tracksSummary?.totalCount ?? tracks.length) >
+          tracks.length
       },
       tracks
     }

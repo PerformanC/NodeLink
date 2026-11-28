@@ -14,6 +14,7 @@ import { parentPort } from 'node:worker_threads';
 import { StreamTransportServer } from '../playback/streamTransport.js';
 import { resolveStreamTransportRoute } from '../playback/streamTransportRouter.js';
 import { getBestMatch, logger } from '../utils.js';
+import { normalizePlaylistResult } from '../utils/playlistNormalizer.js';
 /**
  * Central manager for audio source providers.
  * Handles source discovery, dynamic loading, and request routing based on URL patterns or aliases.
@@ -362,7 +363,21 @@ export default class SourcesManager {
             }
             const result = await fn.apply(instance, args);
             const duration = Math.round(performance.now() - start);
-            if (result.loadType === 'search') {
+            if (result.loadType === 'playlist' ||
+                (result.loadType !== 'empty' &&
+                    result.loadType !== 'error' &&
+                    result.data &&
+                    typeof result.data === 'object' &&
+                    'tracks' in result.data &&
+                    'info' in result.data)) {
+                normalizePlaylistResult(result, {
+                    sourceName,
+                    url: method === 'resolve' && typeof args[0] === 'string'
+                        ? args[0]
+                        : undefined
+                });
+            }
+            else if (result.loadType === 'search') {
                 for (const track of result.data)
                     track.userData ??= {};
             }
@@ -490,10 +505,10 @@ export default class SourcesManager {
             pluginInfo: {},
             tracks: allTracks
         };
-        return {
+        return normalizePlaylistResult({
             loadType: 'playlist',
             data: playlistData
-        };
+        });
     }
     /**
      * Resolves a URL to a resource using the prioritized pattern map.

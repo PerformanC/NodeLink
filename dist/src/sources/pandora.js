@@ -547,17 +547,50 @@ export default class PandoraSource {
             });
         }
         const annotations = data?.annotations ?? {};
-        const trackKeys = this.limitArray(Object.keys(annotations), this.getMaxPlaylistLength());
+        const rawKeys = Object.keys(annotations);
+        const originalCount = rawKeys.length;
+        const maxLength = this.getMaxPlaylistLength();
+        const trackKeys = this.limitArray(rawKeys, maxLength);
         const tracks = trackKeys
             .map((key) => annotations[key])
             .filter((item) => item !== undefined)
             .map((item) => this.buildTrack(item));
+        const isTruncated = originalCount > tracks.length;
+        const rawData = data;
+        const albumAnnotation = Object.values(annotations).find((a) => {
+            const rec = a;
+            return rec?.type === 'AL' || rec?.pandoraId === id;
+        });
+        const rawTotalNum = (typeof rawData?.totalTracks === 'number' && rawData.totalTracks >= 0 ? rawData.totalTracks : null) ??
+            (typeof rawData?.totalCount === 'number' && rawData.totalCount >= 0 ? rawData.totalCount : null) ??
+            (typeof rawData?.trackCount === 'number' && rawData.trackCount >= 0 ? rawData.trackCount : null) ??
+            (typeof albumAnnotation?.trackCount === 'number' && albumAnnotation.trackCount >= 0 ? albumAnnotation.trackCount : null) ??
+            (typeof albumAnnotation?.totalTracks === 'number' && albumAnnotation.totalTracks >= 0 ? albumAnnotation.totalTracks : null) ??
+            null;
+        let totalTracks = null;
+        let isPartial = undefined;
+        if (rawTotalNum !== null) {
+            totalTracks = rawTotalNum;
+            isPartial = tracks.length < rawTotalNum;
+        }
+        else if (isTruncated) {
+            isPartial = true;
+            totalTracks = originalCount;
+        }
+        else {
+            totalTracks = tracks.length;
+            isPartial = false;
+        }
         return {
             loadType: 'playlist',
             data: {
                 info: { name, selectedTrack: 0 },
                 tracks,
-                pluginInfo: { type: 'album' }
+                pluginInfo: {
+                    type: 'album',
+                    totalTracks,
+                    ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+                }
             }
         };
     }
@@ -676,12 +709,34 @@ export default class PandoraSource {
             .map((key) => annotations[key])
             .filter((item) => item !== undefined)
             .map((item) => this.buildTrack(item));
+        const rawData = data;
+        const rawTotalNum = (typeof rawData?.totalTracks === 'number' && rawData.totalTracks >= 0 ? rawData.totalTracks : null) ??
+            (typeof rawData?.totalCount === 'number' && rawData.totalCount >= 0 ? rawData.totalCount : null) ??
+            (typeof rawData?.trackCount === 'number' && rawData.trackCount >= 0 ? rawData.trackCount : null) ??
+            (typeof rawData?.total === 'number' && rawData.total >= 0 ? rawData.total : null) ??
+            null;
+        let totalTracks = null;
+        let isPartial = undefined;
+        if (rawTotalNum !== null) {
+            totalTracks = rawTotalNum;
+            isPartial = tracks.length < rawTotalNum;
+        }
+        else if (tracks.length < maxLength) {
+            totalTracks = tracks.length;
+            isPartial = false;
+        }
+        else {
+            totalTracks = null;
+        }
         return {
             loadType: 'playlist',
             data: {
                 info: { name: data?.name ?? 'Playlist', selectedTrack: 0 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    totalTracks,
+                    ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+                }
             }
         };
     }

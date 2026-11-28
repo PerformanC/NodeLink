@@ -468,7 +468,10 @@ export default class GoogleDriveSource {
                 data: {
                     info: { name: title, selectedTrack: 0 },
                     tracks,
-                    pluginInfo: {}
+                    pluginInfo: {
+                        totalTracks: tracks.length,
+                        isPartial: false
+                    }
                 }
             };
         }

@@ -476,6 +476,99 @@ export interface TrackData {
 }
 
 /**
+ * Fully normalized playlist information returned by NodeLink's API.
+ * @public
+ */
+export interface NormalizedPlaylistInfo {
+  /** Playlist name. */
+  name: string
+  /** Selected track index, following existing protocol behavior. */
+  selectedTrack: number
+  /** Unique playlist identifier from the source. */
+  identifier: string | null
+  /** Original playlist URL. */
+  uri: string | null
+  /** Playlist cover artwork. */
+  artworkUrl: string | null
+  /** Playlist creator or owner. */
+  author: string | null
+  /** Playlist creator's profile URL. */
+  authorUrl: string | null
+  /** Original playlist source. */
+  sourceName: string | null
+  /** Total tracks available in the original playlist. */
+  totalTracks: number | null
+  /** Number of tracks successfully returned. */
+  loadedTracks: number
+  /** Combined duration of the complete playlist in milliseconds, when known. */
+  totalDuration: number | null
+  /** Combined duration of the loaded tracks in milliseconds. */
+  loadedDuration: number
+  /** Whether only part of the original playlist was loaded. Omitted when false. */
+  isPartial?: boolean
+  /** Whether the returned collection represents an album. */
+  isAlbum: boolean
+  /** Whether the playlist contains explicit content, when determinable. Omitted when indeterminable. */
+  isExplicit?: boolean
+  /** Playlist creation date in ISO 8601 format. Omitted when unavailable. */
+  createdAt?: string
+  /** Playlist's last modification date in ISO 8601 format. Omitted when unavailable. */
+  updatedAt?: string
+}
+
+/**
+ * Playlist metadata object. May be partially populated by raw sources,
+ * and is fully populated as NormalizedPlaylistInfo by the normalizer.
+ * @public
+ */
+export interface PlaylistInfo {
+  /** Playlist name. */
+  name: string
+  /** Selected track index. */
+  selectedTrack: number
+  /** Unique playlist identifier from the source. */
+  identifier?: string | null
+  /** Original playlist URL. */
+  uri?: string | null
+  /** Playlist cover artwork. */
+  artworkUrl?: string | null
+  /** Playlist creator or owner. */
+  author?: string | null
+  /** Playlist creator's profile URL. */
+  authorUrl?: string | null
+  /** Original playlist source. */
+  sourceName?: string | null
+  /** Total tracks available in the original playlist. */
+  totalTracks?: number | null
+  /** Number of tracks successfully returned. */
+  loadedTracks?: number
+  /** Combined duration of the complete playlist in milliseconds, when known. */
+  totalDuration?: number | null
+  /** Combined duration of the loaded tracks in milliseconds. */
+  loadedDuration?: number
+  /** Whether only part of the original playlist was loaded. */
+  isPartial?: boolean | null
+  /** Whether the returned collection represents an album. */
+  isAlbum?: boolean | null
+  /** Whether the playlist contains explicit content, when determinable. */
+  isExplicit?: boolean | null
+  /** Playlist creation date in ISO 8601 format. */
+  createdAt?: string | null
+  /** Playlist's last modification date in ISO 8601 format. */
+  updatedAt?: string | null
+}
+
+/**
+ * Raw playlist metadata provided by individual sources prior to normalization.
+ * @public
+ */
+export interface RawPlaylistInfo extends Partial<PlaylistInfo> {
+  name: string
+  selectedTrack?: number
+  [key: string]: unknown
+}
+
+/**
  * Collection-level metadata carried in `PlaylistData.pluginInfo`.
  * @public
  */
@@ -486,12 +579,30 @@ export interface PlaylistPluginInfo extends Record<string, unknown> {
   identifier?: string
   /** Canonical URL of the collection. */
   url?: string
+  /** Canonical URI of the collection. */
+  uri?: string
   /** Cover image URL. */
   artworkUrl?: string | null
   /** Owner / curator / artist name. */
   author?: string | null
+  /** Profile URL of the author/owner. */
+  authorUrl?: string | null
   /** Total tracks in the collection, which can exceed the tracks returned. */
-  totalTracks?: number
+  totalTracks?: number | null
+  /** Total duration in milliseconds if known by the source. */
+  totalDuration?: number | null
+  /** Whether this collection is an album. */
+  isAlbum?: boolean
+  /** Whether this collection is partial. */
+  isPartial?: boolean
+  /** Whether this collection has explicit content. */
+  isExplicit?: boolean | null
+  /** Creation date in ISO 8601 format. */
+  createdAt?: string | null
+  /** Last update date in ISO 8601 format. */
+  updatedAt?: string | null
+  /** Original source name. */
+  sourceName?: string | null
 }
 
 /**
@@ -500,12 +611,7 @@ export interface PlaylistPluginInfo extends Record<string, unknown> {
  */
 export interface PlaylistData {
   /** Playlist metadata. */
-  info: {
-    /** Playlist name. */
-    name: string
-    /** Selected track index. */
-    selectedTrack: number
-  }
+  info: PlaylistInfo
   /**
    * Collection metadata. Sources that can provide it fill `type`,
    * `identifier`, `url`, `artworkUrl`, `author` and `totalTracks`; sources may
@@ -514,6 +620,16 @@ export interface PlaylistData {
   pluginInfo: PlaylistPluginInfo
   /** Tracks in the playlist. */
   tracks: TrackData[]
+}
+
+/**
+ * Input playlist object accepted by the normalizer from sources before enrichment.
+ * @public
+ */
+export interface RawPlaylistData {
+  info: RawPlaylistInfo
+  pluginInfo?: PlaylistPluginInfo | Record<string, unknown>
+  tracks?: TrackData[]
 }
 
 /**

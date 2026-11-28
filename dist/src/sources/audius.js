@@ -318,6 +318,7 @@ export default class AudiusSource {
                         ? this.albumLoadLimit
                         : this.playlistLoadLimit;
                     const tracks = await this._loadPlaylistTracks(pl.id, limit);
+                    const isComplete = tracks.length < limit;
                     return {
                         loadType: 'playlist',
                         data: {
@@ -327,7 +328,10 @@ export default class AudiusSource {
                                 selectedTrack: 0
                             },
                             tracks,
-                            pluginInfo: {}
+                            pluginInfo: {
+                                totalTracks: isComplete ? tracks.length : null,
+                                ...(isComplete ? { isPartial: false } : {})
+                            }
                         }
                     };
                 }
@@ -452,7 +456,11 @@ export default class AudiusSource {
                         type: 'playlist',
                         url: `https://audius.co/${artist}/playlist/${playlistSlug}`,
                         artworkUrl: this._getArtworkUrl(playlistData.artwork),
-                        author: playlistData.user?.name
+                        author: playlistData.user?.name,
+                        totalTracks: tracks.length < this.playlistLoadLimit ? tracks.length : null,
+                        ...(tracks.length < this.playlistLoadLimit
+                            ? { isPartial: false }
+                            : {})
                     },
                     tracks
                 }
@@ -498,7 +506,9 @@ export default class AudiusSource {
                         type: 'album',
                         url: `https://audius.co/${artist}/album/${albumSlug}`,
                         artworkUrl: this._getArtworkUrl(albumData.artwork),
-                        author: albumData.user?.name
+                        author: albumData.user?.name,
+                        totalTracks: tracks.length < this.albumLoadLimit ? tracks.length : null,
+                        ...(tracks.length < this.albumLoadLimit ? { isPartial: false } : {})
                     },
                     tracks
                 }

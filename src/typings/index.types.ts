@@ -305,15 +305,40 @@ export interface SourceSearchResult {
  * @public
  */
 export interface PlaylistInfo {
-  /**
-   * Playlist name
-   */
+  /** Playlist name. */
   name: string
-
-  /**
-   * Selected track index
-   */
+  /** Selected track index, following existing protocol behavior. */
   selectedTrack?: number
+  /** Unique playlist identifier from the source. */
+  identifier?: string | null
+  /** Original playlist URL. */
+  uri?: string | null
+  /** Playlist cover artwork. */
+  artworkUrl?: string | null
+  /** Playlist creator or owner. */
+  author?: string | null
+  /** Playlist creator's profile URL. */
+  authorUrl?: string | null
+  /** Original playlist source. */
+  sourceName?: string | null
+  /** Total tracks available in the original playlist. */
+  totalTracks?: number | null
+  /** Number of tracks successfully returned. */
+  loadedTracks?: number
+  /** Combined duration of the complete playlist in milliseconds, when known. */
+  totalDuration?: number | null
+  /** Combined duration of the loaded tracks in milliseconds. */
+  loadedDuration?: number
+  /** Whether only part of the original playlist was loaded. */
+  isPartial?: boolean
+  /** Whether the returned collection represents an album. */
+  isAlbum?: boolean
+  /** Whether the playlist contains explicit content, when determinable. */
+  isExplicit?: boolean | null
+  /** Playlist creation date in ISO 8601 format. */
+  createdAt?: string | null
+  /** Playlist's last modification date in ISO 8601 format. */
+  updatedAt?: string | null
 }
 
 /**
