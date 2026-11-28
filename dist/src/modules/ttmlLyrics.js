@@ -113,7 +113,8 @@ function inherit(element, context) {
 // TTML parallel containers use parent-relative time. Explicit iTunes lyric
 // timing documents use media-absolute timestamps instead.
 function resolveTiming(element, parent) {
-    const absolute = parent.absolute || /^(word|line)$/i.test(element.attrs['itunes:timing'] ?? '');
+    const absolute = parent.absolute ||
+        /^(word|line)$/i.test(element.attrs['itunes:timing'] ?? '');
     const origin = absolute ? 0 : (parent.start ?? 0);
     const begin = parseTtmlTime(element.attrs.begin);
     const ownEnd = parseTtmlTime(element.attrs.end);
