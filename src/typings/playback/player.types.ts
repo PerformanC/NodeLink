@@ -80,6 +80,9 @@ export interface LyricsLine {
  * Full lyrics payload emitted to clients.
  */
 export interface LyricsPayload {
+  /** Whether the provider supplied reliable timestamps. */
+  synced?: boolean
+
   sourceName: string
   provider: string
   text: string
@@ -463,12 +466,13 @@ export interface LyricsManagerLike {
     loadType: 'lyrics'
     data: {
       provider: string
-      lines: Array<{
-        time: number
-        duration?: number
-        text: string
-        words?: Array<Record<string, unknown>>
-      }>
+      synced?: boolean
+      lines: Array<
+        Omit<
+          import('../../managers/lyricsManager.ts').LyricsLine,
+          'duration'
+        > & { duration?: number }
+      >
     }
   } | null>
 }

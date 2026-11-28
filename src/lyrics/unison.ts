@@ -1,5 +1,5 @@
+import { parseTtmlLyrics } from '../modules/ttmlLyrics.ts'
 import type {
-  LyricsLine,
   LyricsResult,
   TrackInfo
 } from '../typings/lyrics/musixmatch.types.ts'
@@ -63,122 +63,6 @@ export default class UnisonLyrics {
       this.nodelink.proxyManager?.report?.(proxy.url, success, statusCode)
   }
 
-  private _parseTtml(ttml: string): LyricsLine[] {
-    const decode = (value: string): string =>
-      value.replace(
-        /&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos);/gi,
-        (entity, token: string) => {
-          const named: Record<string, string> = {
-            amp: '&',
-            lt: '<',
-            gt: '>',
-            quot: '"',
-            apos: "'"
-          }
-          if (token[0] !== '#') return named[token.toLowerCase()] ?? entity
-          const code =
-            token[1]?.toLowerCase() === 'x'
-              ? Number.parseInt(token.slice(2), 16)
-              : Number.parseInt(token.slice(1), 10)
-          return Number.isFinite(code) ? String.fromCodePoint(code) : entity
-        }
-      )
-    const timeMs = (value?: string): number | null => {
-      if (!value) return null
-      const raw = value.trim()
-      if (/^\d+(?:\.\d+)?ms$/i.test(raw))
-        return Math.round(Number.parseFloat(raw))
-      if (/^\d+(?:\.\d+)?s$/i.test(raw))
-        return Math.round(Number.parseFloat(raw) * 1000)
-      const parts = raw.split(':').map(Number)
-      if (parts.some((part) => !Number.isFinite(part))) return null
-      const [hoursOrMinutes, minutesOrSeconds, seconds] = parts
-      if (
-        parts.length === 2 &&
-        hoursOrMinutes !== undefined &&
-        minutesOrSeconds !== undefined
-      )
-        return Math.round((hoursOrMinutes * 60 + minutesOrSeconds) * 1000)
-      if (
-        parts.length === 3 &&
-        hoursOrMinutes !== undefined &&
-        minutesOrSeconds !== undefined &&
-        seconds !== undefined
-      )
-        return Math.round(
-          (hoursOrMinutes * 3600 + minutesOrSeconds * 60 + seconds) * 1000
-        )
-      return null
-    }
-    const lines: LyricsLine[] = []
-    const sectionStack: Array<string | undefined> = []
-    const tokens =
-      /<div\b([^>]*)>|<\/div>|<p\b([^>]*)>([\s\S]*?)<\/p>/gi
-    let token = tokens.exec(ttml)
-    while (token) {
-      if (token[0].startsWith('</div')) {
-        sectionStack.pop()
-        token = tokens.exec(ttml)
-        continue
-      }
-      if (token[1] !== undefined && token[2] === undefined) {
-        const songPart = token[1].match(
-          /\bitunes:songPart=["']([^"']+)["']/i
-        )?.[1]
-        sectionStack.push(songPart?.trim() || undefined)
-        token = tokens.exec(ttml)
-        continue
-      }
-
-      const attrs = token[2] ?? ''
-      const body = token[3] ?? ''
-      const start = timeMs(attrs.match(/\bbegin=["']([^"']+)["']/i)?.[1]) ?? 0
-      const end = timeMs(attrs.match(/\bend=["']([^"']+)["']/i)?.[1])
-      const section =
-        attrs.match(/\bitunes:songPart=["']([^"']+)["']/i)?.[1]?.trim() ||
-        [...sectionStack].reverse().find(Boolean)
-      const isBackground = /\bttm:role=["']x-bg["']/i.test(attrs)
-      const words: Array<{ text: string; time: number; duration: number }> = []
-      let text = ''
-      let cursor = 0
-      const spans = /<span\b([^>]*)>([\s\S]*?)<\/span>/gi
-      let span = spans.exec(body)
-      while (span) {
-        text += decode(body.slice(cursor, span.index).replace(/<[^>]+>/g, ''))
-        const wordText = decode((span[2] ?? '').replace(/<[^>]+>/g, '')).trim()
-        const spanAttrs = span[1] ?? ''
-        const wordStart = timeMs(
-          spanAttrs.match(/\bbegin=["']([^"']+)["']/i)?.[1]
-        )
-        const wordEnd = timeMs(spanAttrs.match(/\bend=["']([^"']+)["']/i)?.[1])
-        if (wordText) {
-          text += wordText
-          if (wordStart !== null)
-            words.push({
-              text: wordText,
-              time: wordStart,
-              duration: wordEnd === null ? 0 : Math.max(0, wordEnd - wordStart)
-            })
-        }
-        cursor = span.index + span[0].length
-        span = spans.exec(body)
-      }
-      text += decode(body.slice(cursor).replace(/<[^>]+>/g, ''))
-      text = text.replace(/\s+/g, ' ').trim()
-      if (text)
-        lines.push({
-          text,
-          time: start,
-          duration: end === null ? 0 : Math.max(0, end - start),
-          ...(words.length ? { words } : {}),
-          ...(section ? { section } : {}),
-          ...(isBackground ? { isBackground: true } : {})
-        })
-      token = tokens.exec(ttml)
-    }
-    return lines.sort((left, right) => left.time - right.time)
-  }
-
   async setup(): Promise<boolean> {
     return true
   }
@@ -229,10 +113,9 @@ export default class UnisonLyrics {
       const data = payload.data
       if (!payload.success || !data?.lyrics)
         return { loadType: 'empty', data: {} }
-      const timed = /ttml|lrc/i.test(data.format ?? '')
-      const lines = /ttml/i.test(data.format ?? '')
-        ? this._parseTtml(data.lyrics)
-        : []
+      const { lines, synced } = /ttml/i.test(data.format ?? '')
+        ? parseTtmlLyrics(data.lyrics)
+        : { lines: [], synced: false }
       if (!lines.length) return { loadType: 'empty', data: {} }
       const songUrl = `https://unison.betterlyrics.org/song/${encodeURIComponent(data.videoId ?? track.identifier ?? '')}`
       const submitter = data.submitter?.keyId
@@ -245,7 +128,7 @@ export default class UnisonLyrics {
         loadType: 'lyrics',
         data: {
           name: data.song ?? track.title,
-          synced: timed,
+          synced,
           lines,
           attribution: {
             name: 'Unison',

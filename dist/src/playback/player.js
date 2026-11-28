@@ -3,6 +3,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { SeekError } from '@ecliptia/seekable-stream';
 import discordVoice from '@performanc/voice';
 import { EndReasons, GatewayEvents } from '../constants.js';
+import { activeLyricsIndices, buildPlaybackLyrics, hasCompleteLyricsTiming, nextLyricsExpiry } from '../modules/playbackLyrics.js';
 import { YOUTUBE_WEBM_ITAGS } from '../sources/youtube/common.js';
 import { logger } from '../utils.js';
 import { AutoMixRegistry } from './processing/AutoMixRegistry.js';
@@ -111,6 +112,7 @@ export class Player {
     _lyricsBasePosition = 0;
     _lyricsBasePackets = 0;
     _lyricsMarkerTimer = null;
+    _lyricsRequestRevision = 0;
     _audioMixerInitPromise = null;
     isLyricsSubscribed = false;
     currentLyrics = null;
@@ -737,6 +739,7 @@ export class Player {
         this._lastStreamDataTime = 0;
         this.streamInfo = null;
         this.sponsorBlock.segments = [];
+        this._lyricsRequestRevision++;
         this.currentLyrics = null;
         this.lyricsLineIndex = -1;
         this._fading('reset');
@@ -985,7 +988,8 @@ export class Player {
             !extraData.__resolvedFormat) {
             extraData.__resolvedFormat = resolvedUrlData.format;
         }
-        if (resolvedUrlData.isLive !== undefined && extraData.isLive === undefined) {
+        if (resolvedUrlData.isLive !== undefined &&
+            extraData.isLive === undefined) {
             extraData.isLive = resolvedUrlData.isLive;
         }
         if (resolvedUrlData.isEncrypted !== undefined &&
@@ -2681,10 +2685,12 @@ export class Player {
         const mixAdditionalData = {
             ...(urlData.additionalData ?? {})
         };
-        if (typeof urlData.format === 'string' && !mixAdditionalData.__resolvedFormat) {
+        if (typeof urlData.format === 'string' &&
+            !mixAdditionalData.__resolvedFormat) {
             mixAdditionalData.__resolvedFormat = urlData.format;
         }
-        if (urlData.isLive !== undefined && mixAdditionalData.isLive === undefined) {
+        if (urlData.isLive !== undefined &&
+            mixAdditionalData.isLive === undefined) {
             mixAdditionalData.isLive = urlData.isLive;
         }
         if (urlData.isEncrypted !== undefined &&
@@ -2772,6 +2778,7 @@ export class Player {
         logger('debug', 'Player', `[Action: unsubscribeLyrics] Method invoked for guild ${this.guildId}`);
         return new Promise((resolve) => {
             this.isLyricsSubscribed = false;
+            this._lyricsRequestRevision++;
             this.skipTrackSource = false;
             this.currentLyrics = null;
             this.lyricsLineIndex = -1;
@@ -2829,33 +2836,25 @@ export class Player {
      * Loads lyrics for the current track and emits events.
      */
     async _loadLyrics() {
-        if (!this.track)
+        const track = this.track;
+        if (!track || !this.isLyricsSubscribed)
             return;
+        const revision = ++this._lyricsRequestRevision;
         const lyricsManager = this.nodelink.lyrics ?? (await this.nodelink.getLyricsManager?.());
         if (!lyricsManager)
             return;
-        const lyricsData = await lyricsManager.loadLyrics({ info: this.track.info }, undefined, this.skipTrackSource);
+        const lyricsData = await lyricsManager.loadLyrics({ info: track.info }, undefined, this.skipTrackSource);
+        if (!this.isLyricsSubscribed ||
+            this.track !== track ||
+            this._lyricsRequestRevision !== revision)
+            return;
         if (lyricsData && lyricsData.loadType === 'lyrics') {
-            const lines = lyricsData.data.lines.map((line) => ({
-                timestamp: line.time,
-                duration: line.duration || 0,
-                line: line.text,
-                words: line.words || [],
-                plugin: {}
-            }));
-            for (let i = 0; i < lines.length - 1; i++) {
-                const current = lines[i];
-                const next = lines[i + 1];
-                if (!current || !next)
-                    continue;
-                if (current.duration === 0) {
-                    current.duration = next.timestamp - current.timestamp;
-                }
-            }
+            const lines = buildPlaybackLyrics(lyricsData.data);
             const payload = {
-                sourceName: this.track.info.sourceName,
+                sourceName: track.info.sourceName,
                 provider: lyricsData.data.provider,
-                text: lyricsData.data.lines.map((l) => l.text).join('\n'),
+                synced: hasCompleteLyricsTiming(lyricsData.data),
+                text: lines.map((line) => line.line).join('\n'),
                 lines,
                 plugin: {}
             };
@@ -2878,10 +2877,17 @@ export class Player {
      * Synchronizes lyrics with current playback position.
      */
     _syncLyrics(force = false) {
-        if (!this.isLyricsSubscribed || !this.currentLyrics?.lines)
+        if (!this.isLyricsSubscribed ||
+            this.isPaused ||
+            this.currentLyrics?.synced !== true ||
+            !this.currentLyrics.lines)
             return;
-        if (this._lyricsMarkerTimer && !force)
-            return;
+        if (this._lyricsMarkerTimer) {
+            if (!force)
+                return;
+            clearTimeout(this._lyricsMarkerTimer);
+            this._lyricsMarkerTimer = null;
+        }
         const timescale = this._getTimescale();
         const playbackSpeed = timescale.speed * timescale.rate;
         const position = this._getLyricsPosition(playbackSpeed);
@@ -2889,15 +2895,50 @@ export class Player {
         this._recalculateLyricsIndex(position, lines);
         const nextIndex = this.lyricsLineIndex + 1;
         const nextLine = lines[nextIndex];
+        if (!Number.isFinite(playbackSpeed) || playbackSpeed <= 0)
+            return;
+        const lyrics = this.currentLyrics;
+        const expiry = nextLyricsExpiry(lines, position);
+        if (expiry !== undefined && (!nextLine || expiry < nextLine.timestamp)) {
+            const prior = activeLyricsIndices(lines, position);
+            this._lyricsMarkerTimer = setTimeout(() => {
+                this._lyricsMarkerTimer = null;
+                if (!this.isLyricsSubscribed ||
+                    this.isPaused ||
+                    this.currentLyrics !== lyrics)
+                    return;
+                const currentPosition = this._getLyricsPosition(playbackSpeed);
+                const previousIndex = this.lyricsLineIndex;
+                this._recalculateLyricsIndex(currentPosition, lines);
+                const active = activeLyricsIndices(lines, currentPosition);
+                const line = lines[this.lyricsLineIndex];
+                if (line &&
+                    previousIndex === this.lyricsLineIndex &&
+                    (prior.length !== active.length ||
+                        prior.some((value, i) => value !== active[i]))) {
+                    this.emitEvent('LyricsLineEvent', {
+                        lineIndex: this.lyricsLineIndex,
+                        line,
+                        skipped: false,
+                        activeLineIndices: active
+                    });
+                }
+                this._syncLyrics(true);
+            }, Math.max(20, Math.ceil((expiry - position) / playbackSpeed)));
+            this._lyricsMarkerTimer.unref?.();
+            return;
+        }
         if (!nextLine)
             return;
         const nextTimestamp = nextLine.timestamp;
         const delayMs = Math.max(0, (nextTimestamp - position) / playbackSpeed);
         this._lyricsMarkerTimer = setTimeout(() => {
             this._lyricsMarkerTimer = null;
-            if (!this.isLyricsSubscribed || !this.currentLyrics?.lines)
+            if (!this.isLyricsSubscribed ||
+                this.isPaused ||
+                this.currentLyrics !== lyrics)
                 return;
-            const timedLine = this.currentLyrics.lines[nextIndex];
+            const timedLine = lyrics.lines[nextIndex];
             if (!timedLine)
                 return;
             const nowPosition = this._getLyricsPosition(playbackSpeed);
@@ -2917,7 +2958,8 @@ export class Player {
             this.emitEvent('LyricsLineEvent', {
                 lineIndex: nextIndex,
                 line: timedLine,
-                skipped: drift > 60
+                skipped: drift > 60,
+                activeLineIndices: activeLyricsIndices(lyrics.lines, nowPosition)
             });
             this._syncLyrics(true);
         }, delayMs);
@@ -2936,7 +2978,9 @@ export class Player {
      * Recalculates the current lyric line index using binary search O(log N).
      */
     _recalculateLyricsIndex(positionOverride, linesOverride, allowBackward = false) {
-        if (!this.currentLyrics?.lines)
+        if (this.isPaused ||
+            this.currentLyrics?.synced !== true ||
+            !this.currentLyrics.lines)
             return;
         const lines = linesOverride || this.currentLyrics.lines;
         let position = positionOverride;
@@ -2972,7 +3016,8 @@ export class Player {
                 this.emitEvent('LyricsLineEvent', {
                     lineIndex: foundIndex,
                     line: line,
-                    skipped
+                    skipped,
+                    activeLineIndices: activeLyricsIndices(lines, position)
                 });
             }
         }
