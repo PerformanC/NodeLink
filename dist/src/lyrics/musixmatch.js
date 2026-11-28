@@ -44,7 +44,6 @@ const BRACKET_JUNK = /\s*\[([^\]]*(?:official|lyrics?|video|audio|mv|visualizer|
 const FEAT_PATTERN = /\s*[([]\s*(?:ft\.?|feat\.?|featuring)\s+[^)\]]+[)\]]/gi;
 const SEPARATORS = [' - ', ' – ', ' — ', ' ~ '];
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
-const DEFAULT_COOKIE = 'AWSELB=unknown; x-mxm-user-id=undefined; x-mxm-token-guid=undefined; mxm-encrypted-token=';
 const isAuthCode = (code) => code === 401 || code === 403;
 const extractMacroCalls = (body) => {
     const calls = body?.macro_calls;
@@ -175,6 +174,7 @@ export default class MusixmatchLyrics {
     cache;
     cacheCleanup;
     tokenFile;
+    proxyIndex = 0;
     constructor(nodelink) {
         this.nodelink = nodelink;
         this.guid = _guid();
@@ -196,6 +196,16 @@ export default class MusixmatchLyrics {
             if (cachedToken) {
                 this.tokenData = cachedToken;
                 logger('info', 'Lyrics', 'Loaded Musixmatch token from CredentialManager');
+            }
+        }
+        const proxyConfig = this.nodelink.options.lyrics?.musixmatch?.proxy;
+        if (Array.isArray(proxyConfig) && proxyConfig.length > 0) {
+            logger('info', 'Lyrics', `Musixmatch configured with ${proxyConfig.length} rotating proxies`);
+        }
+        else {
+            const proxy = this._getProxy();
+            if (proxy) {
+                logger('info', 'Lyrics', `Musixmatch configured with proxy: ${proxy.url}`);
             }
         }
         this._startCacheCleanup();
@@ -287,30 +297,96 @@ export default class MusixmatchLyrics {
             ? ''
             : Array.from(this.cookies, ([k, v]) => `${k}=${v}`).join('; ');
     }
+    /* INFO: Musixmatch's AWS edge returns 403 for the old placeholder cookie, so only send cookies it actually issued */
+    _cookieHeader() {
+        const cookie = this._getCookies();
+        return cookie ? { cookie } : {};
+    }
+    /**
+     * Resolves the proxy configuration for outbound Musixmatch requests.
+     * Supports round-robin rotation for proxy arrays, with automatic fallback
+     * to the global ProxyManager pool.
+     *
+     * @param rotate - Whether to force advancing to the next proxy in the array.
+     * @returns Proxy settings or undefined if no proxy is configured.
+     * @internal
+     */
+    _getProxy(rotate = false) {
+        const customProxy = this.nodelink.options.lyrics?.musixmatch?.proxy;
+        if (customProxy) {
+            if (Array.isArray(customProxy)) {
+                if (customProxy.length === 0)
+                    return undefined;
+                if (rotate) {
+                    this.proxyIndex = (this.proxyIndex + 1) % customProxy.length;
+                }
+                const item = customProxy[this.proxyIndex % customProxy.length];
+                if (!item)
+                    return undefined;
+                return typeof item === 'string' ? { url: item } : item;
+            }
+            if (typeof customProxy === 'string') {
+                return { url: customProxy };
+            }
+            return customProxy;
+        }
+        const proxySnapshot = this.nodelink.proxyManager?.getBestProxy('musixmatch');
+        if (proxySnapshot?.target?.url) {
+            return {
+                url: proxySnapshot.target.url,
+                username: proxySnapshot.target.username,
+                password: proxySnapshot.target.password
+            };
+        }
+        return undefined;
+    }
+    /**
+     * Reports health metrics of a used proxy back to the ProxyManager.
+     * @internal
+     */
+    _reportProxy(proxy, success, statusCode) {
+        if (!proxy?.url || !this.nodelink.proxyManager?.report)
+            return;
+        this.nodelink.proxyManager.report(proxy.url, success, statusCode);
+    }
     async _fetchToken() {
         const url = _buildUrl(ENDPOINTS.TOKEN, { app_id: APP_ID });
-        const { statusCode, headers, body } = await http1makeRequest(url, {
-            method: 'GET',
-            headers: {
-                accept: '*/*',
-                'accept-language': 'en',
-                cookie: DEFAULT_COOKIE,
-                'user-agent': DEFAULT_UA
+        const proxy = this._getProxy();
+        try {
+            const { statusCode, headers, body } = await http1makeRequest(url, {
+                method: 'GET',
+                headers: {
+                    accept: '*/*',
+                    'accept-language': 'en',
+                    'user-agent': DEFAULT_UA
+                },
+                proxy
+            });
+            if (headers?.['set-cookie']) {
+                this._parseCookies(headers['set-cookie']);
             }
-        });
-        if (headers?.['set-cookie']) {
-            this._parseCookies(headers['set-cookie']);
+            if (statusCode !== 200) {
+                this._reportProxy(proxy, false, statusCode ?? 0);
+                throw new HttpError(statusCode ?? 0);
+            }
+            const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+            const header = parsed?.message?.header;
+            const token = parsed?.message?.body?.user_token;
+            if (header?.status_code !== 200) {
+                this._reportProxy(proxy, false, header?.status_code ?? 0);
+                throw new MxmApiError(header?.status_code ?? 0, header?.hint);
+            }
+            if (!token) {
+                this._reportProxy(proxy, false, 0);
+                throw new MxmApiError(0, header?.hint || 'No token in response');
+            }
+            this._reportProxy(proxy, true, 200);
+            return token;
         }
-        if (statusCode !== 200)
-            throw new HttpError(statusCode ?? 0);
-        const parsed = typeof body === 'string' ? JSON.parse(body) : body;
-        const header = parsed?.message?.header;
-        const token = parsed?.message?.body?.user_token;
-        if (header?.status_code !== 200)
-            throw new MxmApiError(header?.status_code ?? 0, header?.hint);
-        if (!token)
-            throw new MxmApiError(0, header?.hint || 'No token in response');
-        return token;
+        catch (err) {
+            this._reportProxy(proxy, false, err instanceof HttpError ? err.status : 0);
+            throw err;
+        }
     }
     async _resetToken(hard = false) {
         this.tokenData = null;
@@ -402,13 +478,15 @@ export default class MusixmatchLyrics {
         });
         if (this.useManualToken)
             url = this._signUrl(url);
+        const proxy = this._getProxy();
         const { statusCode, headers, body } = await http1makeRequest(url, {
             method: 'GET',
             headers: {
                 accept: 'application/json',
                 'user-agent': DEFAULT_UA,
-                cookie: this._getCookies()
-            }
+                ...this._cookieHeader()
+            },
+            proxy
         });
         if (!this.useManualToken && headers?.['set-cookie']) {
             this._parseCookies(headers['set-cookie']);
@@ -417,6 +495,7 @@ export default class MusixmatchLyrics {
         const apiStatus = parsed?.message?.header?.status_code;
         const apiHint = parsed?.message?.header?.hint;
         if (isAuthCode(statusCode ?? 0) || isAuthCode(apiStatus)) {
+            this._reportProxy(proxy, false, statusCode ?? 403);
             if (!this.useManualToken) {
                 const isCaptcha = apiHint?.toLowerCase().includes('captcha');
                 await this._resetToken(!!isCaptcha);
@@ -427,26 +506,36 @@ export default class MusixmatchLyrics {
                     usertoken: newToken,
                     guid: this.guid
                 });
+                const retryProxy = this._getProxy(true);
                 const { statusCode: retryStatus, headers: retryHeaders, body: retryBody } = await http1makeRequest(retryUrl, {
                     method: 'GET',
                     headers: {
                         accept: 'application/json',
                         'user-agent': DEFAULT_UA,
-                        cookie: this._getCookies()
-                    }
+                        ...this._cookieHeader()
+                    },
+                    proxy: retryProxy
                 });
                 if (retryHeaders?.['set-cookie']) {
                     this._parseCookies(retryHeaders['set-cookie']);
                 }
                 const retryParsed = typeof retryBody === 'string' ? JSON.parse(retryBody) : retryBody;
                 if (retryStatus !== 200 ||
-                    retryParsed?.message?.header?.status_code !== 200)
+                    retryParsed?.message?.header?.status_code !== 200) {
+                    this._reportProxy(retryProxy, false, retryStatus ?? 0);
                     return null;
+                }
+                this._reportProxy(retryProxy, true, 200);
                 return retryParsed.message.body;
             }
             return null;
         }
-        return statusCode === 200 && apiStatus === 200 ? parsed.message.body : null;
+        if (statusCode === 200 && apiStatus === 200) {
+            this._reportProxy(proxy, true, 200);
+            return parsed.message.body;
+        }
+        this._reportProxy(proxy, false, statusCode ?? 0);
+        return null;
     }
     async _fetchMacro(title, artist) {
         const body = await this._request(ENDPOINTS.MACRO, {

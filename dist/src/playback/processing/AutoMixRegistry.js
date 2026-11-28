@@ -6,7 +6,8 @@
  * @license GPL-3.0-or-later
  * @copyright (C) 2026 PerformanC
  *
- * @keywords AutoMix, Background Audio Analysis, Concurrency Throttling, Adaptive Early-Stop, Priority Scheduling, PCM Audio Profiling
+ * @keywords AutoMix, Background Audio Analysis, Concurrency Throttling, Adaptive Early-Stop,
+ *   Priority Scheduling, PCM Audio Profiling
  *
  * @description
  * CPU-aware, budget-conscious analysis registry and priority queue for AutoMix.
@@ -22,8 +23,11 @@
  * @see LICENSE
  */
 import { performance } from 'node:perf_hooks';
+import { framesToMediaMs, mediaMsToFrames } from '../../typings/playback/progressiveAnalysis.types.js';
 import { logger } from '../../utils.js';
-import { inspectTrackOutroQuick, MusicalAnalyzer, TransitionProfileCache } from './MusicalAnalyzer.js';
+import { AutoMixCacheManager } from './AutoMixCacheManager.js';
+import { IncrementalAnalysisEngine } from './IncrementalAnalysisEngine.js';
+import { MusicalAnalyzer, TransitionProfileCache } from './MusicalAnalyzer.js';
 const PRIORITY_ORDER = {
     IMMINENT_TRANSITION: 1,
     CURRENT_OUTRO: 2,
@@ -39,6 +43,7 @@ const PRIORITY_ORDER = {
 export class AutoMixRegistry {
     static instance = null;
     inFlightJobs = new Map();
+    queuedJobs = new Map();
     queue = [];
     MAX_QUEUE_SIZE = 30;
     maxConcurrent = 2;
@@ -84,35 +89,59 @@ export class AutoMixRegistry {
      * Evaluates whether an existing cached profile can be reused for the requested analysis.
      */
     isProfileReusable(cached, windowStartMs, windowDurationMs, priority) {
-        if (priority === 'PASSIVE_REFINEMENT' && cached.confidence >= 0.5) {
-            return true;
-        }
-        if (cached.outroProfile) {
-            const cachedStart = cached.outroProfile.analyzedWindowStartMs;
-            const cachedEnd = cached.outroProfile.analyzedWindowEndMs;
-            const requestedEnd = windowStartMs + windowDurationMs;
-            const overlapStart = Math.max(cachedStart, windowStartMs);
-            const overlapEnd = Math.min(cachedEnd, requestedEnd);
-            const overlapDuration = Math.max(0, overlapEnd - overlapStart);
-            const overlapRatio = windowDurationMs > 0 ? overlapDuration / windowDurationMs : 1.0;
-            if (overlapRatio >= 0.7 &&
-                cached.outroProfile.analysisConfidence >= 0.45) {
-                return true;
-            }
-        }
-        if ((cached.outroProfile?.analysisConfidence ?? cached.confidence) >= 0.65) {
-            return true;
-        }
-        return false;
+        const profile = cached.outroProfile;
+        if (!profile || windowDurationMs <= 0)
+            return false;
+        const requestedEnd = windowStartMs + windowDurationMs;
+        const overlapStart = Math.max(profile.analyzedWindowStartMs, windowStartMs);
+        const overlapEnd = Math.min(profile.analyzedWindowEndMs, requestedEnd);
+        const overlapDuration = Math.max(0, overlapEnd - overlapStart);
+        const overlapRatio = overlapDuration / windowDurationMs;
+        const minimumConfidence = priority === 'IMMINENT_TRANSITION' ? 0.55 : 0.45;
+        return (overlapRatio >= 0.7 && profile.analysisConfidence >= minimumConfidence);
     }
     /**
-     * Requests background outro analysis for a track with deduplication, priority scheduling, and CPU budget enforcement.
+     * Cancels any pending or in-flight analysis jobs for a given track identifier.
+     *
+     * @param trackIdentifier - The identifier of the track to cancel.
+     */
+    cancelTrackAnalysis(trackIdentifier) {
+        for (const job of this.inFlightJobs.values()) {
+            if (job.trackIdentifier === trackIdentifier) {
+                job.abortController.abort();
+            }
+        }
+        for (const [key, job] of this.queuedJobs) {
+            if (job.trackIdentifier === trackIdentifier) {
+                this.queuedJobs.delete(key);
+                const idx = this.queue.indexOf(job);
+                if (idx >= 0)
+                    this.queue.splice(idx, 1);
+                job.resolve(null);
+            }
+        }
+    }
+    /**
+     * Requests background outro analysis for a track with deduplication, priority scheduling, and CPU
+     * budget enforcement.
      */
     async requestOutroAnalysis(options) {
         const trackId = options.track.info.identifier;
-        const windowDurationMs = options.windowDurationMs ?? 25000;
+        const windowDurationMs = Math.max(1, options.windowDurationMs ?? 25000);
         const trackLength = options.track.info.length || 0;
         const windowStartMs = options.windowStartMs ?? Math.max(0, trackLength - windowDurationMs);
+        const deduplicationKey = [
+            trackId,
+            Math.round(windowStartMs),
+            Math.round(windowDurationMs)
+        ].join(':');
+        const attachCompletion = (promise) => options.onComplete
+            ? promise.then((profile) => {
+                if (profile)
+                    options.onComplete?.(profile);
+                return profile;
+            })
+            : promise;
         const cached = TransitionProfileCache.get(trackId);
         if (cached &&
             this.isProfileReusable(cached, windowStartMs, windowDurationMs, options.priority)) {
@@ -132,28 +161,48 @@ export class AutoMixRegistry {
             options.onComplete?.(cached);
             return cached;
         }
-        const inFlight = this.inFlightJobs.get(trackId);
+        const inFlight = this.inFlightJobs.get(deduplicationKey);
         if (inFlight) {
             logger('info', 'AutoMix', `[AutoMix][BackgroundAnalysis] Deduplicated in-flight job for ${trackId}`, {
                 trackId,
                 reusedExistingJob: true,
                 existingJobId: inFlight.jobId,
-                priority: options.priority
+                priority: options.priority,
+                windowStartMs: Math.round(windowStartMs),
+                windowDurationMs: Math.round(windowDurationMs)
             });
             if (PRIORITY_ORDER[options.priority] < PRIORITY_ORDER[inFlight.priority]) {
                 inFlight.priority = options.priority;
             }
-            return inFlight.promise;
+            return attachCompletion(inFlight.promise);
+        }
+        const queued = this.queuedJobs.get(deduplicationKey);
+        if (queued) {
+            if (PRIORITY_ORDER[options.priority] < PRIORITY_ORDER[queued.priority]) {
+                queued.priority = options.priority;
+                queued.options.priority = options.priority;
+                this.queue.sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
+                    a.createdAt - b.createdAt);
+            }
+            logger('debug', 'AutoMix', `[AutoMix][BackgroundAnalysis] Deduplicated queued job for ${trackId}`, { trackId, jobId: queued.jobId, priority: queued.priority });
+            return attachCompletion(queued.promise);
         }
         if (this.queue.length >= this.MAX_QUEUE_SIZE) {
             if (options.priority === 'PASSIVE_REFINEMENT') {
                 logger('debug', 'AutoMix', `[AutoMix][BackgroundAnalysis] Queue saturated, dropping passive refinement for ${trackId}`);
-                return cached ?? null;
+                return null;
             }
-            const lowestIndex = this.queue.findIndex((j) => j.priority === 'PASSIVE_REFINEMENT');
+            const lowestIndex = this.queue.findIndex((job) => job.priority === 'PASSIVE_REFINEMENT');
             if (lowestIndex >= 0) {
                 const evicted = this.queue.splice(lowestIndex, 1)[0];
-                evicted?.resolve(null);
+                if (evicted) {
+                    this.queuedJobs.delete(evicted.deduplicationKey);
+                    evicted.resolve(null);
+                }
+            }
+            else {
+                logger('warn', 'AutoMix', `[AutoMix][BackgroundAnalysis] Queue full, rejecting ${options.priority} job for ${trackId}`, { trackId, priority: options.priority, queueSize: this.queue.length });
+                return null;
             }
         }
         const jobId = `aj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -167,23 +216,31 @@ export class AutoMixRegistry {
             windowStartMs: Math.round(windowStartMs),
             windowDurationMs: Math.round(windowDurationMs)
         });
-        return new Promise((resolve, reject) => {
-            const queuedJob = {
-                jobId,
-                trackIdentifier: trackId,
-                options: {
-                    ...options,
-                    windowStartMs,
-                    windowDurationMs
-                },
-                priority: options.priority,
-                createdAt: performance.now(),
-                resolve,
-                reject
-            };
-            this._enqueueJob(queuedJob);
-            this._processQueue();
+        let resolveJob;
+        let rejectJob;
+        const promise = new Promise((resolve, reject) => {
+            resolveJob = resolve;
+            rejectJob = reject;
         });
+        const queuedJob = {
+            jobId,
+            deduplicationKey,
+            trackIdentifier: trackId,
+            promise,
+            options: {
+                ...options,
+                windowStartMs,
+                windowDurationMs
+            },
+            priority: options.priority,
+            createdAt: performance.now(),
+            resolve: resolveJob,
+            reject: rejectJob
+        };
+        this.queuedJobs.set(deduplicationKey, queuedJob);
+        this._enqueueJob(queuedJob);
+        this._processQueue();
+        return promise;
     }
     _enqueueJob(job) {
         const index = this.queue.findIndex((j) => PRIORITY_ORDER[j.priority] > PRIORITY_ORDER[job.priority]);
@@ -202,16 +259,18 @@ export class AutoMixRegistry {
         if (!job)
             return;
         this.activeWorkers++;
+        this.queuedJobs.delete(job.deduplicationKey);
         const abortController = new AbortController();
         const inFlight = {
             jobId: job.jobId,
+            deduplicationKey: job.deduplicationKey,
             trackIdentifier: job.trackIdentifier,
             priority: job.priority,
             startedAt: performance.now(),
             abortController,
             promise: this._executeJob(job, abortController)
         };
-        this.inFlightJobs.set(job.trackIdentifier, inFlight);
+        this.inFlightJobs.set(job.deduplicationKey, inFlight);
         inFlight.promise
             .then((profile) => {
             job.resolve(profile);
@@ -220,7 +279,7 @@ export class AutoMixRegistry {
             job.reject(err);
         })
             .finally(() => {
-            this.inFlightJobs.delete(job.trackIdentifier);
+            this.inFlightJobs.delete(inFlight.deduplicationKey);
             this.activeWorkers--;
             setImmediate(() => this._processQueue());
         });
@@ -234,18 +293,28 @@ export class AutoMixRegistry {
         const windowStartMs = options.windowStartMs ?? 0;
         const windowDurationMs = options.windowDurationMs ?? 25000;
         const trackLength = track.info.length || 0;
+        if (options.signal) {
+            if (options.signal.aborted) {
+                abortController.abort();
+            }
+            else {
+                options.signal.addEventListener('abort', () => abortController.abort(), { once: true });
+            }
+        }
+        if (abortController.signal.aborted) {
+            return null;
+        }
         let streamResource = null;
         let bytesRead = 0;
         let decodeStart = 0;
         let analyzeStart = 0;
         let stoppedEarly = false;
-        const chunks = [];
         try {
             const trackInfo = {
                 ...track.info,
                 audioTrackId: track.audioTrackId
             };
-            const fetched = await options.fetchResource(trackInfo, options.urlData, windowStartMs, true, true);
+            const fetched = await options.fetchResource(trackInfo, options.urlData, windowStartMs, true, false);
             if ('exception' in fetched || !fetched.stream.stream) {
                 if (!('exception' in fetched))
                     fetched.stream.destroy();
@@ -255,67 +324,254 @@ export class AutoMixRegistry {
             const stream = fetched.stream.stream;
             const fetchMs = performance.now() - startFetchTime;
             decodeStart = performance.now();
-            const analyzer = new MusicalAnalyzer(48000);
-            const expectedBytes = Math.round((windowDurationMs / 1000) * 48000 * 4);
-            const minStopBytes = Math.round(12 * 48000 * 4);
+            const expectedBytes = Math.max(4, Math.floor(((windowDurationMs / 1000) * 48000 * 4) / 4) * 4);
+            const engine = new IncrementalAnalysisEngine({
+                trackId,
+                durationMs: trackLength,
+                hopDurationMs: 20
+            });
+            const musicalAnalyzer = new MusicalAnalyzer(48000);
+            const baseFrame = mediaMsToFrames(windowStartMs, 48000);
+            let currentFrame = baseFrame;
+            let jobMaxEventLoopLagMs = 0;
+            const jobLagMonitor = setInterval(() => {
+                const currentLag = this.getEventLoopLagMs();
+                if (currentLag > jobMaxEventLoopLagMs) {
+                    jobMaxEventLoopLagMs = currentLag;
+                }
+            }, 50);
+            jobLagMonitor.unref?.();
+            AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'preparando');
             const resultPromise = new Promise((resolve) => {
                 let finished = false;
+                let analysisStarted = false;
+                let streamEnd;
+                let streamSafetyTimer = null;
+                let resumeTimer = null;
+                // Dynamic mathematical pacing:
+                // Calculates the slice delay (ms) as a continuous function of the real playback time budget.
+                // timeBudget = remaining playback time minus crossfade preparation lead (5000ms).
+                const SLICE_DURATION_MS = 200;
+                const YIELD_SLICE_BYTES = SLICE_DURATION_MS * 48 * 4; // 38,400 bytes
+                const SAFETY_SPEEDUP_FACTOR = 6; // Target finishing well ahead of the deadline
+                const MAX_PACE_DELAY_MS = 25;
+                const remainingMs = options.remainingMs ??
+                    (job.priority === 'IMMINENT_TRANSITION' ? 0 : 60000);
+                const timeBudgetMs = Math.max(0, remainingMs - 5000);
+                const paceDelayMs = Math.min(MAX_PACE_DELAY_MS, Math.max(0, Math.round((SLICE_DURATION_MS * timeBudgetMs) /
+                    (windowDurationMs * SAFETY_SPEEDUP_FACTOR))));
+                let bytesSinceYield = 0;
+                const detachListeners = () => {
+                    if (resumeTimer) {
+                        clearTimeout(resumeTimer);
+                        resumeTimer = null;
+                    }
+                    clearInterval(jobLagMonitor);
+                    stream.removeListener('data', onData);
+                    stream.removeListener('end', onEnd);
+                    stream.removeListener('error', onError);
+                    abortController.signal.removeEventListener('abort', onAbort);
+                };
                 const finish = (profile) => {
                     if (finished)
                         return;
                     finished = true;
-                    stream.removeListener('data', onData);
-                    stream.removeListener('end', onEnd);
-                    stream.removeListener('error', onError);
+                    if (streamSafetyTimer)
+                        clearTimeout(streamSafetyTimer);
+                    detachListeners();
                     try {
                         streamResource?.destroy();
                     }
                     catch { }
+                    if (profile) {
+                        AutoMixCacheManager.getInstance().setProfile(trackId, profile);
+                    }
+                    else {
+                        AutoMixCacheManager.getInstance().setAnalysisStatus(trackId, 'falha');
+                    }
                     resolve(profile);
                 };
+                const completeAnalysis = () => {
+                    if (finished || analysisStarted)
+                        return;
+                    analysisStarted = true;
+                    if (streamSafetyTimer)
+                        clearTimeout(streamSafetyTimer);
+                    detachListeners();
+                    try {
+                        stream.pause();
+                        streamResource?.destroy();
+                    }
+                    catch { }
+                    stoppedEarly = streamEnd === undefined && bytesRead >= expectedBytes;
+                    analyzeStart = performance.now();
+                    if (bytesRead === 0) {
+                        finish(null);
+                        return;
+                    }
+                    const featureMap = engine.finalize();
+                    const musicalProfile = musicalAnalyzer.getProfile();
+                    const actualWindowEndMs = windowStartMs + framesToMediaMs(Math.floor(bytesRead / 4), 48000);
+                    const points = featureMap.points;
+                    let avgEnergy = musicalProfile.energy;
+                    let energyProfileType = 'sustained';
+                    if (points.length > 0) {
+                        let totalRms = 0;
+                        for (const p of points)
+                            totalRms += p.rms;
+                        avgEnergy = totalRms / points.length;
+                        const lastThirdStart = Math.floor(points.length * 0.67);
+                        let lastThirdSum = 0;
+                        let lastThirdCount = 0;
+                        for (let i = lastThirdStart; i < points.length; i++) {
+                            const p = points[i];
+                            if (p) {
+                                lastThirdSum += p.rms;
+                                lastThirdCount++;
+                            }
+                        }
+                        const lastThirdAvg = lastThirdCount > 0 ? lastThirdSum / lastThirdCount : avgEnergy;
+                        if (lastThirdAvg < avgEnergy * 0.1)
+                            energyProfileType = 'cliff';
+                        else if (lastThirdAvg < avgEnergy * 0.4)
+                            energyProfileType = 'fade';
+                        else if (lastThirdAvg < avgEnergy * 0.7)
+                            energyProfileType = 'decay';
+                        else
+                            energyProfileType = 'sustained';
+                    }
+                    let vocalEndMs = 0;
+                    let lastPhraseEndMs = 0;
+                    let finalBeatMs = 0;
+                    if (points.length > 0) {
+                        const naturalPoint = featureMap.naturalOutroPointMs ?? actualWindowEndMs;
+                        for (let i = points.length - 1; i >= 0; i--) {
+                            const p = points[i];
+                            if (!p)
+                                continue;
+                            if (finalBeatMs === 0 && p.beat) {
+                                finalBeatMs = p.timestampMs;
+                            }
+                            if (vocalEndMs === 0 && p.vocalActivity >= 0.35) {
+                                vocalEndMs = p.timestampMs;
+                            }
+                            if (lastPhraseEndMs === 0 &&
+                                p.onset &&
+                                p.timestampMs <= naturalPoint) {
+                                lastPhraseEndMs = p.timestampMs;
+                            }
+                        }
+                        if (finalBeatMs === 0)
+                            finalBeatMs = Math.round(naturalPoint);
+                        if (lastPhraseEndMs === 0)
+                            lastPhraseEndMs = Math.round(naturalPoint);
+                    }
+                    const profileConfidence = Math.max(musicalProfile.confidence, featureMap.confidence);
+                    const profile = {
+                        trackId,
+                        timestamp: Date.now(),
+                        analysisVersion: 2,
+                        confidence: profileConfidence,
+                        bpm: musicalProfile.bpm,
+                        bpmConfidence: musicalProfile.confidence,
+                        key: musicalProfile.key,
+                        keyConfidence: musicalProfile.keyConfidence,
+                        energy: avgEnergy,
+                        loudnessLufs: musicalProfile.loudnessLufs,
+                        vocalActivity: musicalProfile.vocalActivity,
+                        brightness: musicalProfile.brightness,
+                        bands: { ...musicalProfile.bands },
+                        outroProfile: {
+                            analyzedWindowStartMs: Math.round(windowStartMs),
+                            analyzedWindowEndMs: Math.round(actualWindowEndMs),
+                            analysisConfidence: profileConfidence,
+                            energyDecayStartMs: Math.round(featureMap.energyDecayStartMs ?? windowStartMs),
+                            naturalOutroPointMs: Math.round(featureMap.naturalOutroPointMs ?? actualWindowEndMs),
+                            vocalEndMs: Math.round(vocalEndMs),
+                            lastPhraseEndMs: Math.round(lastPhraseEndMs),
+                            finalBeatMs: Math.round(finalBeatMs),
+                            averageEnergy: avgEnergy,
+                            sourceEndRms: featureMap.sourceEndRms,
+                            energyProfile: energyProfileType
+                        },
+                        introProfile: null,
+                        durationMs: trackLength
+                    };
+                    TransitionProfileCache.set(trackId, profile);
+                    finish(profile);
+                };
                 const onData = (chunk) => {
+                    if (finished || analysisStarted)
+                        return;
                     if (abortController.signal.aborted) {
                         finish(null);
                         return;
                     }
-                    chunks.push(chunk);
-                    bytesRead += chunk.length;
-                    analyzer.pushPcm(chunk);
-                    if (bytesRead >= minStopBytes &&
-                        bytesRead % (48000 * 4) < chunk.length) {
-                        const currentProfile = analyzer.getProfile();
-                        if (currentProfile.confidence >= 0.72 &&
-                            currentProfile.keyConfidence >= 0.6) {
-                            stoppedEarly = true;
-                            onEnd();
-                            return;
-                        }
+                    const remainingBytes = Math.max(0, expectedBytes - bytesRead);
+                    const bytesToTake = Math.min(chunk.length, remainingBytes);
+                    const alignedBytes = bytesToTake - (bytesToTake % 4);
+                    if (alignedBytes > 0) {
+                        const alignedChunk = alignedBytes === chunk.length
+                            ? chunk
+                            : chunk.subarray(0, alignedBytes);
+                        const frameCount = alignedBytes / 4;
+                        // Progressively feed both engines with zero buffer accumulation
+                        engine.pushPcm({
+                            data: alignedChunk,
+                            startFrame: currentFrame,
+                            frameCount
+                        });
+                        musicalAnalyzer.pushPcm(alignedChunk);
+                        currentFrame += frameCount;
+                        bytesRead += alignedBytes;
+                        bytesSinceYield += alignedBytes;
                     }
                     if (bytesRead >= expectedBytes) {
-                        onEnd();
+                        completeAnalysis();
+                        return;
+                    }
+                    // Paced consumption without rush: apply backpressure by pausing stream between audio slices
+                    if (bytesSinceYield >= YIELD_SLICE_BYTES) {
+                        bytesSinceYield = 0;
+                        stream.pause();
+                        if (paceDelayMs <= 0) {
+                            setImmediate(() => {
+                                if (!finished &&
+                                    !analysisStarted &&
+                                    !abortController.signal.aborted) {
+                                    stream.resume();
+                                }
+                            });
+                        }
+                        else {
+                            resumeTimer = setTimeout(() => {
+                                resumeTimer = null;
+                                if (!finished &&
+                                    !analysisStarted &&
+                                    !abortController.signal.aborted) {
+                                    stream.resume();
+                                }
+                            }, paceDelayMs);
+                        }
                     }
                 };
                 const onEnd = () => {
-                    if (finished)
-                        return;
-                    analyzeStart = performance.now();
-                    if (chunks.length === 0) {
-                        finish(null);
-                        return;
-                    }
-                    const pcm = Buffer.concat(chunks);
-                    chunks.length = 0;
-                    const updatedProfile = inspectTrackOutroQuick(pcm, 48000, trackId, windowStartMs, trackLength);
-                    finish(updatedProfile);
+                    streamEnd = 'eof';
+                    completeAnalysis();
                 };
                 const onError = () => {
-                    finish(null);
+                    streamEnd = 'error';
+                    completeAnalysis();
                 };
+                const onAbort = () => finish(null);
                 stream.on('data', onData);
                 stream.once('end', onEnd);
                 stream.once('error', onError);
-                const safetyTimer = setTimeout(() => finish(null), 7000);
-                safetyTimer.unref?.();
+                abortController.signal.addEventListener('abort', onAbort, {
+                    once: true
+                });
+                streamSafetyTimer = setTimeout(completeAnalysis, paceDelayMs <= 0 ? 7000 : 25000);
+                streamSafetyTimer.unref?.();
             });
             const finalProfile = await resultPromise;
             const totalMs = performance.now() - startFetchTime;
@@ -346,8 +602,8 @@ export class AutoMixRegistry {
                     completedAt: Math.round(performance.now()),
                     elapsedMs: Math.round(totalMs),
                     playbackContinued: true,
-                    audioUnderrun: false,
-                    eventLoopLagMaxMs: Math.round(this.maxEventLoopLagMs * 10) / 10,
+                    playbackUnderrunObserved: null,
+                    eventLoopLagMaxMs: Math.round(jobMaxEventLoopLagMs * 10) / 10,
                     stoppedEarly,
                     cancelled: false
                 });
@@ -359,7 +615,6 @@ export class AutoMixRegistry {
             return null;
         }
         finally {
-            chunks.length = 0;
             try {
                 streamResource?.destroy();
             }

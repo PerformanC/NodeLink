@@ -14,6 +14,61 @@ const IHEART_PATTERN = /https?:\/\/(?:www\.)?iheart\.com\/live\/(?:[a-zA-Z0-9-]+
  */
 export default class IheartradioSource {
     /**
+     * Declarative test suite for validating iHeartRadio source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'iheartradio.station.resolve',
+            name: 'iHeartRadio Station URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.iheart.com/live/1469/'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Z100' },
+                    isStream: { op: 'equals', value: true },
+                    sourceName: { op: 'equals', value: 'iheartradio' }
+                }
+            }
+        },
+        {
+            id: 'iheartradio.station.slug',
+            name: 'iHeartRadio Station URL with slug resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://www.iheart.com/live/z100-1469/'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Z100' },
+                    isStream: { op: 'equals', value: true },
+                    sourceName: { op: 'equals', value: 'iheartradio' }
+                }
+            }
+        },
+        {
+            id: 'iheartradio.search.ihsearch',
+            name: 'iHeartRadio Search query (ihsearch:)',
+            input: {
+                type: 'search',
+                value: 'Z100',
+                searchType: 'ihsearch'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Z100' },
+                    sourceName: { op: 'equals', value: 'iheartradio' }
+                }
+            }
+        }
+    ];
+    /**
      * Worker runtime shared with the source manager.
      */
     nodelink;
@@ -51,7 +106,13 @@ export default class IheartradioSource {
                 options.search?.maxResults > 0
                 ? options.search.maxResults
                 : 10;
+        this.streamCapabilities = {
+            protocols: ['http', 'https'],
+            formats: ['aac', 'mp3'],
+            codecs: ['aac', 'mpeg']
+        };
     }
+    streamCapabilities;
     /**
      * Announces the source during worker initialization.
      *

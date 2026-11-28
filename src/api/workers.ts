@@ -9,13 +9,8 @@ import type {
   WorkerMetricsEntry,
   WorkerMetricsPayload
 } from '../typings/api/stats.types.ts'
+import { isLoopbackRequest } from '../utils/clientAddress.ts'
 import { sendErrorResponse, sendResponse } from '../utils.ts'
-
-/**
- * Loopback addresses allowed to access the workers patch endpoint when
- * external patching is disabled.
- */
-const LOOPBACKS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
 /**
  * Request payload accepted by the workers patch endpoint.
@@ -175,7 +170,7 @@ function getEndpointConfig(
   const code =
     typeof endpoint?.code === 'string' && endpoint.code.length > 0
       ? endpoint.code
-      : 'CAPYBARA'
+      : ''
 
   return {
     patchEnabled: endpoint?.patchEnabled === true,
@@ -341,8 +336,8 @@ function handlePatch(
     return
   }
 
-  const remoteAddress = req.socket?.remoteAddress ?? ''
-  if (!endpointConfig.allowExternalPatch && !LOOPBACKS.has(remoteAddress)) {
+  const isLocal = isLoopbackRequest(req.socket?.remoteAddress, req.headers)
+  if (!endpointConfig.allowExternalPatch && !isLocal) {
     sendErrorResponse(
       req,
       res,
@@ -354,8 +349,20 @@ function handlePatch(
     return
   }
 
+  const serverPassword = nodelink.options.server.password
+  const authHeader = req.headers?.authorization
+  const isServerAuth =
+    authHeader === serverPassword || authHeader === `Bearer ${serverPassword}`
+
   const payload = getPatchPayload(req.body)
-  if (payload.code !== endpointConfig.code) {
+  const isCodeAuth =
+    typeof endpointConfig.code === 'string' &&
+    endpointConfig.code.length > 0 &&
+    typeof payload.code === 'string' &&
+    payload.code.length > 0 &&
+    payload.code === endpointConfig.code
+
+  if (!isServerAuth && !isCodeAuth) {
     sendErrorResponse(
       req,
       res,

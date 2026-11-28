@@ -76,7 +76,15 @@ export default class YouTubeLyrics {
      */
     async getLyrics(trackInfo, language) {
         const resolvedTrack = await this.nodelink.sources.resolve(trackInfo.uri, trackInfo.sourceName);
-        const captionTracks = resolvedTrack.data?.pluginInfo?.captions;
+        let captionTracks = resolvedTrack.data?.pluginInfo?.captions;
+        if (typeof captionTracks === 'string') {
+            try {
+                captionTracks = JSON.parse(captionTracks);
+            }
+            catch {
+                captionTracks = [];
+            }
+        }
         if (resolvedTrack.loadType !== 'track' || !Array.isArray(captionTracks)) {
             logger('debug', 'Lyrics', `No captions found for ${trackInfo.title} after resolving.`);
             return { loadType: 'empty', data: {} };

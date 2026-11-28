@@ -24,6 +24,7 @@ import type {
   TrackInfo,
   TrackStreamResult
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   HttpRequestResult,
   TrackEncodeInput
@@ -32,7 +33,7 @@ import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.ts'
 
 const DECRYPTION_KEY = 'IFYOUWANTTHEARTISTSTOGETPAIDDONOTDOWNLOADFROMMIXCLOUD'
 const MIXCLOUD_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0'
 const DEFAULT_MAX_RESULTS = 10
 const DEFAULT_MAX_PLAYLIST_LENGTH = 1000
 
@@ -41,6 +42,42 @@ const DEFAULT_MAX_PLAYLIST_LENGTH = 1000
  * @public
  */
 export default class MixcloudSource {
+  /**
+   * Declarative test suite for validating Mixcloud source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'mixcloud.track.resolve',
+      name: 'Mixcloud Track URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.mixcloud.com/kubozuzula/chillout-with-chopin/'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Chillout With Chopin' },
+          author: { op: 'matches', value: 'Kubo Zuzula' },
+          sourceName: { op: 'equals', value: 'mixcloud' }
+        }
+      }
+    },
+    {
+      id: 'mixcloud.search.mcsearch',
+      name: 'Mixcloud Search query (mcsearch:)',
+      input: {
+        type: 'search',
+        value: 'chillout',
+        searchType: 'mcsearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -74,13 +111,21 @@ export default class MixcloudSource {
     this.nodelink = nodelink
     this.config = nodelink.options
     this.patterns = [
-      /https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/(?!stream|uploads|favorites|listens|playlists)(?<slug>[^/]+)\/?/i,
-      /https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/playlists\/(?<playlist>[^/]+)\/?/i,
-      /https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<id>[^/]+)\/(?<type>uploads|favorites|listens|stream)?\/?/i
+      /^https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/(?!stream|uploads|favorites|listens|playlists)(?<slug>[^/]+)\/?/i,
+      /^https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<user>[^/]+)\/playlists\/(?<playlist>[^/]+)\/?/i,
+      /^https?:\/\/(?:(?:www|beta|m)\.)?mixcloud\.com\/(?<id>[^/]+)\/(?<type>uploads|favorites|listens|stream)?\/?/i
     ]
     this.searchTerms = ['mcsearch']
     this.priority = 90
+    this.streamCapabilities = {
+      heavyByDefault: true,
+      protocols: ['hls', 'https'],
+      formats: ['mpegts', 'm4a'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes source resources.
@@ -412,38 +457,58 @@ export default class MixcloudSource {
 
       const tracks: MixcloudTrackData[] = []
       let cursor: string | null = null
-      let hasNextPage = true
+      let hasNextPage = false
+      let stoppedEarly = false
       let playlistName = 'Mixcloud Playlist'
       const maxTracks =
         this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
 
-      while (hasNextPage && tracks.length < maxTracks) {
+      while (tracks.length < maxTracks) {
         const response = await this._request(queryTemplate(cursor))
         const body = this.parseObjectBody<MixcloudPlaylistLookupResponse>(
           response.body
         )
         const playlist = body?.data?.playlistLookup
-        if (response.statusCode !== 200 || !playlist?.items) break
+        if (response.statusCode !== 200 || !playlist?.items) {
+          if (tracks.length > 0) stoppedEarly = true
+          break
+        }
 
         playlistName = playlist.name || playlistName
+        const edges = playlist.items.edges || []
 
-        for (const edge of playlist.items.edges || []) {
+        for (const edge of edges) {
           const track = edge.node?.cloudcast
           if (!track?.url) continue
+          if (tracks.length >= maxTracks) {
+            stoppedEarly = true
+            break
+          }
           tracks.push(this._parseTrackData(track))
-          if (tracks.length >= maxTracks) break
         }
 
         cursor = playlist.items.pageInfo?.endCursor || null
         hasNextPage = playlist.items.pageInfo?.hasNextPage === true
+
+        if (tracks.length >= maxTracks) {
+          if (hasNextPage) stoppedEarly = true
+          break
+        }
+        if (!hasNextPage) break
       }
 
       if (tracks.length === 0) return this.emptyResult()
+
+      const isPartial = stoppedEarly || hasNextPage
 
       return {
         loadType: 'playlist',
         data: {
           info: { name: playlistName, selectedTrack: 0 },
+          pluginInfo: {
+            totalTracks: isPartial ? null : tracks.length,
+            isPartial
+          },
           tracks
         }
       }
@@ -490,12 +555,13 @@ export default class MixcloudSource {
 
       const tracks: MixcloudTrackData[] = []
       let cursor: string | null = null
-      let hasNextPage = true
+      let hasNextPage = false
+      let stoppedEarly = false
       let userDisplayName = username
       const maxTracks =
         this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
 
-      while (hasNextPage && tracks.length < maxTracks) {
+      while (tracks.length < maxTracks) {
         const response = await this._request(queryTemplate(cursor))
         const body = this.parseObjectBody<MixcloudUserLookupResponse>(
           response.body
@@ -504,27 +570,46 @@ export default class MixcloudSource {
         const list = userLookup?.[queryType] as
           | MixcloudUserCollection
           | undefined
-        if (response.statusCode !== 200 || !list) break
+        if (response.statusCode !== 200 || !list) {
+          if (tracks.length > 0) stoppedEarly = true
+          break
+        }
 
         userDisplayName = userLookup?.displayName || userDisplayName
+        const edges = list.edges || []
 
-        for (const edge of list.edges || []) {
+        for (const edge of edges) {
           const node = edge.node
           if (!node?.url) continue
+          if (tracks.length >= maxTracks) {
+            stoppedEarly = true
+            break
+          }
           tracks.push(this._parseTrackData(node))
-          if (tracks.length >= maxTracks) break
         }
 
         cursor = list.pageInfo?.endCursor || null
         hasNextPage = list.pageInfo?.hasNextPage === true
+
+        if (tracks.length >= maxTracks) {
+          if (hasNextPage) stoppedEarly = true
+          break
+        }
+        if (!hasNextPage) break
       }
 
       if (tracks.length === 0) return this.emptyResult()
+
+      const isPartial = stoppedEarly || hasNextPage
 
       return {
         loadType: 'playlist',
         data: {
           info: { name: `${userDisplayName} (${type})`, selectedTrack: 0 },
+          pluginInfo: {
+            totalTracks: isPartial ? null : tracks.length,
+            isPartial
+          },
           tracks
         }
       }

@@ -20,6 +20,7 @@ import type {
   JioSaavnWebApiGetResponse
 } from '../typings/sources/jiosaavn.types.ts'
 import type { TrackInfo } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type {
   BestMatchCandidate,
   TrackEncodeInput
@@ -49,6 +50,61 @@ const DEFAULT_ARTIST_LIMIT = 20
  * @public
  */
 export default class JioSaavnSource {
+  /**
+   * Declarative test suite for validating JioSaavn source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'jiosaavn.track.resolve',
+      name: 'JioSaavn Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.jiosaavn.com/song/kesariya-tu-fuljhadiyo-wale-tyohaaro-jesi-happy-diwali/AgIAQyBeWlI'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Kesariya' },
+          author: { op: 'matches', value: 'Pritam' },
+          sourceName: { op: 'equals', value: 'jiosaavn' }
+        }
+      }
+    },
+    {
+      id: 'jiosaavn.album.resolve',
+      name: 'JioSaavn Album URL resolution',
+      input: {
+        type: 'resolve',
+        value: 'https://www.jiosaavn.com/album/brahmastra/xq4v9ZFC9iA_'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 5 },
+        metadata: {
+          sourceName: { op: 'equals', value: 'jiosaavn' }
+        }
+      }
+    },
+    {
+      id: 'jiosaavn.search.jssearch',
+      name: 'JioSaavn Search query (jssearch:)',
+      input: {
+        type: 'search',
+        value: 'Kesariya',
+        searchType: 'jssearch'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Kesariya' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -99,13 +155,20 @@ export default class JioSaavnSource {
     this.searchTerms = ['jssearch']
     this.recommendationTerm = ['jsrec']
     this.patterns = [
-      /https?:\/\/(?:www\.)?jiosaavn\.com\/(?:(?<type>album|featured|song|s\/playlist|artist)\/)(?:[^/]+\/)(?<id>[A-Za-z0-9_,-]+)/
+      /^https?:\/\/(?:www\.)?jiosaavn\.com\/(?:(?<type>album|featured|song|s\/playlist|artist)\/)(?:[^/]+\/)(?<id>[A-Za-z0-9_,-]+)/
     ]
     this.priority = 60
     this.playlistLoadLimit =
       this.config.playlistLoadLimit || DEFAULT_PLAYLIST_LIMIT
     this.artistLoadLimit = this.config.artistLoadLimit || DEFAULT_ARTIST_LIMIT
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp4'],
+      codecs: ['aac']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the provider.
@@ -436,7 +499,6 @@ export default class JioSaavnSource {
       _format: 'json',
       _marker: '0',
       cc: 'in',
-      ctx: 'web6dot0',
       ...Object.fromEntries(
         Object.entries(params).map(([key, value]) => [key, String(value)])
       )
@@ -453,10 +515,11 @@ export default class JioSaavnSource {
     }
 
     if (typeof body === 'string') {
+      if (!body.trim()) return null
       try {
         return JSON.parse(body)
       } catch {
-        throw new Error('Failed to parse JioSaavn response')
+        return null
       }
     }
 
@@ -500,9 +563,19 @@ export default class JioSaavnSource {
     const webApiPayload = this.toObject(
       data
     ) as JioSaavnWebApiGetResponse | null
-    return Array.isArray(webApiPayload?.songs)
-      ? this._parseSongPayload(webApiPayload.songs[0])
-      : null
+
+    if (webApiPayload) {
+      if (Array.isArray(webApiPayload.songs) && webApiPayload.songs[0]) {
+        return this._parseSongPayload(webApiPayload.songs[0])
+      }
+      const values = Object.values(webApiPayload)
+      if (values[0] && typeof values[0] === 'object') {
+        const payload = this._parseSongPayload(values[0])
+        if (payload) return payload
+      }
+    }
+
+    return null
   }
 
   /**
@@ -545,10 +618,44 @@ export default class JioSaavnSource {
       typeof payload?.title === 'string' ? payload.title : payload?.name || ''
     if (type === 'artist') name = `${name}'s Top Tracks`
 
+    const rawPayload = payload as Record<string, unknown> | null
+    const rawCount =
+      rawPayload?.list_count ??
+      rawPayload?.song_count ??
+      rawPayload?.count ??
+      rawPayload?.total ??
+      (rawPayload?.more_info as Record<string, unknown> | undefined)?.song_count
+    const upstreamTotal =
+      typeof rawCount === 'number' && Number.isFinite(rawCount) && rawCount >= 0
+        ? Math.floor(rawCount)
+        : typeof rawCount === 'string' && /^\d+$/.test(rawCount.trim())
+          ? parseInt(rawCount.trim(), 10)
+          : null
+
+    const limit =
+      type === 'artist' ? this.artistLoadLimit : this.playlistLoadLimit
+    let isPartial: boolean | undefined = undefined
+    let totalTracks: number | null = null
+
+    if (upstreamTotal !== null) {
+      totalTracks = upstreamTotal
+      isPartial = tracks.length < upstreamTotal
+    } else if (tracks.length < limit) {
+      totalTracks = tracks.length
+      isPartial = false
+    } else {
+      totalTracks = null
+    }
+
     const playlistData: JioSaavnPlaylistData = {
       info: {
         name: this._cleanString(name),
         selectedTrack: 0
+      },
+      pluginInfo: {
+        type,
+        totalTracks,
+        ...(typeof isPartial === 'boolean' ? { isPartial } : {})
       },
       tracks
     }

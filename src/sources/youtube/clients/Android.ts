@@ -20,6 +20,7 @@ import {
   BaseClient,
   buildTrack,
   checkURLType,
+  extractPlaylistSelection,
   YOUTUBE_CONSTANTS
 } from '../common.ts'
 
@@ -73,6 +74,23 @@ export default class Android extends BaseClient {
    */
   override requirePlayerScript(): boolean {
     return false
+  }
+
+  /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
+    return false
+  }
+
+  /**
+   * Returns player parameters for ANDROID playback.
+   *
+   * @returns Base64-encoded player parameters string
+   */
+  override getPlayerParams(): string | null {
+    return '2AMB'
   }
 
   /**
@@ -353,8 +371,12 @@ export default class Android extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
-        if (!playlistIdMatch?.[1]) {
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
+        if (!playlistId) {
           logger(
             'error',
             'youtube-android',
@@ -370,9 +392,6 @@ export default class Android extends BaseClient {
           }
         }
 
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
         const isRadio = playlistId.startsWith('RD')
 
         logger(
@@ -445,7 +464,9 @@ export default class Android extends BaseClient {
             playlistId,
             playlistResponse,
             sourceName,
-            context
+            context,
+            currentVideoId,
+            targetIndex
           )
         }
 
@@ -453,7 +474,9 @@ export default class Android extends BaseClient {
           playlistId,
           currentVideoId,
           playlistResponse,
-          sourceName
+          sourceName,
+          context,
+          targetIndex
         )
       }
 

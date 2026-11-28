@@ -1,4 +1,5 @@
 import type { Readable } from 'node:stream'
+import type { AudioProcessingMode } from '../../playback/processing/audioContract.ts'
 import type { HeadQueue } from '../../workers/headQueue.ts'
 import type { NodelinkConfig as NodeLinkConfig } from '../config/config.types.ts'
 import type {
@@ -67,7 +68,8 @@ export interface WorkerExtensions extends Record<string, unknown> {
 /**
  * Runtime context shared across worker components.
  */
-export interface WorkerNodeLink extends Omit<NodeLink, 'extensions'> {
+export interface WorkerNodeLink
+  extends Omit<NodeLink, 'extensions' | 'trackCacheManager'> {
   options: NodeLinkConfig & NodeLink['options']
   logger: LoggerFn
   voiceRelay?: NodeLink['voiceRelay']
@@ -133,10 +135,11 @@ export type WorkerPlayer = {
   _isRestoring?: boolean
   updateVoice: (voice: PlayerVoiceState) => void
   volume: (volume: number) => void
-  setFilters: (filters: Record<string, unknown>) => void
+  setFilters: (filters: Record<string, unknown> | object) => void
   pause: (pause: boolean) => void
   play: (track: PlayPayload) => Promise<unknown>
   destroy: (disconnect?: boolean) => void
+  exportHandoffState: () => PlayerHandoffSnapshot
 } & Record<string, unknown>
 
 /**
@@ -169,23 +172,32 @@ export interface CreatePlayerPayload {
   guildId: string
   userId: string
   voice?: PlayerVoiceState
+  audioProcessingMode?: AudioProcessingMode | null
+}
+
+/**
+ * Live handoff state exported directly by an active Player.
+ */
+export interface PlayerHandoffSnapshot {
+  guildId: string
+  sessionId: string
+  userId: string
+  track?: PlayPayload & { track?: string }
+  position?: number
+  capturedAt?: number
+  isPaused?: boolean
+  volume?: number
+  filters?: Record<string, unknown> | object
+  voice?: PlayerVoiceState
+  contentLength?: number | null
+  downloadedBytes?: number
 }
 
 /**
  * Payload used to restore players from snapshots.
  */
 export interface RestorePlayerPayload {
-  snapshot: {
-    guildId: string
-    sessionId: string
-    userId: string
-    track?: PlayPayload & { track?: string }
-    position?: number
-    isPaused?: boolean
-    volume?: number
-    filters?: Record<string, unknown>
-    voice?: PlayerVoiceState
-  }
+  snapshot: PlayerHandoffSnapshot
 }
 
 /**
@@ -198,4 +210,6 @@ export interface LoadStreamPayload {
   position?: number
   volume?: number
   filters?: Record<string, unknown>
+  itag?: number
+  passthrough?: boolean
 }

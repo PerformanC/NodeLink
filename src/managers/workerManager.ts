@@ -14,11 +14,24 @@ import type {
   WorkerStatsPayload
 } from '../typings/api/stats.types.ts'
 import type { NodelinkConfig } from '../typings/config/config.types.ts'
-import type { WorkerCommandPayload } from '../typings/workers/worker.types.ts'
+import type {
+  PlayerHandoffSnapshot,
+  WorkerCommandPayload
+} from '../typings/workers/worker.types.ts'
 import { logger } from '../utils.ts'
+import { WorkerFailoverCoordinator } from './workerFailover.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+/* INFO: Player state and voice connections live on one worker; retrying elsewhere cannot recover that state. */
+const PLAYER_STATE_COMMANDS = new Set([
+  'playerCommand',
+  'createPlayer',
+  'destroyPlayer',
+  'restorePlayer',
+  'getPlayerHandoffState'
+])
 
 /**
  * Cluster worker with NodeLink playback metadata.
@@ -323,12 +336,12 @@ const buildWorkerExecArgv = (
 export default class WorkerManager {
   private config: NodelinkConfig
   workers: PlaybackWorker[]
-  private workersById: Map<number, PlaybackWorker>
-  private guildToWorker: Map<string, number>
-  private workerToGuilds: Map<number, Set<string>>
+  workersById: Map<number, PlaybackWorker>
+  guildToWorker: Map<string, number>
+  workerToGuilds: Map<number, Set<string>>
   private nextStatelessWorkerIndex: number
-  private pendingRequests: Map<string, PendingCommandRequest>
-  private streamRequests: Map<string, StreamRequestEntry>
+  pendingRequests: Map<string, PendingCommandRequest>
+  streamRequests: Map<string, StreamRequestEntry>
   private maxWorkers: number
   private minWorkers: number
   workerLoad: Map<number, number>
@@ -341,7 +354,7 @@ export default class WorkerManager {
   private statsUpdateTimer: NodeJS.Timeout | null
   private workerHealth: Map<number, number>
   private workerStartTime: Map<number, number>
-  private workerUniqueId: Map<number, number>
+  workerUniqueId: Map<number, number>
   private workerReady: Set<number>
   private nextWorkerId: number
   private liveYoutubeConfig: LiveYoutubeConfig
@@ -358,6 +371,7 @@ export default class WorkerManager {
   private eventSockets: Map<number, EventSocket>
   private socketRotateInProgress: boolean
   private lastSocketRotateAt: number
+  private failoverCoordinator: WorkerFailoverCoordinator
 
   constructor(config: NodelinkConfig) {
     this.config = config
@@ -413,6 +427,67 @@ export default class WorkerManager {
     this.eventSockets = new Map()
     this.socketRotateInProgress = false
     this.lastSocketRotateAt = 0
+    this.failoverCoordinator = new WorkerFailoverCoordinator({
+      getLiveWorkerIds: () =>
+        this.workers
+          .filter((w) => w.isConnected() && w.ready)
+          .map((w) => w.id),
+      getBestTargetWorkerId: (excludeWorkerId?: number) => {
+        let best: PlaybackWorker | null = null
+        let minLoad = Number.POSITIVE_INFINITY
+        for (const w of this.workers) {
+          if (w.id === excludeWorkerId || !w.isConnected()) continue
+          const load = this.workerLoad.get(w.id) || 0
+          if (load < minLoad) {
+            minLoad = load
+            best = w
+          }
+        }
+        return best ? best.id : null
+      },
+      isWorkerHealthyForHandback: (workerId: number) => {
+        const w = this.workersById.get(workerId)
+        return Boolean(w && w.isConnected() && w.ready && !this.isDestroying)
+      },
+      assignGuild: (playerKey: string, workerId: number) => {
+        const w = this.workersById.get(workerId)
+        if (w) this.assignGuildToWorker(playerKey, w)
+      },
+      unassignGuild: (playerKey: string) => {
+        this.unassignGuild(playerKey)
+      },
+      executeOnWorker: <T = unknown>(
+        workerId: number,
+        type: string,
+        payload: WorkerCommandPayload
+      ) => {
+        const w = this.workersById.get(workerId)
+        if (!w || !w.isConnected()) {
+          return Promise.reject(new Error(`Worker ${workerId} unavailable`))
+        }
+        return this.execute(w, type, payload) as Promise<T>
+      },
+      onUnrecoverablePlayers: (deadWorkerId: number, playerKeys: string[]) => {
+        const nodelink = getGlobalNodelink()
+        if (!nodelink || playerKeys.length === 0) return
+        for (const playerKey of playerKeys) {
+          const [sessionId] = playerKey.split(':')
+          if (!sessionId) continue
+          const session = nodelink.sessions.get(sessionId)
+          if (session?.players.players.delete(playerKey)) {
+            logger(
+              'debug',
+              'Cluster',
+              `Removed stale player placeholder for ${playerKey} from session ${session.id}`
+            )
+          }
+        }
+        nodelink.handleIPCMessage({
+          type: 'workerFailed',
+          payload: { workerId: deadWorkerId, affectedGuilds: playerKeys }
+        })
+      }
+    })
 
     logger(
       'info',
@@ -439,6 +514,7 @@ export default class WorkerManager {
         const index = this.workers.indexOf(playbackWorker)
         if (index !== -1) this.workers.splice(index, 1)
         this.workersById.delete(playbackWorker.id)
+        this.cachedSources = null
         return
       }
 
@@ -537,6 +613,13 @@ export default class WorkerManager {
       if (request.workerId === workerId) {
         clearTimeout(request.timeout)
         this.pendingRequests.delete(requestId)
+
+        if (PLAYER_STATE_COMMANDS.has(request.type)) {
+          request.reject(
+            new Error(`Worker ${workerId} exited before completing request`)
+          )
+          continue
+        }
 
         if (request.retryCount < this.maxRetries) {
           logger(
@@ -974,6 +1057,51 @@ export default class WorkerManager {
               errorMsg = payload.toString('utf8')
             }
             this._handleCommandResponse(id, null, errorMsg)
+            continue
+          }
+
+          if (type === 4) {
+            try {
+              const data = v8.deserialize(payload) as {
+                task: string
+                payload: unknown
+              }
+              const nodelink = getGlobalNodelink() as {
+                sourceWorkerManager?: {
+                  execute?: <T>(t: string, p: unknown) => Promise<T>
+                }
+              }
+              const swm = nodelink?.sourceWorkerManager
+              const workerId = commandSocket._workerId
+              if (swm?.execute && workerId !== undefined) {
+                logger(
+                  'debug',
+                  'Cluster',
+                  `Forwarding task '${data.task}' from playback worker ${workerId} to source worker`
+                )
+                swm
+                  .execute(data.task, data.payload)
+                  .then((res) => {
+                    const resBuf = v8.serialize(res)
+                    this._sendCommandSocketFrame(workerId, 2, id, resBuf)
+                  })
+                  .catch((err) => {
+                    const errBuf = v8.serialize((err as Error).message)
+                    this._sendCommandSocketFrame(workerId, 3, id, errBuf)
+                  })
+              } else if (workerId !== undefined) {
+                const errBuf = v8.serialize(
+                  'SourceWorkerManager not available on master'
+                )
+                this._sendCommandSocketFrame(workerId, 3, id, errBuf)
+              }
+            } catch (e: unknown) {
+              const workerId = commandSocket._workerId
+              if (workerId !== undefined) {
+                const errBuf = v8.serialize((e as Error).message)
+                this._sendCommandSocketFrame(workerId, 3, id, errBuf)
+              }
+            }
           }
         }
       })
@@ -1310,6 +1438,7 @@ export default class WorkerManager {
     this.workers.push(worker)
     this.workersById.set(worker.id, worker)
     this.workerLoad.set(worker.id, 0)
+    this.cachedSources = null
 
     this.workerStats.set(worker.id, { players: 0, playingPlayers: 0 })
 
@@ -1351,6 +1480,7 @@ export default class WorkerManager {
     if (index !== -1) this.workers.splice(index, 1)
 
     this.workersById.delete(workerId)
+    this.cachedSources = null
     this.workerReady.delete(workerId)
     this.workerLoad.delete(workerId)
     this.workerStats.delete(workerId)
@@ -1371,26 +1501,7 @@ export default class WorkerManager {
     }
 
     if (affectedGuilds.length > 0) {
-      const nodelink = getGlobalNodelink()
-      if (nodelink) {
-        for (const playerKey of affectedGuilds) {
-          const [sessionId] = playerKey.split(':')
-          if (!sessionId) continue
-          const session = nodelink.sessions.get(sessionId)
-          if (session?.players.players.delete(playerKey)) {
-            logger(
-              'debug',
-              'Cluster',
-              `Removed stale player placeholder for ${playerKey} from session ${session.id}`
-            )
-          }
-        }
-
-        nodelink.handleIPCMessage({
-          type: 'workerFailed',
-          payload: { workerId: worker.id, affectedGuilds }
-        })
-      }
+      this.failoverCoordinator.scheduleFailover(worker.id, affectedGuilds)
     }
 
     try {
@@ -1447,6 +1558,22 @@ export default class WorkerManager {
       }
     } else if (message.type === 'pong') {
       this.workerHealth.set(worker.id, Date.now())
+    } else if (
+      message.type === 'playerHandoffUpdate' &&
+      Array.isArray((message as { snapshots?: unknown }).snapshots)
+    ) {
+      const snapshots = (message as { snapshots: PlayerHandoffSnapshot[] })
+        .snapshots
+      for (const snap of snapshots) {
+        this.failoverCoordinator.updateState(worker.id, snap)
+      }
+    } else if (
+      message.type === 'playerHandoffDelete' &&
+      typeof (message as { playerKey?: unknown }).playerKey === 'string'
+    ) {
+      this.failoverCoordinator.removeState(
+        (message as { playerKey: string }).playerKey
+      )
     } else if (message.type === 'ready') {
       worker.ready = true
       this.workerHealth.set(worker.id, Date.now())
@@ -1456,6 +1583,7 @@ export default class WorkerManager {
         'Cluster',
         `Worker ${worker.id} (PID ${worker.process.pid}) ready`
       )
+      this.failoverCoordinator.scheduleGradualHandback(worker.id)
 
       if (
         this.liveYoutubeConfig.refreshToken ||
@@ -1482,7 +1610,10 @@ export default class WorkerManager {
       this._rotateSocketServers(socketType, worker.id)
     } else {
       const nodelink = getGlobalNodelink()
-      nodelink?.handleIPCMessage(message)
+      nodelink?.handleIPCMessage({
+        ...message,
+        pid: worker.process?.pid
+      } as typeof message)
     }
   }
 
@@ -1551,12 +1682,19 @@ export default class WorkerManager {
 
     let bestWorker: PlaybackWorker | null = null
     let minCost = Number.POSITIVE_INFINITY
+    let minPlacementCost = Number.POSITIVE_INFINITY
 
     for (const worker of this.workers) {
       if (worker.isConnected()) {
         const cost = this._calculateWorkerCost(worker.id)
-        if (cost < minCost) {
-          minCost = cost
+        minCost = Math.min(minCost, cost)
+        const reportedPlayers = this.workerStats.get(worker.id)?.players ?? 0
+        const assignedPlayers = this.workerToGuilds.get(worker.id)?.size ?? 0
+        /* INFO: Count incoming assignments for placement before worker stats catch up. */
+        const placementCost =
+          cost + Math.max(0, assignedPlayers - reportedPlayers)
+        if (placementCost < minPlacementCost) {
+          minPlacementCost = placementCost
           bestWorker = worker
         }
       }
@@ -1743,8 +1881,30 @@ export default class WorkerManager {
     return workerMetrics
   }
 
+  private cachedSources: string[] | null = null
+
+  async getSources(): Promise<string[]> {
+    if (this.cachedSources) return this.cachedSources
+
+    const worker = this.getBestWorker()
+    if (!worker) {
+      logger('warn', 'Cluster', 'No worker available to get sources from.')
+      return []
+    }
+    const sources = (await this.execute(worker, 'getSources', {})) as string[]
+    this.cachedSources = sources
+    return sources
+  }
+
+  updateWorkerLoad(pid: number, players: number): void {
+    const worker = this.workers.find(({ process }) => process.pid === pid)
+    if (!worker) return
+    this.workerLoad.set(worker.id, players)
+  }
+
   destroy(): void {
     this.isDestroying = true
+    this.failoverCoordinator.destroy()
     this._stopScalingCheck()
     this._stopHealthCheck()
 
@@ -1760,6 +1920,7 @@ export default class WorkerManager {
     this.workerStartTime.clear()
     this.workerUniqueId.clear()
     this.idleWorkers.clear()
+    this.cachedSources = null
 
     for (const worker of this.workers) {
       if (worker.isConnected()) {
@@ -1916,6 +2077,7 @@ export default class WorkerManager {
     isFast: boolean,
     timeoutOverride?: number
   ): void {
+    const ownsPlayerState = PLAYER_STATE_COMMANDS.has(type)
     const requestId = crypto.randomBytes(16).toString('hex')
     const timeoutMs =
       typeof timeoutOverride === 'number' &&
@@ -1952,7 +2114,9 @@ export default class WorkerManager {
         }
 
         setTimeout(() => {
-          const newWorker = this.getBestWorker() || worker
+          const newWorker = ownsPlayerState
+            ? worker
+            : this.getBestWorker() || worker
           this._executeCommand(
             newWorker,
             type,
@@ -1999,6 +2163,15 @@ export default class WorkerManager {
         clearTimeout(timeout)
         this.pendingRequests.delete(requestId)
 
+        if (ownsPlayerState) {
+          reject(
+            new Error(
+              `Worker ${worker.id} disconnected before completing player command`
+            )
+          )
+          return
+        }
+
         if (retryCount < this.maxRetries) {
           const newWorker = this.getBestWorker()
           if (newWorker) {
@@ -2029,6 +2202,11 @@ export default class WorkerManager {
         )
         let attempts = 0
         const checkReady = setInterval(() => {
+          /* INFO: A timed-out or exited request must not be sent later by its old readiness poll. */
+          if (!this.pendingRequests.has(requestId)) {
+            clearInterval(checkReady)
+            return
+          }
           attempts++
           if (
             this.workerReady.has(worker.id) ||
@@ -2061,7 +2239,9 @@ export default class WorkerManager {
                 nodelink.statsManager.incrementCommandRetry(type)
               }
               setTimeout(() => {
-                const newWorker = this.getBestWorker() || worker
+                const newWorker = ownsPlayerState
+                  ? worker
+                  : this.getBestWorker() || worker
                 this._executeCommand(
                   newWorker,
                   type,
@@ -2103,7 +2283,7 @@ export default class WorkerManager {
           nodelink.statsManager.incrementCommandRetry(type)
         }
         setTimeout(() => {
-          const newWorker = this.getBestWorker()
+          const newWorker = ownsPlayerState ? worker : this.getBestWorker()
           if (newWorker) {
             this._executeCommand(
               newWorker,

@@ -11,6 +11,7 @@ import util from 'node:util';
 import zlib from 'node:zlib';
 import packageJson from '../package.json' with { type: 'json' };
 import { DEFAULT_MAX_REDIRECTS, DISCORD_ID_REGEX, REDIRECT_STATUS_CODES, SEMVER_PATTERN } from './constants.js';
+import { defaultSanitizer, LogSanitizer } from './utils/sanitizer.js';
 /**
  * Reference to the runtime NodeLink instance stored on the global object.
  *
@@ -85,6 +86,7 @@ const logLevels = {
 };
 let loggingConfig = {};
 let currentLogLevel = logLevels.info;
+const logSanitizer = defaultSanitizer;
 let logStream = null;
 let gitInfoCache = null;
 let currentLogFile = null;
@@ -199,12 +201,15 @@ function initFileLogger() {
     const rotation = loggingConfig.file?.rotation || 'session';
     if (rotation === 'hourly') {
         logRotationInterval = setInterval(rotateLogFile, 60 * 60 * 1000);
+        logRotationInterval.unref?.();
     }
     else if (rotation === 'daily') {
         logRotationInterval = setInterval(rotateLogFile, 24 * 60 * 60 * 1000);
+        logRotationInterval.unref?.();
     }
     cleanOldLogs();
     logCleanupInterval = setInterval(cleanOldLogs, 60 * 60 * 1000);
+    logCleanupInterval.unref?.();
 }
 /**
  * Initializes logger configuration.
@@ -220,6 +225,9 @@ function initFileLogger() {
 function initLogger(config) {
     loggingConfig = config.logging || {};
     currentLogLevel = logLevels[loggingConfig.level || 'info'];
+    if (loggingConfig.redaction) {
+        logSanitizer.updateOptions(loggingConfig.redaction);
+    }
     initFileLogger();
 }
 /**
@@ -283,11 +291,17 @@ function logger(level, ...args) {
         }
         return arg;
     });
-    const msg = util.format(...formattedArgs);
-    const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${msg}`;
+    const rawMsg = util.format(...formattedArgs);
+    const isRedactionActive = loggingConfig.redaction?.enabled !== false &&
+        loggingConfig.redaction?.mode !== 'off';
+    const consoleMsg = isRedactionActive ? logSanitizer.sanitize(rawMsg) : rawMsg;
+    const consoleOutput = `[${time}] ${lvl.color}[${lvl.label}] >${resetColor}${formattedCategory} ${consoleMsg}`;
     console.log(consoleOutput);
     if (logStream) {
-        const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${msg}\n`;
+        const fileMsg = !isRedactionActive && loggingConfig.file?.redactSensitive !== false
+            ? logSanitizer.sanitize(rawMsg)
+            : consoleMsg;
+        const fileOutput = `[${new Date().toISOString()}] [${lvl.label}] ${formattedCategory} ${fileMsg}\n`;
         logStream.write(fileOutput);
     }
 }
@@ -375,6 +389,57 @@ function getVersion(type = 'string') {
         return packageJson.version;
     }
     return undefined;
+}
+const dependencyVersionCache = new Map();
+/**
+ * Resolves the installed version and git commit hash of a dependency.
+ *
+ * Checks `node_modules/<depName>/package.json` for the semver version and
+ * inspects `package-lock.json` for resolved git commit references.
+ *
+ * @param depName - Name of the dependency (e.g. '@performanc/voice').
+ * @returns Formatted version string (e.g. "2.2.15 (93f3e3b)") or "unknown".
+ * @public
+ */
+function getDependencyVersion(depName) {
+    const cached = dependencyVersionCache.get(depName);
+    if (cached)
+        return cached;
+    let version = '';
+    let commit = '';
+    try {
+        const pkgPath = path.resolve(process.cwd(), 'node_modules', depName, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+            const data = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+            if (data.version) {
+                version = data.version;
+            }
+        }
+    }
+    catch { }
+    try {
+        const lockPath = path.resolve(process.cwd(), 'package-lock.json');
+        if (fs.existsSync(lockPath)) {
+            const lockData = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+            const resolved = lockData.packages?.[`node_modules/${depName}`]?.resolved;
+            if (resolved?.includes('#')) {
+                commit = resolved.split('#')[1]?.slice(0, 7) || '';
+            }
+        }
+    }
+    catch { }
+    let result = 'unknown';
+    if (version && commit) {
+        result = `${version} (${commit})`;
+    }
+    else if (version) {
+        result = version;
+    }
+    else if (commit) {
+        result = commit;
+    }
+    dependencyVersionCache.set(depName, result);
+    return result;
 }
 /**
  * Applies track modifiers to payloads before serialization.
@@ -508,6 +573,26 @@ function getGitInfo() {
     }
     if (gitInfoCache)
         return gitInfoCache;
+    const envCommit = (process.env.GIT_COMMIT || process.env.NODELINK_GIT_COMMIT)?.trim();
+    if (envCommit && envCommit !== 'unknown') {
+        const branch = (process.env.GIT_BRANCH || process.env.NODELINK_GIT_BRANCH)?.trim() ||
+            'unknown';
+        const rawTime = process.env.GIT_COMMIT_TIME ||
+            process.env.BUILD_TIME ||
+            process.env.NODELINK_BUILD_TIME;
+        const parsedTime = rawTime ? Number.parseInt(rawTime.trim(), 10) : 0;
+        const commitTime = Number.isFinite(parsedTime) && parsedTime > 0
+            ? parsedTime < 1e12
+                ? parsedTime * 1000
+                : parsedTime
+            : Date.now();
+        gitInfoCache = {
+            branch,
+            commit: envCommit.length > 7 ? envCommit.slice(0, 7) : envCommit,
+            commitTime
+        };
+        return gitInfoCache;
+    }
     try {
         const output = execSync('git log -1 --format=%D%n%h%n%ct', {
             encoding: 'utf8'
@@ -1085,6 +1170,264 @@ setInterval(() => {
     }
 }, 6 * 60 * 60 * 1000).unref();
 /**
+ * Origin-keyed pool of active HTTP/2 client sessions.
+ * @internal
+ */
+const http2Pool = new Map();
+/**
+ * Maximum number of concurrent HTTP/2 sessions allowed per origin to prevent socket explosion.
+ */
+const MAX_SESSIONS_PER_ORIGIN = 4;
+function getHttp2PoolKey(origin, localAddress) {
+    return localAddress ? `${origin}|${localAddress}` : origin;
+}
+function removeSessionFromPool(entry) {
+    const key = getHttp2PoolKey(entry.origin, entry.localAddress);
+    const list = http2Pool.get(key);
+    if (!list)
+        return;
+    const idx = list.indexOf(entry);
+    if (idx !== -1) {
+        list.splice(idx, 1);
+    }
+    if (list.length === 0) {
+        http2Pool.delete(key);
+    }
+}
+/**
+ * Closes and evicts all pooled HTTP/2 sessions.
+ * @public
+ */
+function closeHttp2Pool() {
+    for (const list of http2Pool.values()) {
+        for (const entry of list) {
+            entry.closed = true;
+            if (!entry.session.closed && !entry.session.destroyed) {
+                try {
+                    entry.session.close();
+                }
+                catch { }
+            }
+        }
+    }
+    http2Pool.clear();
+}
+/**
+ * Identifies whether an error indicates genuine ALPN or protocol negotiation failure
+ * justifying a fallback to HTTP/1.1 and adding the host to http2FailedHosts.
+ * @internal
+ */
+function isProtocolOrAlpnFailure(error) {
+    if (!error || typeof error !== 'object')
+        return false;
+    const err = error;
+    const msg = String(err.message || '').toLowerCase();
+    const code = String(err.code || '');
+    return ((code === 'ERR_HTTP2_ERROR' &&
+        (msg.includes('alpn') || msg.includes('protocol'))) ||
+        msg.includes('alpn negotiation failed') ||
+        msg.includes('handshake failure') ||
+        (code === 'ECONNRESET' && msg.includes('alpn')));
+}
+/**
+ * Identifies whether an error indicates a transient session/stream refusal
+ * that should be retried automatically on a fresh HTTP/2 session per RFC 9113 §8.7.
+ * @internal
+ */
+function isRetryableHttp2Error(error) {
+    if (!error || typeof error !== 'object')
+        return false;
+    const err = error;
+    const msg = String(err.message || '').toLowerCase();
+    const code = String(err.code || '');
+    return (code === 'ERR_HTTP2_GOAWAY_SESSION' ||
+        code === 'ERR_HTTP2_INVALID_SESSION' ||
+        code === 'ERR_HTTP2_STREAM_CANCEL' ||
+        msg.includes('refused_stream') ||
+        msg.includes('goaway') ||
+        msg.includes('nghttp2_refused_stream'));
+}
+/**
+ * Retrieves an active pooled HTTP/2 session or establishes a new one.
+ * @internal
+ */
+function getOrCreateHttp2Session(origin, localAddress) {
+    const key = getHttp2PoolKey(origin, localAddress);
+    let list = http2Pool.get(key);
+    if (!list) {
+        list = [];
+        http2Pool.set(key, list);
+    }
+    // 1. Purge closed / dead sessions
+    for (let i = list.length - 1; i >= 0; i--) {
+        const item = list[i];
+        if (!item || item.closed || item.session.closed || item.session.destroyed) {
+            list.splice(i, 1);
+        }
+    }
+    // 2. Look for an existing connected session with free stream capacity
+    for (const item of list) {
+        if (!item.closed &&
+            !item.session.closed &&
+            !item.session.destroyed &&
+            item.maxConcurrentStreams > 0 &&
+            item.activeStreams < item.maxConcurrentStreams) {
+            return item;
+        }
+    }
+    // 3. If origin session limit reached, reuse least loaded active session
+    if (list.length >= MAX_SESSIONS_PER_ORIGIN) {
+        let bestEntry = null;
+        for (const item of list) {
+            if (!item.closed && !item.session.closed && !item.session.destroyed) {
+                if (!bestEntry || item.activeStreams < bestEntry.activeStreams) {
+                    bestEntry = item;
+                }
+            }
+        }
+        if (bestEntry)
+            return bestEntry;
+    }
+    // 4. Create a new pooled session with single, persistent error/goaway/close handlers
+    const session = http2.connect(origin, {
+        localAddress
+    });
+    const activeRequests = new Set();
+    const entry = {
+        session,
+        origin,
+        localAddress,
+        activeStreams: 0,
+        maxConcurrentStreams: 100,
+        closed: false,
+        lastUsed: Date.now(),
+        activeRequests
+    };
+    list.push(entry);
+    // Respect remote settings, handling maxConcurrentStreams >= 0 correctly
+    session.on('remoteSettings', (settings) => {
+        if (typeof settings.maxConcurrentStreams === 'number' &&
+            settings.maxConcurrentStreams >= 0) {
+            entry.maxConcurrentStreams = settings.maxConcurrentStreams;
+        }
+    });
+    // Exactly one persistent goaway handler per session:
+    session.on('goaway', (errorCode, lastStreamID) => {
+        entry.closed = true;
+        removeSessionFromPool(entry);
+        for (const req of activeRequests) {
+            try {
+                req.onSessionGoaway?.(errorCode, lastStreamID);
+            }
+            catch { }
+        }
+        if (entry.activeStreams === 0 && !session.closed && !session.destroyed) {
+            try {
+                session.close();
+            }
+            catch { }
+        }
+    });
+    // Exactly one persistent close handler per session:
+    session.on('close', () => {
+        entry.closed = true;
+        removeSessionFromPool(entry);
+        const err = new Error('HTTP/2 session closed');
+        for (const req of activeRequests) {
+            try {
+                req.onSessionError(err);
+            }
+            catch { }
+        }
+        activeRequests.clear();
+    });
+    // Exactly one persistent error handler per session:
+    session.on('error', (err) => {
+        entry.closed = true;
+        removeSessionFromPool(entry);
+        for (const req of activeRequests) {
+            try {
+                req.onSessionError(err);
+            }
+            catch { }
+        }
+        activeRequests.clear();
+    });
+    return entry;
+}
+const CROSS_ORIGIN_SENSITIVE_HEADERS = /^(?:authorization|cookie|proxy-authorization)$/i;
+/**
+ * Validates and prepares the next request in an HTTP redirect chain.
+ *
+ * Enforces redirect depth limits, blocks HTTPS-to-HTTP downgrades and non-HTTP
+ * schemes, runs the caller's `shouldFollowRedirect` predicate before any
+ * network connection is made to the target, and strips credentials when
+ * crossing origins.
+ * @internal
+ */
+function resolveRedirect(currentUrl, location, responseStatus, respHeaders, options) {
+    const { method = 'GET', headers: customHeaders = {}, body, maxRedirects = DEFAULT_MAX_REDIRECTS, _redirectsFollowed = 0, shouldFollowRedirect } = options;
+    if (_redirectsFollowed >= maxRedirects) {
+        throw new Error(`Too many redirects (${maxRedirects}) for ${currentUrl.href}`);
+    }
+    const nextUrl = new URL(location, currentUrl);
+    if (nextUrl.protocol !== 'http:' && nextUrl.protocol !== 'https:') {
+        throw new Error(`Unsupported redirect protocol "${nextUrl.protocol}" for ${nextUrl.href}`);
+    }
+    if (currentUrl.protocol === 'https:' && nextUrl.protocol === 'http:') {
+        throw new Error(`Refusing HTTPS to HTTP redirect downgrade from ${currentUrl.href} to ${nextUrl.href}`);
+    }
+    if (shouldFollowRedirect && !shouldFollowRedirect(nextUrl, currentUrl)) {
+        throw new Error(`Redirect to ${nextUrl.href} is not allowed`);
+    }
+    let nextMethod = method;
+    let nextBody = body;
+    if (method === 'HEAD') {
+        nextMethod = 'HEAD';
+        nextBody = undefined;
+    }
+    else if (responseStatus === 303 ||
+        ((responseStatus === 301 || responseStatus === 302) &&
+            method !== 'GET' &&
+            method !== 'HEAD')) {
+        nextMethod = 'GET';
+        nextBody = undefined;
+    }
+    const isSameOrigin = nextUrl.origin === currentUrl.origin;
+    const nextHeaders = {};
+    for (const [key, value] of Object.entries(customHeaders)) {
+        if (!isSameOrigin && CROSS_ORIGIN_SENSITIVE_HEADERS.test(key)) {
+            continue;
+        }
+        if (value !== undefined) {
+            nextHeaders[key] = value;
+        }
+    }
+    const setCookie = respHeaders['set-cookie'];
+    if (isSameOrigin && setCookie) {
+        const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+        const existingCookie = String(nextHeaders.cookie || nextHeaders.Cookie || '');
+        const newCookies = cookies.map((c) => String(c).split(';')[0]).join('; ');
+        nextHeaders.cookie = existingCookie
+            ? `${existingCookie}; ${newCookies}`
+            : newCookies;
+    }
+    return {
+        url: nextUrl.href,
+        options: {
+            ...options,
+            _redirectsFollowed: _redirectsFollowed + 1,
+            method: nextMethod,
+            body: nextBody,
+            headers: nextHeaders,
+            disableBodyCompression: nextBody
+                ? options.disableBodyCompression
+                : undefined
+        }
+    };
+}
+const gzipAsync = util.promisify(zlib.gzip);
+/**
  * Internal HTTP/1 request handler with redirect and decompression support.
  *
  * This method performs the actual HTTP/1 request and handles response
@@ -1097,7 +1440,7 @@ setInterval(() => {
 async function _internalHttp1Request(urlString, options = {}) {
     const { method = 'GET', headers: customHeaders = {}, body, timeout = Math.max(1, options.timeout ?? 30000), streamOnly = false, disableBodyCompression = false, maxRedirects = DEFAULT_MAX_REDIRECTS, maxResponseBodyBytes = DEFAULT_MAX_RESPONSE_BODY_BYTES, localAddress, agent: customAgent, _redirectsFollowed = 0 } = options;
     const actualLocalAddress = localAddress ?? runtime.nodelink?.routePlanner?.getIP?.() ?? undefined;
-    if (_redirectsFollowed >= maxRedirects) {
+    if (_redirectsFollowed > maxRedirects) {
         throw new Error(`Too many redirects (${maxRedirects}) for ${urlString}`);
     }
     const currentUrl = new URL(urlString);
@@ -1133,7 +1476,7 @@ async function _internalHttp1Request(urlString, options = {}) {
             }
             else {
                 reqHeaders['Content-Encoding'] = 'gzip';
-                payloadBuffer = zlib.gzipSync(rawPayload);
+                payloadBuffer = await gzipAsync(rawPayload);
             }
         }
     }
@@ -1159,6 +1502,7 @@ async function _internalHttp1Request(urlString, options = {}) {
         const cleanupReq = () => {
             req.removeListener('error', reqErrorHandler);
             req.removeListener('timeout', reqTimeoutHandler);
+            req.removeListener('close', cleanupReq);
         };
         req = lib.request(reqOptions, (res) => {
             const { statusCode, headers: respHeaders } = res;
@@ -1170,36 +1514,14 @@ async function _internalHttp1Request(urlString, options = {}) {
             if (REDIRECT_STATUS_CODES.includes(responseStatus) &&
                 location) {
                 res.resume();
-                const nextUrl = new URL(location, currentUrl).href;
-                const isGetRedirect = [301, 302, 303].includes(responseStatus);
-                let nextMethod = method;
-                let nextBody = body;
-                if (method === 'HEAD') {
-                    nextMethod = 'HEAD';
-                    nextBody = undefined;
+                cleanupReq();
+                try {
+                    const redirect = resolveRedirect(currentUrl, location, responseStatus, respHeaders, options);
+                    resolve(http1makeRequest(redirect.url, redirect.options));
                 }
-                else if (isGetRedirect) {
-                    nextMethod = 'GET';
-                    nextBody = undefined;
+                catch (err) {
+                    reject(err);
                 }
-                const nextHeaders = { ...customHeaders };
-                const setCookie = respHeaders['set-cookie'];
-                if (setCookie) {
-                    const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
-                    const existingCookie = String(nextHeaders.cookie || nextHeaders.Cookie || '');
-                    const newCookies = cookies.map((c) => c.split(';')[0]).join('; ');
-                    nextHeaders.cookie = existingCookie
-                        ? `${existingCookie}; ${newCookies}`
-                        : newCookies;
-                }
-                const nextOptions = {
-                    ...options,
-                    _redirectsFollowed: _redirectsFollowed + 1,
-                    method: nextMethod,
-                    body: nextBody,
-                    headers: nextHeaders
-                };
-                resolve(http1makeRequest(nextUrl, nextOptions));
                 return;
             }
             const isNoBodyResponse = method === 'HEAD' ||
@@ -1244,16 +1566,30 @@ async function _internalHttp1Request(urlString, options = {}) {
                 finalStream = res.pipe(zlib.createInflate());
             }
             let cleanupBody;
-            res.on('error', (err) => {
+            const responseErrorHandler = (err) => {
                 cleanupBody?.();
                 cleanupReq();
                 reject(new Error(`Response error for ${urlString}: ${err.message}`));
-            });
+            };
+            const responseCloseHandler = () => {
+                res.removeListener('error', responseErrorHandler);
+                if (finalStream === res)
+                    cleanupBody?.();
+                cleanupReq();
+            };
+            res.on('error', responseErrorHandler);
+            res.once('close', responseCloseHandler);
             if (finalStream !== res) {
-                finalStream.on('error', (err) => {
+                const decompressionErrorHandler = (err) => {
                     cleanupBody?.();
                     cleanupReq();
                     reject(new Error(`Decompression error for ${urlString}: ${err.message}`));
+                };
+                finalStream.on('error', decompressionErrorHandler);
+                finalStream.once('close', () => {
+                    finalStream.removeListener('error', decompressionErrorHandler);
+                    cleanupBody?.();
+                    cleanupReq();
                 });
             }
             if (streamOnly) {
@@ -1276,7 +1612,7 @@ async function _internalHttp1Request(urlString, options = {}) {
                 }
                 chunks.push(chunk);
             };
-            const onEnd = () => {
+            const onEnd = async () => {
                 try {
                     const responseBuffer = Buffer.concat(chunks);
                     cleanupBody?.();
@@ -1297,7 +1633,30 @@ async function _internalHttp1Request(urlString, options = {}) {
                     const isJson = contentType
                         .toLowerCase()
                         .startsWith('application/json');
-                    const responseBody = isJson && text ? JSON.parse(text) : text;
+                    let responseBody = text;
+                    if (isJson && text) {
+                        if (text.length > 65536) {
+                            await new Promise((resolve) => setImmediate(resolve));
+                        }
+                        try {
+                            responseBody = JSON.parse(text);
+                        }
+                        catch {
+                            const trimmed = text.trim();
+                            const firstNewline = trimmed.indexOf('\n');
+                            if (firstNewline !== -1) {
+                                try {
+                                    responseBody = JSON.parse(trimmed.slice(0, firstNewline));
+                                }
+                                catch {
+                                    responseBody = text;
+                                }
+                            }
+                            else {
+                                responseBody = text;
+                            }
+                        }
+                    }
                     resolve({
                         statusCode,
                         headers: respHeaders,
@@ -1324,6 +1683,7 @@ async function _internalHttp1Request(urlString, options = {}) {
         });
         req.on('error', reqErrorHandler);
         req.on('timeout', reqTimeoutHandler);
+        req.once('close', cleanupReq);
         if (payloadBuffer) {
             req.end(payloadBuffer);
         }
@@ -1421,8 +1781,8 @@ async function http1makeRequest(urlString, options = {}) {
  * ```
  * @public
  */
-async function makeRequest(urlString, options, nodelink) {
-    const { method = 'GET', headers: customHeaders = {}, body, timeout = Math.max(1, options.timeout ?? 30000), streamOnly = false, disableBodyCompression = false, maxRedirects = DEFAULT_MAX_REDIRECTS, maxResponseBodyBytes = DEFAULT_MAX_RESPONSE_BODY_BYTES, _redirectsFollowed = 0 } = options;
+async function makeRequest(urlString, options = {}, nodelink) {
+    const { method = 'GET', headers: customHeaders = {}, body, timeout = Math.max(1, options?.timeout ?? 30000), streamOnly = false, disableBodyCompression = false, maxRedirects = DEFAULT_MAX_REDIRECTS, maxResponseBodyBytes = DEFAULT_MAX_RESPONSE_BODY_BYTES, _redirectsFollowed = 0 } = options;
     const finalNodeLink = nodelink || runtime.nodelink;
     const logId = crypto.randomBytes(4).toString('hex');
     if (loggingConfig.debug?.network) {
@@ -1438,7 +1798,7 @@ async function makeRequest(urlString, options, nodelink) {
             logger('debug', 'Network', `[${logId}] Body: ${bodySnippet}${bodySnippet.length === 200 ? '...' : ''}`);
         }
     }
-    if (_redirectsFollowed >= maxRedirects) {
+    if (_redirectsFollowed > maxRedirects) {
         return Promise.reject(new Error(`Too many redirects (${maxRedirects}) for ${urlString}`));
     }
     if (options.network?.proxy) {
@@ -1450,6 +1810,7 @@ async function makeRequest(urlString, options, nodelink) {
         !body &&
         !localAddress &&
         !options.network?.proxy &&
+        !options.shouldFollowRedirect &&
         (method === 'GET' || method === 'HEAD')) {
         let t = null;
         try {
@@ -1476,6 +1837,9 @@ async function makeRequest(urlString, options, nodelink) {
                 throw new Error('body too large');
             const text = Buffer.from(buf).toString();
             const ct = res.headers.get('content-type') ?? '';
+            if (text.length > 65536) {
+                await new Promise((resolve) => setImmediate(resolve));
+            }
             const out = ct.includes('application/json') && text ? JSON.parse(text) : text;
             return {
                 statusCode: res.status,
@@ -1502,234 +1866,336 @@ async function makeRequest(urlString, options, nodelink) {
     }
     return new Promise((resolve, reject) => {
         let session;
-        let sessionClosed = false;
+        let responseHeadersReceived = false;
+        let fallbackStarted = false;
         let currentUrl;
-        const fallbackToHttp1 = () => {
-            if (!sessionClosed && session) {
-                sessionClosed = true;
-                session.close();
+        let pooledEntry;
+        let activeReq;
+        let streamReleased = false;
+        const releaseStream = () => {
+            if (streamReleased)
+                return;
+            streamReleased = true;
+            if (pooledEntry) {
+                if (activeReq) {
+                    pooledEntry.activeRequests.delete(activeReq);
+                    activeReq = undefined;
+                }
+                pooledEntry.activeStreams = Math.max(0, pooledEntry.activeStreams - 1);
+                if (pooledEntry.closed && pooledEntry.activeStreams === 0) {
+                    if (session && !session.closed && !session.destroyed) {
+                        try {
+                            session.close();
+                        }
+                        catch { }
+                    }
+                }
             }
-            try {
-                const url = new URL(urlString);
-                http2FailedHosts.add(url.host);
+        };
+        const handleHttp2Failure = (error) => {
+            // After response headers the caller owns this stream. Its source-specific
+            // recovery path, if any, must handle a later body interruption.
+            if (responseHeadersReceived || fallbackStarted)
+                return;
+            fallbackStarted = true;
+            releaseStream();
+            if (isProtocolOrAlpnFailure(error)) {
+                try {
+                    const url = new URL(urlString);
+                    http2FailedHosts.add(url.host);
+                }
+                catch { }
             }
-            catch { }
             resolve(http1makeRequest(urlString, { ...options, localAddress }));
         };
-        try {
-            currentUrl = new URL(urlString);
-            session = http2.connect(currentUrl.origin, {
-                localAddress
-            });
-            const closeSessionGracefully = () => {
-                if (session &&
-                    !session.closed &&
-                    !session.destroyed &&
-                    !sessionClosed) {
-                    sessionClosed = true;
-                    session.close();
-                }
-            };
-            session.on('error', fallbackToHttp1);
-            session.on('goaway', closeSessionGracefully);
-            const h2Headers = {
-                ':method': method,
-                ':path': currentUrl.pathname + currentUrl.search,
-                ':scheme': currentUrl.protocol.slice(0, -1),
-                ':authority': currentUrl.host,
-                'accept-encoding': hasZstd
-                    ? 'zstd, br, gzip, deflate'
-                    : 'br, gzip, deflate',
-                'user-agent': 'Mozilla/5.0 (Node.js Http2Client)',
-                dnt: '1',
-                ...customHeaders
-            };
-            if (body && !['GET', 'HEAD'].includes(method)) {
-                h2Headers['Content-Type'] =
-                    typeof body === 'object'
-                        ? 'application/json'
-                        : h2Headers['Content-Type'];
-                if (!disableBodyCompression)
-                    h2Headers['content-encoding'] = 'gzip';
-            }
-            const req = session.request(h2Headers);
-            let reqClosed = false;
-            if (timeout) {
-                req.setTimeout(timeout, () => {
-                    if (!reqClosed) {
-                        reqClosed = true;
-                        req.close(http2.constants.NGHTTP2_CANCEL);
+        const trySendHttp2Request = (retryCount = 0) => {
+            try {
+                currentUrl = new URL(urlString);
+                pooledEntry = getOrCreateHttp2Session(currentUrl.origin, localAddress);
+                session = pooledEntry.session;
+                pooledEntry.activeStreams++;
+                pooledEntry.lastUsed = Date.now();
+                streamReleased = false;
+                let req;
+                let reqClosed = false;
+                activeReq = {
+                    onSessionError: (error) => {
+                        if (!responseHeadersReceived) {
+                            handleHttp2Failure(error);
+                        }
+                        else if (req && !req.destroyed) {
+                            req.destroy(error);
+                        }
+                    },
+                    onSessionGoaway: (_errorCode, _lastStreamID) => {
+                        if (!responseHeadersReceived && !reqClosed) {
+                            reqClosed = true;
+                            try {
+                                req?.close(http2.constants.NGHTTP2_CANCEL);
+                            }
+                            catch { }
+                            releaseStream();
+                            if (retryCount < 2) {
+                                trySendHttp2Request(retryCount + 1);
+                            }
+                            else {
+                                handleHttp2Failure(new Error('GOAWAY received'));
+                            }
+                        }
                     }
-                    closeSessionGracefully();
-                    fallbackToHttp1();
-                    reject(new Error(`HTTP/2 request timeout for ${urlString}`));
-                });
-            }
-            req.on('error', (err) => {
-                if (!reqClosed)
-                    reqClosed = true;
-                closeSessionGracefully();
-                fallbackToHttp1();
-                reject(new Error(`HTTP/2 request error for ${urlString}: ${err.message}`));
-            });
-            req.on('response', async (headers) => {
-                const statusHeader = headers[':status'];
-                const rawStatus = typeof statusHeader === 'number' ? statusHeader : Number(statusHeader);
-                const statusCode = Number.isNaN(rawStatus) ? undefined : rawStatus;
-                if (statusCode === 429) {
-                    finalNodeLink?.routePlanner?.banIP?.(localAddress);
-                }
-                const locationHeader = headers.location;
-                const location = Array.isArray(locationHeader)
-                    ? locationHeader[0]
-                    : locationHeader;
-                if (REDIRECT_STATUS_CODES.includes((statusCode ?? 0)) &&
-                    location) {
-                    const newLocation = new URL(location, urlString).href;
-                    let nextMethod = method;
-                    let nextBody = body;
-                    if (method === 'HEAD') {
-                        nextMethod = 'HEAD';
-                        nextBody = undefined;
-                    }
-                    else if ((statusCode === 301 || statusCode === 302) &&
-                        ['POST', 'PUT', 'DELETE'].includes(method)) {
-                        nextMethod = 'GET';
-                        nextBody = undefined;
-                    }
-                    else if (statusCode === 303) {
-                        nextMethod = 'GET';
-                        nextBody = undefined;
-                    }
-                    if (!reqClosed) {
-                        reqClosed = true;
-                        req.close(http2.constants.NGHTTP2_NO_ERROR);
-                    }
-                    closeSessionGracefully();
-                    return resolve(makeRequest(newLocation, {
-                        ...options,
-                        method: nextMethod,
-                        body: nextBody,
-                        _redirectsFollowed: _redirectsFollowed + 1,
-                        disableBodyCompression: nextBody
-                            ? disableBodyCompression
-                            : undefined
-                    }, finalNodeLink));
-                }
-                const isNoBodyResponse = method === 'HEAD' ||
-                    statusCode === 204 ||
-                    statusCode === 304 ||
-                    (statusCode !== undefined && statusCode >= 100 && statusCode < 200);
-                if (isNoBodyResponse) {
-                    if (streamOnly) {
-                        req.on('end', closeSessionGracefully);
-                        req.on('error', closeSessionGracefully);
-                        req.on('close', closeSessionGracefully);
-                        return resolve({ statusCode, headers, stream: req });
-                    }
-                    closeSessionGracefully();
-                    return resolve({
-                        statusCode,
-                        headers,
-                        body: options.responseType === 'buffer' ? Buffer.alloc(0) : ''
-                    });
-                }
-                let responseStream = req;
-                const encodingHeader = headers['content-encoding'];
-                const encoding = Array.isArray(encodingHeader)
-                    ? encodingHeader.join(',')
-                    : String(encodingHeader || '');
-                if (encoding === 'zstd' && hasZstd)
-                    responseStream = req.pipe(zlib.createZstdDecompress());
-                else if (encoding === 'br')
-                    responseStream = req.pipe(zlib.createBrotliDecompress());
-                else if (encoding === 'gzip')
-                    responseStream = req.pipe(zlib.createGunzip());
-                else if (encoding === 'deflate')
-                    responseStream = req.pipe(zlib.createInflate());
-                if (streamOnly) {
-                    responseStream.on('end', closeSessionGracefully);
-                    responseStream.on('error', closeSessionGracefully);
-                    responseStream.on('close', closeSessionGracefully);
-                    return resolve({ statusCode, headers, stream: responseStream });
+                };
+                pooledEntry.activeRequests.add(activeReq);
+                const h2Headers = {
+                    ':method': method,
+                    ':path': currentUrl.pathname + currentUrl.search,
+                    ':scheme': currentUrl.protocol.slice(0, -1),
+                    ':authority': currentUrl.host,
+                    'accept-encoding': hasZstd
+                        ? 'zstd, br, gzip, deflate'
+                        : 'br, gzip, deflate',
+                    'user-agent': 'Mozilla/5.0 (Node.js Http2Client)',
+                    dnt: '1',
+                    ...customHeaders
+                };
+                if (body && !['GET', 'HEAD'].includes(method)) {
+                    h2Headers['Content-Type'] =
+                        typeof body === 'object'
+                            ? 'application/json'
+                            : h2Headers['Content-Type'];
+                    if (!disableBodyCompression)
+                        h2Headers['content-encoding'] = 'gzip';
                 }
                 try {
-                    const chunks = [];
-                    let bufferedBytes = 0;
-                    for await (const chunk of responseStream) {
-                        const bufferChunk = chunk;
-                        bufferedBytes += bufferChunk.length;
-                        if (bufferedBytes > maxResponseBodyBytes) {
-                            throw new Error(`Response body too large for ${urlString} (${bufferedBytes} bytes > ${maxResponseBodyBytes} bytes)`);
+                    req = session.request(h2Headers);
+                }
+                catch (reqErr) {
+                    if (pooledEntry) {
+                        pooledEntry.closed = true;
+                        removeSessionFromPool(pooledEntry);
+                    }
+                    releaseStream();
+                    if (isRetryableHttp2Error(reqErr) && retryCount < 2) {
+                        trySendHttp2Request(retryCount + 1);
+                        return;
+                    }
+                    handleHttp2Failure(reqErr);
+                    return;
+                }
+                const handleRequestTimeout = () => {
+                    if (!responseHeadersReceived) {
+                        if (!reqClosed) {
+                            reqClosed = true;
+                            req.close(http2.constants.NGHTTP2_CANCEL);
                         }
-                        chunks.push(bufferChunk);
+                        releaseStream();
+                        handleHttp2Failure(new Error(`HTTP/2 timeout for ${urlString}`));
+                        return;
                     }
-                    const text = Buffer.concat(chunks).toString();
-                    const contentTypeHeader = headers['content-type'];
-                    const contentType = Array.isArray(contentTypeHeader)
-                        ? contentTypeHeader[0]
-                        : contentTypeHeader || '';
-                    const isJson = contentType
-                        .toLowerCase()
-                        .startsWith('application/json');
-                    const responseBody = isJson && text ? JSON.parse(text) : text;
-                    if (loggingConfig.debug?.network) {
-                        const bodySnippet = typeof responseBody === 'string'
-                            ? responseBody.substring(0, 200)
-                            : JSON.stringify(responseBody).substring(0, 200);
-                        logger('debug', 'Network', `[${logId}] Response Status: ${statusCode}`);
-                        logger('debug', 'Network', `[${logId}] Response Body: ${bodySnippet}${bodySnippet.length === 200 ? '...' : ''}`);
+                    if (req.isPaused()) {
+                        req.setTimeout(0);
+                        return;
                     }
-                    resolve({
-                        statusCode,
-                        headers,
-                        body: responseBody
+                    req.destroy(new Error(`HTTP/2 response stream timeout for ${urlString}`));
+                };
+                if (timeout) {
+                    req.on('timeout', handleRequestTimeout);
+                    req.on('pause', () => {
+                        if (responseHeadersReceived)
+                            req.setTimeout(0);
                     });
-                }
-                catch (err) {
-                    resolve({
-                        statusCode,
-                        headers,
-                        error: err instanceof Error ? err.message : String(err)
+                    req.on('resume', () => {
+                        if (responseHeadersReceived)
+                            req.setTimeout(timeout);
                     });
+                    req.setTimeout(timeout);
                 }
-                finally {
-                    if (!streamOnly)
-                        closeSessionGracefully();
-                }
-            });
-            if (body && !['GET', 'HEAD'].includes(method)) {
-                if (Buffer.isBuffer(body) || body instanceof Uint8Array) {
-                    req.end(Buffer.from(body));
-                }
-                else {
-                    const payload = JSON.stringify(body);
-                    if (disableBodyCompression ||
-                        h2Headers['content-encoding'] !== 'gzip') {
-                        req.end(payload);
+                req.on('close', releaseStream);
+                req.on('error', (err) => {
+                    releaseStream();
+                    if (responseHeadersReceived)
+                        return;
+                    if (!reqClosed)
+                        reqClosed = true;
+                    if (isRetryableHttp2Error(err) && retryCount < 2) {
+                        if (pooledEntry) {
+                            pooledEntry.closed = true;
+                            removeSessionFromPool(pooledEntry);
+                        }
+                        trySendHttp2Request(retryCount + 1);
+                        return;
                     }
-                    else {
-                        zlib.gzip(payload, (err, data) => {
-                            if (err) {
-                                req.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
-                                closeSessionGracefully();
-                                return reject(new Error(`Gzip error for ${urlString}: ${err.message}`));
-                            }
-                            req.end(data);
+                    handleHttp2Failure(err);
+                    if (!fallbackStarted) {
+                        reject(new Error(`HTTP/2 request error for ${urlString}: ${err.message}`));
+                    }
+                });
+                req.on('response', async (headers) => {
+                    responseHeadersReceived = true;
+                    req.setTimeout(0);
+                    const statusHeader = headers[':status'];
+                    const rawStatus = typeof statusHeader === 'number'
+                        ? statusHeader
+                        : Number(statusHeader);
+                    const statusCode = Number.isNaN(rawStatus) ? undefined : rawStatus;
+                    if (statusCode === 429) {
+                        finalNodeLink?.routePlanner?.banIP?.(localAddress);
+                    }
+                    const locationHeader = headers.location;
+                    const location = Array.isArray(locationHeader)
+                        ? locationHeader[0]
+                        : locationHeader;
+                    if (REDIRECT_STATUS_CODES.includes((statusCode ?? 0)) &&
+                        location &&
+                        currentUrl) {
+                        if (!reqClosed) {
+                            reqClosed = true;
+                            req.close(http2.constants.NGHTTP2_NO_ERROR);
+                        }
+                        releaseStream();
+                        try {
+                            const redirect = resolveRedirect(currentUrl, location, statusCode ?? 0, headers, options);
+                            return resolve(makeRequest(redirect.url, redirect.options, finalNodeLink));
+                        }
+                        catch (err) {
+                            return reject(err);
+                        }
+                    }
+                    const isNoBodyResponse = method === 'HEAD' ||
+                        statusCode === 204 ||
+                        statusCode === 304 ||
+                        (statusCode !== undefined && statusCode >= 100 && statusCode < 200);
+                    if (isNoBodyResponse) {
+                        if (streamOnly) {
+                            req.on('end', releaseStream);
+                            req.on('error', releaseStream);
+                            req.on('close', releaseStream);
+                            return resolve({ statusCode, headers, stream: req });
+                        }
+                        releaseStream();
+                        return resolve({
+                            statusCode,
+                            headers,
+                            body: options.responseType === 'buffer' ? Buffer.alloc(0) : ''
                         });
                     }
+                    let responseStream = req;
+                    const encodingHeader = headers['content-encoding'];
+                    const encoding = Array.isArray(encodingHeader)
+                        ? encodingHeader.join(',')
+                        : String(encodingHeader || '');
+                    if (encoding === 'zstd' && hasZstd)
+                        responseStream = req.pipe(zlib.createZstdDecompress());
+                    else if (encoding === 'br')
+                        responseStream = req.pipe(zlib.createBrotliDecompress());
+                    else if (encoding === 'gzip')
+                        responseStream = req.pipe(zlib.createGunzip());
+                    else if (encoding === 'deflate')
+                        responseStream = req.pipe(zlib.createInflate());
+                    if (streamOnly) {
+                        responseStream.on('end', releaseStream);
+                        responseStream.on('error', releaseStream);
+                        responseStream.on('close', releaseStream);
+                        return resolve({ statusCode, headers, stream: responseStream });
+                    }
+                    try {
+                        const chunks = [];
+                        let bufferedBytes = 0;
+                        for await (const chunk of responseStream) {
+                            const bufferChunk = chunk;
+                            bufferedBytes += bufferChunk.length;
+                            if (bufferedBytes > maxResponseBodyBytes) {
+                                throw new Error(`Response body too large for ${urlString} (${bufferedBytes} bytes > ${maxResponseBodyBytes} bytes)`);
+                            }
+                            chunks.push(bufferChunk);
+                        }
+                        const text = Buffer.concat(chunks).toString();
+                        const contentTypeHeader = headers['content-type'];
+                        const contentType = Array.isArray(contentTypeHeader)
+                            ? contentTypeHeader[0]
+                            : contentTypeHeader || '';
+                        const isJson = contentType
+                            .toLowerCase()
+                            .startsWith('application/json');
+                        let responseBody = text;
+                        if (isJson && text) {
+                            if (text.length > 65536) {
+                                await new Promise((resolve) => setImmediate(resolve));
+                            }
+                            try {
+                                responseBody = JSON.parse(text);
+                            }
+                            catch {
+                                const trimmed = text.trim();
+                                const firstNewline = trimmed.indexOf('\n');
+                                if (firstNewline !== -1) {
+                                    try {
+                                        responseBody = JSON.parse(trimmed.slice(0, firstNewline));
+                                    }
+                                    catch {
+                                        responseBody = text;
+                                    }
+                                }
+                                else {
+                                    responseBody = text;
+                                }
+                            }
+                        }
+                        if (loggingConfig.debug?.network) {
+                            const bodySnippet = typeof responseBody === 'string'
+                                ? responseBody.substring(0, 200)
+                                : JSON.stringify(responseBody).substring(0, 200);
+                            logger('debug', 'Network', `[${logId}] Response Status: ${statusCode}`);
+                            logger('debug', 'Network', `[${logId}] Response Body: ${bodySnippet}${bodySnippet.length === 200 ? '...' : ''}`);
+                        }
+                        resolve({
+                            statusCode,
+                            headers,
+                            body: responseBody
+                        });
+                    }
+                    catch (err) {
+                        resolve({
+                            statusCode,
+                            headers,
+                            error: err instanceof Error ? err.message : String(err)
+                        });
+                    }
+                    finally {
+                        if (!streamOnly)
+                            releaseStream();
+                    }
+                });
+                if (body && !['GET', 'HEAD'].includes(method)) {
+                    if (Buffer.isBuffer(body) || body instanceof Uint8Array) {
+                        req.end(Buffer.from(body));
+                    }
+                    else {
+                        const payload = JSON.stringify(body);
+                        if (disableBodyCompression ||
+                            h2Headers['content-encoding'] !== 'gzip') {
+                            req.end(payload);
+                        }
+                        else {
+                            zlib.gzip(payload, (err, data) => {
+                                if (err) {
+                                    req.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+                                    releaseStream();
+                                    return reject(new Error(`Gzip error for ${urlString}: ${err.message}`));
+                                }
+                                req.end(data);
+                            });
+                        }
+                    }
+                }
+                else {
+                    req.end();
                 }
             }
-            else {
-                req.end();
+            catch (e) {
+                handleHttp2Failure(e);
             }
-        }
-        catch {
-            if (session && !session.closed && !session.destroyed && !sessionClosed) {
-                session.close();
-            }
-            fallbackToHttp1();
-        }
+        };
+        trySendHttp2Request(0);
     });
 }
 /**
@@ -1752,9 +2218,7 @@ async function checkDependencyUpdates(credentialManager) {
         '@toddynnn/symphonia-decoder',
         '@toddynnn/voice-opus',
         '@ecliptia/faad2-wasm',
-        '@alexanderolsen/libsamplerate-js',
-        '@ecliptia/seekable-stream',
-        'mp4box'
+        '@ecliptia/seekable-stream'
     ];
     const localVersions = [];
     for (const dep of coreDeps) {
@@ -1995,6 +2459,7 @@ function cleanupHttpAgents() {
         httpAgent.destroy();
         httpsAgent.destroy();
         http2FailedHosts.clear();
+        closeHttp2Pool();
         logger('info', 'Utils', 'HTTP agents cleaned up successfully');
     }
     catch (error) {
@@ -2085,8 +2550,11 @@ export function getBestMatch(list, original, options = {}) {
             .replace(/feat\.?/g, '')
             .replace(/ft\.?/g, '')
             .replace(/\s*\([^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)/gi, '')
-            .replace(/\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^\]]*\]/gi, '')
-            .replace(/[^\w\s]/g, '')
+            .replace(/\s*\[[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi, '')
+            // Preserves letters and numbers across all Unicode scripts (\p{L}\p{N}), ensuring
+            // non-Latin titles (Japanese, Chinese, Cyrillic, etc.) are not erased during normalization.
+            // Ref: https://github.com/PerformanC/NodeLink/commit/7ee75784
+            .replace(/[^\p{L}\p{N}\s]/gu, '')
             .trim();
     };
     const specKeywords = [
@@ -2103,17 +2571,97 @@ export function getBestMatch(list, original, options = {}) {
         'slowed',
         'reverb'
     ];
-    const findSpec = (str) => specKeywords.filter((k) => str.toLowerCase().includes(k));
+    // Word boundaries avoid false positives such as "live" inside "alive" or
+    // "deliver". This still relies on English keywords for known version tags,
+    // but languages are no longer needed to reject unknown extra tags.
+    const specPatterns = specKeywords.map((k) => new RegExp(`(^|[^\\p{L}\\p{N}])${k}([^\\p{L}\\p{N}]|$)`, 'iu'));
+    const findSpec = (str) => specKeywords.filter((_, i) => specPatterns[i]?.test(str) ?? false);
     const originalTitle = original.title.toLowerCase();
     const originalSpec = findSpec(originalTitle);
     const isOriginalExplicit = original.uri?.includes('explicit=true') ||
         originalTitle.includes('explicit');
     const targetDuration = original.length;
     const allowedDiff = targetDuration * durationTolerance;
+    const normOriginalTitle = normalize(original.title);
     const normOriginalAuthor = normalize(original.author);
-    const originalWords = new Set(normalize(original.title)
-        .split(' ')
-        .filter((w) => w.length > 1));
+    const primaryTitleRaw = original.title
+        .replace(/\s*[\(\[][^\)\]]*[\)\]]/g, '')
+        .split(/\s*[-–—|]\s*/)[0] || '';
+    const normPrimaryTitle = normalize(primaryTitleRaw);
+    const primaryWords = new Set(normPrimaryTitle.split(/\s+/).filter((w) => w.length > 0));
+    let cleanTitleForWords = normOriginalTitle;
+    if (normOriginalAuthor && cleanTitleForWords.includes(normOriginalAuthor)) {
+        const stripped = cleanTitleForWords.replace(normOriginalAuthor, '').trim();
+        if (stripped.length >= 2)
+            cleanTitleForWords = stripped;
+    }
+    const originalWords = new Set(cleanTitleForWords
+        .split(/\s+/)
+        .filter((w) => w.length > 0));
+    // Split multiple artists (e.g. "ぴーなた, 重音テト") to match individual artist aliases/channels.
+    const originalArtists = original.author
+        ? original.author
+            .split(/[,/&]/)
+            .map((a) => normalize(a))
+            .filter((a) => a.length > 0)
+        : [];
+    // Language-agnostic quality signals. Extra words or bracketed tags left in a
+    // candidate after the usual upload-tag cleanup almost always describe a
+    // different version ("ao vivo", "en direct", "ライブ", ...) regardless of the
+    // language used by the uploader.
+    const standardTagWords = new Set([
+        'official',
+        'video',
+        'audio',
+        'mv',
+        'visualizer',
+        'color',
+        'coded',
+        'hd',
+        '4k',
+        'prod',
+        'lyric',
+        'lyrics',
+        'topic',
+        'explicit',
+        'clean',
+        'scrapped',
+        'unreleased',
+        'demo',
+        'leak',
+        'loop',
+        'bonus',
+        'remastered'
+    ]);
+    const standardTagPattern = /\(\s*[^)]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.)[^)]*\)|\[\s*[^\]]*(official|video|audio|mv|visualizer|color\s*coded|hd|4k|prod\.|scrapped|unreleased|demo|leak|loop|bonus)[^\]]*\]/gi;
+    const extraBracketTags = (str) => {
+        const tags = [];
+        for (const match of str
+            .replace(standardTagPattern, '')
+            .matchAll(/[\(\[]([^\)\]]+)[\)\]]/g)) {
+            const tag = normalize(match[1] ?? '');
+            if (!tag)
+                continue;
+            // Brackets around an artist name (common in Vocaloid/J-pop uploads) are
+            // not a version tag when they refer to the original artist.
+            if (originalArtists.some((artist) => tag.includes(artist) || artist.includes(tag)))
+                continue;
+            tags.push(tag);
+        }
+        return tags;
+    };
+    const expectedWords = new Set(originalWords);
+    for (const word of normOriginalAuthor.split(/\s+/)) {
+        if (word)
+            expectedWords.add(word);
+    }
+    for (const artist of originalArtists) {
+        for (const word of artist.split(/\s+/)) {
+            if (word)
+                expectedWords.add(word);
+        }
+    }
+    const originalExtraTags = extraBracketTags(original.title.toLowerCase());
     const scored = list.map((item) => {
         const itemTitle = item.info.title.toLowerCase();
         const normItemTitle = normalize(itemTitle);
@@ -2121,14 +2669,69 @@ export function getBestMatch(list, original, options = {}) {
         const itemSpec = findSpec(itemTitle);
         const isItemClean = itemTitle.includes('clean') || itemTitle.includes('radio edit');
         let score = 0;
-        const itemWords = normItemTitle.split(' ').filter((w) => w.length > 1);
+        const itemWords = normItemTitle.split(/\s+/).filter((w) => w.length > 0);
         const itemWordsSet = new Set(itemWords);
         let overlap = 0;
         for (const word of originalWords) {
-            if (itemWordsSet.has(word))
+            if (itemWordsSet.has(word)) {
                 overlap++;
+            }
+            else if (
+            // For CJK languages that lack space delimiters, check substring containment.
+            word.length >= 2 &&
+                (normItemTitle.includes(word) || word.includes(normItemTitle))) {
+                overlap += 0.8;
+            }
+            else {
+                for (const iw of itemWords) {
+                    if ((iw.length >= 4 && word.startsWith(iw)) ||
+                        (word.length >= 4 && iw.startsWith(word))) {
+                        overlap += 0.8;
+                        break;
+                    }
+                }
+            }
         }
-        score += (overlap / Math.max(originalWords.size, 1)) * 300;
+        let primaryOverlap = 0;
+        if (primaryWords.size >= 2 && primaryWords.size < originalWords.size) {
+            for (const word of primaryWords) {
+                if (itemWordsSet.has(word)) {
+                    primaryOverlap++;
+                }
+                else if (word.length >= 2 &&
+                    (normItemTitle.includes(word) || word.includes(normItemTitle))) {
+                    primaryOverlap += 0.8;
+                }
+                else {
+                    for (const iw of itemWords) {
+                        if ((iw.length >= 4 && word.startsWith(iw)) ||
+                            (word.length >= 4 && iw.startsWith(word))) {
+                            primaryOverlap += 0.8;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        const overallRatio = overlap / Math.max(originalWords.size, 1);
+        const primaryRatio = primaryWords.size >= 2 ? primaryOverlap / primaryWords.size : 0;
+        const effectiveRatio = primaryWords.size >= 2 && primaryWords.size < originalWords.size
+            ? Math.max(overallRatio, primaryRatio * 0.95)
+            : overallRatio;
+        score += effectiveRatio * 300;
+        // Precision: words left in the candidate that are not in the original
+        // title (or its artists) describe a different edition in any language.
+        const extraWords = itemWords.filter((word) => word.length > 1 &&
+            !expectedWords.has(word) &&
+            !standardTagWords.has(word));
+        const precision = itemWords.length
+            ? (itemWords.length - extraWords.length) / itemWords.length
+            : 1;
+        score += precision * 80;
+        score -= extraWords.length * 45;
+        if (originalExtraTags.length === 0 &&
+            extraBracketTags(itemTitle).length > 0)
+            score -= 120;
         for (const spec of specKeywords) {
             const inOriginal = originalSpec.includes(spec);
             const inItem = itemSpec.includes(spec);
@@ -2141,26 +2744,76 @@ export function getBestMatch(list, original, options = {}) {
             if (isItemClean)
                 score += 500;
         }
-        if (normItemAuthor.includes(normOriginalAuthor) ||
-            normOriginalAuthor.includes(normItemAuthor)) {
+        let authorMatched = false;
+        if ((normOriginalAuthor && normItemAuthor.includes(normOriginalAuthor)) ||
+            (normItemAuthor && normOriginalAuthor.includes(normItemAuthor))) {
             score += 150;
+            authorMatched = true;
         }
         else {
+            for (const artist of originalArtists) {
+                if (artist.length >= 2 &&
+                    (normItemAuthor.includes(artist) || artist.includes(normItemAuthor))) {
+                    score += 150;
+                    authorMatched = true;
+                    break;
+                }
+            }
+        }
+        if (!authorMatched) {
+            // In Japanese/Vocaloid and indie media, featured or primary artist names
+            // are frequently included in video titles (e.g. "【重音テト】アンタに言ってんの！【MV】").
+            for (const artist of originalArtists) {
+                if (artist.length >= 2 &&
+                    (normItemTitle.includes(artist) || itemTitle.includes(artist))) {
+                    score += 100;
+                    authorMatched = true;
+                    break;
+                }
+            }
+        }
+        if (!authorMatched && normOriginalAuthor && normItemAuthor) {
             const longer = normOriginalAuthor.length > normItemAuthor.length
                 ? normOriginalAuthor
                 : normItemAuthor;
             const shorter = normOriginalAuthor.length > normItemAuthor.length
                 ? normItemAuthor
                 : normOriginalAuthor;
-            if (shorter.length > 2 && longer.includes(shorter))
+            if (shorter.length > 2 && longer.includes(shorter)) {
                 score += 100;
+                authorMatched = true;
+            }
         }
+        if (!authorMatched && normOriginalAuthor && normItemAuthor) {
+            const authorWords = normOriginalAuthor
+                .split(/\s+/)
+                .filter((w) => w.length >= 4);
+            for (const w of authorWords) {
+                if (normItemAuthor.includes(w) || normItemTitle.includes(w)) {
+                    score += 100;
+                    authorMatched = true;
+                    break;
+                }
+            }
+        }
+        if (!authorMatched && normItemAuthor && normItemAuthor.length >= 3) {
+            if (normOriginalTitle.includes(normItemAuthor)) {
+                score += 100;
+                authorMatched = true;
+            }
+        }
+        const isEpisode = original.uri?.includes('/episode/') ||
+            original.uri?.includes('/chapter/');
         if (targetDuration > 0) {
             const diff = Math.abs(item.info.length - targetDuration);
             if (diff <= allowedDiff) {
                 score += (1 - diff / allowedDiff) * 100;
+                // Studio versions are usually within a few seconds of the source,
+                // while live versions drift with applause, intros and outros.
+                if (diff <= 3)
+                    score += 40;
             }
-            else {
+            else if (!isEpisode) {
                 score -= 100;
             }
         }
@@ -2169,7 +2822,11 @@ export function getBestMatch(list, original, options = {}) {
         return { item, score };
     });
     scored.sort((a, b) => b.score - a.score);
-    return scored[0]?.item || list[0] || null;
+    const best = scored[0];
+    if (!best ||
+        (options.minScore !== undefined && best.score < options.minScore))
+        return null;
+    return best.item;
 }
 /**
  * Cleans up logger resources and intervals.
@@ -2251,4 +2908,21 @@ async function fetchSponsorBlockSegments(videoId, categories, actionTypes, apiBa
         return [];
     }
 }
-export { applyEnvOverrides, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, decodeTrack, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };
+/**
+ * Caps a collection's reported track count at the configured
+ * `playback.maxPlaylistLength`.
+ *
+ * A source may hold more tracks than NodeLink will ever load, so the total it
+ * reports should not exceed what a client can actually receive. An unset,
+ * zero, negative or non-numeric cap means "no cap".
+ *
+ * @param total - Track count as reported by the source.
+ * @param max - Configured `playback.maxPlaylistLength`.
+ * @returns `Math.min(total, max)`, or `total` when there is no usable cap.
+ */
+function capTotalTracks(total, max) {
+    return typeof max === 'number' && Number.isFinite(max) && max > 0
+        ? Math.min(total, max)
+        : total;
+}
+export { applyEnvOverrides, capTotalTracks, checkDependencyUpdates, checkForUpdates, cleanupHttpAgents, cleanupLogger, closeHttp2Pool, decodeTrack, defaultSanitizer, encodeTrack, fetchSponsorBlockSegments, generateRandomLetters, getDependencyVersion, getGitInfo, getStats, getVersion, http1makeRequest, initLogger, LogSanitizer, logger, makeRequest, parseClient, parseSemver, sendErrorResponse, sendResponse, validateProperty, verifyDiscordID, verifyMethod };

@@ -12,22 +12,36 @@ const parsePositiveIntEnv = (key, fallback) => {
 };
 const BUFFER_SIZE = parsePositiveIntEnv('NODELINK_WEBM_DEMUX_RING_BYTES', 512 * 1024);
 const TAGS = Object.freeze({
-    '1a45dfa3': true,
-    18538067: true,
-    '1f43b675': true,
-    '1654ae6b': true,
-    '1c53bb6b': false,
-    '1254c367': false,
-    ae: true,
-    d7: false,
-    83: false,
-    a3: false,
-    '63a2': false,
-    e7: false,
-    a0: true,
-    a1: false
+    '1a45dfa3': true, // EBML
+    '18538067': true, // Segment
+    '1549a966': true, // Info
+    '1654ae6b': true, // Tracks
+    ae: true, // TrackEntry
+    '1f43b675': true, // Cluster
+    a0: true, // BlockGroup
+    '1c53bb6b': true, // Cues
+    'bb': true, // CuePoint
+    'b7': true, // CueTrackPositions
+    '2ad7b1': false, // TimecodeScale
+    '4489': false, // Duration
+    d7: false, // TrackNumber
+    '83': false, // TrackType
+    '86': false, // CodecID
+    '63a2': false, // CodecPrivate
+    '56aa': false, // CodecDelay
+    '56bb': false, // SeekPreRoll
+    e7: false, // Cluster Timecode
+    a3: false, // SimpleBlock
+    a1: false, // Block
+    '9b': false, // BlockDuration
+    '75a2': false, // DiscardPadding
+    f7: false, // CueTrack
+    f1: false, // CueClusterPosition
+    b3: false // CueTime
 });
-const OPUS_HEAD = Buffer.from([0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64]);
+const OPUS_HEAD = Buffer.from([
+    0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64
+]);
 const MAX_TAG_SIZE = 10 * 1024 * 1024;
 const toTightBuffer = (buf) => Buffer.from(buf);
 const webmOpusProfiler = {
@@ -48,13 +62,7 @@ const webmOpusProfiler = {
 export const getWebmOpusProfilerStats = () => ({
     ...webmOpusProfiler
 });
-/**
- * Reads the VINT length prefix from an EBML buffer.
- * @param buf - Source buffer to read from.
- * @param index - Byte offset to inspect.
- * @returns The VINT length (1-8 bytes) or a sentinel indicating failure.
- * @internal
- */
+/** Reads the length of an EBML VINT without consuming its marker bit. */
 const readVintLength = (buf, index) => {
     if (index < 0 || index >= buf.length)
         return TOO_SHORT;
@@ -63,53 +71,185 @@ const readVintLength = (buf, index) => {
         return TOO_SHORT;
     if (firstByte === 0)
         return INVALID_VINT;
-    let n = 0;
-    for (; n < 8; n++)
-        if ((1 << (7 - n)) & firstByte)
-            break;
-    n++;
-    return index + n > buf.length ? TOO_SHORT : n;
+    let mask = 0x80;
+    let length = 1;
+    while (length <= 8 && (firstByte & mask) === 0) {
+        mask >>= 1;
+        length++;
+    }
+    if (length > 8)
+        return INVALID_VINT;
+    return index + length > buf.length ? TOO_SHORT : length;
 };
-/**
- * Reads an EBML variable-length integer (VINT).
- * @param buf - Source buffer containing the VINT.
- * @param start - Start index of the VINT.
- * @param end - End index (exclusive) of the VINT.
- * @returns Parsed bigint value or a sentinel when insufficient data exists.
- * @internal
- */
+/** Reads an EBML VINT value with its marker bit removed. */
 const readVint = (buf, start, end) => {
     if (end > buf.length)
         return TOO_SHORT;
-    const len = readVintLength(buf, start);
-    if (typeof len !== 'number')
+    const length = readVintLength(buf, start);
+    if (typeof length !== 'number' || end !== start + length)
         return TOO_SHORT;
-    const mask = (1 << (8 - len)) - 1;
-    const startByte = buf[start];
-    if (startByte === undefined)
+    const firstByte = buf[start];
+    if (firstByte === undefined)
         return TOO_SHORT;
-    let value = BigInt(startByte & mask);
-    for (let i = start + 1; i < end; i++) {
-        const nextByte = buf[i];
+    const mask = (1 << (8 - length)) - 1;
+    let value = BigInt(firstByte & mask);
+    for (let index = start + 1; index < end; index++) {
+        const nextByte = buf[index];
         if (nextByte === undefined)
             return TOO_SHORT;
         value = (value << 8n) | BigInt(nextByte);
     }
     return value;
 };
+const readUnsigned = (data) => {
+    let value = 0n;
+    for (const byte of data)
+        value = (value << 8n) | BigInt(byte);
+    return value;
+};
+const readBlockVint = (data, offset) => {
+    const length = readVintLength(data, offset);
+    if (typeof length !== 'number')
+        return null;
+    const value = readVint(data, offset, offset + length);
+    if (value === TOO_SHORT)
+        return null;
+    return { value, length };
+};
+const parseLacedFrames = (data, offset, lacing) => {
+    if (offset > data.length)
+        return null;
+    if (lacing === 0)
+        return [data.subarray(offset)];
+    if (offset >= data.length)
+        return null;
+    const frameCount = (data[offset] ?? 0) + 1;
+    offset++;
+    if (frameCount < 1)
+        return null;
+    if (lacing === 2) {
+        const payloadLength = data.length - offset;
+        if (payloadLength % frameCount !== 0)
+            return null;
+        const frameLength = payloadLength / frameCount;
+        const frames = [];
+        for (let index = 0; index < frameCount; index++) {
+            const start = offset + index * frameLength;
+            frames.push(data.subarray(start, start + frameLength));
+        }
+        return frames;
+    }
+    const sizes = [];
+    let declaredSize = 0;
+    if (lacing === 1) {
+        for (let index = 0; index < frameCount - 1; index++) {
+            let frameSize = 0;
+            let byte;
+            do {
+                if (offset >= data.length)
+                    return null;
+                byte = data[offset++] ?? 0;
+                frameSize += byte;
+            } while (byte === 255);
+            sizes.push(frameSize);
+            declaredSize += frameSize;
+        }
+    }
+    else if (lacing === 3) {
+        const first = readBlockVint(data, offset);
+        if (!first || first.value > BigInt(Number.MAX_SAFE_INTEGER))
+            return null;
+        offset += first.length;
+        let previousSize = Number(first.value);
+        sizes.push(previousSize);
+        declaredSize += previousSize;
+        for (let index = 1; index < frameCount - 1; index++) {
+            const deltaVint = readBlockVint(data, offset);
+            if (!deltaVint)
+                return null;
+            offset += deltaVint.length;
+            const bias = (1n << BigInt(7 * deltaVint.length - 1)) - 1n;
+            const delta = deltaVint.value - bias;
+            const nextSizeBig = BigInt(previousSize) + delta;
+            if (nextSizeBig < 0n || nextSizeBig > BigInt(Number.MAX_SAFE_INTEGER))
+                return null;
+            previousSize = Number(nextSizeBig);
+            sizes.push(previousSize);
+            declaredSize += previousSize;
+        }
+    }
+    else {
+        return null;
+    }
+    const remaining = data.length - offset;
+    const lastSize = remaining - declaredSize;
+    if (lastSize < 0)
+        return null;
+    sizes.push(lastSize);
+    const frames = [];
+    let cursor = offset;
+    for (const size of sizes) {
+        if (!Number.isSafeInteger(size) || size < 0 || cursor + size > data.length)
+            return null;
+        frames.push(data.subarray(cursor, cursor + size));
+        cursor += size;
+    }
+    return cursor === data.length ? frames : null;
+};
+/** Returns the duration represented by one Opus packet, based on its TOC. */
+const getOpusPacketDurationMs = (packet) => {
+    const toc = packet[0];
+    if (toc === undefined)
+        return 20;
+    const config = toc >> 3;
+    let frameDurationMs;
+    if (config >= 16) {
+        frameDurationMs = [2.5, 5, 10, 20][config & 0x03] ?? 20;
+    }
+    else if (config >= 12) {
+        frameDurationMs = (config & 0x01) === 0 ? 10 : 20;
+    }
+    else {
+        frameDurationMs = [10, 20, 40, 60][config & 0x03] ?? 20;
+    }
+    const frameCode = toc & 0x03;
+    let frameCount = 1;
+    if (frameCode === 1 || frameCode === 2) {
+        frameCount = 2;
+    }
+    else if (frameCode === 3) {
+        /* INFO: RFC 6716 §3.2.5 puts the frame count in the low six bits. */
+        frameCount = (packet[1] ?? 0) & 0x3f;
+    }
+    const duration = frameDurationMs * frameCount;
+    return frameCount > 0 && duration <= 120 ? duration : 20;
+};
+const parseBlock = (data) => {
+    const track = readBlockVint(data, 0);
+    if (!track || track.value > BigInt(Number.MAX_SAFE_INTEGER))
+        return null;
+    let offset = track.length;
+    if (offset + 3 > data.length)
+        return null;
+    const relativeTimecode = data.readInt16BE(offset);
+    offset += 2;
+    const flags = data[offset] ?? 0;
+    offset++;
+    const lacing = (flags >> 1) & 0x03;
+    const packets = parseLacedFrames(data, offset, lacing);
+    if (!packets || packets.some((packet) => packet.length === 0))
+        return null;
+    return {
+        trackNumber: Number(track.value),
+        relativeTimecode,
+        flags,
+        packets
+    };
+};
 /**
- * Base demuxer for WebM streams that emit Opus packets.
- * @remarks
- * This parser keeps a rolling ring buffer and scans EBML tags to locate
- * the Opus head payload and audio blocks.
- * @example
- * ```ts
- * const demuxer = new WebmOpusDemuxer()
- * inputStream.pipe(demuxer).on('data', (packet) => {
- *   // packet contains raw Opus frame bytes
- * })
- * ```
- * @internal
+ * Demuxes WebM audio blocks into Opus packets. For every emitted packet it also
+ * emits a `packetTimestamp` event before pushing the packet downstream. The
+ * timestamp is the Matroska block timestamp adjusted by CodecDelay.
  */
 class WebmBaseDemuxer extends Transform {
     ringBuffer;
@@ -119,35 +259,45 @@ class WebmBaseDemuxer extends Transform {
     currentTrack;
     pendingTrack;
     ebmlFound;
-    /**
-     * Creates a new WebM demuxer instance.
-     * @param options - Transform stream options.
-     */
+    clusterTimecode;
+    timecodeScaleNs;
+    cleanedUp;
     constructor(options = {}) {
         super({ readableObjectMode: true, ...options });
         this.on('error', (err) => {
+            const errorCode = String(err.code ?? '');
+            const expectedCancellation = errorCode === 'ERR_STREAM_PREMATURE_CLOSE' ||
+                errorCode === 'ABORT_ERR' ||
+                err.name === 'AbortError' ||
+                (this.destroyed && errorCode === 'ECONNRESET');
+            if (expectedCancellation) {
+                logger('debug', 'WebmDemuxer', `Upstream stream closed: ${err.message}`);
+                return;
+            }
             const code = err.code ? ` (${err.code})` : '';
             logger('error', 'WebmDemuxer', `Stream error: ${err.message}${code}`);
         });
-        this.ringBuffer = new RingBuffer(BUFFER_SIZE);
+        /* INFO: Keep the parser limit for large elements without reserving it for every stream. */
+        this.ringBuffer = new RingBuffer(BUFFER_SIZE, 64 * 1024);
         this.total = 0n;
         this.processed = 0n;
         this.skipUntil = null;
         this.currentTrack = null;
         this.pendingTrack = {};
         this.ebmlFound = false;
+        this.clusterTimecode = 0n;
+        this.timecodeScaleNs = 1000000n;
+        this.cleanedUp = false;
         webmOpusProfiler.created++;
         webmOpusProfiler.active++;
     }
-    /**
-     * Consumes incoming chunks and emits decoded Opus packets.
-     * @param chunk - Incoming data chunk.
-     * @param _encoding - Encoding (unused for Buffer input).
-     * @param done - Callback to signal completion.
-     */
     _transform(chunk, _encoding, done) {
         if (!chunk?.length) {
             done();
+            return;
+        }
+        if (chunk.length > BUFFER_SIZE || this.ringBuffer.length + chunk.length > BUFFER_SIZE) {
+            done(new Error(`WebM parser buffer overflow (buffered=${this.ringBuffer.length}, incoming=${chunk.length}, capacity=${BUFFER_SIZE})`));
             return;
         }
         webmOpusProfiler.chunksIn++;
@@ -162,9 +312,7 @@ class WebmBaseDemuxer extends Transform {
             const bufferLen = BigInt(this.ringBuffer.length);
             const toSkip = remainingToSkip < bufferLen ? remainingToSkip : bufferLen;
             if (toSkip > 0n) {
-                const skipNum = toSkip > BigInt(Number.MAX_SAFE_INTEGER)
-                    ? Number.MAX_SAFE_INTEGER
-                    : Number(toSkip);
+                const skipNum = Number(toSkip);
                 this.ringBuffer.skip(skipNum);
                 this.processed += BigInt(skipNum);
             }
@@ -178,9 +326,9 @@ class WebmBaseDemuxer extends Transform {
             const currentData = this.ringBuffer.getContiguous(this.ringBuffer.length);
             if (!currentData)
                 break;
-            let res;
+            let result;
             try {
-                res = this._readTag(currentData, 0);
+                result = this._readTag(currentData, 0);
             }
             catch (err) {
                 const error = err instanceof Error ? err : new Error(String(err));
@@ -188,71 +336,48 @@ class WebmBaseDemuxer extends Transform {
                 done(error);
                 return;
             }
-            if (res === TOO_SHORT) {
+            if (result === TOO_SHORT) {
                 webmOpusProfiler.tooShortReads++;
                 break;
             }
-            if (res._skipUntil) {
+            if (result._skipUntil !== undefined) {
                 const skipped = this.ringBuffer.length;
                 if (skipped > 0)
                     webmOpusProfiler.skippedBytes += skipped;
-                this.skipUntil = res._skipUntil;
+                this.skipUntil = result._skipUntil;
                 this.ringBuffer.skip(skipped);
                 this.processed += BigInt(skipped);
                 break;
             }
-            if (res.offset) {
-                if (res.offset > 0)
-                    webmOpusProfiler.skippedBytes += res.offset;
-                const offset = BigInt(res.offset);
-                const skipNum = offset > BigInt(Number.MAX_SAFE_INTEGER)
-                    ? Number.MAX_SAFE_INTEGER
-                    : Number(offset);
-                this.ringBuffer.skip(skipNum);
-                this.processed += BigInt(skipNum);
+            if (result.offset > 0) {
+                webmOpusProfiler.skippedBytes += result.offset;
+                this.ringBuffer.skip(result.offset);
+                this.processed += BigInt(result.offset);
             }
             else {
                 break;
             }
         }
-        if (this.total > 1000000000n && !this.skipUntil) {
+        if (this.total > 1000000000n && this.skipUntil === null) {
             this.total = this.processed = 0n;
         }
         done();
     }
-    /**
-     * Reads the EBML tag ID from the provided buffer.
-     * @param chunk - Buffer to scan.
-     * @param offset - Offset to start reading from.
-     * @returns Parsed tag ID or a sentinel when data is incomplete.
-     */
     _readEBMLId(chunk, offset) {
-        const len = readVintLength(chunk, offset);
-        if (len === TOO_SHORT || len === INVALID_VINT)
-            return len;
-        return { id: chunk.subarray(offset, offset + len), offset: offset + len };
+        const length = readVintLength(chunk, offset);
+        if (length === TOO_SHORT || length === INVALID_VINT)
+            return length;
+        return { id: chunk.subarray(offset, offset + length), offset: offset + length };
     }
-    /**
-     * Reads the EBML tag size.
-     * @param chunk - Buffer to scan.
-     * @param offset - Offset to start reading from.
-     * @returns Parsed data length, including VINT metadata, or sentinel.
-     */
     _readTagSize(chunk, offset) {
-        const len = readVintLength(chunk, offset);
-        if (len === TOO_SHORT || len === INVALID_VINT)
-            return len;
-        const dataLen = readVint(chunk, offset, offset + len);
+        const length = readVintLength(chunk, offset);
+        if (length === TOO_SHORT || length === INVALID_VINT)
+            return length;
+        const dataLen = readVint(chunk, offset, offset + length);
         if (dataLen === TOO_SHORT)
             return TOO_SHORT;
-        return { offset: offset + len, dataLen, vintLen: len };
+        return { offset: offset + length, dataLen, vintLen: length };
     }
-    /**
-     * Parses a single EBML tag and emits audio when available.
-     * @param chunk - Buffer to parse from.
-     * @param offset - Offset into the buffer.
-     * @returns Offsets to skip or a sentinel if more data is required.
-     */
     _readTag(chunk, offset) {
         const idData = this._readEBMLId(chunk, offset);
         if (idData === TOO_SHORT)
@@ -264,15 +389,13 @@ class WebmBaseDemuxer extends Transform {
         const tag = idData.id.toString('hex');
         if (!this.ebmlFound) {
             if (tag === '1a45dfa3' || tag === '1f43b675') {
-                logger('debug', 'WebmDemuxer', `Header found: ${tag}`);
                 this.ebmlFound = true;
             }
             else {
                 return { offset: 1 };
             }
         }
-        let currentOffset = idData.offset;
-        const sizeData = this._readTagSize(chunk, currentOffset);
+        const sizeData = this._readTagSize(chunk, idData.offset);
         if (sizeData === TOO_SHORT)
             return TOO_SHORT;
         if (sizeData === INVALID_VINT) {
@@ -285,88 +408,125 @@ class WebmBaseDemuxer extends Transform {
             numericTagSize > webmOpusProfiler.maxTagBytesSeen) {
             webmOpusProfiler.maxTagBytesSeen = numericTagSize;
         }
-        if (tag !== '18538067' && dataLen > BigInt(MAX_TAG_SIZE)) {
-            const isUnknownSize = dataLen === 2n ** BigInt(7 * vintLen) - 1n;
-            if (!isUnknownSize) {
-                return { offset: 1 };
-            }
+        const unknownSize = dataLen === 2n ** BigInt(7 * vintLen) - 1n;
+        if (tag !== '18538067' && !unknownSize && dataLen > BigInt(MAX_TAG_SIZE)) {
+            return { offset: 1 };
         }
-        currentOffset = sizeData.offset;
+        const dataOffset = sizeData.offset;
         if (!(tag in TAGS)) {
-            const isUnknownSize = dataLen === 2n ** BigInt(7 * vintLen) - 1n;
-            const numDataLen = Number(dataLen);
-            if (isUnknownSize) {
+            if (unknownSize)
                 return { offset: 1 };
+            const size = Number(dataLen);
+            if (!Number.isSafeInteger(size) || size < 0)
+                return { offset: 1 };
+            if (chunk.length >= dataOffset + size) {
+                return { offset: dataOffset + size };
             }
-            if (chunk.length > currentOffset + numDataLen)
-                return { offset: currentOffset + numDataLen };
             return {
-                offset: currentOffset,
-                _skipUntil: this.processed + BigInt(currentOffset + numDataLen)
+                offset: dataOffset,
+                _skipUntil: this.processed + BigInt(dataOffset + size)
             };
         }
-        const hasChildren = TAGS[tag];
-        if (hasChildren)
-            return { offset: currentOffset };
-        const numDataLen = Number(dataLen);
-        if (currentOffset + numDataLen > chunk.length)
-            return TOO_SHORT;
-        const data = chunk.subarray(currentOffset, currentOffset + numDataLen);
-        if (!this.currentTrack) {
+        if (TAGS[tag]) {
+            if (tag === '1f43b675')
+                this.clusterTimecode = 0n;
             if (tag === 'ae')
                 this.pendingTrack = {};
-            if (tag === 'd7')
-                this.pendingTrack.number = data[0];
-            if (tag === '83')
-                this.pendingTrack.type = data[0];
-            if (this.pendingTrack.type === 2 &&
-                this.pendingTrack.number !== undefined)
-                this.currentTrack = this.pendingTrack;
+            return { offset: dataOffset };
         }
-        if (tag === '63a2') {
+        const size = Number(dataLen);
+        if (!Number.isSafeInteger(size) || size < 0)
+            return { offset: 1 };
+        if (dataOffset + size > chunk.length)
+            return TOO_SHORT;
+        const data = chunk.subarray(dataOffset, dataOffset + size);
+        if (tag === '2ad7b1') {
+            const scale = readUnsigned(data);
+            if (scale > 0n)
+                this.timecodeScaleNs = scale;
+        }
+        else if (tag === 'd7') {
+            const value = readUnsigned(data);
+            if (value <= BigInt(Number.MAX_SAFE_INTEGER))
+                this.pendingTrack.number = Number(value);
+        }
+        else if (tag === '83') {
+            const value = readUnsigned(data);
+            if (value <= BigInt(Number.MAX_SAFE_INTEGER))
+                this.pendingTrack.type = Number(value);
+        }
+        else if (tag === '86') {
+            this.pendingTrack.codecId = data.toString('utf8');
+        }
+        else if (tag === '56aa') {
+            this.pendingTrack.codecDelayNs = readUnsigned(data);
+        }
+        else if (tag === '56bb') {
+            this.pendingTrack.seekPreRollNs = readUnsigned(data);
+        }
+        if (!this.currentTrack &&
+            this.pendingTrack.type === 2 &&
+            this.pendingTrack.number !== undefined &&
+            this.pendingTrack.codecId === 'A_OPUS') {
+            this.currentTrack = this.pendingTrack;
+        }
+        if (tag === 'e7') {
+            this.clusterTimecode = readUnsigned(data);
+        }
+        else if (tag === '63a2') {
             try {
                 this._checkHead(data);
                 webmOpusProfiler.headPackets++;
-                // Emit a tight copy so downstream listeners do not retain the ring backing store.
                 this.emit('head', toTightBuffer(data));
             }
-            catch (_e) { }
-        }
-        else if (tag === 'a3') {
-            const firstByte = data[0];
-            if (this.currentTrack &&
-                firstByte !== undefined &&
-                (firstByte & 0xf) === this.currentTrack.number) {
-                // Avoid retaining large backing stores through subarray views.
-                const packet = toTightBuffer(data.subarray(4));
-                webmOpusProfiler.packetsOut++;
-                webmOpusProfiler.packetBytesOut += packet.length;
-                this.push(packet);
+            catch {
+                // An invalid CodecPrivate is ignored here; packet validation below will
+                // still fail through the decoder if the stream is not valid Opus.
             }
         }
-        return { offset: currentOffset + numDataLen };
+        else if (tag === 'a3' || tag === 'a1') {
+            this._emitBlock(data);
+        }
+        return { offset: dataOffset + size };
     }
-    /**
-     * Cleans up internal buffers when destroyed.
-     * @param err - Optional error.
-     * @param cb - Callback invoked after cleanup.
-     */
+    _emitBlock(data) {
+        const block = parseBlock(data);
+        if (!block || !this.currentTrack)
+            return;
+        if (block.trackNumber !== this.currentTrack.number)
+            return;
+        const rawTimestamp = (this.clusterTimecode + BigInt(block.relativeTimecode)) * this.timecodeScaleNs;
+        const codecDelayNs = this.currentTrack.codecDelayNs ?? 0n;
+        const timestampNs = rawTimestamp - codecDelayNs;
+        let elapsedMs = 0;
+        for (const packet of block.packets) {
+            const durationMs = getOpusPacketDurationMs(packet);
+            const timestampMs = Number(timestampNs) / 1_000_000 + elapsedMs;
+            if (this.listenerCount('packetTimestamp') > 0) {
+                this.emit('packetTimestamp', {
+                    timestampMs,
+                    durationMs
+                });
+            }
+            const output = toTightBuffer(packet);
+            webmOpusProfiler.packetsOut++;
+            webmOpusProfiler.packetBytesOut += output.length;
+            this.push(output);
+            elapsedMs += durationMs;
+        }
+    }
     _destroy(err, cb) {
         this._cleanup();
         cb(err ?? undefined);
     }
-    /**
-     * Cleans up internal buffers when the stream ends.
-     * @param cb - Completion callback.
-     */
     _final(cb) {
         this._cleanup();
         cb();
     }
-    /**
-     * Resets internal state and releases pooled buffers.
-     */
     _cleanup() {
+        if (this.cleanedUp)
+            return;
+        this.cleanedUp = true;
         webmOpusProfiler.destroyed++;
         webmOpusProfiler.active = Math.max(0, webmOpusProfiler.active - 1);
         this.ringBuffer.dispose();
@@ -376,21 +536,7 @@ class WebmBaseDemuxer extends Transform {
         this.skipUntil = null;
     }
 }
-/**
- * Demuxer for WebM containers carrying Opus audio.
- * @example
- * ```ts
- * const demuxer = new WebmOpusDemuxer()
- * demuxer.on('head', (header) => console.log('Opus head', header))
- * sourceStream.pipe(demuxer)
- * ```
- * @public
- */
 export class WebmOpusDemuxer extends WebmBaseDemuxer {
-    /**
-     * Ensures the Opus head packet is present.
-     * @param data - Packet payload to validate.
-     */
     _checkHead(data) {
         if (!data.subarray(0, 8).equals(OPUS_HEAD)) {
             throw new Error('Expected Opus audio stream');

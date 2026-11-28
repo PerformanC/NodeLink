@@ -5,6 +5,7 @@ import type {
   ApiRouteModule,
   ApiSendResponse
 } from '../typings/api/api.types.ts'
+import type { RoutePlannerIpBlockEntry } from '../typings/api/routeplanner.types.ts'
 import { sendErrorResponse, sendResponse } from '../utils.ts'
 
 /**
@@ -19,7 +20,7 @@ interface RoutePlannerConfigRuntime {
   /**
    * Configured IP blocks in CIDR format.
    */
-  ipBlocks: string[]
+  ipBlocks?: RoutePlannerIpBlockEntry[]
 
   /**
    * Active routing strategy name.
@@ -225,6 +226,23 @@ function getFreeAddressPayload(
 }
 
 /**
+ * Resolves the CIDR string of the first configured IP block.
+ *
+ * @param ipBlocks - Configured blocks, either as raw strings or objects.
+ * @returns First CIDR string, or `null` when none is configured.
+ */
+function getFirstBlockCidr(
+  ipBlocks: RoutePlannerIpBlockEntry[] | undefined
+): string | null {
+  const first = ipBlocks?.[0]
+  if (typeof first === 'string') return first
+  if (first && typeof first === 'object' && typeof first.cidr === 'string') {
+    return first.cidr
+  }
+  return null
+}
+
+/**
  * Builds the route planner status payload.
  *
  * @param nodelink - Route planner runtime.
@@ -253,7 +271,7 @@ function buildStatusResponse(
     class: 'BalancingIpRoutePlanner',
     details: {
       ipBlock: {
-        type: routePlanner.config.ipBlocks[0]?.includes(':')
+        type: getFirstBlockCidr(routePlanner.config.ipBlocks)?.includes(':')
           ? 'Inet6Address'
           : 'Inet4Address',
         size: routePlanner.ipBlocks.length

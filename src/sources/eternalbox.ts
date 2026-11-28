@@ -1,5 +1,9 @@
 import { PassThrough, type Readable } from 'node:stream'
-import * as MP4Box from 'mp4box'
+import symphonia from '@toddynnn/symphonia-decoder'
+import {
+  createAdtsHeader,
+  getMp4AacConfig
+} from '../playback/processing/streamProcessor.ts'
 import type { EternalboxSourceConfig } from '../typings/config/config.types.ts'
 import type {
   EternalboxAnalysis,
@@ -17,42 +21,8 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import { encodeTrack, http1makeRequest, logger } from '../utils.ts'
-
-/**
- * Common sampling rates for AAC audio.
- * @internal
- */
-const SAMPLE_RATES = Object.freeze([
-  96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025,
-  8000, 7350
-])
-
-/**
- * Creates an ADTS header for a single AAC frame.
- * @internal
- */
-const _createAdtsHeader = (
-  sampleLength: number,
-  profile: number,
-  samplingIndex: number,
-  channelCount: number
-): Buffer => {
-  const frameLength = sampleLength + 7
-  const profileIndex = profile - 1
-
-  return Buffer.from([
-    0xff,
-    0xf1,
-    ((profileIndex & 0x03) << 6) |
-      ((samplingIndex & 0x0f) << 2) |
-      ((channelCount & 0x04) >> 2),
-    ((channelCount & 0x03) << 6) | ((frameLength & 0x1800) >> 11),
-    (frameLength & 0x7f8) >> 3,
-    ((frameLength & 0x7) << 5) | 0x1f,
-    0xfc
-  ])
-}
 
 /**
  * Internal interface for graph edges between beats.
@@ -100,6 +70,47 @@ interface QuantumInternal extends EternalboxQuantum {
  * @public
  */
 export default class EternalboxSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating Eternalbox source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'eternalbox.track.resolve',
+      name: 'Eternalbox Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://eternalbox.floriegl.tech/jukebox_go.html?id=0DiWol3AO6WpXZgp0goxAV'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'One More Time' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'eternalbox' }
+        }
+      }
+    },
+    {
+      id: 'eternalbox.search.ebox',
+      name: 'Eternalbox Search query (ebox:)',
+      input: {
+        type: 'search',
+        searchType: 'ebox',
+        value: 'Daft Punk One More Time'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'One More Time' },
+          sourceName: { op: 'equals', value: 'eternalbox' }
+        }
+      }
+    }
+  ]
+
   /**
    * The NodeLink worker context.
    * @internal
@@ -156,6 +167,7 @@ export default class EternalboxSource implements SourceInstance {
    * @public
    */
   public readonly patterns: RegExp[]
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Constructs a new EternalboxSource instance.
@@ -165,11 +177,16 @@ export default class EternalboxSource implements SourceInstance {
     this.nodelink = nodelink
     this.config = (nodelink.options.sources?.eternalbox || {
       enabled: false,
-      baseUrl: 'https://eternalboxmirror.xyz'
+      baseUrl: 'https://eternalbox.floriegl.tech'
     }) as EternalboxSourceConfig
 
-    this.baseUrl = this.config.baseUrl || 'https://eternalboxmirror.xyz'
+    this.baseUrl = this.config.baseUrl || 'https://eternalbox.floriegl.tech'
     this.cacheMaxBytes = this.config.cacheMaxBytes ?? 20 * 1024 * 1024
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['m4a'],
+      codecs: ['aac']
+    }
 
     const mirrors = [
       'eternalboxmirror\\.xyz',
@@ -182,19 +199,19 @@ export default class EternalboxSource implements SourceInstance {
 
     this.patterns = [
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/jukebox_go\\.html\\?id=([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/jukebox_go\\.html\\?id=([A-Za-z0-9]+)(?:[#&].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/analysis\\/analyse\\/([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/analysis\\/analyse\\/([A-Za-z0-9]+)(?:[/?#].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)(?:[/?#].*)?$`,
         'i'
       ),
       new RegExp(
-        `https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)\\/location`,
+        `^https?:\\/\\/(?:www\\.)?(?:${mirrors})\\/api\\/audio\\/jukebox\\/([A-Za-z0-9]+)\\/location(?:[/?#].*)?$`,
         'i'
       )
     ]
@@ -231,7 +248,14 @@ export default class EternalboxSource implements SourceInstance {
 
     try {
       const res = await http1makeRequest(url, {
-        headers: this._buildApiHeaders()
+        headers: this._buildApiHeaders(),
+        shouldFollowRedirect: (nextUrl) => {
+          try {
+            return this._isAllowedHost(new URL(nextUrl).hostname)
+          } catch {
+            return false
+          }
+        }
       })
       if (res.statusCode !== 200) return { loadType: 'empty', data: {} }
 
@@ -259,6 +283,10 @@ export default class EternalboxSource implements SourceInstance {
    * @public
    */
   public async resolve(url: string): Promise<SourceResult> {
+    if (!this.patterns.some((pattern) => pattern.test(url))) {
+      return { loadType: 'empty', data: {} }
+    }
+
     const id = this._extractId(url)
     if (!id) return { loadType: 'empty', data: {} }
 
@@ -437,6 +465,13 @@ export default class EternalboxSource implements SourceInstance {
    * @internal
    */
   private _extractItems(body: unknown): Record<string, unknown>[] {
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body)
+      } catch {
+        return []
+      }
+    }
     if (Array.isArray(body)) return body as Record<string, unknown>[]
     const b = body as Record<string, unknown> | null
     if (!b) return []
@@ -475,9 +510,23 @@ export default class EternalboxSource implements SourceInstance {
   ): Promise<EternalboxPayload | null> {
     const url = `${baseUrl}/api/analysis/analyse/${id}`
     const res = await http1makeRequest(url, {
-      headers: this._buildApiHeaders()
+      headers: this._buildApiHeaders(),
+      shouldFollowRedirect: (nextUrl) => {
+        try {
+          return this._isAllowedHost(new URL(nextUrl).hostname)
+        } catch {
+          return false
+        }
+      }
     })
-    if (res.statusCode !== 200) return null
+    if (res.statusCode !== 200 || !res.body) return null
+    if (typeof res.body === 'string') {
+      try {
+        return JSON.parse(res.body) as EternalboxPayload
+      } catch {
+        return null
+      }
+    }
     return res.body as EternalboxPayload
   }
 
@@ -608,6 +657,35 @@ export default class EternalboxSource implements SourceInstance {
   }
 
   /**
+   * Validates whether a candidate hostname belongs to allowed Eternalbox mirrors.
+   * @internal
+   */
+  private _isAllowedHost(candidate: string): boolean {
+    const host = candidate.toLowerCase()
+    const allowed = new Set([
+      'eternalboxmirror.xyz',
+      'www.eternalboxmirror.xyz',
+      'eternalbox.floriegl.tech',
+      'www.eternalbox.floriegl.tech',
+      'eternal.floriegl.tech',
+      'www.eternal.floriegl.tech',
+      'forever.reheated.org',
+      'www.forever.reheated.org',
+      'jukebox.justdavi.dev',
+      'www.jukebox.justdavi.dev',
+      'eternalbox.dev',
+      'www.eternalbox.dev'
+    ])
+    try {
+      const configuredHost = new URL(this.baseUrl).hostname.toLowerCase()
+      if (configuredHost) allowed.add(configuredHost)
+    } catch {
+      // ignore
+    }
+    return allowed.has(host)
+  }
+
+  /**
    * Extracts the origin base URL from an input URL.
    * @internal
    */
@@ -615,7 +693,12 @@ export default class EternalboxSource implements SourceInstance {
     try {
       if (typeof input !== 'string') return this.baseUrl
       const url = new URL(input)
-      if (url.protocol.startsWith('http')) return url.origin
+      if (
+        (url.protocol === 'https:' || url.protocol === 'http:') &&
+        this._isAllowedHost(url.hostname)
+      ) {
+        return url.origin
+      }
     } catch {
       // ignore
     }
@@ -682,10 +765,23 @@ export default class EternalboxSource implements SourceInstance {
     const url = `${baseUrl}/api/audio/jukebox/${id}/location`
     try {
       const res = await http1makeRequest(url, {
-        headers: this._buildApiHeaders()
+        headers: this._buildApiHeaders(),
+        shouldFollowRedirect: (nextUrl) => {
+          try {
+            return this._isAllowedHost(new URL(nextUrl).hostname)
+          } catch {
+            return false
+          }
+        }
       })
-      if (res.statusCode !== 200) return null
-      return (res.body as { url?: string })?.url || null
+      if (res.statusCode !== 200 || !res.body) return null
+      let body = res.body
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body)
+        } catch {}
+      }
+      return (body as { url?: string })?.url || null
     } catch {
       return null
     }
@@ -885,109 +981,30 @@ export default class EternalboxSource implements SourceInstance {
     frameEnds: number[]
     totalBytes: number
   } {
-    const mp4boxFile = MP4Box.createFile(false)
+    const track = symphonia.demuxMp4Aac(buffer)
+    const { profile, samplingIndex, channelCount } = getMp4AacConfig(
+      track.config,
+      track.sampleRate,
+      track.channels
+    )
     const frames: Buffer[] = []
     const frameStarts: number[] = []
     const frameEnds: number[] = []
-    let audioConfig: {
-      profile: number
-      samplingIndex: number
-      channelCount: number
-    } | null = null
-    let timescale: number | null = null
     let totalBytes = 0
-
-    mp4boxFile.onReady = (info: MP4Box.Movie) => {
-      const audioTrack = info.tracks.find((t) => t.codec?.startsWith('mp4a'))
-      if (!audioTrack?.timescale || !audioTrack.audio) return
-      timescale = audioTrack.timescale
-      audioConfig = this._getAudioConfig(audioTrack)
-      mp4boxFile.setExtractionOptions(audioTrack.id, null, { nbSamples: 50 })
-      mp4boxFile.start()
+    for (const packet of track.packets) {
+      const header = createAdtsHeader(
+        packet.data.length,
+        profile,
+        samplingIndex,
+        channelCount
+      )
+      const frame = Buffer.concat([header, packet.data])
+      frames.push(frame)
+      frameStarts.push(packet.start)
+      frameEnds.push(packet.end)
+      totalBytes += frame.length
     }
-
-    mp4boxFile.onSamples = (
-      id: number,
-      _user: unknown,
-      samples: MP4Box.Sample[]
-    ) => {
-      if (!audioConfig || !timescale || !samples?.length) return
-      for (const sample of samples) {
-        if (!sample?.data) continue
-        const sampleData = Buffer.from(sample.data)
-        const adts = _createAdtsHeader(
-          sampleData.byteLength,
-          audioConfig.profile,
-          audioConfig.samplingIndex,
-          audioConfig.channelCount
-        )
-        const frame = Buffer.concat([adts, sampleData])
-        frames.push(frame)
-        totalBytes += frame.length
-        frameStarts.push(sample.dts / timescale)
-        frameEnds.push((sample.dts + sample.duration) / timescale)
-      }
-
-      const lastSample = samples[samples.length - 1]
-      const lastNumber = (lastSample as unknown as { number?: number })?.number
-      if (typeof lastNumber === 'number') {
-        const file = mp4boxFile as unknown as {
-          releaseUsedSamples: (trackId: number, sampleNumber: number) => void
-        }
-        file.releaseUsedSamples(id, lastNumber + 1)
-      }
-    }
-
-    const arrayBuffer = buffer.buffer.slice(
-      buffer.byteOffset,
-      buffer.byteOffset + buffer.byteLength
-    ) as ArrayBuffer & { fileStart: number }
-    arrayBuffer.fileStart = 0
-    mp4boxFile.appendBuffer(arrayBuffer)
-    try {
-      mp4boxFile.flush()
-    } catch {}
-
-    try {
-      mp4boxFile.stop()
-    } catch {}
-    mp4boxFile.onReady = undefined
-    mp4boxFile.onSamples = undefined
-    mp4boxFile.onError = undefined
-
     return { frames, frameStarts, frameEnds, totalBytes }
-  }
-
-  /**
-   * Extracts AAC configuration from a track metadata node.
-   * @internal
-   */
-  private _getAudioConfig(track: MP4Box.Track): {
-    profile: number
-    samplingIndex: number
-    channelCount: number
-  } {
-    if (!track.audio) throw new Error('Missing audio metadata in track.')
-    const samplingIndex = SAMPLE_RATES.indexOf(track.audio.sample_rate)
-    if (samplingIndex === -1)
-      throw new Error('Unsupported sample rate for ADTS.')
-
-    let profile = 2
-    if (track.codec) {
-      const parts = track.codec.split('.')
-      if (parts.length >= 3) {
-        const valStr = parts[2]
-        if (valStr) {
-          const val = Number.parseInt(valStr, 10)
-          if (Number.isFinite(val) && val > 0) profile = val
-        }
-      }
-    }
-    return {
-      samplingIndex,
-      channelCount: track.audio.channel_count,
-      profile
-    }
   }
 
   /**

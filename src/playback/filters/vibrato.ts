@@ -1,8 +1,10 @@
 import { SAMPLE_RATE } from '../../constants.ts'
 import type { FilterSettings } from '../../typings/playback/filters.types.ts'
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.ts'
 import { AnimatableFilter } from './AnimatableFilter.ts'
 import { clamp16Bit } from './dsp/clamp16Bit.ts'
 import DelayLine from './dsp/delay.ts'
+import { Float64DelayLine } from './dsp/float64Delay.ts'
 import LFO from './dsp/lfo.ts'
 
 const CHANNELS = 2
@@ -15,10 +17,13 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000)
  * @public
  */
 export default class Vibrato extends AnimatableFilter {
+  public override audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES
   public priority = 10
   private lfo: LFO
   private leftDelay: DelayLine
   private rightDelay: DelayLine
+  private leftDelayFloat: Float64DelayLine | null = null
+  private rightDelayFloat: Float64DelayLine | null = null
   private targetFrequency = 0
   private targetDepth = 0
   private alpha = 0
@@ -110,12 +115,38 @@ export default class Vibrato extends AnimatableFilter {
     return chunk
   }
 
+  public processFloat32(chunk: Buffer): Buffer {
+    if (chunk.length % 8 !== 0)
+      throw new RangeError(
+        'Vibrato Float32 input must contain complete stereo frames'
+      )
+    super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le')
+    if (this.alpha <= 0.001) return chunk
+    this.leftDelayFloat ??= new Float64DelayLine(bufferSize)
+    this.rightDelayFloat ??= new Float64DelayLine(bufferSize)
+    const maxDelayWidth = this.lfo.depth * (SAMPLE_RATE * 0.005)
+    for (let i = 0; i < chunk.length; i += 8) {
+      const delay = maxDelayWidth + this.lfo.getValue() * maxDelayWidth
+      const left = chunk.readFloatLE(i)
+      this.leftDelayFloat.write(left)
+      const delayedLeft = this.leftDelayFloat.read(delay)
+      chunk.writeFloatLE(left + this.alpha * (delayedLeft - left), i)
+      const right = chunk.readFloatLE(i + 4)
+      this.rightDelayFloat.write(right)
+      const delayedRight = this.rightDelayFloat.read(delay)
+      chunk.writeFloatLE(right + this.alpha * (delayedRight - right), i + 4)
+    }
+    return chunk
+  }
+
   /**
    * Clears the vibrato state.
    */
   public override flush(): Buffer {
     this.leftDelay.clear()
     this.rightDelay.clear()
+    this.leftDelayFloat?.clear()
+    this.rightDelayFloat?.clear()
     this.lfo.phase = 0
     return Buffer.alloc(0)
   }
@@ -123,5 +154,7 @@ export default class Vibrato extends AnimatableFilter {
   public destroy(): void {
     this.leftDelay.destroy()
     this.rightDelay.destroy()
+    this.leftDelayFloat?.destroy()
+    this.rightDelayFloat?.destroy()
   }
 }

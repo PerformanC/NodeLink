@@ -144,6 +144,13 @@ export class ScratchTransformer extends Transform {
      * @returns Resampled audio buffer.
      */
     process(chunk) {
+        return this._process(chunk, false);
+    }
+    /** Float32 resampling path used by the Protected flow; output keeps headroom. */
+    processFloat32(chunk) {
+        return this._process(chunk, true);
+    }
+    _process(chunk, float32) {
         if (chunk.length === 0)
             return chunk;
         if (!this.state &&
@@ -151,7 +158,8 @@ export class ScratchTransformer extends Transform {
             this.inputWritePos <= this.inputReadPos + this.channels) {
             return chunk;
         }
-        const incomingSamples = chunk.length / 2;
+        const bytesPerSample = float32 ? 4 : 2;
+        const incomingSamples = chunk.length / bytesPerSample;
         const incomingFrames = incomingSamples / this.channels;
         const inputBuffer = this._ensureInputBuffer();
         if (this.inputWritePos + incomingSamples > this.maxBufferSize) {
@@ -163,9 +171,13 @@ export class ScratchTransformer extends Transform {
             }
         }
         for (let i = 0; i < incomingSamples; i++) {
-            inputBuffer[this.inputWritePos++] = chunk.readInt16LE(i * 2) / 32767;
+            inputBuffer[this.inputWritePos++] = float32
+                ? chunk.readFloatLE(i * bytesPerSample)
+                : chunk.readInt16LE(i * bytesPerSample) / 32767;
         }
-        const outI16 = new Int16Array(incomingSamples);
+        const out = float32
+            ? Buffer.allocUnsafe(incomingSamples * 4)
+            : new Int16Array(incomingSamples);
         const frameDurationMs = 1000 / this.sampleRate;
         const latencyFrames = 1024;
         if (!this.state &&
@@ -198,7 +210,13 @@ export class ScratchTransformer extends Transform {
                         (-p0 + p2) * frac +
                         (2 * p0 - 5 * p1 + 4 * p2 - p3) * frac * frac +
                         (-p0 + 3 * p1 - 3 * p2 + p3) * frac * frac * frac);
-                outI16[f * this.channels + c] = Math.max(-32768, Math.min(32767, Math.round(val * 32767)));
+                const sampleIndex = f * this.channels + c;
+                if (float32)
+                    out.writeFloatLE(val, sampleIndex * 4);
+                else {
+                    ;
+                    out[sampleIndex] = Math.max(-32768, Math.min(32767, Math.round(val * 32767)));
+                }
             }
             this.inputReadPos += this.currentRate * this.channels;
             if (this.inputReadPos < this.channels)
@@ -206,7 +224,9 @@ export class ScratchTransformer extends Transform {
             if (this.inputReadPos >= this.inputWritePos)
                 this.inputReadPos = this.inputWritePos - 1;
         }
-        return Buffer.from(outI16.buffer, outI16.byteOffset, outI16.byteLength);
+        return float32
+            ? out
+            : Buffer.from(out.buffer, out.byteOffset, out.byteLength);
     }
     /**
      * Shifts the circular buffer to free up space while preserving 1s of history.

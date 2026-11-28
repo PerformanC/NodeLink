@@ -6,6 +6,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
@@ -115,6 +116,45 @@ interface GoogleTtsTrackUrlResult extends TrackUrlResult {
  */
 export default class GoogleTTSSource {
   /**
+   * Declarative test suite for validating Google TTS source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'googletts.tts.resolve',
+      name: 'Google TTS resolution',
+      input: {
+        type: 'resolve',
+        value: 'Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          author: { op: 'equals', value: 'Google TTS' },
+          sourceName: { op: 'equals', value: 'google-tts' }
+        }
+      }
+    },
+    {
+      id: 'googletts.tts.search',
+      name: 'Google TTS Search query (gtts:)',
+      input: {
+        type: 'search',
+        searchType: 'gtts',
+        value: 'Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          sourceName: { op: 'equals', value: 'google-tts' }
+        }
+      }
+    }
+  ]
+
+  /**
    * Runtime worker context used by the source implementation.
    */
   public readonly nodelink: WorkerNodeLink
@@ -156,7 +196,14 @@ export default class GoogleTTSSource {
     this.searchTerms = ['gtts', 'speak', 'tts']
     this.baseUrl = 'https://translate.google.com'
     this.priority = 50
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp3'],
+      codecs: ['mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Reads and normalizes the Google TTS configuration from the shared runtime.
@@ -346,8 +393,25 @@ export default class GoogleTTSSource {
       }
     }
 
+    let url = track.uri
+    if (track.identifier?.startsWith('gtts:')) {
+      url = this.buildUrl(track.identifier.slice(5))
+    } else {
+      try {
+        const parsed = new URL(track.uri)
+        if (
+          parsed.hostname !== 'translate.google.com' ||
+          parsed.pathname !== '/translate_tts'
+        ) {
+          url = this.buildUrl(track.title.replace(/^TTS:\s*/, ''))
+        }
+      } catch {
+        url = this.buildUrl(track.title.replace(/^TTS:\s*/, ''))
+      }
+    }
+
     const result: GoogleTtsTrackUrlResult = {
-      url: track.uri,
+      url,
       protocol: 'https',
       format: 'mp3'
     }
@@ -392,6 +456,14 @@ export default class GoogleTTSSource {
     )
 
     try {
+      const parsed = new URL(url)
+      if (
+        parsed.hostname !== 'translate.google.com' ||
+        parsed.pathname !== '/translate_tts'
+      ) {
+        throw new Error('Invalid Google TTS URL destination.')
+      }
+
       const response = await makeRequest(url, {
         method: 'GET',
         streamOnly: true,

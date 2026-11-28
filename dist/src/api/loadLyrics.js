@@ -19,6 +19,16 @@ function getEncodedTrackFromQuery(parsedUrl) {
     return encodedTrack.replace(/ /g, '+');
 }
 /**
+ * Reads the optional `source` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Selected lyrics source name, or `undefined` when absent.
+ */
+function getSourceFromQuery(parsedUrl) {
+    const source = parsedUrl.searchParams.get('source')?.trim();
+    return source ? source : undefined;
+}
+/**
  * Reads the optional `lang` query string parameter.
  *
  * @param parsedUrl - Parsed request URL.
@@ -27,6 +37,20 @@ function getEncodedTrackFromQuery(parsedUrl) {
 function getLanguageFromQuery(parsedUrl) {
     const language = parsedUrl.searchParams.get('lang')?.trim();
     return language ? language : undefined;
+}
+/**
+ * Reads the optional `type` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Normalized lyrics request type (`onlyCaptions` or `lyrics`), or `undefined` when absent.
+ */
+function getTypeFromQuery(parsedUrl) {
+    const raw = parsedUrl.searchParams.get('type')?.trim().toLowerCase();
+    if (raw === 'onlycaptions' || raw === 'captions')
+        return 'onlyCaptions';
+    if (raw === 'lyrics')
+        return 'lyrics';
+    return undefined;
 }
 /**
  * Builds a strongly typed runtime view for the lyrics endpoint.
@@ -62,6 +86,8 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
     }
     const encodedTrack = getEncodedTrackFromQuery(parsedUrl);
     const language = getLanguageFromQuery(parsedUrl);
+    const source = getSourceFromQuery(parsedUrl);
+    const type = getTypeFromQuery(parsedUrl);
     if (!encodedTrack) {
         logger('warn', 'Lyrics', MISSING_ENCODED_TRACK_MESSAGE);
         sendErrorResponse(req, res, 400, 'Bad Request', MISSING_ENCODED_TRACK_MESSAGE, parsedUrl.pathname);
@@ -69,11 +95,13 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
     }
     try {
         const decodedTrack = decodeTrack(encodedTrack);
-        logger('debug', 'Lyrics', `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}`);
+        logger('debug', 'Lyrics', `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}${source ? ` (Source: ${source})` : ''}`);
         if (runtime.sourceWorkerManager) {
             const delegated = runtime.sourceWorkerManager.delegate(req, res, 'loadLyrics', {
                 decodedTrackInfo: decodedTrack.info,
-                language
+                language,
+                source,
+                type
             });
             if (delegated) {
                 return;
@@ -84,11 +112,13 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
             const worker = runtime.workerManager.getBestWorker();
             lyricsData = await runtime.workerManager.execute(worker, 'loadLyrics', {
                 decodedTrackInfo: decodedTrack.info,
-                language
+                language,
+                source,
+                type
             });
         }
         else {
-            lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language);
+            lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language, undefined, source, type);
         }
         sendResponse(req, res, lyricsData, 200);
     }

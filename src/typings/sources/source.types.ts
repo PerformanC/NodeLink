@@ -17,6 +17,9 @@ import type {
 } from '../modules/credential.types.ts'
 import type { LoggerFn, TrackInfoExtended } from '../playback/player.types.ts'
 import type { TrackCacheEntry } from '../playback/trackCache.types.ts'
+import type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
+
+export type { SourceHealthMetricPayload } from './sourceHealth.types.ts'
 
 /**
  * Frame type identifier for socket communication protocol
@@ -30,7 +33,13 @@ export enum FrameType {
   /** Error frame (2) - contains error message */
   ERROR = 2,
   /** Chat action frame (3) - contains live chat actions */
-  CHAT_ACTION = 3
+  CHAT_ACTION = 3,
+  /** Binary result frame (4) - contains v8 serialized binary payload */
+  BINARY = 4,
+  /** Hello frame (5) - worker handshake */
+  HELLO = 5,
+  /** Task frame (6) - master to worker task dispatch */
+  TASK = 6
 }
 
 /**
@@ -91,6 +100,8 @@ export interface ReadyMessage extends WorkerMessage {
   type: 'ready'
   /** Process ID of the worker (optional, main thread only) */
   pid?: number
+  /** Lightweight declarative source cases available in this micro-worker. */
+  healthProbeSources?: string[]
 }
 
 /**
@@ -105,6 +116,22 @@ export interface ResultMessage extends WorkerMessage {
   id: string
   /** JSON-stringified result data (mutually exclusive with error) */
   result?: string
+  /** Error message (mutually exclusive with result) */
+  error?: string
+}
+
+/**
+ * Message containing binary task result
+ * @public
+ */
+export interface BinaryResultMessage extends WorkerMessage {
+  type: 'binaryResult'
+  /** Socket path for response */
+  socketPath: string
+  /** Task identifier */
+  id: string
+  /** Binary ArrayBuffer result */
+  result?: ArrayBuffer
   /** Error message (mutually exclusive with result) */
   error?: string
 }
@@ -169,16 +196,27 @@ export interface ErrorMessage extends WorkerMessage {
 }
 
 /**
+ * Source health metric message emitted by worker threads
+ * @public
+ */
+export interface SourceHealthMetricMessage {
+  type: 'sourceHealthMetric'
+  payload: SourceHealthMetricPayload
+}
+
+/**
  * Union type of all possible worker messages
  * @public
  */
 export type WorkerMessageType =
   | ReadyMessage
   | ResultMessage
+  | BinaryResultMessage
   | StreamMessage
   | ChatActionMessage
   | EndMessage
   | ErrorMessage
+  | SourceHealthMetricMessage
 
 /**
  * Task data structure sent to micro-workers
@@ -209,7 +247,12 @@ export type TaskType =
   | 'loadStream'
   | 'loadLiveChat'
   | 'cancelLiveChat'
+  | 'sourceHealthProbe'
+  | 'analyzePcm'
   | 'profilerCommand'
+  | 'getTrackUrl'
+  | 'startStreamTransport'
+  | 'cancelStreamTransport'
 
 /**
  * Base task payload structure
@@ -273,6 +316,10 @@ export interface LoadStreamPayload extends BaseTaskPayload {
   volume?: number
   /** Audio filter configuration */
   filters?: Record<string, unknown>
+  /** Optional format identifier (e.g. YouTube itag) */
+  itag?: number
+  /** When true, bypasses PCM decoding and streams the original source bytes */
+  passthrough?: boolean
 }
 
 /**
@@ -360,6 +407,10 @@ export interface TrackUrlResult {
   protocol?: string
   /** Audio format */
   format?: string | { itag?: number; [key: string]: unknown }
+  /** Whether the resolved stream is a live broadcast */
+  isLive?: boolean
+  /** Whether the resolved stream requires continuous chunk decryption */
+  isEncrypted?: boolean
   /** Updated track information (if changed) */
   newTrack?: {
     /** Updated track info */
@@ -425,21 +476,160 @@ export interface TrackData {
 }
 
 /**
+ * Fully normalized playlist information returned by NodeLink's API.
+ * @public
+ */
+export interface NormalizedPlaylistInfo {
+  /** Playlist name. */
+  name: string
+  /** Selected track index, following existing protocol behavior. */
+  selectedTrack: number
+  /** Unique playlist identifier from the source. */
+  identifier: string | null
+  /** Original playlist URL. */
+  uri: string | null
+  /** Playlist cover artwork. */
+  artworkUrl: string | null
+  /** Playlist creator or owner. */
+  author: string | null
+  /** Playlist creator's profile URL. */
+  authorUrl: string | null
+  /** Original playlist source. */
+  sourceName: string | null
+  /** Total tracks available in the original playlist. */
+  totalTracks: number | null
+  /** Number of tracks successfully returned. */
+  loadedTracks: number
+  /** Combined duration of the complete playlist in milliseconds, when known. */
+  totalDuration: number | null
+  /** Combined duration of the loaded tracks in milliseconds. */
+  loadedDuration: number
+  /** Whether only part of the original playlist was loaded. Omitted when false. */
+  isPartial?: boolean
+  /** Whether the returned collection represents an album. */
+  isAlbum: boolean
+  /** Whether the playlist contains explicit content, when determinable. Omitted when indeterminable. */
+  isExplicit?: boolean
+  /** Playlist creation date in ISO 8601 format. Omitted when unavailable. */
+  createdAt?: string
+  /** Playlist's last modification date in ISO 8601 format. Omitted when unavailable. */
+  updatedAt?: string
+}
+
+/**
+ * Playlist metadata object. May be partially populated by raw sources,
+ * and is fully populated as NormalizedPlaylistInfo by the normalizer.
+ * @public
+ */
+export interface PlaylistInfo {
+  /** Playlist name. */
+  name: string
+  /** Selected track index. */
+  selectedTrack: number
+  /** Unique playlist identifier from the source. */
+  identifier?: string | null
+  /** Original playlist URL. */
+  uri?: string | null
+  /** Playlist cover artwork. */
+  artworkUrl?: string | null
+  /** Playlist creator or owner. */
+  author?: string | null
+  /** Playlist creator's profile URL. */
+  authorUrl?: string | null
+  /** Original playlist source. */
+  sourceName?: string | null
+  /** Total tracks available in the original playlist. */
+  totalTracks?: number | null
+  /** Number of tracks successfully returned. */
+  loadedTracks?: number
+  /** Combined duration of the complete playlist in milliseconds, when known. */
+  totalDuration?: number | null
+  /** Combined duration of the loaded tracks in milliseconds. */
+  loadedDuration?: number
+  /** Whether only part of the original playlist was loaded. */
+  isPartial?: boolean | null
+  /** Whether the returned collection represents an album. */
+  isAlbum?: boolean | null
+  /** Whether the playlist contains explicit content, when determinable. */
+  isExplicit?: boolean | null
+  /** Playlist creation date in ISO 8601 format. */
+  createdAt?: string | null
+  /** Playlist's last modification date in ISO 8601 format. */
+  updatedAt?: string | null
+}
+
+/**
+ * Raw playlist metadata provided by individual sources prior to normalization.
+ * @public
+ */
+export interface RawPlaylistInfo extends Partial<PlaylistInfo> {
+  name: string
+  selectedTrack?: number
+  [key: string]: unknown
+}
+
+/**
+ * Collection-level metadata carried in `PlaylistData.pluginInfo`.
+ * @public
+ */
+export interface PlaylistPluginInfo extends Record<string, unknown> {
+  /** Kind of collection, e.g. `playlist` or `album`. */
+  type?: string
+  /** Source-specific collection ID. */
+  identifier?: string
+  /** Canonical URL of the collection. */
+  url?: string
+  /** Canonical URI of the collection. */
+  uri?: string
+  /** Cover image URL. */
+  artworkUrl?: string | null
+  /** Owner / curator / artist name. */
+  author?: string | null
+  /** Profile URL of the author/owner. */
+  authorUrl?: string | null
+  /** Total tracks in the collection, which can exceed the tracks returned. */
+  totalTracks?: number | null
+  /** Total duration in milliseconds if known by the source. */
+  totalDuration?: number | null
+  /** Whether this collection is an album. */
+  isAlbum?: boolean
+  /** Whether this collection is partial. */
+  isPartial?: boolean
+  /** Whether this collection has explicit content. */
+  isExplicit?: boolean | null
+  /** Creation date in ISO 8601 format. */
+  createdAt?: string | null
+  /** Last update date in ISO 8601 format. */
+  updatedAt?: string | null
+  /** Original source name. */
+  sourceName?: string | null
+}
+
+/**
  * Complete playlist object returned by source methods.
  * @public
  */
 export interface PlaylistData {
   /** Playlist metadata. */
-  info: {
-    /** Playlist name. */
-    name: string
-    /** Selected track index. */
-    selectedTrack: number
-  }
-  /** Source-specific metadata. */
-  pluginInfo: Record<string, unknown>
+  info: PlaylistInfo
+  /**
+   * Collection metadata. Sources that can provide it fill `type`,
+   * `identifier`, `url`, `artworkUrl`, `author` and `totalTracks`; sources may
+   * add their own keys alongside.
+   */
+  pluginInfo: PlaylistPluginInfo
   /** Tracks in the playlist. */
   tracks: TrackData[]
+}
+
+/**
+ * Input playlist object accepted by the normalizer from sources before enrichment.
+ * @public
+ */
+export interface RawPlaylistData {
+  info: RawPlaylistInfo
+  pluginInfo?: PlaylistPluginInfo | Record<string, unknown>
+  tracks?: TrackData[]
 }
 
 /**
@@ -471,10 +661,31 @@ export type SourceResult =
 export type SourceResultWithData = Exclude<SourceResult, { loadType: 'error' }>
 
 /**
+ * Declarative stream identity and workload capabilities exposed by a source.
+ * @public
+ */
+export interface SourceStreamCapabilities {
+  /** Whether the source decrypts audio chunks continuously during streaming. */
+  encryptedStream?: boolean
+  /** Whether the source delegates playback to another target source. */
+  isMirror?: boolean
+  /** Whether the source commonly performs heavy segmented/cipher streaming. */
+  heavyByDefault?: boolean
+  /** Protocols this source can emit (e.g. `hls`, `sabr`, `https`). */
+  protocols?: string[]
+  /** Raw container/stream formats this source can emit (e.g. `mp4`, `m4a`). */
+  formats?: string[]
+  /** Normalized codec identifiers from `SupportedFormats`. */
+  codecs?: string[]
+}
+
+/**
  * Represents a loaded source instance (e.g. YouTube, SoundCloud, HTTP).
  * @public
  */
 export interface SourceInstance {
+  /** Declarative stream capabilities for transport routing. */
+  streamCapabilities?: SourceStreamCapabilities
   /** Called once during initialization; returns true if ready. */
   setup?: () => Promise<boolean>
   /** Search for tracks by query. */
@@ -510,6 +721,8 @@ export interface SourceInstance {
   patterns?: RegExp[]
   /** Priority for URL pattern matching (higher wins). */
   priority?: number
+  /** Whether the source supports protected volume mode (Float32). Default is true. */
+  isVolProtectedSupport?: boolean
   /** Live chat handler (YouTube). */
   handleLiveChat?: (socket: unknown, videoId: string) => Promise<unknown>
   /** Live chat accessor (YouTube). */
@@ -589,7 +802,8 @@ export interface SourceManager {
   getTrackUrl: (
     track: TrackInfo | TrackInfoExtended,
     itag?: number,
-    isRecovering?: boolean
+    isRecovering?: boolean,
+    isUpscaling?: boolean
   ) => Promise<
     TrackUrlResult & {
       protocol?: string
@@ -615,6 +829,10 @@ export interface SourceManager {
   getSource: (name: string) => SourceInstance | null
   /** Load sources from folder */
   loadFolder: () => Promise<void>
+  /** Run a lightweight case from the provider's declarative source tests. */
+  runHealthProbe: (sourceName: string) => Promise<void>
+  /** List providers with a lightweight declarative health case. */
+  getHealthProbeSources: () => string[]
   /** Primary source instances keyed by source name */
   sources: Map<string, SourceInstance>
   /** Get names of all enabled sources */

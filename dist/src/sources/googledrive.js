@@ -7,19 +7,61 @@ import { encodeTrack, http1makeRequest, logger, makeRequest } from '../utils.js'
  * @public
  */
 export default class GoogleDriveSource {
+    /**
+     * Declarative test suite for validating Google Drive source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'googledrive.track.resolve',
+            name: 'Google Drive Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://drive.google.com/file/d/1yMbItvFKVaCT93yPWmlP3883XtJ-wSee/view'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    identifier: {
+                        op: 'equals',
+                        value: '1yMbItvFKVaCT93yPWmlP3883XtJ-wSee'
+                    },
+                    sourceName: { op: 'equals', value: 'googledrive' }
+                }
+            }
+        },
+        {
+            id: 'googledrive.search.empty',
+            name: 'Google Drive Search returns empty',
+            input: {
+                type: 'search',
+                searchType: 'gdsearch',
+                value: 'test'
+            },
+            expect: {
+                result: { type: 'empty' }
+            }
+        }
+    ];
     nodelink;
     searchTerms = ['gdsearch'];
     patterns = [
-        /https?:\/\/(?:docs|drive|drive\.usercontent)\.google\.com\/(?:(?:uc|open|download)\?.*?id=|file\/d\/)([a-zA-Z0-9_-]{28,})/,
-        /https?:\/\/video\.google\.com\/get_player\?.*?docid=([a-zA-Z0-9_-]{28,})/,
-        /https?:\/\/(?:docs|drive)\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]{28,})/
+        /^https?:\/\/(?:docs|drive|drive\.usercontent)\.google\.com\/(?:(?:uc|open|download)\?.*?id=|file\/d\/)([a-zA-Z0-9_-]{28,})/,
+        /^https?:\/\/video\.google\.com\/get_player\?.*?docid=([a-zA-Z0-9_-]{28,})/,
+        /^https?:\/\/(?:docs|drive)\.google\.com\/drive\/folders\/([a-zA-Z0-9_-]{28,})/
     ];
     priority = 90;
     apiKey = 'AIzaSyDVQw45DwoYh632gvsP5vPDqEKvb-Ywnb8';
     userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36';
     constructor(nodelink) {
         this.nodelink = nodelink;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['mp4', 'mp3', 'flac', 'ogg', 'wav'],
+            codecs: ['aac', 'mpeg', 'flac', 'vorbis', 'wav']
+        };
     }
+    streamCapabilities;
     async setup() {
         logger('info', 'Sources', 'Google Drive source initialized');
         return true;
@@ -41,13 +83,31 @@ export default class GoogleDriveSource {
         const hashStr = crypto.createHash('sha1').update(data).digest('hex');
         return `SAPISIDHASH ${timestamp}_${hashStr}`;
     }
+    _isGoogleDriveUrl(url) {
+        return ((url.protocol === 'https:' || url.protocol === 'http:') &&
+            /^(?:(?:docs|drive|drive\.usercontent|video)\.google\.com)$/i.test(url.hostname) &&
+            url.port === '' &&
+            url.username === '' &&
+            url.password === '');
+    }
     async _getCookiesAndAuthHeader(url, origin) {
-        const res = await makeRequest(url, {
+        let parsedUrl;
+        try {
+            parsedUrl = new URL(url);
+            if (!this._isGoogleDriveUrl(parsedUrl)) {
+                return { cookieHeader: '', authHeader: null };
+            }
+        }
+        catch {
+            return { cookieHeader: '', authHeader: null };
+        }
+        const res = await makeRequest(parsedUrl.href, {
             method: 'GET',
             headers: {
                 'User-Agent': this.userAgent,
                 'Accept-Language': 'en-US,en;q=0.5'
-            }
+            },
+            shouldFollowRedirect: (nextUrl) => this._isGoogleDriveUrl(nextUrl)
         });
         let cookiesStr = '';
         if (res.headers?.['set-cookie']) {
@@ -94,7 +154,8 @@ export default class GoogleDriveSource {
     }
     _normalizeDriveTitle(title) {
         const normalized = title.replace(' - Google Drive', '').trim();
-        if (!normalized || /virus scan warning/i.test(normalized))
+        if (!normalized ||
+            /virus scan warning|error 404|not found/i.test(normalized))
             return '';
         return normalized;
     }
@@ -184,6 +245,15 @@ export default class GoogleDriveSource {
         return { title: folderTitle, tracks };
     }
     async resolve(url) {
+        try {
+            const parsedUrl = new URL(url);
+            if (!this._isGoogleDriveUrl(parsedUrl)) {
+                return { loadType: 'empty', data: null };
+            }
+        }
+        catch {
+            return { loadType: 'empty', data: null };
+        }
         const folderPattern = this.patterns[2];
         const folderMatch = folderPattern ? url.match(folderPattern) : null;
         if (folderMatch?.[1]) {
@@ -302,15 +372,20 @@ export default class GoogleDriveSource {
                     }
                 };
             }
+            const parsedUrl = new URL(url);
+            if (!this._isGoogleDriveUrl(parsedUrl)) {
+                return { loadType: 'empty', data: {} };
+            }
             const origin = 'https://drive.google.com';
-            const { cookieHeader, authHeader } = await this._getCookiesAndAuthHeader(url, origin);
-            const webpage = await makeRequest(url, {
+            const { cookieHeader, authHeader } = await this._getCookiesAndAuthHeader(parsedUrl.href, origin);
+            const webpage = await makeRequest(parsedUrl.href, {
                 method: 'GET',
                 headers: {
                     'User-Agent': this.userAgent,
                     'Accept-Language': 'en-US,en;q=0.5',
                     Cookie: cookieHeader
-                }
+                },
+                shouldFollowRedirect: (nextUrl) => this._isGoogleDriveUrl(nextUrl)
             });
             if (typeof webpage.body !== 'string')
                 throw new Error('Failed to load folder page');
@@ -393,7 +468,10 @@ export default class GoogleDriveSource {
                 data: {
                     info: { name: title, selectedTrack: 0 },
                     tracks,
-                    pluginInfo: {}
+                    pluginInfo: {
+                        totalTracks: tracks.length,
+                        isPartial: false
+                    }
                 }
             };
         }
@@ -666,7 +744,7 @@ export default class GoogleDriveSource {
         attachStream(stream);
         return { stream: finalStream, type: streamType };
     }
-    async search() {
+    async search(_query) {
         return { loadType: 'empty', data: null };
     }
 }

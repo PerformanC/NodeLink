@@ -15,6 +15,72 @@ const DEFAULT_HIFI_QUALITIES = ['HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'LOW'];
  */
 export default class TidalSource {
     /**
+     * Declarative test suite for validating Tidal source behavior.
+     * @public
+     */
+    static _TESTS = [
+        {
+            id: 'tidal.track.resolve',
+            name: 'Tidal Track URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://tidal.com/browse/track/20115564'
+            },
+            expect: {
+                result: { type: 'track' },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    author: { op: 'matches', value: 'Daft Punk' },
+                    sourceName: { op: 'equals', value: 'tidal' }
+                }
+            }
+        },
+        {
+            id: 'tidal.album.resolve',
+            name: 'Tidal Album URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://tidal.com/browse/album/20115556'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 10 },
+                metadata: {
+                    author: { op: 'matches', value: 'Daft Punk' }
+                }
+            }
+        },
+        {
+            id: 'tidal.playlist.resolve',
+            name: 'Tidal Playlist URL resolution',
+            input: {
+                type: 'resolve',
+                value: 'https://tidal.com/browse/playlist/edf3b7d2-cb42-41d7-93c0-afa2a395521b'
+            },
+            expect: {
+                result: { type: 'playlist' },
+                collection: { minItems: 20 }
+            }
+        },
+        {
+            id: 'tidal.search.tdsearch',
+            name: 'Tidal Search query (tdsearch:)',
+            input: {
+                type: 'search',
+                searchType: 'tdsearch',
+                value: 'Daft Punk Get Lucky'
+            },
+            expect: {
+                result: { type: 'search' },
+                collection: { minItems: 1 },
+                metadata: {
+                    title: { op: 'matches', value: 'Get Lucky' },
+                    sourceName: { op: 'equals', value: 'tidal' }
+                }
+            }
+        }
+    ];
+    /**
      * Runtime NodeLink context.
      */
     nodelink;
@@ -92,7 +158,13 @@ export default class TidalSource {
             configuredQualities.length > 0
                 ? configuredQualities
                 : DEFAULT_HIFI_QUALITIES;
+        this.streamCapabilities = {
+            protocols: ['https'],
+            formats: ['flac', 'm4a', 'mp4'],
+            codecs: ['flac', 'aac']
+        };
     }
+    streamCapabilities;
     /**
      * Initializes source token state.
      * @returns True when setup finishes.
@@ -421,6 +493,8 @@ export default class TidalSource {
         const tracks = items
             .map((item) => this.buildTrack(item))
             .filter((item) => item !== null);
+        const albumArtist = this.asRecord(albumData.artist);
+        const albumCover = this.asString(albumData.cover);
         return {
             loadType: 'playlist',
             data: {
@@ -429,7 +503,19 @@ export default class TidalSource {
                     selectedTrack: 0
                 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    type: 'album',
+                    identifier: id,
+                    url: `https://tidal.com/album/${id}`,
+                    artworkUrl: albumCover ? this.buildImageUrl(albumCover, '1280x1280') : null,
+                    author: this.asString(albumArtist?.name) ?? '',
+                    authorUrl: this.asString(albumArtist?.url) ?? null,
+                    totalTracks: this.asNumber(albumData.numberOfTracks) ?? tracks.length,
+                    isPartial: (this.asNumber(albumData.numberOfTracks) ?? tracks.length) >
+                        tracks.length,
+                    isAlbum: true,
+                    createdAt: this.asString(albumData.releaseDate) ?? null
+                }
             }
         };
     }
@@ -481,6 +567,7 @@ export default class TidalSource {
             .map((item) => this.buildTrack(item))
             .filter((item) => item !== null);
         logger('info', 'Tidal', `Loaded ${tracks.length} of ${totalTracks} tracks from playlist "${this.asString(playlistData.title) || 'Unknown Playlist'}".`);
+        const playlistCreator = this.asRecord(playlistData.creator);
         return {
             loadType: 'playlist',
             data: {
@@ -489,7 +576,17 @@ export default class TidalSource {
                     selectedTrack: 0
                 },
                 tracks,
-                pluginInfo: {}
+                pluginInfo: {
+                    type: 'playlist',
+                    identifier: id,
+                    url: `https://tidal.com/playlist/${id}`,
+                    artworkUrl: this.getPlaylistCoverUrl(playlistData),
+                    author: this.asString(playlistCreator?.name) ?? '',
+                    createdAt: this.asString(playlistData.created) ?? null,
+                    updatedAt: this.asString(playlistData.lastUpdated) ?? null,
+                    totalTracks,
+                    isPartial: totalTracks > tracks.length
+                }
             }
         };
     }
@@ -567,6 +664,30 @@ export default class TidalSource {
         return this.asRecord(body);
     }
     /**
+     * Builds a Tidal CDN image URL from an image UUID.
+     * @param uuid - Image UUID, dash-separated (e.g. `a178483d-e537-...`).
+     * @param size - Dimensions such as `1080x1080`.
+     * @returns The resource URL.
+     */
+    buildImageUrl(uuid, size) {
+        return `https://resources.tidal.com/images/${uuid.replace(/-/g, '/')}/${size}.jpg`;
+    }
+    /**
+     * Picks the cover image for a playlist payload.
+     * Prefers the square cover, falling back to the 3:2 `image`.
+     * @param playlist - Raw playlist payload.
+     * @returns The cover URL, or an empty string when none is present.
+     */
+    getPlaylistCoverUrl(playlist) {
+        const square = this.asString(playlist.squareImage);
+        if (square)
+            return this.buildImageUrl(square, '1080x1080');
+        const image = this.asString(playlist.image);
+        if (image)
+            return this.buildImageUrl(image, '1080x720');
+        return '';
+    }
+    /**
      * Creates encoded track payload from raw Tidal item.
      * @param item - Raw Tidal track object.
      * @returns Encoded track payload.
@@ -591,9 +712,7 @@ export default class TidalSource {
             title: this.asString(item.title) || 'Unknown Title',
             uri: this.asString(item.url) ||
                 `https://tidal.com/browse/track/${identifier}`,
-            artworkUrl: cover
-                ? `https://resources.tidal.com/images/${cover.replace(/-/g, '/')}/1280x1280.jpg`
-                : null,
+            artworkUrl: cover ? this.buildImageUrl(cover, '1280x1280') : null,
             isrc: this.asString(item.isrc) || null,
             sourceName: 'tidal'
         };
@@ -662,8 +781,11 @@ export default class TidalSource {
         let count = 0;
         for (const match of text.matchAll(regex)) {
             count += 1;
-            if (count === 2)
-                return match[1] || null;
+            if (count === 2) {
+                return match[1]
+                    ? Buffer.from(match[1], 'utf16le').toString('utf16le')
+                    : null;
+            }
         }
         return null;
     }

@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 import LFO from './dsp/lfo.js';
@@ -10,6 +11,7 @@ const CHANNELS = 2;
  */
 export default class Rotation extends AnimatableFilter {
     priority = 10;
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     lfo;
     rotationHz = 0;
     alpha = 0;
@@ -64,6 +66,24 @@ export default class Rotation extends AnimatableFilter {
             const newRight = currentRight * (1 - alpha + alpha * rightFactor);
             chunk.writeInt16LE(clamp16Bit(newLeft), i);
             chunk.writeInt16LE(clamp16Bit(newRight), i + 2);
+        }
+        return chunk;
+    }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Rotation Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        const alpha = this.alpha;
+        for (let i = 0; i < chunk.length; i += 8) {
+            const lfoValue = this.lfo.getValue();
+            const leftFactor = Math.sqrt((1 - lfoValue) / 2);
+            const rightFactor = Math.sqrt((1 + lfoValue) / 2);
+            const left = chunk.readFloatLE(i);
+            const right = chunk.readFloatLE(i + 4);
+            chunk.writeFloatLE(left * (1 - alpha + alpha * leftFactor), i);
+            chunk.writeFloatLE(right * (1 - alpha + alpha * rightFactor), i + 4);
         }
         return chunk;
     }

@@ -1,5 +1,8 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs/promises'
+import fs from 'node:fs'
+import fsPromises from 'node:fs/promises'
+import path from 'node:path'
+import { DatabaseSync, type StatementSync } from 'node:sqlite'
 import { logger } from '../utils.ts'
 
 export type BaseCacheEntry<T> = {
@@ -25,6 +28,27 @@ export interface BaseCacheOptions {
   maxEntries?: number
   version?: number
   diskCacheEnabled?: boolean
+  maxHotEntries?: number
+}
+
+const DEFAULT_DATABASE_PATH = './.cache/cache.db'
+const DEFAULT_MAX_HOT_ENTRIES = 250
+
+let sharedDatabase: DatabaseSync | null = null
+
+function getSharedDatabase(dbPath: string): DatabaseSync {
+  if (!sharedDatabase) {
+    const resolvedPath = path.resolve(process.cwd(), dbPath)
+    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true })
+    sharedDatabase = new DatabaseSync(resolvedPath)
+    sharedDatabase.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA busy_timeout = 5000;
+      PRAGMA temp_store = MEMORY;
+    `)
+  }
+  return sharedDatabase
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -33,50 +57,49 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error ?? 'Unknown error')
 
-const getErrorCode = (error: unknown): string | undefined => {
-  if (!error || typeof error !== 'object' || !('code' in error)) {
-    return undefined
-  }
-  const code = (error as NodeJS.ErrnoException).code
-  return typeof code === 'string' ? code : undefined
-}
-
 /**
- * Generic encrypted cache file store using AES-256-GCM.
- * Handles atomic saves, TTL purging, and max entry eviction.
+ * High-performance, multi-tier cache manager using an in-memory Hot Cache (LRU)
+ * backed by native SQLite on disk with WAL mode and automatic legacy .bin migration.
  */
 export default abstract class BaseCacheManager<T = unknown> {
   protected readonly cacheName: string
+  protected readonly tableName: string
   private readonly passwordHashKey: string
   private readonly salt: string
   private key: Buffer
   private legacyKey: Buffer | null
   protected readonly filePath: string
-  protected readonly tempFilePath: string
-  protected readonly saveDelayMs: number
   protected readonly cleanupIntervalMs: number
   protected readonly maxEntries: number
+  protected readonly maxHotEntries: number
   protected readonly version: number
   protected readonly diskCacheEnabled: boolean
 
   protected cache: Map<string, BaseCacheEntry<T>>
-  private saveTimeout: NodeJS.Timeout | null
   private cleanupInterval: NodeJS.Timeout | null
-  private savePromise: Promise<void> | null
-  private saveQueued: boolean
 
   protected lastLoadedAt: number | null
   protected lastSavedAt: number | null
 
+  private db: DatabaseSync | null = null
+  private stmtGet: StatementSync | null = null
+  private stmtSet: StatementSync | null = null
+  private stmtDelete: StatementSync | null = null
+  private stmtPurgeExpired: StatementSync | null = null
+  private stmtPurgeExcess: StatementSync | null = null
+  private stmtClear: StatementSync | null = null
+  private stmtRecent: StatementSync | null = null
+  private stmtCount: StatementSync | null = null
+
   constructor(options: BaseCacheOptions) {
     this.cacheName = options.name
+    this.tableName = `${options.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')}_cache`
     this.passwordHashKey = options.passwordHashKey
     this.salt = options.salt
     this.filePath = options.filePath
-    this.tempFilePath = `${options.filePath}.tmp`
-    this.saveDelayMs = options.saveDelayMs ?? 5000
     this.cleanupIntervalMs = options.cleanupIntervalMs ?? 60000
     this.maxEntries = options.maxEntries ?? 0
+    this.maxHotEntries = options.maxHotEntries ?? DEFAULT_MAX_HOT_ENTRIES
     this.version = options.version ?? 1
     this.diskCacheEnabled = options.diskCacheEnabled ?? true
 
@@ -84,128 +107,355 @@ export default abstract class BaseCacheManager<T = unknown> {
     this.legacyKey = null
     this.cache = new Map()
 
-    this.saveTimeout = null
-    this.savePromise = null
-    this.saveQueued = false
     this.lastLoadedAt = null
     this.lastSavedAt = null
 
+    if (this.diskCacheEnabled) {
+      this._initDatabase()
+    }
+
     this.cleanupInterval = setInterval(() => {
-      const expiredCount = this._purgeExpired()
-      const evictedCount = this._enforceMaxEntries()
-      if (expiredCount > 0 || evictedCount > 0) this.save()
+      this._purgeExpired()
+      this._enforceMaxEntries()
     }, this.cleanupIntervalMs)
     this.cleanupInterval.unref?.()
+  }
+
+  private _initDatabase(): void {
+    try {
+      this.db = getSharedDatabase(DEFAULT_DATABASE_PATH)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS ${this.tableName} (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          expires_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_${this.tableName}_expires ON ${this.tableName}(expires_at);
+        CREATE INDEX IF NOT EXISTS idx_${this.tableName}_updated ON ${this.tableName}(updated_at);
+      `)
+
+      this.stmtGet = this.db.prepare(
+        `SELECT value, created_at, updated_at, expires_at FROM ${this.tableName} WHERE key = ?`
+      )
+      this.stmtSet = this.db.prepare(
+        `INSERT OR REPLACE INTO ${this.tableName} (key, value, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?)`
+      )
+      this.stmtDelete = this.db.prepare(
+        `DELETE FROM ${this.tableName} WHERE key = ?`
+      )
+      this.stmtPurgeExpired = this.db.prepare(
+        `DELETE FROM ${this.tableName} WHERE expires_at IS NOT NULL AND expires_at <= ?`
+      )
+      this.stmtClear = this.db.prepare(`DELETE FROM ${this.tableName}`)
+      this.stmtRecent = this.db.prepare(
+        `SELECT key, value, created_at, updated_at, expires_at FROM ${this.tableName} WHERE expires_at IS NULL OR expires_at > ? ORDER BY updated_at DESC LIMIT ?`
+      )
+      this.stmtCount = this.db.prepare(
+        `SELECT COUNT(*) as count FROM ${this.tableName}`
+      )
+    } catch (error) {
+      logger(
+        'error',
+        this.cacheName,
+        `Failed to initialize SQLite database: ${getErrorMessage(error)}`
+      )
+      this.db = null
+    }
   }
 
   async load(): Promise<void> {
     if (!this.diskCacheEnabled) return
 
+    if (fs.existsSync(this.filePath)) {
+      await this._migrateLegacyFile()
+    }
+
+    this._preloadHotEntries()
+    this.lastLoadedAt = Date.now()
+    logger(
+      'debug',
+      this.cacheName,
+      `Initialized cache with ${this.cache.size} hot entries in RAM.`
+    )
+  }
+
+  private async _migrateLegacyFile(): Promise<void> {
     try {
-      const data = await fs.readFile(this.filePath)
+      const data = await fsPromises.readFile(this.filePath)
       if (data.length < 32) return
 
       let payload: BaseCachePayload<T>
-      let migratedFromLegacy = false
-
       try {
         payload = this._decodePayload(data, this.key)
       } catch {
         const legacyKey = this._getLegacyKey()
         payload = this._decodePayload(data, legacyKey)
-        migratedFromLegacy = true
       }
 
-      this.cache = new Map(Object.entries(payload.entries))
-
-      const expiredCount = this._purgeExpired()
-      const evictedCount = this._enforceMaxEntries()
-      if (expiredCount > 0 || evictedCount > 0 || migratedFromLegacy)
-        this.save()
-
-      this.lastLoadedAt = Date.now()
-      logger(
-        'debug',
-        this.cacheName,
-        `Loaded ${this.cache.size} entries from disk.`
-      )
-    } catch (error) {
-      const code = getErrorCode(error)
-      if (code !== 'ENOENT') {
+      const entries = Object.entries(payload.entries)
+      if (entries.length > 0 && this.db && this.stmtSet) {
         logger(
-          'error',
+          'info',
           this.cacheName,
-          `Failed to load cache: ${getErrorMessage(error)}`
+          `Migrating ${entries.length} entries from legacy ${this.filePath} to SQLite...`
         )
+
+        this.db.exec('BEGIN IMMEDIATE')
+        try {
+          const now = Date.now()
+          let migrated = 0
+          for (const [key, entry] of entries) {
+            if (entry.expiresAt && entry.expiresAt <= now) continue
+            this.stmtSet.run(
+              key,
+              JSON.stringify(entry.value),
+              entry.createdAt,
+              entry.updatedAt,
+              entry.expiresAt
+            )
+            migrated++
+          }
+          this.db.exec('COMMIT')
+          logger(
+            'info',
+            this.cacheName,
+            `Successfully migrated ${migrated} entries to SQLite.`
+          )
+        } catch (txError) {
+          this.db.exec('ROLLBACK')
+          throw txError
+        }
       }
-      this.cache = new Map()
-    }
-  }
 
-  save(): void {
-    if (this.saveTimeout) return
-
-    this.saveTimeout = setTimeout(() => {
-      this.saveTimeout = null
-      void this.forceSave()
-    }, this.saveDelayMs)
-  }
-
-  async forceSave(): Promise<void> {
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout)
-      this.saveTimeout = null
-    }
-
-    try {
-      this._purgeExpired()
-      this._enforceMaxEntries()
-      await this._flushSaveQueue()
-      logger('debug', this.cacheName, 'Force saved to disk.')
+      try {
+        await fsPromises.unlink(this.filePath)
+      } catch {}
     } catch (error) {
       logger(
         'error',
         this.cacheName,
-        `Failed to force save: ${getErrorMessage(error)}`
+        `Failed to migrate legacy cache ${this.filePath}: ${getErrorMessage(error)}`
       )
     }
   }
 
+  private _preloadHotEntries(): void {
+    if (!this.stmtRecent) return
+    const now = Date.now()
+    const rows = this.stmtRecent.all(now, this.maxHotEntries) as Array<{
+      key: string
+      value: string
+      created_at: number
+      updated_at: number
+      expires_at: number | null
+    }>
+
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i]
+      if (!row) continue
+      try {
+        const parsed = JSON.parse(row.value) as T
+        this.cache.set(row.key, {
+          value: parsed,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+          expiresAt: row.expires_at
+        })
+      } catch {}
+    }
+  }
+
+  save(): void {
+    this.lastSavedAt = Date.now()
+  }
+
+  async forceSave(): Promise<void> {
+    this._purgeExpired()
+    this._enforceMaxEntries()
+    this.lastSavedAt = Date.now()
+  }
+
   clear(): void {
-    if (this.cache.size === 0) return
     this.cache.clear()
+    if (this.stmtClear) {
+      try {
+        this.stmtClear.run()
+      } catch (error) {
+        logger(
+          'error',
+          this.cacheName,
+          `Clear failed: ${getErrorMessage(error)}`
+        )
+      }
+    }
     this.save()
   }
 
-  /**
-   * Cleans up internal timers and resources.
-   */
   destroy(): void {
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval)
       this.cleanupInterval = null
     }
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout)
-      this.saveTimeout = null
-    }
+    this.cache.clear()
   }
 
   protected _getValidEntry(key: string): BaseCacheEntry<T> | null {
-    const entry = this.cache.get(key)
-    if (!entry) return null
-    if (entry.expiresAt && Date.now() > entry.expiresAt) {
+    const hot = this.cache.get(key)
+    if (hot) {
+      if (hot.expiresAt && Date.now() > hot.expiresAt) {
+        this.cache.delete(key)
+        this.stmtDelete?.run(key)
+        return null
+      }
       this.cache.delete(key)
-      this.save()
+      this.cache.set(key, hot)
+      return hot
+    }
+
+    if (!this.stmtGet) return null
+
+    try {
+      const row = this.stmtGet.get(key) as
+        | {
+            value: string
+            created_at: number
+            updated_at: number
+            expires_at: number | null
+          }
+        | undefined
+
+      if (!row) return null
+
+      const now = Date.now()
+      if (row.expires_at && now > row.expires_at) {
+        this.stmtDelete?.run(key)
+        return null
+      }
+
+      const parsed = JSON.parse(row.value) as T
+      const entry: BaseCacheEntry<T> = {
+        value: parsed,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        expiresAt: row.expires_at
+      }
+
+      this._insertHotCache(key, entry)
+      return entry
+    } catch {
       return null
     }
+  }
 
-    if (this.maxEntries > 0) {
-      this.cache.delete(key)
-      this.cache.set(key, entry)
+  protected _setEntry(key: string, value: unknown, ttlMs?: number): void {
+    const now = Date.now()
+    const expiresAt =
+      typeof ttlMs === 'number' && ttlMs > 0 ? now + ttlMs : null
+    const hot = this.cache.get(key)
+
+    const entry: BaseCacheEntry<T> = {
+      value: value as T,
+      createdAt: hot?.createdAt ?? now,
+      updatedAt: now,
+      expiresAt
     }
 
-    return entry
+    this._insertHotCache(key, entry)
+
+    if (this.stmtSet) {
+      try {
+        this.stmtSet.run(
+          key,
+          JSON.stringify(value),
+          entry.createdAt,
+          entry.updatedAt,
+          entry.expiresAt
+        )
+      } catch (error) {
+        logger(
+          'error',
+          this.cacheName,
+          `SQLite set failed: ${getErrorMessage(error)}`
+        )
+      }
+    }
+    this.save()
+  }
+
+  protected _deleteEntry(key: string): boolean {
+    const inHot = this.cache.delete(key)
+    let inDb = false
+
+    if (this.stmtDelete) {
+      try {
+        const info = this.stmtDelete.run(key)
+        inDb = Number(info.changes) > 0
+      } catch (error) {
+        logger(
+          'error',
+          this.cacheName,
+          `SQLite delete failed: ${getErrorMessage(error)}`
+        )
+      }
+    }
+
+    if (inHot || inDb) this.save()
+    return inHot || inDb
+  }
+
+  private _insertHotCache(key: string, entry: BaseCacheEntry<T>): void {
+    if (this.cache.size >= this.maxHotEntries && !this.cache.has(key)) {
+      const oldestKey = this.cache.keys().next().value
+      if (oldestKey !== undefined) this.cache.delete(oldestKey)
+    }
+    this.cache.set(key, entry)
+  }
+
+  protected _purgeExpired(): number {
+    const now = Date.now()
+    let expiredCount = 0
+
+    for (const [key, entry] of this.cache.entries()) {
+      if (entry.expiresAt && now > entry.expiresAt) {
+        this.cache.delete(key)
+        expiredCount++
+      }
+    }
+
+    if (this.stmtPurgeExpired) {
+      try {
+        const info = this.stmtPurgeExpired.run(now)
+        expiredCount += Number(info.changes)
+      } catch (error) {
+        logger(
+          'error',
+          this.cacheName,
+          `Purge expired failed: ${getErrorMessage(error)}`
+        )
+      }
+    }
+
+    return expiredCount
+  }
+
+  protected _enforceMaxEntries(): number {
+    if (this.maxEntries <= 0 || !this.db) return 0
+
+    try {
+      if (!this.stmtPurgeExcess) {
+        this.stmtPurgeExcess = this.db.prepare(`
+          DELETE FROM ${this.tableName} WHERE key NOT IN (
+            SELECT key FROM ${this.tableName} ORDER BY updated_at DESC LIMIT ?
+          )
+        `)
+      }
+      const info = this.stmtPurgeExcess.run(this.maxEntries)
+      return Number(info.changes)
+    } catch {
+      return 0
+    }
   }
 
   private _deriveFastKey(password: string): Buffer {
@@ -220,31 +470,6 @@ export default abstract class BaseCacheManager<T = unknown> {
       this.legacyKey = crypto.scryptSync(this.passwordHashKey, this.salt, 32)
     }
     return this.legacyKey
-  }
-
-  private _purgeExpired(): number {
-    const now = Date.now()
-    let expiredCount = 0
-    for (const [key, entry] of this.cache.entries()) {
-      if (entry.expiresAt && now > entry.expiresAt) {
-        this.cache.delete(key)
-        expiredCount++
-      }
-    }
-    return expiredCount
-  }
-
-  protected _enforceMaxEntries(): number {
-    if (this.maxEntries <= 0 || this.cache.size <= this.maxEntries) return 0
-
-    let removed = 0
-    while (this.cache.size > this.maxEntries) {
-      const oldestKey = this.cache.keys().next().value
-      if (!oldestKey) break
-      this.cache.delete(oldestKey)
-      removed++
-    }
-    return removed
   }
 
   private _decodePayload(data: Buffer, key: Buffer): BaseCachePayload<T> {
@@ -350,77 +575,5 @@ export default abstract class BaseCacheManager<T = unknown> {
       updatedAt: fallbackTime,
       expiresAt: null
     }
-  }
-
-  private _buildPayload(): BaseCachePayload<T> {
-    return {
-      version: this.version,
-      savedAt: Date.now(),
-      entries: Object.fromEntries(this.cache)
-    }
-  }
-
-  private async _flushSaveQueue(): Promise<void> {
-    if (this.savePromise) {
-      this.saveQueued = true
-      await this.savePromise
-      if (this.saveQueued) {
-        this.saveQueued = false
-        await this._flushSaveQueue()
-      }
-      return
-    }
-
-    const payload = this._buildPayload()
-    this.savePromise = this._writeToDisk(payload)
-    try {
-      await this.savePromise
-    } finally {
-      this.savePromise = null
-    }
-
-    if (this.saveQueued) {
-      this.saveQueued = false
-      await this._flushSaveQueue()
-    }
-  }
-
-  private async _writeToDisk(payload: BaseCachePayload<T>): Promise<void> {
-    if (!this.diskCacheEnabled) return
-
-    const plainText = JSON.stringify(payload)
-    const iv = crypto.randomBytes(16)
-    const cipher = crypto.createCipheriv('aes-256-gcm', this.key, iv)
-
-    const encrypted = Buffer.concat([
-      cipher.update(plainText, 'utf8'),
-      cipher.final()
-    ])
-    const tag = cipher.getAuthTag()
-    const outBuffer = Buffer.concat([iv, tag, encrypted])
-
-    await fs.mkdir('./.cache', { recursive: true })
-    try {
-      await fs.writeFile(this.tempFilePath, outBuffer)
-      await fs.rename(this.tempFilePath, this.filePath)
-    } catch (error) {
-      logger(
-        'debug',
-        this.cacheName,
-        `Atomic save failed, falling back to direct write: ${getErrorMessage(error)}`
-      )
-      await fs.writeFile(this.filePath, outBuffer)
-      try {
-        await fs.unlink(this.tempFilePath)
-      } catch (cleanupError) {
-        logger(
-          'debug',
-          this.cacheName,
-          `Failed to remove temp cache file: ${getErrorMessage(cleanupError)}`
-        )
-      }
-    }
-
-    this.lastSavedAt = payload.savedAt
   }
 }

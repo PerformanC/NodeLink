@@ -6,6 +6,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
@@ -21,6 +22,45 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000
  * @public
  */
 export default class LazyPyTtsSource {
+  /**
+   * Declarative test suite for validating LazyPy TTS source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'lazypytts.tts.resolve',
+      name: 'LazyPy TTS resolution',
+      input: {
+        type: 'resolve',
+        value: 'Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          author: { op: 'equals', value: 'LazyPy TTS' },
+          sourceName: { op: 'equals', value: 'lazypytts' }
+        }
+      }
+    },
+    {
+      id: 'lazypytts.tts.search',
+      name: 'LazyPy TTS Search query (lazypytts:)',
+      input: {
+        type: 'search',
+        searchType: 'lazypytts',
+        value: 'Hello world'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Hello world' },
+          sourceName: { op: 'equals', value: 'lazypytts' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    */
@@ -82,7 +122,14 @@ export default class LazyPyTtsSource {
     this.patterns = [/^lazypytts:/i, /^lazytts:/i]
     this.priority = 50
     this.services = new Map()
+    this.streamCapabilities = {
+      protocols: ['lazypytts'],
+      formats: ['mp3'],
+      codecs: ['mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes source and loads voices metadata.
@@ -420,10 +467,9 @@ export default class LazyPyTtsSource {
     voice: string
     text: string
   } {
-    let raw = String(query || '').trim()
+    const raw = String(query || '').trim()
     if (!raw) return { service: '', voice: '', text: '' }
 
-    raw = raw.replace(/^lazypytts:/i, '').replace(/^lazytts:/i, '')
     const parsed = this._parseQueryString(raw) || this._parseColonInput(raw)
 
     return {

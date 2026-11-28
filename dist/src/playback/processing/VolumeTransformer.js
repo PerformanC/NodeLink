@@ -94,6 +94,13 @@ export class VolumeTransformer extends Transform {
             this.agc = null;
         }
     }
+    /** Reset Protected normalizer history when crossfade promotes a new track. */
+    resetAGC() {
+        this.agc?.reset();
+    }
+    getRequestedVolume() {
+        return this.targetVolume;
+    }
     _getFadeCurveValue(progress) {
         const clamped = Math.min(1, Math.max(0, progress));
         switch (this.fadeCurve) {
@@ -245,6 +252,28 @@ export class VolumeTransformer extends Transform {
                 view[i] = this._clampToInt16(limited);
                 gain += gainStep;
             }
+        }
+        return chunk;
+    }
+    /** Protected-only Float32 gain path; it preserves out-of-range headroom. */
+    processFloat32(chunk) {
+        if (chunk.length % (4 * this.channels) !== 0) {
+            throw new RangeError('Protected volume input must contain complete Float32 frames');
+        }
+        const sampleCount = chunk.length / 4;
+        if (sampleCount === 0)
+            return chunk;
+        if (this.agc)
+            this.agc.processFloat32(chunk);
+        const { gainStart, gainEnd } = this._computeFadeGains(sampleCount);
+        const step = sampleCount > 1 ? (gainEnd - gainStart) / (sampleCount - 1) : 0;
+        for (let i = 0; i < sampleCount; i++) {
+            const offset = i * 4;
+            const value = chunk.readFloatLE(offset) * (gainStart + step * i);
+            if (!Number.isFinite(value) || Math.abs(value) > 3.4028234663852886e38) {
+                throw new RangeError(`Protected volume overflow at sample ${i}`);
+            }
+            chunk.writeFloatLE(value, offset);
         }
         return chunk;
     }

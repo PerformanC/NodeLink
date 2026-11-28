@@ -85,17 +85,7 @@ export default class CredentialManager extends BaseCacheManager<unknown> {
    * @param ttlMs - Time-to-live in milliseconds (0 = no expiry).
    */
   set<T = unknown>(key: string, value: T, ttlMs = 0): void {
-    const now = Date.now()
-    const current = this.cache.get(key)
-    const expiresAt = ttlMs > 0 ? now + ttlMs : null
-
-    this.cache.set(key, {
-      value,
-      createdAt: current?.createdAt ?? now,
-      updatedAt: now,
-      expiresAt
-    })
-    this.save()
+    this._setEntry(key, value, ttlMs)
   }
 
   /**
@@ -104,9 +94,7 @@ export default class CredentialManager extends BaseCacheManager<unknown> {
    * @returns True if an entry was removed.
    */
   delete(key: string): boolean {
-    const existed = this.cache.delete(key)
-    if (existed) this.save()
-    return existed
+    return this._deleteEntry(key)
   }
 
   /**

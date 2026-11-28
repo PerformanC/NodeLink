@@ -151,6 +151,10 @@ class BotGuardClient {
   private readonly defaultTimeout = 3000
   private readonly vm: BotGuardVm
   private readonly program: string
+  private shutdownFunction: BotGuardVmFunctions['shutdownFunction'] | null =
+    null
+  private previousOnerror: PropertyDescriptor | undefined
+  private installedOnerror: unknown
 
   private constructor(options: {
     globalObj: Record<string, unknown>
@@ -172,6 +176,7 @@ class BotGuardClient {
   private async load(): Promise<this> {
     if (!this.vm) throw new Error('VM not found')
     if (!this.vm.a) throw new Error('VM init function not found')
+    this.previousOnerror = Object.getOwnPropertyDescriptor(Object, 'onerror')
 
     const vmFunctionsCallback = (
       asyncSnapshotFunction: BotGuardVmFunctions['asyncSnapshotFunction'],
@@ -179,6 +184,7 @@ class BotGuardClient {
       passEventFunction: BotGuardVmFunctions['passEventFunction'],
       checkCameraFunction: BotGuardVmFunctions['checkCameraFunction']
     ) => {
+      this.shutdownFunction = shutdownFunction
       this.deferredVmFunctions.resolve({
         asyncSnapshotFunction,
         shutdownFunction,
@@ -196,12 +202,49 @@ class BotGuardClient {
         () => {},
         [[], []]
       )
+      this.installedOnerror = Object.getOwnPropertyDescriptor(
+        Object,
+        'onerror'
+      )?.value
     } catch (error) {
+      this.installedOnerror = Object.getOwnPropertyDescriptor(
+        Object,
+        'onerror'
+      )?.value
+      try {
+        this.shutdown()
+      } catch {}
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(`Could not load program: ${message}`)
     }
 
     return this
+  }
+
+  /**
+   * Releases resources registered by the BotGuard VM.
+   * @internal
+   */
+  public shutdown(): void {
+    const shutdownFunction = this.shutdownFunction
+    this.shutdownFunction = null
+    const ownsOnerror =
+      this.installedOnerror !== undefined &&
+      Object.getOwnPropertyDescriptor(Object, 'onerror')?.value ===
+        this.installedOnerror
+    try {
+      shutdownFunction?.()
+    } finally {
+      if (ownsOnerror) {
+        if (this.previousOnerror) {
+          Object.defineProperty(Object, 'onerror', this.previousOnerror)
+        } else {
+          Reflect.deleteProperty(Object, 'onerror')
+        }
+      }
+      this.installedOnerror = undefined
+      this.previousOnerror = undefined
+    }
   }
 
   public async snapshot(
@@ -255,12 +298,8 @@ class WebPoMinter {
 
   public static async create(
     integrityToken: string,
-    webPoSignalOutput: unknown[]
+    getMinter: (token: Uint8Array) => Promise<unknown>
   ): Promise<WebPoMinter> {
-    const getMinter = webPoSignalOutput[0] as
-      | ((token: Uint8Array) => Promise<unknown>)
-      | undefined
-    if (!getMinter) throw new Error('PMD:Undefined')
     if (!integrityToken) throw new Error('No integrity token provided')
 
     const mintCallback = await getMinter(base64ToU8(integrityToken))
@@ -307,6 +346,11 @@ export class PoTokenManager {
   private minter: WebPoMinter | null = null
   private visitorData: string | null = null
   private integrityToken: string | null = null
+  private initializationPromise: Promise<void> | null = null
+  private initializationGeneration = 0
+  private vmGlobalName: string | null = null
+  private previousVmGlobal: PropertyDescriptor | undefined
+  private installedVmGlobal: unknown
 
   private _dom: {
     window: {
@@ -396,6 +440,16 @@ export class PoTokenManager {
     }
 
     const g2 = globalThis as unknown as Record<string, unknown>
+    if (this.vmGlobalName && g2[this.vmGlobalName] === this.installedVmGlobal) {
+      if (this.previousVmGlobal) {
+        Object.defineProperty(g2, this.vmGlobalName, this.previousVmGlobal)
+      } else {
+        Reflect.deleteProperty(g2, this.vmGlobalName)
+      }
+    }
+    this.vmGlobalName = null
+    this.previousVmGlobal = undefined
+    this.installedVmGlobal = undefined
     try {
       if ((g2.yt as Record<string, unknown> | undefined)?.config_) {
         Reflect.deleteProperty(g2, 'yt')
@@ -473,12 +527,24 @@ export class PoTokenManager {
           const win = (globalThis as unknown as Record<string, unknown>)
             .window as Record<string, unknown> | undefined
           if (win) win.yt = ytObj
-          if (
-            ytcfg.VISITOR_DATA &&
-            typeof ytcfg.VISITOR_DATA === 'string' &&
-            !this.visitorData
-          ) {
-            this.visitorData = ytcfg.VISITOR_DATA
+          if (!this.visitorData) {
+            const topLevel = ytcfg.VISITOR_DATA
+            if (typeof topLevel === 'string' && topLevel) {
+              this.visitorData = topLevel
+            } else {
+              const context = ytcfg.INNERTUBE_CONTEXT
+              const client =
+                context && typeof context === 'object' && 'client' in context
+                  ? context.client
+                  : undefined
+              const visitorData =
+                client && typeof client === 'object' && 'visitorData' in client
+                  ? client.visitorData
+                  : undefined
+              if (typeof visitorData === 'string' && visitorData) {
+                this.visitorData = visitorData
+              }
+            }
           }
         } catch {}
       } else {
@@ -604,6 +670,8 @@ export class PoTokenManager {
    * @public
    */
   public async initialize(existingVisitorData?: string): Promise<void> {
+    while (this.initializationPromise) await this.initializationPromise
+
     if (
       existingVisitorData &&
       this.visitorData &&
@@ -630,7 +698,31 @@ export class PoTokenManager {
       `VisitorData: ${this.visitorData?.slice(0, 20) ?? '(none, will extract from homepage)'}...`
     )
 
-    await this._initializeWithDom()
+    this.initializationPromise = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const initializationGeneration = this.initializationGeneration
+        const initialized = await this._initializeWithDom()
+        if (initializationGeneration !== this.initializationGeneration) {
+          throw new Error('BotGuard initialization was reset')
+        }
+        if (initialized) return
+
+        /* INFO: A snapshot without a minter cannot be reused for attestation. */
+        if (attempt === 0) {
+          this.reset()
+          this.visitorData = existingVisitorData || null
+        }
+      }
+      throw new Error('PMD:Undefined')
+    })()
+    try {
+      await this.initializationPromise
+    } catch (error) {
+      this.reset()
+      throw error
+    } finally {
+      this.initializationPromise = null
+    }
     logger(
       'debug',
       'PoToken',
@@ -640,9 +732,10 @@ export class PoTokenManager {
 
   /**
    * Internal helper to perform BotGuard initialization with NativeDOM.
+   * @returns False when the snapshot does not provide a minter callback.
    * @internal
    */
-  private async _initializeWithDom(): Promise<void> {
+  private async _initializeWithDom(): Promise<boolean> {
     this._cleanupDom()
 
     const { NativeDOM } = await import('./nativeDOM.ts')
@@ -684,7 +777,19 @@ export class PoTokenManager {
     const interpreterJavascript = await bgScriptResponse.text()
     if (!interpreterJavascript) throw new Error('Could not load BotGuard VM')
 
-    new Function(interpreterJavascript)()
+    this.vmGlobalName = challengeResponse.bg_challenge.global_name
+    this.previousVmGlobal = Object.getOwnPropertyDescriptor(
+      globalThis,
+      this.vmGlobalName
+    )
+    Reflect.deleteProperty(globalThis, this.vmGlobalName)
+    try {
+      new Function(interpreterJavascript)()
+    } finally {
+      this.installedVmGlobal = (
+        globalThis as unknown as Record<string, unknown>
+      )[this.vmGlobalName]
+    }
 
     logger('debug', 'PoToken', 'Creating BotGuard client...')
     this.botguard = await BotGuardClient.create({
@@ -696,6 +801,10 @@ export class PoTokenManager {
     logger('debug', 'PoToken', 'Generating snapshot and creating minter...')
     const webPoSignalOutput: unknown[] = []
     const botguardResponse = await this.botguard.snapshot({ webPoSignalOutput })
+    const getMinter = webPoSignalOutput[0] as
+      | ((token: Uint8Array) => Promise<unknown>)
+      | undefined
+    if (typeof getMinter !== 'function') return false
 
     const requestKey = 'O43z0dpjhgX20SCx4KAo'
     const integrityTokenResponse = await fetch(buildURL('GenerateIT', true), {
@@ -726,11 +835,9 @@ export class PoTokenManager {
       `IntegrityToken retrieved. Length: ${this.integrityToken.length}`
     )
 
-    this.minter = await WebPoMinter.create(
-      this.integrityToken,
-      webPoSignalOutput
-    )
+    this.minter = await WebPoMinter.create(this.integrityToken, getMinter)
     logger('debug', 'PoToken', 'Initialization complete')
+    return true
   }
 
   /**
@@ -958,9 +1065,16 @@ export class PoTokenManager {
    */
   public reset(): void {
     logger('debug', 'PoToken', 'Resetting PoTokenManager state')
+    this.initializationGeneration++
     if (this._idleTimer) {
       clearTimeout(this._idleTimer)
       this._idleTimer = null
+    }
+    try {
+      this.botguard?.shutdown()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger('warn', 'PoToken', `Failed to shut down BotGuard: ${message}`)
     }
     this.botguard = null
     this.minter = null

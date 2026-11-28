@@ -1,4 +1,5 @@
 import { logger, sendErrorResponse } from '../utils.js';
+import { normalizePlaylistResult } from '../utils/playlistNormalizer.js';
 import { validator } from '../validators.js';
 /**
  * Quick protocol matcher for absolute URLs.
@@ -9,7 +10,7 @@ const URL_PROTOCOL_RE = /^(?:https?|ftts):\/\//i;
  *
  * Captures named groups: `source`, `query`, and `local`.
  */
-const IDENTIFIER_RE = /^(?:(?<source>(?![A-Z]:\\)[A-Za-z0-9]+):(?<query>(?!\/\/).+)|(?<local>(?:\/|[A-Z]:\\|\\).+))$/i;
+const IDENTIFIER_RE = /^(?:(?<source>(?![A-Za-z]:[\\/])[A-Za-z0-9]+):\s*(?<query>(?!\/\/).+)|(?<local>(?:\/|[A-Za-z]:\\|\\).+))$/is;
 /**
  * Message used when the identifier parameter is missing or empty.
  */
@@ -61,25 +62,26 @@ function parseIdentifier(identifier, defaultSearchSource) {
     const match = IDENTIFIER_RE.exec(identifier);
     const groups = match?.groups;
     if (groups?.local) {
-        return { kind: 'search', source: 'local', query: groups.local };
+        return { kind: 'search', source: 'local', query: groups.local.trim() };
     }
     if (groups?.source && groups?.query) {
+        const cleanQuery = groups.query.replace(/\r?\n+/g, ' ').trim();
         if (groups.source === 'search') {
-            return { kind: 'unifiedSearch', query: groups.query };
+            return { kind: 'unifiedSearch', query: cleanQuery };
         }
         if (groups.source.toLowerCase() === 'isrc') {
             return {
                 kind: 'search',
                 source: normalizeDefaultSearchSource(defaultSearchSource),
-                query: groups.query
+                query: cleanQuery
             };
         }
-        return { kind: 'search', source: groups.source, query: groups.query };
+        return { kind: 'search', source: groups.source, query: cleanQuery };
     }
     return {
         kind: 'search',
         source: normalizeDefaultSearchSource(defaultSearchSource),
-        query: identifier
+        query: identifier.replace(/\r?\n+/g, ' ').trim()
     };
 }
 /**
@@ -160,6 +162,12 @@ async function handler(nodelink, req, res, sendResponse, parsedUrl) {
             else {
                 result = await sources.search(target.source, target.query);
             }
+        }
+        if (result && typeof result === 'object' && 'loadType' in result) {
+            normalizePlaylistResult(result, {
+                sourceName: target.kind === 'search' ? target.source : undefined,
+                url: target.kind === 'url' ? target.url : undefined
+            });
         }
         return sendResponse(req, res, result, 200);
     }

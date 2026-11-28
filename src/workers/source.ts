@@ -18,10 +18,16 @@ import {
 import type PluginManager from '../managers/pluginManager.ts'
 import type { PluginManagerContext } from '../managers/pluginManager.ts'
 import { migrateConfig } from '../modules/config/configMigration.ts'
+import {
+  createDecodedPCMStream,
+  createDemuxedStream
+} from '../playback/processing/streamProcessor.ts'
+import { StreamTransportClient } from '../playback/streamTransport.ts'
 
 import type {
   JsonValue,
-  NodelinkConfig
+  NodelinkConfig,
+  StreamOutputMode
 } from '../typings/config/config.types.ts'
 import type { NodeLink } from '../typings/playback/player.types.ts'
 import type {
@@ -32,6 +38,7 @@ import type {
   SourceWorkerConfig,
   TaskData,
   TrackInfo,
+  TrackUrlResult,
   WorkerData,
   WorkerMessageType,
   WorkerNodeLink
@@ -201,7 +208,6 @@ if (isMainThread) {
   const taskQueue = createHeadQueue<TaskData>()
   let lastScaleUpAt = 0
   let nextThreadId = initialThreadCount + 1
-  const inheritedExecArgv = process.execArgv || []
 
   nodelink.logger(
     'info',
@@ -210,13 +216,13 @@ if (isMainThread) {
   )
 
   const createMicroWorker = (threadNumber: number): void => {
+    /* INFO: Default inheritance supports V8 flags that explicit execArgv rejects. */
     const worker = new Worker(__filename, {
       workerData: {
         config,
         silentLogs: specConfig.silentLogs ?? false,
         threadId: threadNumber
-      } satisfies WorkerData,
-      ...(inheritedExecArgv.length > 0 ? { execArgv: inheritedExecArgv } : {})
+      } satisfies WorkerData
     }) as MicroWorker
 
     worker.ready = false
@@ -230,10 +236,23 @@ if (isMainThread) {
           'SourceWorker',
           `Micro-worker ${threadNumber} is ready.`
         )
+        if (msg.healthProbeSources) {
+          process.send?.({
+            type: 'sourceHealthReady',
+            payload: { sources: msg.healthProbeSources }
+          })
+        }
         processNextTask()
       } else if (msg.type === 'result') {
         const { socketPath, id, result, error } = msg
-        finishTask(socketPath, id, result, error)
+        finishTask(socketPath, id, result, error, false)
+
+        worker.load = Math.max(0, worker.load - 1)
+        processNextTask()
+      } else if (msg.type === 'binaryResult') {
+        const { socketPath, id, result, error } = msg
+        const buf = result ? Buffer.from(result) : undefined
+        finishTask(socketPath, id, buf, error, true)
 
         worker.load = Math.max(0, worker.load - 1)
         processNextTask()
@@ -249,6 +268,8 @@ if (isMainThread) {
         sendStreamError(msg.socketPath, msg.id, msg.error)
         worker.load = Math.max(0, worker.load - 1)
         processNextTask()
+      } else if (msg.type === 'sourceHealthMetric') {
+        process.send?.(msg)
       }
     })
 
@@ -393,23 +414,33 @@ if (isMainThread) {
    * Sends task completion result or error back through socket
    * @param socketPath - Unix socket path
    * @param id - Task identifier
-   * @param result - Result data (JSON string)
+   * @param result - Result data (JSON string or binary Buffer)
    * @param error - Error message if task failed
+   * @param isBinary - Whether result should be sent as binary frame (type 4)
    * @internal
    */
   function finishTask(
     socketPath: string,
     id: string,
-    result: string | undefined,
-    error: string | undefined
+    result: string | Buffer | undefined,
+    error: string | undefined,
+    isBinary = false
   ): void {
     getSocket(socketPath)
       .then((socket) => {
         socketLastUsed.set(socketPath, Date.now())
         if (error) {
           sendFrame(socket, id, 2, Buffer.from(error, 'utf8'))
-        } else if (result) {
-          sendFrame(socket, id, 0, Buffer.from(result, 'utf8'))
+        } else if (isBinary && Buffer.isBuffer(result)) {
+          sendFrame(socket, id, 4, result)
+        } else {
+          const body =
+            result !== undefined
+              ? Buffer.isBuffer(result)
+                ? result
+                : Buffer.from(result, 'utf8')
+              : Buffer.from('null', 'utf8')
+          sendFrame(socket, id, 0, body)
           sendFrame(socket, id, 1, Buffer.alloc(0))
         }
       })
@@ -421,6 +452,111 @@ if (isMainThread) {
         )
       })
   }
+
+  const controlSocketPath = process.env.SOURCE_SOCKET_PATH
+
+  const connectControlSocket = (): void => {
+    if (!controlSocketPath) return
+    const socket = net.createConnection(controlSocketPath, () => {
+      sockets.set(controlSocketPath, socket)
+      socketLastUsed.set(controlSocketPath, Date.now())
+
+      const helloPayload = v8.serialize({ pid: process.pid })
+      sendFrame(socket, '', 5, helloPayload)
+    })
+
+    const frameChunks: Buffer[] = []
+    let frameBytes = 0
+
+    const peekBytes = (count: number): Buffer => {
+      const first = frameChunks[0]
+      if (first && first.length >= count) return first.subarray(0, count)
+
+      const out = Buffer.allocUnsafe(count)
+      let offset = 0
+      for (const piece of frameChunks) {
+        const take = Math.min(piece.length, count - offset)
+        piece.copy(out, offset, 0, take)
+        offset += take
+        if (offset >= count) break
+      }
+      return out
+    }
+
+    const readBytes = (count: number): Buffer => {
+      const out = Buffer.allocUnsafe(count)
+      let offset = 0
+
+      while (offset < count) {
+        const piece = frameChunks[0]
+        if (!piece) break
+
+        const take = Math.min(piece.length, count - offset)
+        piece.copy(out, offset, 0, take)
+        offset += take
+
+        if (take === piece.length) frameChunks.shift()
+        else frameChunks[0] = piece.subarray(take)
+      }
+
+      frameBytes = Math.max(0, frameBytes - count)
+      return out
+    }
+
+    socket.on('data', (chunk: Buffer) => {
+      if (!chunk.length) return
+      frameChunks.push(chunk)
+      frameBytes += chunk.length
+
+      while (frameBytes >= 6) {
+        const header = peekBytes(6)
+        const idSize = header.readUInt8(0)
+        const type = header.readUInt8(1)
+        const payloadSize = header.readUInt32BE(2)
+        const totalSize = 6 + idSize + payloadSize
+
+        if (frameBytes < totalSize) break
+
+        const frame = readBytes(totalSize)
+        const id = frame.toString('utf8', 6, 6 + idSize)
+        const payload = frame.subarray(6 + idSize)
+
+        if (type === 6) {
+          try {
+            const data = v8.deserialize(payload) as {
+              task: string
+              payload: unknown
+            }
+            enqueueHeadQueue(taskQueue, {
+              id,
+              task: data.task as TaskData['task'],
+              payload: data.payload,
+              socketPath: controlSocketPath
+            })
+            maybeScaleUpMicroWorkers()
+            processNextTask()
+          } catch (e: unknown) {
+            utils.logger(
+              'error',
+              'SourceWorker',
+              `Failed to parse task frame from socket: ${(e as Error).message}`
+            )
+          }
+        }
+      }
+    })
+
+    socket.on('error', () => {
+      sockets.delete(controlSocketPath)
+    })
+
+    socket.on('close', () => {
+      sockets.delete(controlSocketPath)
+      setTimeout(connectControlSocket, 500)
+    })
+  }
+
+  if (controlSocketPath) connectControlSocket()
 
   /**
    * Sends a stream data chunk through socket
@@ -726,6 +862,7 @@ if (isMainThread) {
    * @internal
    */
   const activeChats = new Map<string, boolean>()
+  const activeTransports = new Map<string, StreamTransportClient>()
   const profilerBaseDir = process.env.NODELINK_PROFILER_DIR || '.profiles'
   let activeCpuSession: {
     session: inspector.Session
@@ -1175,7 +1312,10 @@ if (isMainThread) {
     return { success: false, error: `Unsupported profiler action: ${action}` }
   }
 
-  ;(parentPort as MessagePort).postMessage({ type: 'ready' })
+  ;(parentPort as MessagePort).postMessage({
+    type: 'ready',
+    healthProbeSources: nodelink.sources?.getHealthProbeSources() ?? []
+  })
 
   /**
    * Sends stream data chunk to parent thread
@@ -1357,7 +1497,10 @@ if (isMainThread) {
         throw new Error('Invalid encoded track')
       }
 
-      const urlResult = await nodelink.sources?.getTrackUrl(trackInfo)
+      const urlResult = await nodelink.sources?.getTrackUrl(
+        trackInfo,
+        payload?.itag
+      )
       if (!urlResult || urlResult.exception) {
         throw new Error(
           urlResult?.exception?.message || 'Failed to get track URL'
@@ -1370,7 +1513,29 @@ if (isMainThread) {
       const isSabr = urlResult.protocol === 'sabr'
       const isLocal = sourceName === 'local'
 
-      if (urlResult.url && !isHls && !isLocal && !isSabr) {
+      if (payload?.passthrough) {
+        const additionalData = {
+          ...(urlResult.additionalData || {}),
+          startTime: payload?.position || 0,
+          position: payload?.position || 0
+        }
+
+        fetched =
+          (await nodelink.sources?.getTrackStream(
+            urlResult.newTrack?.info || trackInfo,
+            urlResult.url as string,
+            urlResult.protocol as string,
+            additionalData
+          )) || null
+
+        if (!fetched || fetched.exception || !fetched.stream) {
+          throw new Error(
+            fetched?.exception?.message || 'Failed to load stream'
+          )
+        }
+
+        pcmStream = fetched.stream as unknown as PCMStream
+      } else if (urlResult.url && !isHls && !isLocal && !isSabr) {
         const resource = await createSeekeableAudioResource(
           id,
           urlResult.url,
@@ -1380,11 +1545,8 @@ if (isMainThread) {
           {},
           {
             streamInfo: urlResult,
-            loudnessNormalizer: (
-              nodelink.options as unknown as {
-                audio?: { loudnessNormalizer?: boolean }
-              }
-            ).audio?.loudnessNormalizer
+            loudnessNormalizer:
+              nodelink.options.playback?.audio?.loudnessNormalizer ?? false
           },
           (payload?.volume ?? 100) / 100,
           null,
@@ -1423,7 +1585,8 @@ if (isMainThread) {
           fetched.type || (urlResult.format as string) || 'unknown',
           nodelink as unknown as NodeLink,
           (payload?.volume ?? 100) / 100,
-          payload?.filters || {}
+          payload?.filters || {},
+          nodelink.options.playback?.audio?.loudnessNormalizer ?? false
         ) as unknown as PCMStream
       }
 
@@ -1498,7 +1661,10 @@ if (isMainThread) {
               info: (payload as { decodedTrackInfo: TrackInfo })
                 .decodedTrackInfo
             },
-            (payload as { language?: string }).language
+            (payload as { language?: string }).language,
+            undefined,
+            (payload as { source?: string }).source,
+            (payload as { type?: 'lyrics' | 'onlyCaptions' }).type
           )
           break
         }
@@ -1523,6 +1689,193 @@ if (isMainThread) {
             (payload as Record<string, unknown>) || {}
           )
           break
+        case 'sourceHealthProbe':
+          await nodelink.sources?.runHealthProbe(
+            (payload as { sourceName: string }).sourceName
+          )
+          result = true
+          break
+        case 'getTrackUrl': {
+          const { track, itag, isRecovering, isUpscaling } = payload as {
+            track: TrackInfo
+            itag?: number
+            isRecovering?: boolean
+            isUpscaling?: boolean
+          }
+          const start = performance.now()
+          utils.logger(
+            'debug',
+            'SourceWorker',
+            `[Thread ${workerData.threadId}] Resolving track URL for '${track.sourceName}' (${track.title || track.identifier || 'unknown'})`
+          )
+          result = await nodelink.sources?.getTrackUrl(
+            track,
+            itag,
+            isRecovering,
+            isUpscaling
+          )
+          const duration = (performance.now() - start).toFixed(1)
+          const isError =
+            result &&
+            typeof result === 'object' &&
+            'loadType' in result &&
+            (result as { loadType: string }).loadType === 'error'
+          const urlRes = !isError
+            ? (result as TrackUrlResult | undefined)
+            : undefined
+
+          if (isError) {
+            const errResult = result as { exception?: { message?: string } }
+            utils.logger(
+              'warn',
+              'SourceWorker',
+              `[Thread ${workerData.threadId}] Failed to resolve track URL for '${track.sourceName}' in ${duration}ms: ${errResult.exception?.message || 'unknown error'}`
+            )
+          } else if (urlRes?.url) {
+            utils.logger(
+              'debug',
+              'SourceWorker',
+              `[Thread ${workerData.threadId}] Resolved track URL for '${track.sourceName}' in ${duration}ms (protocol: ${urlRes.protocol || 'http'})`
+            )
+          } else {
+            utils.logger(
+              'debug',
+              'SourceWorker',
+              `[Thread ${workerData.threadId}] No track URL returned for '${track.sourceName}' in ${duration}ms`
+            )
+          }
+          break
+        }
+        case 'startStreamTransport': {
+          const {
+            track,
+            url,
+            protocol,
+            additionalData,
+            outputMode,
+            transportSocketPath,
+            streamIdBytes,
+            securityTokenBytes,
+            maxRecordPayloadBytes,
+            artificialDelayMs
+          } = payload as {
+            track: TrackInfo
+            url: string
+            protocol?: string
+            additionalData?: Record<string, unknown>
+            outputMode?: StreamOutputMode
+            transportSocketPath: string
+            streamIdBytes: Uint8Array
+            securityTokenBytes: Uint8Array
+            maxRecordPayloadBytes?: number
+            artificialDelayMs?: number
+          }
+
+          const idBuf = Buffer.from(streamIdBytes)
+          const tokenBuf = Buffer.from(securityTokenBytes)
+          securityTokenBytes.fill(0)
+
+          const fetched = await nodelink.sources?.getTrackStream(
+            track,
+            url,
+            protocol,
+            {
+              ...(additionalData || {}),
+              __fromSourceWorkerTransport: true
+            }
+          )
+
+          if (
+            !fetched ||
+            ('exception' in fetched && fetched.exception) ||
+            !('stream' in fetched) ||
+            !fetched.stream
+          ) {
+            tokenBuf.fill(0)
+            const errMsg =
+              fetched && 'exception' in fetched && fetched.exception
+                ? fetched.exception.message
+                : 'Failed to open source stream in Source Worker'
+            throw new Error(errMsg)
+          }
+
+          let producedStream = fetched.stream
+          let producedType = fetched.type || 'audio/mpeg'
+          if (outputMode === 'pcm') {
+            producedStream = createDecodedPCMStream(
+              fetched.stream,
+              producedType,
+              nodelink as unknown as NodeLink,
+              url
+            )
+            producedType = 'pcm'
+          } else if (outputMode === 'demuxed') {
+            const demuxed = createDemuxedStream(fetched.stream, producedType)
+            producedStream = demuxed.stream
+            producedType = demuxed.type
+          }
+
+          const streamIdHex = idBuf.toString('hex')
+          const transportKind =
+            process.platform === 'win32' ? 'Named Pipe' : 'Unix Domain Socket'
+          utils.logger(
+            'info',
+            'SourceWorker',
+            `[Thread ${workerData.threadId}] Producing '${track.title}' (${outputMode || 'raw'}:${producedType}) via ${transportKind} [streamId=${streamIdHex}]`
+          )
+          const client = new StreamTransportClient({
+            socketPath: transportSocketPath,
+            streamIdBytes: idBuf,
+            securityTokenBytes: tokenBuf,
+            sourceStream: producedStream,
+            maxRecordPayloadBytes,
+            artificialDelayMs
+          })
+          activeTransports.set(streamIdHex, client)
+          void client
+            .run()
+            .catch(() => {})
+            .finally(() => {
+              activeTransports.delete(streamIdHex)
+            })
+
+          result = {
+            started: true,
+            type: producedType
+          }
+          break
+        }
+        case 'cancelStreamTransport': {
+          const { streamIdHex } = payload as { streamIdHex: string }
+          const active = activeTransports.get(streamIdHex)
+          if (active) {
+            active.cancel()
+            activeTransports.delete(streamIdHex)
+          }
+          result = { cancelled: true }
+          break
+        }
+      }
+      if (
+        task === 'getTrackUrl' ||
+        task === 'startStreamTransport' ||
+        task === 'cancelStreamTransport'
+      ) {
+        const bin = v8.serialize(result)
+        const ab = bin.buffer.slice(
+          bin.byteOffset,
+          bin.byteOffset + bin.byteLength
+        )
+        ;(parentPort as MessagePort).postMessage(
+          {
+            type: 'binaryResult',
+            id,
+            socketPath,
+            result: ab
+          },
+          [ab]
+        )
+        return
       }
       ;(parentPort as MessagePort).postMessage({
         type: 'result',

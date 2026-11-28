@@ -256,6 +256,54 @@ export class LoudnessNormalizer {
     this._currentGain = gainState
   }
 
+  /** Processes normalized Float32 samples in place without imposing a full-scale clamp. */
+  public processFloat32(input: Buffer): void {
+    if (input.length % (4 * this.channels) !== 0) {
+      throw new RangeError(
+        'Float32 normalizer input must contain complete interleaved frames'
+      )
+    }
+    const frames = input.length / (4 * this.channels)
+    let energyState = this._energyState
+    let gainState = this._currentGain
+    for (let frame = 0; frame < frames; frame++) {
+      let energy = 0
+      for (let channel = 0; channel < this.channels; channel++) {
+        const offset = (frame * this.channels + channel) * 4
+        const sample = input.readFloatLE(offset)
+        if (!Number.isFinite(sample)) {
+          throw new RangeError(
+            `Float32 normalizer received a non-finite sample at byte offset ${offset}`
+          )
+        }
+        const filtered = this.filters[channel]?.process(sample) ?? sample
+        energy += filtered * filtered
+      }
+      energy = fround(energy / this.channels)
+      if (energy > this._gateThresholdEnergy) {
+        energyState = fround(
+          energyState * this._energyAlpha + (1 - this._energyAlpha) * energy
+        )
+      }
+      const loudness =
+        -0.691 + 10 * Math.log10(Math.max(energyState, MIN_ENERGY))
+      const desiredGain = 10 ** ((this.targetLoudness - loudness) / 20)
+      const alpha =
+        desiredGain < gainState ? this._attackAlpha : this._releaseAlpha
+      gainState = fround(alpha * gainState + (1 - alpha) * desiredGain)
+      if (gainState > 4) gainState = 4
+      for (let channel = 0; channel < this.channels; channel++) {
+        const offset = (frame * this.channels + channel) * 4
+        input.writeFloatLE(
+          fround(input.readFloatLE(offset) * gainState),
+          offset
+        )
+      }
+    }
+    this._energyState = energyState
+    this._currentGain = gainState
+  }
+
   private _ensureFilters(): void {
     while (this.filters.length < this.channels) {
       this.filters.push(new KWeightingFilter())

@@ -1,3 +1,4 @@
+import type { LyricsRequestType } from '../managers/lyricsManager.ts'
 import type {
   ApiNodelinkServer,
   ApiRequest,
@@ -39,6 +40,8 @@ interface LyricsSourceWorkerManager {
     payload: {
       decodedTrackInfo: EncodedTrackPayload['info']
       language?: string
+      source?: string
+      type?: LyricsRequestType
     }
   ) => boolean
 }
@@ -73,6 +76,8 @@ interface LyricsWorkerManager {
     payload: {
       decodedTrackInfo: EncodedTrackPayload['info']
       language?: string
+      source?: string
+      type?: LyricsRequestType
     }
   ) => Promise<LyricsResponseValue>
 }
@@ -90,7 +95,10 @@ interface LyricsManagerRuntime {
    */
   loadLyrics: (
     track: Pick<EncodedTrackPayload, 'info'>,
-    language?: string
+    language?: string,
+    skipTrackSource?: boolean,
+    requestedSource?: string,
+    type?: LyricsRequestType
   ) => Promise<LyricsResponseValue>
 }
 
@@ -137,6 +145,17 @@ function getEncodedTrackFromQuery(parsedUrl: URL): string | null {
 }
 
 /**
+ * Reads the optional `source` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Selected lyrics source name, or `undefined` when absent.
+ */
+function getSourceFromQuery(parsedUrl: URL): string | undefined {
+  const source = parsedUrl.searchParams.get('source')?.trim()
+  return source ? source : undefined
+}
+
+/**
  * Reads the optional `lang` query string parameter.
  *
  * @param parsedUrl - Parsed request URL.
@@ -145,6 +164,19 @@ function getEncodedTrackFromQuery(parsedUrl: URL): string | null {
 function getLanguageFromQuery(parsedUrl: URL): string | undefined {
   const language = parsedUrl.searchParams.get('lang')?.trim()
   return language ? language : undefined
+}
+
+/**
+ * Reads the optional `type` query string parameter.
+ *
+ * @param parsedUrl - Parsed request URL.
+ * @returns Normalized lyrics request type (`onlyCaptions` or `lyrics`), or `undefined` when absent.
+ */
+function getTypeFromQuery(parsedUrl: URL): LyricsRequestType | undefined {
+  const raw = parsedUrl.searchParams.get('type')?.trim().toLowerCase()
+  if (raw === 'onlycaptions' || raw === 'captions') return 'onlyCaptions'
+  if (raw === 'lyrics') return 'lyrics'
+  return undefined
 }
 
 /**
@@ -203,6 +235,8 @@ async function handler(
 
   const encodedTrack = getEncodedTrackFromQuery(parsedUrl)
   const language = getLanguageFromQuery(parsedUrl)
+  const source = getSourceFromQuery(parsedUrl)
+  const type = getTypeFromQuery(parsedUrl)
 
   if (!encodedTrack) {
     logger('warn', 'Lyrics', MISSING_ENCODED_TRACK_MESSAGE)
@@ -223,7 +257,7 @@ async function handler(
     logger(
       'debug',
       'Lyrics',
-      `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}`
+      `Request to load lyrics for: ${decodedTrack.info.title}${language ? ` (Lang: ${language})` : ''}${source ? ` (Source: ${source})` : ''}`
     )
 
     if (runtime.sourceWorkerManager) {
@@ -233,7 +267,9 @@ async function handler(
         'loadLyrics',
         {
           decodedTrackInfo: decodedTrack.info,
-          language
+          language,
+          source,
+          type
         }
       )
       if (delegated) {
@@ -246,10 +282,18 @@ async function handler(
       const worker = runtime.workerManager.getBestWorker()
       lyricsData = await runtime.workerManager.execute(worker, 'loadLyrics', {
         decodedTrackInfo: decodedTrack.info,
-        language
+        language,
+        source,
+        type
       })
     } else {
-      lyricsData = await runtime.lyrics.loadLyrics(decodedTrack, language)
+      lyricsData = await runtime.lyrics.loadLyrics(
+        decodedTrack,
+        language,
+        undefined,
+        source,
+        type
+      )
     }
 
     sendResponse(req, res, lyricsData, 200)

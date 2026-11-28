@@ -10,7 +10,11 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parentPort } from 'node:worker_threads';
+import { StreamTransportServer } from '../playback/streamTransport.js';
+import { resolveStreamTransportRoute } from '../playback/streamTransportRouter.js';
 import { getBestMatch, logger } from '../utils.js';
+import { normalizePlaylistResult } from '../utils/playlistNormalizer.js';
 /**
  * Central manager for audio source providers.
  * Handles source discovery, dynamic loading, and request routing based on URL patterns or aliases.
@@ -31,6 +35,9 @@ export default class SourcesManager {
     searchAliasMap;
     /** Prioritized list of URL patterns for routing. */
     patternMap;
+    transportServer = null;
+    transportServerPromise = null;
+    activeTransportCount = 0;
     /**
      * Constructs a new SourcesManager.
      * @param nodelink - The NodeLink server/worker context.
@@ -41,6 +48,32 @@ export default class SourcesManager {
         this.sourceMap = new Map();
         this.searchAliasMap = new Map();
         this.patternMap = [];
+    }
+    /**
+     * Returns the shared `StreamTransportServer` for this process, starting it
+     * on first use.
+     */
+    async getTransportServer(maxGlobalReserveBytes, handshakeTimeoutMs) {
+        if (this.transportServer?.isListening)
+            return this.transportServer;
+        if (this.transportServerPromise)
+            return this.transportServerPromise;
+        const init = (async () => {
+            const server = new StreamTransportServer({
+                globalReserveBudgetBytes: maxGlobalReserveBytes,
+                authTimeoutMs: handshakeTimeoutMs
+            });
+            await server.start();
+            this.transportServer = server;
+            return server;
+        })();
+        this.transportServerPromise = init;
+        try {
+            return await init;
+        }
+        finally {
+            this.transportServerPromise = null;
+        }
     }
     /**
      * Scans the sources directory and dynamically loads all enabled providers.
@@ -100,6 +133,7 @@ export default class SourcesManager {
                         }
                     }
                 }
+                this.nodelink.sourceHealthManager?.registerSource(sourceKey);
                 logger('info', 'Sources', `Loaded source: ${sourceKey}`);
             }
         };
@@ -154,6 +188,158 @@ export default class SourcesManager {
         }
         this.patternMap.sort((a, b) => b.priority - a.priority);
     }
+    /** Runs one bounded, declarative source test without downloading or decoding audio. */
+    async runHealthProbe(sourceName) {
+        const instance = this.sources.get(sourceName);
+        if (!instance)
+            throw new Error(`Source "${sourceName}" is not loaded`);
+        const cases = instance.constructor._TESTS ?? [];
+        const testCase = cases.find((candidate) => !candidate.skip &&
+            !candidate.matrix &&
+            !candidate.expect.stream?.required);
+        if (!testCase)
+            throw new Error(`Source "${sourceName}" has no lightweight declarative test`);
+        const operation = async () => {
+            if (testCase.input.type === 'search') {
+                if (!instance.search)
+                    throw new Error('Test requires unsupported search operation');
+                return instance.search(testCase.input.value, sourceName, testCase.input.searchType);
+            }
+            if (!instance.resolve)
+                throw new Error('Test requires unsupported resolve operation');
+            return instance.resolve(testCase.input.value);
+        };
+        let timeout;
+        const result = await Promise.race([
+            operation(),
+            new Promise((_, reject) => {
+                timeout = setTimeout(() => reject(new Error('Declarative source check timed out')), 5000);
+                timeout.unref?.();
+            })
+        ]).finally(() => {
+            if (timeout)
+                clearTimeout(timeout);
+        });
+        if (result.loadType === 'error')
+            throw new Error(result.exception.message);
+        if (result.loadType === 'empty')
+            throw new Error('Test returned empty');
+        const expected = testCase.expect.result.type;
+        const actual = result.loadType === 'track' || result.loadType === 'episode'
+            ? 'track'
+            : result.loadType === 'search'
+                ? 'search'
+                : 'playlist';
+        if (expected !== actual) {
+            throw new Error(`Declarative test expected ${expected}, got ${actual}`);
+        }
+        const minimum = testCase.expect.collection?.minItems ?? 1;
+        const count = result.loadType === 'search'
+            ? result.data.length
+            : result.loadType === 'track' || result.loadType === 'episode'
+                ? 1
+                : result.data.tracks.length;
+        if (count < minimum)
+            throw new Error(`Test returned ${count} items; expected at least ${minimum}`);
+        const primaryTrack = result.loadType === 'track' || result.loadType === 'episode'
+            ? result.data.info
+            : result.loadType === 'search'
+                ? result.data[0]?.info
+                : result.data.tracks[0]?.info;
+        if (testCase.expect.metadata && !primaryTrack) {
+            throw new Error('Test returned no track metadata to validate');
+        }
+        for (const [key, matcher] of Object.entries(testCase.expect.metadata ?? {})) {
+            const actual = primaryTrack?.[key];
+            if (!this.matchesSourceTestValue(matcher, actual)) {
+                throw new Error(`Test metadata assertion failed for "${key}" (got ${String(actual)})`);
+            }
+        }
+    }
+    matchesSourceTestValue(matcher, actual) {
+        switch (matcher.op) {
+            case 'equals':
+                return actual === matcher.value;
+            case 'not-equals':
+                return actual !== matcher.value;
+            case 'matches':
+            case 'not-matches': {
+                const regex = matcher.value instanceof RegExp
+                    ? matcher.value
+                    : new RegExp(String(matcher.value), 'i');
+                const matches = regex.test(String(actual ?? ''));
+                return matcher.op === 'matches' ? matches : !matches;
+            }
+            case 'between': {
+                const value = Number(actual);
+                return value >= matcher.min && value <= matcher.max;
+            }
+            case 'at-least':
+                return Number(actual) >= matcher.value;
+            case 'at-most':
+                return Number(actual) <= matcher.value;
+            case 'exists': {
+                const exists = actual !== undefined && actual !== null && actual !== '';
+                return exists === matcher.value;
+            }
+        }
+    }
+    /** Returns enabled providers with a declarative case suitable for a lightweight check. */
+    getHealthProbeSources() {
+        return Array.from(this.sources.entries())
+            .filter(([, instance]) => instance.constructor._TESTS?.some((testCase) => !testCase.skip &&
+            !testCase.matrix &&
+            !testCase.expect.stream?.required))
+            .map(([name]) => name);
+    }
+    /**
+     * Reports an execution metric to the SourceHealthManager or forwards it via IPC.
+     * @param sourceName - Source identifier.
+     * @param success - Whether the call succeeded.
+     * @param duration - Call duration in milliseconds.
+     * @param error - Optional error message or object.
+     * @param httpStatus - Optional HTTP status code.
+     * @private
+     */
+    _reportHealthMetric(sourceName, success, duration, error, httpStatus) {
+        const healthSourceName = sourceName === 'ytmusic' ? 'youtube' : sourceName;
+        const healthManager = this.nodelink.sourceHealthManager;
+        if (healthManager) {
+            if (success) {
+                healthManager.recordSuccess(healthSourceName, duration);
+            }
+            else {
+                healthManager.recordFailure(healthSourceName, duration, error);
+            }
+            return;
+        }
+        const errorMsg = error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+                ? error
+                : error
+                    ? String(error)
+                    : undefined;
+        const payload = {
+            sourceName: healthSourceName,
+            success,
+            duration,
+            error: errorMsg,
+            httpStatus
+        };
+        if (parentPort) {
+            const msg = {
+                type: 'sourceHealthMetric',
+                payload
+            };
+            parentPort.postMessage(msg);
+            return;
+        }
+        process.send?.({
+            type: 'sourceHealthMetric',
+            payload
+        });
+    }
     /**
      * Executes a source method with metric tracking and error handling.
      * @param sourceName - The identifier of the source to call.
@@ -169,13 +355,29 @@ export default class SourcesManager {
             this.nodelink.statsManager?.incrementSourceFailure?.(sourceName || 'unknown');
             throw new Error(`Source ${sourceName} not found or does not support ${method}`);
         }
+        const start = performance.now();
         try {
             const fn = instance[method];
             if (!fn) {
                 throw new Error(`Method ${method} not found on source ${sourceName}`);
             }
             const result = await fn.apply(instance, args);
-            if (result.loadType === 'search') {
+            const duration = Math.round(performance.now() - start);
+            if (result.loadType === 'playlist' ||
+                (result.loadType !== 'empty' &&
+                    result.loadType !== 'error' &&
+                    result.data &&
+                    typeof result.data === 'object' &&
+                    'tracks' in result.data &&
+                    'info' in result.data)) {
+                normalizePlaylistResult(result, {
+                    sourceName,
+                    url: method === 'resolve' && typeof args[0] === 'string'
+                        ? args[0]
+                        : undefined
+                });
+            }
+            else if (result.loadType === 'search') {
                 for (const track of result.data)
                     track.userData ??= {};
             }
@@ -190,14 +392,18 @@ export default class SourcesManager {
             }
             if (result.loadType === 'error') {
                 this.nodelink.statsManager?.incrementSourceFailure?.(sourceName);
+                this._reportHealthMetric(sourceName, false, duration, result.exception?.message ?? 'Source returned error loadType');
             }
             else {
                 this.nodelink.statsManager?.incrementSourceSuccess?.(sourceName);
+                this._reportHealthMetric(sourceName, true, duration);
             }
             return result;
         }
         catch (e) {
+            const duration = Math.round(performance.now() - start);
             this.nodelink.statsManager?.incrementSourceFailure?.(sourceName);
+            this._reportHealthMetric(sourceName, false, duration, e);
             throw e;
         }
     }
@@ -218,7 +424,7 @@ export default class SourcesManager {
             throw new Error(`Source or search alias not found for: ${sourceTerm}`);
         }
         let searchType = 'track';
-        let searchQuery = query;
+        let searchQuery = query.replace(/\r?\n+/g, ' ').trim();
         if (query.includes(':')) {
             const parts = query.split(':');
             const possibleType = (parts[0] ?? '').toLowerCase();
@@ -299,10 +505,10 @@ export default class SourcesManager {
             pluginInfo: {},
             tracks: allTracks
         };
-        return {
+        return normalizePlaylistResult({
             loadType: 'playlist',
             data: playlistData
-        };
+        });
     }
     /**
      * Resolves a URL to a resource using the prioritized pattern map.
@@ -360,6 +566,26 @@ export default class SourcesManager {
             throw new Error(`Source ${track.sourceName} not found or does not support getTrackUrl`);
         }
         const sourceGetTrackUrl = instance.getTrackUrl;
+        const swm = this.nodelink.sourceWorkerManager;
+        if (swm?.execute && swm.hasAvailableWorkers) {
+            try {
+                const start = performance.now();
+                const workerResult = await swm.execute('getTrackUrl', {
+                    track,
+                    itag,
+                    isRecovering,
+                    isUpscaling
+                });
+                if (workerResult) {
+                    const duration = (performance.now() - start).toFixed(1);
+                    logger('debug', 'Sources', `Resolved getTrackUrl for '${track.sourceName}' via SourceWorker in ${duration}ms (${track.title || track.identifier || 'unknown'})`);
+                    return workerResult;
+                }
+            }
+            catch (err) {
+                logger('warn', 'Sources', `Source worker getTrackUrl failed for ${track.sourceName}, falling back to local: ${err.message}`);
+            }
+        }
         const activeSources = this.resolvingSources.getStore();
         if (activeSources?.has(instance)) {
             return {
@@ -398,7 +624,23 @@ export default class SourcesManager {
                     }
                 }
             }
-            return (await sourceGetTrackUrl.call(instance, track, itag, isRecovering));
+            const trackStart = performance.now();
+            try {
+                const urlResult = (await sourceGetTrackUrl.call(instance, track, itag, isRecovering));
+                const trackDuration = Math.round(performance.now() - trackStart);
+                if (urlResult.exception) {
+                    this._reportHealthMetric(track.sourceName, false, trackDuration, urlResult.exception.message);
+                }
+                else {
+                    this._reportHealthMetric(track.sourceName, true, trackDuration);
+                }
+                return urlResult;
+            }
+            catch (err) {
+                const trackDuration = Math.round(performance.now() - trackStart);
+                this._reportHealthMetric(track.sourceName, false, trackDuration, err);
+                throw err;
+            }
         });
     }
     /**
@@ -425,6 +667,98 @@ export default class SourcesManager {
         if (typeof normalizedAdditionalData.position === 'number' &&
             typeof normalizedAdditionalData.startTime !== 'number') {
             normalizedAdditionalData.startTime = normalizedAdditionalData.position;
+        }
+        const transportConfig = this.nodelink.options?.cluster?.streamTransport;
+        const swm = this.nodelink.sourceWorkerManager;
+        if (normalizedAdditionalData.__fromSourceWorkerTransport !== true &&
+            normalizedAdditionalData.__disableStreamTransport !== true &&
+            swm?.hasAvailableWorkers) {
+            const route = resolveStreamTransportRoute(transportConfig, {
+                track,
+                protocol,
+                additionalData: normalizedAdditionalData,
+                capabilities: instance.streamCapabilities
+            });
+            if (route.transport === 'direct' && transportConfig?.enabled) {
+                logger('debug', 'StreamTransport', `Direct stream for '${track.title}' (${track.sourceName}) [rule=${route.ruleName}, codec=${route.codec}, protocol=${protocol || 'unknown'}]`);
+            }
+            if (route.transport === 'worker') {
+                const maxConcurrent = transportConfig?.limits?.maxConcurrentTransports ?? 0;
+                const onUnavailable = transportConfig?.fallback?.onWorkerUnavailable ?? 'direct';
+                if (maxConcurrent > 0 && this.activeTransportCount >= maxConcurrent) {
+                    if (onUnavailable === 'error') {
+                        return {
+                            exception: {
+                                message: `StreamTransport concurrency limit reached (${maxConcurrent}).`
+                            }
+                        };
+                    }
+                    logger('warn', 'StreamTransport', `Concurrency limit (${maxConcurrent}) reached for '${track.title}', falling back to direct stream.`);
+                }
+                else {
+                    const server = await this.getTransportServer(transportConfig?.limits?.maxGlobalReserveBytes, transportConfig?.fallback?.handshakeTimeoutMs);
+                    const playerId = String(normalizedAdditionalData.guildId ??
+                        normalizedAdditionalData.playerId ??
+                        track.identifier);
+                    const session = server.createStreamSession({
+                        playerId,
+                        watermarks: {
+                            lowWatermark: route.watermarks.lowWatermarkBytes,
+                            targetWatermark: route.watermarks.targetWatermarkBytes,
+                            highWatermark: route.watermarks.highWatermarkBytes
+                        }
+                    });
+                    const tokenCopy = Buffer.from(session.securityTokenBytes);
+                    session.securityTokenBytes.fill(0);
+                    this.activeTransportCount++;
+                    session.stream.once('close', () => {
+                        this.activeTransportCount = Math.max(0, this.activeTransportCount - 1);
+                        void swm
+                            .execute('cancelStreamTransport', { streamIdHex: session.streamIdHex }, { timeoutMs: 3000 })
+                            .catch(() => { });
+                    });
+                    const serializableExtra = {};
+                    for (const [key, value] of Object.entries(normalizedAdditionalData)) {
+                        if (typeof value !== 'function')
+                            serializableExtra[key] = value;
+                    }
+                    serializableExtra.__fromSourceWorkerTransport = true;
+                    try {
+                        const workerRes = await swm.execute('startStreamTransport', {
+                            track,
+                            url,
+                            protocol,
+                            additionalData: serializableExtra,
+                            outputMode: route.output,
+                            transportSocketPath: session.socketPath,
+                            streamIdBytes: session.streamIdBytes,
+                            securityTokenBytes: tokenCopy,
+                            artificialDelayMs: typeof normalizedAdditionalData.artificialDelayMs === 'number'
+                                ? normalizedAdditionalData.artificialDelayMs
+                                : undefined
+                        }, { timeoutMs: 15000 });
+                        tokenCopy.fill(0);
+                        logger('debug', 'StreamTransport', `Routed '${track.title}' (${track.sourceName}) via rule '${route.ruleName}' [output=${route.output}, profile=${route.bufferProfile}, streamId=${session.streamIdHex}]`);
+                        return {
+                            stream: session.stream,
+                            type: workerRes?.type || protocol
+                        };
+                    }
+                    catch (err) {
+                        tokenCopy.fill(0);
+                        session.cancel();
+                        const errMsg = err instanceof Error ? err.message : String(err);
+                        if (onUnavailable === 'error') {
+                            return {
+                                exception: {
+                                    message: `Source Worker transport failed: ${errMsg}`
+                                }
+                            };
+                        }
+                        logger('warn', 'StreamTransport', `Source Worker transport failed for '${track.title}' [streamId=${session.streamIdHex}], falling back to direct stream: ${errMsg}`);
+                    }
+                }
+            }
         }
         return (await instance.loadStream(track, url, protocol, normalizedAdditionalData));
     }

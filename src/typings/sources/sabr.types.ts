@@ -322,9 +322,6 @@ export interface DownloadedSegment {
   /** Total byte length of the downloaded segment data. */
   byteLength: number
 
-  /** The media header that describes this segment. */
-  mediaHeader: MediaHeaderMsg
-
   /**
    * Start time of the segment in milliseconds from the beginning
    * of the media timeline.
@@ -588,11 +585,11 @@ export interface TrafficLogEntry {
   /** Player time in milliseconds at request time. */
   playerTimeMs?: number | string
 
-  /** Preferred audio itags for the request. */
-  preferredAudioItags?: number[]
+  /** Selected audio itags for the request. */
+  selectedAudioItags?: number[]
 
-  /** Selected format itags for the request. */
-  selectedItags?: number[]
+  /** Initialization format itags for the request. */
+  initializationItags?: number[]
 
   /** Buffered range summaries. */
   bufferedRanges?: Array<{
@@ -705,13 +702,13 @@ export interface DetailedStateParams {
   videoFormat?: FormatEntry
 
   /** Format IDs selected for this request cycle. */
-  selectedFormatIds?: FormatIdMsg[]
+  initializationFormatIds?: FormatIdMsg[]
 
-  /** Preferred audio format IDs. */
-  preferredAudioFormatIds?: FormatIdMsg[]
+  /** Selected audio format IDs. */
+  selectedAudioFormatIds?: FormatIdMsg[]
 
-  /** Preferred video format IDs. */
-  preferredVideoFormatIds?: FormatIdMsg[]
+  /** Selected video format IDs. */
+  selectedVideoFormatIds?: FormatIdMsg[]
 
   /** Current buffered ranges being reported. */
   bufferedRanges?: BufferedRangeSummary[]
@@ -751,6 +748,9 @@ export declare class CompositeBuffer {
 
   /** Appends a byte chunk or merges another CompositeBuffer. */
   append(chunk: Uint8Array | CompositeBuffer): void
+
+  /** Checks whether a chunk extends the last chunk over the same backing store. */
+  canMergeWithLastChunk(chunk: Uint8Array): boolean
 
   /**
    * Splits the buffer at the given position.

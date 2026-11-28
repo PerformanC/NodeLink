@@ -5,7 +5,7 @@
  * This seems to be a Internal youtube client. It does not require
  * a login to function, just like ANDROID_VR.
  * As of this date (08/16/2026), its more reliable than ANDROID_VR.
- * 
+ *
  * @packageDocumentation
  * @module YouTubeVisionOSClient
  */
@@ -29,6 +29,7 @@ import {
   BaseClient,
   buildTrack,
   checkURLType,
+  extractPlaylistSelection,
   YOUTUBE_CONSTANTS
 } from '../common.ts'
 
@@ -61,13 +62,13 @@ export default class VisionOs extends BaseClient {
     return {
       client: {
         clientName: 'VISIONOS',
-        clientVersion: '0.1',
+        clientVersion: '1.08',
         userAgent:
-          'com.google.ios.youtube/0.1 (RealityDevice14,1; U; CPU visionOS 1_3 like Mac OS X;)',
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.1)',
         deviceMake: 'Apple',
-        deviceModel: 'RealityDevice14,1',
+        deviceModel: 'RealityDevice17,1',
         osName: 'visionOS',
-        osVersion: '1.3.21O771',
+        osVersion: '26.5.23O471',
         hl: context.client.hl,
         gl: context.client.gl,
         visitorData: context.client.visitorData
@@ -84,6 +85,14 @@ export default class VisionOs extends BaseClient {
    */
   override getPlayerParams(): string | null {
     return '2AMB'
+  }
+
+  /**
+   * Whether this client requires OAuth authentication (REQUIRED).
+   * Will check if the Oauth is configured, and return false if not.
+   */
+  override requiresOAuth(): boolean {
+    return false
   }
 
   /**
@@ -304,9 +313,13 @@ export default class VisionOs extends BaseClient {
       }
 
       case YOUTUBE_CONSTANTS.PLAYLIST: {
-        const playlistIdMatch = url.match(/[?&]list=([\w-]+)/)
+        const {
+          playlistId,
+          videoId: currentVideoId,
+          targetIndex
+        } = extractPlaylistSelection(url)
 
-        if (!playlistIdMatch?.[1]) {
+        if (!playlistId) {
           logger(
             'error',
             'YouTube-VisionOS',
@@ -321,10 +334,6 @@ export default class VisionOs extends BaseClient {
             }
           }
         }
-
-        const playlistId = playlistIdMatch[1]
-        const videoIdMatch = url.match(/[?&]v=([\w-]+)/)
-        const currentVideoId = videoIdMatch?.[1] ?? null
 
         const requestBody: Record<string, unknown> = {
           context: this.getClient(context),
@@ -367,7 +376,9 @@ export default class VisionOs extends BaseClient {
           playlistId,
           currentVideoId,
           playlistResponse,
-          sourceName
+          sourceName,
+          context,
+          targetIndex
         )
       }
 

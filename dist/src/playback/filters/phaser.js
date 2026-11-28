@@ -1,4 +1,5 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import Allpass from './dsp/allpass.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
@@ -11,6 +12,7 @@ const MAX_STAGES = 12;
  * @public
  */
 export default class Phaser extends AnimatableFilter {
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     priority = 10;
     leftLfo;
     rightLfo;
@@ -113,6 +115,51 @@ export default class Phaser extends AnimatableFilter {
             const finalRight = rightSample + alpha * (phasedRight - rightSample);
             chunk.writeInt16LE(clamp16Bit(finalLeft), i);
             chunk.writeInt16LE(clamp16Bit(finalRight), i + 2);
+        }
+        return chunk;
+    }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Phaser Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        const sweepRange = this.maxFrequency - this.minFrequency;
+        for (let i = 0; i < chunk.length; i += 8) {
+            const left = chunk.readFloatLE(i);
+            const right = chunk.readFloatLE(i + 4);
+            const leftLfo = (this.leftLfo.getValue() + 1) / 2;
+            const rightLfo = (this.rightLfo.getValue() + 1) / 2;
+            const aL = (1 -
+                Math.tan((Math.PI * (this.minFrequency + sweepRange * leftLfo)) / SAMPLE_RATE)) /
+                (1 +
+                    Math.tan((Math.PI * (this.minFrequency + sweepRange * leftLfo)) / SAMPLE_RATE));
+            const aR = (1 -
+                Math.tan((Math.PI * (this.minFrequency + sweepRange * rightLfo)) /
+                    SAMPLE_RATE)) /
+                (1 +
+                    Math.tan((Math.PI * (this.minFrequency + sweepRange * rightLfo)) /
+                        SAMPLE_RATE));
+            let wetL = left + this.lastLeftFeedback * this.feedback;
+            let wetR = right + this.lastRightFeedback * this.feedback;
+            for (let stage = 0; stage < this.stages; stage++) {
+                const lf = this.leftFilters[stage];
+                const rf = this.rightFilters[stage];
+                if (lf) {
+                    lf.setCoefficient(aL);
+                    wetL = lf.process(wetL);
+                }
+                if (rf) {
+                    rf.setCoefficient(aR);
+                    wetR = rf.process(wetR);
+                }
+            }
+            this.lastLeftFeedback = wetL;
+            this.lastRightFeedback = wetR;
+            const phasedL = left * (1 - this.mix) + wetL * this.mix;
+            const phasedR = right * (1 - this.mix) + wetR * this.mix;
+            chunk.writeFloatLE(left + this.alpha * (phasedL - left), i);
+            chunk.writeFloatLE(right + this.alpha * (phasedR - right), i + 4);
         }
         return chunk;
     }

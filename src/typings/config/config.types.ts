@@ -1,3 +1,11 @@
+import type { AudioProcessingMode } from '../../playback/processing/audioContract.ts'
+import type { AdmissionConfig } from '../admission/admission.types.ts'
+import type { DosProtectionConfig } from '../api/dosProtection.types.ts'
+import type { RateLimitConfig } from '../api/rateLimit.types.ts'
+import type { RoutePlannerIpBlockEntry } from '../api/routeplanner.types.ts'
+import type { MusixmatchConfig } from '../lyrics/musixmatch.types.ts'
+import type { SourceHealthConfig } from '../sources/sourceHealth.types.ts'
+
 /**
  * Selection of the internal engine used for networking and protocol handling.
  */
@@ -37,7 +45,7 @@ export interface AudioTransition {
   curve: string
 
   /** The technical logic type applied during the transition. */
-  type: string
+  type: 'volume' | 'tape' | 'scratch' | 'both'
 }
 
 /**
@@ -206,6 +214,9 @@ export interface SpotifySourceConfig {
 
   /** The 'sp_dc' cookie for mobile token generation. */
   sp_dc: string
+
+  /** If true, extracts cover art color palettes for single tracks. Default: false. */
+  extractColors?: boolean
 }
 
 /**
@@ -890,6 +901,25 @@ export interface SourcesRegistry {
   /** Twitch stream/clip. */
   twitch: FeatureToggle
 
+  /** Naver Chzzk live stream/VOD/clip. */
+  chzzk: FeatureToggle
+
+  /** Zing MP3 music and playlist streaming. */
+  zingmp3: FeatureToggle & {
+    /** Optional custom Vietnam IPv4 address used in X-Forwarded-For headers. */
+    vietnamIp?: string
+  }
+
+  /** QQ Music music, album, playlist, and toplist streaming. */
+  qqmusic: FeatureToggle & {
+    /** Optional cookie string for VIP credentials. */
+    cookie?: string
+    /** Optional QQ User Identification Number (UIN). */
+    uin?: string | number
+    /** Optional QQ Music keyst token for authenticated API calls. */
+    qmKeyst?: string
+  }
+
   /** NicoVideo resolution. */
   nicovideo: FeatureToggle
 
@@ -942,6 +972,44 @@ export interface ServerSection {
 
   /** Allow browser web players from any origin (permissive CORS). */
   cors: boolean
+
+  /** Maximum request body size in bytes. */
+  maxBodySize?: number
+
+  /** Request body timeout in milliseconds. */
+  bodyTimeout?: number
+
+  /** HTTP socket headers timeout in milliseconds. */
+  headersTimeout?: number
+
+  /** HTTP keep-alive timeout in milliseconds. */
+  keepAliveTimeout?: number
+
+  /** Automatic server self-update settings. */
+  autoUpdate?: AutoUpdateSection
+}
+
+export interface AutoUpdateSection {
+  /** Enable automatic self-updating of the server code. */
+  enabled?: boolean
+
+  /** Target update channel: 'dev' or 'stable'. Defaults to 'dev'. */
+  channel?: 'dev' | 'stable'
+
+  /** Whether to check for updates on server boot. Defaults to true. */
+  checkOnBoot?: boolean
+
+  /** Interval in milliseconds to check for updates in background (e.g. 3600000 = 1 hour). Set 0 to disable. */
+  checkInterval?: number
+
+  /** Automatically restart the server to apply the update. Defaults to true. */
+  autoRestart?: boolean
+
+  /** If false, waits for active players to drop to 0 before restarting. If true, disconnects players with code 5002. Defaults to false. */
+  forceRestart?: boolean
+
+  /** Timeout in milliseconds to wait for WebSockets to disconnect gracefully after sending code 5002. Defaults to 2000. */
+  drainTimeout?: number
 }
 
 /**
@@ -951,62 +1019,164 @@ export interface SecuritySection {
   /** Master auth password. */
   password?: string
 
-  /** Trust X-Forwarded-For headers. */
+  /** Trust proxy headers (X-Forwarded-For, CF-Connecting-IP, etc). */
   trustProxy: boolean
 
-  /** Anti-flooding protection. */
-  dosProtection: {
-    enabled: boolean
-    thresholds: {
-      /** Max requests in window. */
-      burstRequests: number
-      /** Sliding window size (ms). */
-      timeWindowMs: number
-    }
-    mitigation: {
-      /** Artificial response delay (ms). */
-      delayMs: number
-      /** access block duration (ms). */
-      blockDurationMs: number
-    }
-    ignore: {
-      userIds: string[]
-      guildIds: string[]
-      ips: string[]
-    }
-  }
+  /** Anti-flooding and DoS protection. */
+  dosProtection: DosProtectionConfig
 
-  /** fair-use API throttling. */
-  rateLimit: {
-    enabled: boolean
-    maxEntries: number
-    global: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    perIp: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    perUserId: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    perGuildId: {
-      maxRequests: number
-      timeWindowMs: number
-    }
-    /** Paths that bypass rate limiting. */
-    ignorePaths: string[]
-    ignore: {
-      userIds: string[]
-      guildIds: string[]
-      ips: string[]
-    }
-  }
+  /** Fair-use API and WebSocket rate limiting. */
+  rateLimit: RateLimitConfig
+
+  /** Adaptive admission control and multi-layer resource protection. */
+  admission?: AdmissionConfig
 
   /** Allow additional security-specific properties. */
   [key: string]: unknown
+}
+
+/**
+ * Stream processing stage delivered by the Source Worker over StreamTransport.
+ */
+export const StreamOutputMode = {
+  /** Source Worker fetches (and decrypts if needed) and forwards raw stream bytes. */
+  RAW: 'raw',
+  /** Source Worker assembles segmented protocols (HLS/DASH) or strips container framing (e.g. fMP4/MPEG-TS -> AAC). */
+  DEMUXED: 'demuxed',
+  /** Source Worker decodes audio all the way to 48kHz stereo PCM (~192 KB/s per stream). */
+  PCM: 'pcm'
+} as const
+export type StreamOutputMode =
+  (typeof StreamOutputMode)[keyof typeof StreamOutputMode]
+
+/**
+ * Simplified preset modes for StreamTransport routing.
+ */
+export const StreamTransportPreset = {
+  /** Disables StreamTransport routing regardless of rules. */
+  OFF: 'off',
+  /** Offloads only continuously decrypted streams (e.g. Deezer Blowfish, NicoVideo/HLS AES) in `raw` mode. */
+  ENCRYPTED_ONLY: 'encrypted-only',
+  /** Offloads live streams (`demuxed`), encrypted streams (`raw`), and segmented protocols (`hls`, `sabr`, `dash` -> `demuxed`). */
+  BALANCED: 'balanced',
+  /** Offloads all eligible sources in `demuxed` mode. */
+  FULL_OFFLOAD: 'full-offload',
+  /** Offloads all eligible sources decoded to `pcm` (reduces Player CPU at higher pipe bandwidth). */
+  CPU_SAVER: 'cpu-saver',
+  /** Ignores built-in presets and evaluates `rules` in order, falling back to `defaultAction`. */
+  CUSTOM: 'custom'
+} as const
+export type StreamTransportPreset =
+  (typeof StreamTransportPreset)[keyof typeof StreamTransportPreset]
+
+/**
+ * Named reserve buffer profiles for StreamTransport.
+ */
+export const StreamBufferProfileName = {
+  /** Low-memory buffer (`32 KB` / `96 KB` / `192 KB`). */
+  COMPACT: 'compact',
+  /** Balanced buffer for compressed streams (`64 KB` / `192 KB` / `384 KB`). */
+  STANDARD: 'standard',
+  /** High-throughput buffer for `pcm` or jittery live streams (`128 KB` / `512 KB` / `1024 KB`). */
+  LARGE: 'large'
+} as const
+export type StreamBufferProfileName =
+  (typeof StreamBufferProfileName)[keyof typeof StreamBufferProfileName]
+
+/**
+ * Watermark thresholds for a StreamTransport reserve buffer profile.
+ */
+export interface StreamTransportBufferProfile {
+  /** Resume threshold (bytes): server resumes reading from socket once reserve drops below this value. */
+  lowWatermarkBytes: number
+  /** Target steady-state reserve level (bytes). */
+  targetWatermarkBytes: number
+  /** Pause threshold (bytes): server applies backpressure to the socket when reserve reaches this limit. */
+  highWatermarkBytes: number
+}
+
+/**
+ * Action taken when a StreamTransport routing rule matches.
+ */
+export interface StreamTransportAction {
+  /** `'worker'` routes production through a Source Worker pipe; `'direct'` keeps local/Player streaming. */
+  transport: 'worker' | 'direct'
+  /** Processing stage delivered by the Source Worker (`'raw'`, `'demuxed'`, or `'pcm'`). */
+  output: StreamOutputMode
+  /** Reserve buffer profile applied to this stream (`'compact'`, `'standard'`, or `'large'`). @default 'standard' */
+  bufferProfile?: StreamBufferProfileName
+}
+
+/**
+ * Match criteria evaluated against track metadata, source capabilities, and resolved URL.
+ */
+export interface StreamTransportRuleMatch {
+  /** Source names to match (e.g. `['youtube', 'deezer']` or `['*']`). */
+  sources?: string[]
+  /** Match live broadcasts (`true`) or VOD/on-demand tracks (`false`). */
+  isLive?: boolean
+  /** Match streams requiring continuous chunk decryption (`true`) or unencrypted streams (`false`). */
+  encrypted?: boolean
+  /** Resolved stream protocols to match (e.g. `['hls', 'sabr', 'dash', 'https']`). */
+  protocols?: string[]
+  /** Raw container/stream formats before normalization (e.g. `['mp4', 'm4a', 'fmp4', 'mpegts']`). */
+  formats?: string[]
+  /** Normalized audio codecs from `normalizeFormat()` (e.g. `['aac', 'opus', 'flac', 'mpeg']`). */
+  codecs?: string[]
+  /** Minimum track duration in milliseconds. */
+  minDurationMs?: number
+  /** Maximum track duration in milliseconds (`0` = no upper bound). */
+  maxDurationMs?: number
+}
+
+/**
+ * Single ordered routing layer in StreamTransport configuration.
+ */
+export interface StreamTransportRule {
+  /** Optional rule label used in debug logs and diagnostics. */
+  name?: string
+  /** Whether this rule is active. @default true */
+  enabled?: boolean
+  /** Conditions that must all match for this rule to apply. */
+  match: StreamTransportRuleMatch
+  /** Routing action and output stage applied when `match` succeeds. */
+  action: StreamTransportAction
+}
+
+/**
+ * Configuration for dedicated binary stream transport between Source Workers and Players.
+ */
+export interface StreamTransportConfig {
+  /** Enables dedicated Unix Domain Socket / Named Pipe stream offloading to Source Workers. @default false */
+  enabled: boolean
+  /** Routing preset (`'off'`, `'encrypted-only'`, `'balanced'`, `'full-offload'`, `'cpu-saver'`, or `'custom'`). @default 'off' */
+  preset: StreamTransportPreset
+  /** Global source allowlist (e.g. `['*']` for all sources, or `['deezer', 'youtube']`). @default ['*'] */
+  sources: string[]
+  /** Sources excluded from offloading even when `sources` is `['*']`. @default ['local'] */
+  excludeSources?: string[]
+  /** Fallback action used in `'custom'` preset when no rule in `rules` matches. */
+  defaultAction?: StreamTransportAction
+  /** Ordered routing layers evaluated top-to-bottom (first match wins) when `preset` is `'custom'`. */
+  rules?: StreamTransportRule[]
+  /** Custom watermark overrides for `'compact'`, `'standard'`, and `'large'` buffer profiles. */
+  bufferProfiles?: Partial<
+    Record<StreamBufferProfileName, StreamTransportBufferProfile>
+  >
+  /** Global memory and concurrency limits for active transport sessions. */
+  limits?: {
+    /** Maximum combined reserve memory across all active transport streams in bytes. @default 67108864 */
+    maxGlobalReserveBytes?: number
+    /** Maximum concurrent Source Worker transport pipes (`0` = unlimited). @default 0 */
+    maxConcurrentTransports?: number
+  }
+  /** Resilience settings when Source Workers are unavailable or saturated. */
+  fallback?: {
+    /** Behavior when worker transport fails or hits limits: `'direct'` falls back to Player streaming; `'error'` fails the track. @default 'direct' */
+    onWorkerUnavailable?: 'direct' | 'error'
+    /** Handshake authorization timeout in milliseconds. @default 5000 */
+    handshakeTimeoutMs?: number
+  }
 }
 
 /**
@@ -1040,6 +1210,9 @@ export interface ClusterSection {
     tasksPerWorker: number
     silentLogs: boolean
   }
+
+  /** Optional dedicated binary stream transport from Source Workers to Players. */
+  streamTransport?: StreamTransportConfig
 
   /** Heavy command timeout (ms). */
   commandTimeout: number
@@ -1090,12 +1263,28 @@ export interface LoggingSection {
   /** log level (e.g. 'info', 'debug'). */
   level: string
 
+  /** Sensitive data redaction configuration. */
+  redaction?: {
+    enabled?: boolean
+    mode?: 'mask' | 'trace' | 'off'
+    ips?: boolean
+    tokens?: boolean
+    passwords?: boolean
+    userPaths?: boolean
+    networkInfo?: boolean
+    cookies?: boolean
+    emails?: boolean
+    discordIds?: boolean
+    accountInfo?: boolean
+  }
+
   /** Disk logging settings. */
   file: {
     enabled: boolean
     path: string
     rotation: string
     ttlDays: number
+    redactSensitive?: boolean
   }
 
   /** Granular debug flags. */
@@ -1118,6 +1307,7 @@ export interface LoggingSection {
  * Connectivity health and multi-IP rotation.
  */
 export interface NetworkSection {
+  [key: string]: unknown
   /** Shared outbound proxy for sources and internals. */
   proxy: {
     enabled: boolean
@@ -1143,7 +1333,7 @@ export interface NetworkSection {
   routePlanner: {
     strategy: string
     bannedIpCooldown: number
-    ipBlocks: Array<string | { cidr: string }>
+    ipBlocks: RoutePlannerIpBlockEntry[]
   }
 }
 
@@ -1190,12 +1380,15 @@ export interface FilterConfig {
  * The consolidated NodeLink configuration schema.
  */
 export interface NodelinkConfig {
+  [key: string]: unknown
   server: ServerSection
   cluster: ClusterSection
   logging: LoggingSection
   connection: NetworkSection['connection']
   rateLimit: SecuritySection['rateLimit']
   dosProtection: SecuritySection['dosProtection']
+  admission?: AdmissionConfig
+  sourceHealth?: SourceHealthConfig
   trustProxy: boolean
   network: NetworkSection
   search: {
@@ -1221,9 +1414,12 @@ export interface NodelinkConfig {
     }
     filters: FilterConfig
     audio: {
+      /** Audio processing path; defaults to the unchanged legacy pipeline. */
+      processingMode?: AudioProcessingMode
       quality: string
       encryption: string
       resamplingQuality: string
+      opusComplexity?: number
       loudnessNormalizer: boolean
       lookaheadMs: number
       gateThresholdLUFS: number
@@ -1246,7 +1442,7 @@ export interface NodelinkConfig {
         enabled: boolean
         duration: number
         curve: string
-        mode: 'preload' | 'stream'
+        mode: 'preload' | 'stream' | 'smart'
         minBufferMs: number
         bufferMs: number
       }
@@ -1262,6 +1458,7 @@ export interface NodelinkConfig {
   api: {
     enableTrackStreamEndpoint: boolean
     enableLoadStreamEndpoint: boolean
+    enableHlsEndpoint: boolean
     metrics: {
       enabled: boolean
       authorization: {
@@ -1283,6 +1480,27 @@ export interface NodelinkConfig {
     fallbackSource: string
     /** Ordered lyrics providers tried after the track's native provider. */
     preferredSources?: string[]
+    /** Musixmatch lyrics provider configuration. */
+    musixmatch?: MusixmatchConfig
+    /** Provider-specific proxy settings and identifiers are supported. */
+    unison?: FeatureToggle & {
+      proxy?:
+        | import('../utils.types.ts').HttpProxyConfig
+        | string
+        | Array<import('../utils.types.ts').HttpProxyConfig | string>
+    }
+    lrcRed?: FeatureToggle & {
+      proxy?:
+        | import('../utils.types.ts').HttpProxyConfig
+        | string
+        | Array<import('../utils.types.ts').HttpProxyConfig | string>
+    }
+    lrclib?: FeatureToggle & {
+      proxy?:
+        | import('../utils.types.ts').HttpProxyConfig
+        | string
+        | Array<import('../utils.types.ts').HttpProxyConfig | string>
+    }
     [source: string]: unknown
   }
 
@@ -1299,14 +1517,6 @@ export interface NodelinkConfig {
       username: string
       password: string
     }
-  }
-
-  /** Multi-audio layering mixer. */
-  mix: {
-    enabled: boolean
-    defaultVolume: number
-    maxLayersMix: number
-    autoCleanup: boolean
   }
 
   /** Registry of addons to load. */

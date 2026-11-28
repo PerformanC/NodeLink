@@ -4,7 +4,20 @@ export const config = {
         port: 3000,
         password: 'youshallnotpass',
         useBunServer: true,
-        cors: false
+        cors: false,
+        maxBodySize: 1048576,
+        bodyTimeout: 10000,
+        headersTimeout: 15000,
+        keepAliveTimeout: 15000,
+        autoUpdate: {
+            enabled: false,
+            channel: 'dev',
+            checkOnBoot: true,
+            checkInterval: 3600000,
+            autoRestart: true,
+            forceRestart: false,
+            drainTimeout: 2000
+        }
     },
     cluster: {
         enabled: true,
@@ -24,6 +37,43 @@ export const config = {
             microWorkers: 2,
             tasksPerWorker: 32,
             silentLogs: true
+        },
+        streamTransport: {
+            enabled: false,
+            preset: 'off',
+            sources: ['*'],
+            excludeSources: ['local'],
+            defaultAction: {
+                transport: 'direct',
+                output: 'raw',
+                bufferProfile: 'standard'
+            },
+            rules: [],
+            bufferProfiles: {
+                compact: {
+                    lowWatermarkBytes: 32 * 1024,
+                    targetWatermarkBytes: 96 * 1024,
+                    highWatermarkBytes: 192 * 1024
+                },
+                standard: {
+                    lowWatermarkBytes: 64 * 1024,
+                    targetWatermarkBytes: 192 * 1024,
+                    highWatermarkBytes: 384 * 1024
+                },
+                large: {
+                    lowWatermarkBytes: 128 * 1024,
+                    targetWatermarkBytes: 512 * 1024,
+                    highWatermarkBytes: 1024 * 1024
+                }
+            },
+            limits: {
+                maxGlobalReserveBytes: 64 * 1024 * 1024,
+                maxConcurrentTransports: 0
+            },
+            fallback: {
+                onWorkerUnavailable: 'direct',
+                handshakeTimeoutMs: 5000
+            }
         },
         timeouts: {
             heavyMs: 6000,
@@ -48,18 +98,32 @@ export const config = {
             cpuPenaltyLimit: 0.85
         },
         endpoint: {
-            patchEnabled: true,
+            patchEnabled: false,
             allowExternalPatch: false,
-            code: 'CAPYBARA'
+            code: ''
         }
     },
     logging: {
         level: 'debug',
+        redaction: {
+            enabled: true,
+            mode: 'mask',
+            ips: true,
+            tokens: true,
+            passwords: true,
+            userPaths: true,
+            networkInfo: true,
+            cookies: true,
+            emails: true,
+            discordIds: false,
+            accountInfo: true
+        },
         file: {
             enabled: false,
             path: 'logs',
             rotation: 'daily',
-            ttlDays: 7
+            ttlDays: 7,
+            redactSensitive: true
         },
         debug: {
             all: false,
@@ -103,27 +167,113 @@ export const config = {
             maxRequests: 20,
             timeWindowMs: 5000
         },
+        upgrade: {
+            maxRequests: 30,
+            timeWindowMs: 10000
+        },
+        routeWeights: {
+            '/loadtracks': 5,
+            '/loadstream': 5,
+            '/loadlyrics': 3,
+            '/meaning': 3,
+            '/decodetracks': 2
+        },
+        defaultCost: 1,
+        ipv6SubnetMask: 64,
         ignorePaths: [],
         ignore: {
             userIds: [],
             guildIds: [],
-            ips: []
-        }
+            ips: [],
+            paths: []
+        },
+        trustProxy: false,
+        trustedProxies: []
     },
     dosProtection: {
         enabled: true,
         thresholds: {
             burstRequests: 50,
-            timeWindowMs: 10000
+            timeWindowMs: 10000,
+            warnRatio: 0.5,
+            maxEntries: 10000
         },
         mitigation: {
-            delayMs: 500,
-            blockDurationMs: 300000
+            action: 'reject',
+            blockDurationMs: 300000,
+            backoffMultiplier: 2,
+            maxBlockDurationMs: 2400000,
+            delayMs: 0
         },
+        maxConcurrentConnectionsPerIp: 25,
+        authProtection: {
+            enabled: true,
+            maxFailures: 5,
+            timeWindowMs: 60000,
+            banDurationMs: 900000
+        },
+        syncCluster: true,
+        ipv6SubnetMask: 64,
         ignore: {
             userIds: [],
             guildIds: [],
-            ips: []
+            ips: [],
+            paths: []
+        },
+        trustProxy: false,
+        trustedProxies: []
+    },
+    admission: {
+        enabled: true,
+        trustProxy: false,
+        trustedProxies: [],
+        guild: {
+            baseCapacity: 30,
+            refillRatePerSecond: 10,
+            maxConcurrency: 2,
+            quarantineScoreThreshold: 10,
+            quarantineRecoveryThreshold: 4,
+            quarantineDurationMs: 15000,
+            scoreDecayHalfLifeSeconds: 8,
+            maxGuildStates: 10000
+        },
+        session: {
+            baseCapacity: 150,
+            tokensPerActivePlayer: 1.5,
+            refillRatePerSecond: 30,
+            refillRatePerPlayerPerSecond: 0.2,
+            quarantineScoreThreshold: 20,
+            quarantineDurationMs: 30000,
+            maxPlayerChurnPerMinute: 60,
+            anomalyBurstMultiplier: 4,
+            reconciliationMultiplier: 1.5,
+            organicGrowthFactor: 0.2,
+            organicGrowthFloor: 25,
+            flappingThresholdMs: 120000,
+            warmupDurationMs: 45000,
+            maxReconciliationsPerWindow: 3,
+            reconciliationWindowMs: 3600000
+        },
+        global: {
+            baseCapacity: 300,
+            refillRatePerSecond: 60
+        },
+        ip: {
+            baseCapacity: 500,
+            refillRatePerSecond: 100,
+            maxConcurrentSockets: 25,
+            maxProxySockets: 1024,
+            ipv6SubnetMask: 64,
+            blockScoreThreshold: 30,
+            blockDurationMs: 300000,
+            backoffMultiplier: 2,
+            maxBlockDurationMs: 2400000,
+            authProtection: {
+                enabled: true,
+                maxFailures: 5,
+                windowMs: 60000,
+                banDurationMs: 900000
+            }
         }
     },
     trustProxy: false,
@@ -200,9 +350,11 @@ export const config = {
             }
         },
         audio: {
+            processingMode: 'legacy',
             quality: 'high',
             encryption: 'aead_xchacha20_poly1305_rtpsize',
             resamplingQuality: 'best',
+            opusComplexity: 6,
             loudnessNormalizer: false,
             lookaheadMs: 5,
             gateThresholdLUFS: -60,
@@ -268,6 +420,7 @@ export const config = {
     api: {
         enableTrackStreamEndpoint: false,
         enableLoadStreamEndpoint: false,
+        enableHlsEndpoint: false,
         metrics: {
             enabled: true,
             authorization: {
@@ -279,6 +432,32 @@ export const config = {
     },
     experimental: {
         enableHoloTracks: false
+    },
+    sourceHealth: {
+        enabled: true,
+        observationWindowSize: 50,
+        minObservations: 3,
+        idleThresholdMs: 600000,
+        degradedLatencyThresholdMs: 2500,
+        degradedJitterThresholdMs: 800,
+        consecutiveFailureThreshold: 3,
+        failureRateThreshold: 0.5,
+        relativeLatencyMultiplier: 3.0,
+        circuitBreaker: {
+            enabled: true,
+            resetTimeoutMs: 30000,
+            maxResetTimeoutMs: 300000,
+            backoffMultiplier: 2.0,
+            halfOpenMaxAttempts: 1
+        },
+        activeProbes: {
+            enabled: true,
+            startupProbe: true,
+            maxConcurrent: 2,
+            intervalMs: 120000
+        },
+        websocketNotifications: true,
+        sources: {}
     },
     sources: {
         youtube: {
@@ -294,6 +473,7 @@ export const config = {
                 'soundcloud',
                 'deezer',
                 'jiosaavn',
+                'tidal',
                 'qobuz',
                 'gaana',
                 'vkmusic',
@@ -317,7 +497,8 @@ export const config = {
                     'WebEmbedded',
                     'WebParentTools',
                     'Web',
-                    'IOS'
+                    'IOS',
+                    'IOSProducer'
                 ],
                 resolve: [
                     'VisionOs',
@@ -328,7 +509,8 @@ export const config = {
                     'WebEmbedded',
                     'WebParentTools',
                     'IOS',
-                    'Web'
+                    'Web',
+                    'IOSProducer'
                 ],
                 settings: {
                     TV: {
@@ -645,6 +827,15 @@ export const config = {
         twitch: {
             enabled: true
         },
+        chzzk: {
+            enabled: true
+        },
+        zingmp3: {
+            enabled: true
+        },
+        qqmusic: {
+            enabled: true
+        },
         nicovideo: {
             enabled: true
         },
@@ -693,6 +884,12 @@ export const config = {
         lrclib: {
             enabled: true
         },
+        unison: {
+            enabled: true
+        },
+        lrcRed: {
+            enabled: false
+        },
         letrasmus: {
             enabled: true
         },
@@ -721,12 +918,6 @@ export const config = {
             username: 'admin',
             password: ''
         }
-    },
-    mix: {
-        enabled: true,
-        defaultVolume: 0.8,
-        maxLayersMix: 5,
-        autoCleanup: true
     },
     cache: {
         diskEnabled: true

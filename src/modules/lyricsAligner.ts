@@ -83,15 +83,22 @@ function flattenYouTubeLyrics(
   for (const line of ytLyrics.lines) {
     if (line.text && /^\[.*\]$/.test(line.text.trim())) continue
 
-    if (line.words) {
+    if (line.words && line.words.length > 0) {
       for (const word of line.words) {
-        const clean = cleanWord(word.text)
-        if (clean.length > 0) {
-          words.push({
-            text: clean,
-            time: parseInt(String(word.timestamp ?? word.time ?? 0), 10)
-          })
-        }
+        if (!word.text) continue
+        const wordTokens = word.text.trim().split(/\s+/)
+        const durationPerWord = (word.duration || 0) / (wordTokens.length || 1)
+        const baseTime = parseInt(String(word.timestamp ?? word.time ?? 0), 10)
+
+        wordTokens.forEach((token, index) => {
+          const clean = cleanWord(token)
+          if (clean.length > 0) {
+            words.push({
+              text: clean,
+              time: baseTime + Math.round(index * durationPerWord)
+            })
+          }
+        })
       }
     } else if (line.text) {
       const lineText = line.text.trim()
@@ -212,6 +219,7 @@ export function alignLyrics(
 
   const MAX_JUMP_MS = 2500
   const SEARCH_LOOKAHEAD = 25000
+  const EXTENDED_LOOKAHEAD = 90000
 
   for (let i = 0; i < hqLyrics.length; i++) {
     const line = hqLyrics[i]
@@ -219,12 +227,24 @@ export function alignLyrics(
     const words = getLineWords(line.text)
     const predictedYtTime = line.time + currentOffset
 
-    const match = findBestSequenceMatch(
+    let match = findBestSequenceMatch(
       words,
       ytWords,
       lastYtIndex,
       predictedYtTime + SEARCH_LOOKAHEAD
     )
+
+    if (!match && words.length >= 4) {
+      const extendedMatch = findBestSequenceMatch(
+        words,
+        ytWords,
+        lastYtIndex,
+        predictedYtTime + EXTENDED_LOOKAHEAD
+      )
+      if (extendedMatch && extendedMatch.score >= 0.85) {
+        match = extendedMatch
+      }
+    }
 
     let offsetToUse = currentOffset
 
@@ -266,9 +286,23 @@ export function alignLyrics(
       offsetToUse = currentOffset
     }
 
+    const newTime = Math.max(0, Math.round(line.time + offsetToUse - 50))
+    const delta = newTime - line.time
+    const shiftedWords = line.words?.map((word) => {
+      const updated = { ...word }
+      if (typeof word.timestamp === 'number') {
+        updated.timestamp = Math.max(0, word.timestamp + delta)
+      }
+      if (typeof word.time === 'number') {
+        updated.time = Math.max(0, word.time + delta)
+      }
+      return updated
+    })
+
     alignedLines.push({
       ...line,
-      time: Math.max(0, Math.round(line.time + offsetToUse - 50))
+      time: newTime,
+      ...(shiftedWords ? { words: shiftedWords } : {})
     })
   }
 

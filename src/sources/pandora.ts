@@ -31,6 +31,7 @@ import type {
   TrackUrlResult,
   WorkerNodeLink
 } from '../typings/sources/source.types.ts'
+import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import type { TrackEncodeInput } from '../typings/utils.types.ts'
 import {
   encodeTrack,
@@ -64,6 +65,64 @@ const PANDORA_BASE_URL = 'https://www.pandora.com'
  * @public
  */
 export default class PandoraSource implements SourceInstance {
+  /**
+   * Declarative test suite for validating Pandora source behavior.
+   * @public
+   */
+  public static readonly _TESTS: SourceTestCase[] = [
+    {
+      id: 'pandora.track.resolve',
+      name: 'Pandora Track URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.pandora.com/artist/daft-punk/get-lucky-radio-edit-feat-pharrell-williams-and-nile-rodgers/get-lucky-radio-edit-feat-pharrell-williams-and-nile-rodgers/TRV4k4P4lv7g7ng'
+      },
+      expect: {
+        result: { type: 'track' },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'pandora' }
+        }
+      }
+    },
+    {
+      id: 'pandora.album.resolve',
+      name: 'Pandora Album URL resolution',
+      input: {
+        type: 'resolve',
+        value:
+          'https://www.pandora.com/artist/daft-punk/discovery/ALnj5w9vqJX7gvZ'
+      },
+      expect: {
+        result: { type: 'playlist' },
+        collection: { minItems: 10 },
+        metadata: {
+          author: { op: 'matches', value: 'Daft Punk' },
+          sourceName: { op: 'equals', value: 'pandora' }
+        }
+      }
+    },
+    {
+      id: 'pandora.search.pdsearch',
+      name: 'Pandora Search query (pdsearch:)',
+      input: {
+        type: 'search',
+        searchType: 'pdsearch',
+        value: 'Daft Punk Get Lucky'
+      },
+      expect: {
+        result: { type: 'search' },
+        collection: { minItems: 1 },
+        metadata: {
+          title: { op: 'matches', value: 'Get Lucky' },
+          sourceName: { op: 'equals', value: 'pandora' }
+        }
+      }
+    }
+  ]
+
   /**
    * Runtime NodeLink context.
    * @internal
@@ -136,7 +195,14 @@ export default class PandoraSource implements SourceInstance {
     this.config = (nodelink.options.sources?.pandora ??
       {}) as PandoraSourceConfig
     this.csrfTokenConfig = this.config.csrfToken ?? null
+    this.streamCapabilities = {
+      protocols: ['https'],
+      formats: ['mp4', 'm4a', 'mp3'],
+      codecs: ['aac', 'mpeg']
+    }
   }
+
+  public readonly streamCapabilities: import('../typings/sources/source.types.ts').SourceStreamCapabilities
 
   /**
    * Initializes the Pandora source by obtaining authentication tokens.
@@ -427,17 +493,22 @@ export default class PandoraSource implements SourceInstance {
     const authError = await this.ensureAuth()
     if (authError) return authError
 
+    const cleanUrl = url.split('?')[0]?.split('#')[0] ?? url
+
     const typeMatch =
-      /^(https:\/\/www\.pandora\.com\/)((playlist)|(station)|(podcast)|(artist))\/.+/.exec(
-        url
+      /^https?:\/\/(?:www\.)?pandora\.com\/(playlist|station|podcast|artist)\/.+/i.exec(
+        cleanUrl
       )
 
     if (!typeMatch) {
       return { loadType: 'empty', data: {} }
     }
 
-    const type = typeMatch[2]
-    const lastPart = url.split('/').pop() ?? ''
+    const type = typeMatch[1]?.toLowerCase()
+    if (!type) {
+      return { loadType: 'empty', data: {} }
+    }
+    const lastPart = cleanUrl.split('/').pop() ?? ''
 
     logger('debug', 'Pandora', `Resolving ${type} with ID: ${lastPart}`)
 
@@ -649,21 +720,55 @@ export default class PandoraSource implements SourceInstance {
     }
 
     const annotations = data?.annotations ?? {}
-    const trackKeys = this.limitArray(
-      Object.keys(annotations),
-      this.getMaxPlaylistLength()
-    )
+    const rawKeys = Object.keys(annotations)
+    const originalCount = rawKeys.length
+    const maxLength = this.getMaxPlaylistLength()
+    const trackKeys = this.limitArray(rawKeys, maxLength)
     const tracks = trackKeys
       .map((key) => annotations[key])
       .filter((item): item is PandoraTrackAnnotation => item !== undefined)
       .map((item) => this.buildTrack(item))
 
+    const isTruncated = originalCount > tracks.length
+    const rawData = data as Record<string, unknown> | undefined
+    const albumAnnotation = (Object.values(annotations) as unknown[]).find(
+      (a) => {
+        const rec = a as Record<string, unknown> | undefined
+        return rec?.type === 'AL' || rec?.pandoraId === id
+      }
+    ) as Record<string, unknown> | undefined
+    const rawTotalNum =
+      (typeof rawData?.totalTracks === 'number' && rawData.totalTracks >= 0 ? rawData.totalTracks : null) ??
+      (typeof rawData?.totalCount === 'number' && rawData.totalCount >= 0 ? rawData.totalCount : null) ??
+      (typeof rawData?.trackCount === 'number' && rawData.trackCount >= 0 ? rawData.trackCount : null) ??
+      (typeof albumAnnotation?.trackCount === 'number' && albumAnnotation.trackCount >= 0 ? (albumAnnotation.trackCount as number) : null) ??
+      (typeof albumAnnotation?.totalTracks === 'number' && albumAnnotation.totalTracks >= 0 ? (albumAnnotation.totalTracks as number) : null) ??
+      null
+
+    let totalTracks: number | null = null
+    let isPartial: boolean | undefined = undefined
+
+    if (rawTotalNum !== null) {
+      totalTracks = rawTotalNum
+      isPartial = tracks.length < rawTotalNum
+    } else if (isTruncated) {
+      isPartial = true
+      totalTracks = originalCount
+    } else {
+      totalTracks = tracks.length
+      isPartial = false
+    }
+
     return {
-      loadType: 'album',
+      loadType: 'playlist',
       data: {
         info: { name, selectedTrack: 0 },
         tracks,
-        pluginInfo: {}
+        pluginInfo: {
+          type: 'album',
+          totalTracks,
+          ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+        }
       }
     }
   }
@@ -805,12 +910,36 @@ export default class PandoraSource implements SourceInstance {
       .filter((item): item is PandoraTrackAnnotation => item !== undefined)
       .map((item) => this.buildTrack(item))
 
+    const rawData = data as Record<string, unknown> | undefined
+    const rawTotalNum =
+      (typeof rawData?.totalTracks === 'number' && rawData.totalTracks >= 0 ? rawData.totalTracks : null) ??
+      (typeof rawData?.totalCount === 'number' && rawData.totalCount >= 0 ? rawData.totalCount : null) ??
+      (typeof rawData?.trackCount === 'number' && rawData.trackCount >= 0 ? rawData.trackCount : null) ??
+      (typeof rawData?.total === 'number' && rawData.total >= 0 ? rawData.total : null) ??
+      null
+
+    let totalTracks: number | null = null
+    let isPartial: boolean | undefined = undefined
+
+    if (rawTotalNum !== null) {
+      totalTracks = rawTotalNum
+      isPartial = tracks.length < rawTotalNum
+    } else if (tracks.length < maxLength) {
+      totalTracks = tracks.length
+      isPartial = false
+    } else {
+      totalTracks = null
+    }
+
     return {
       loadType: 'playlist',
       data: {
         info: { name: data?.name ?? 'Playlist', selectedTrack: 0 },
         tracks,
-        pluginInfo: {}
+        pluginInfo: {
+          totalTracks,
+          ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+        }
       }
     }
   }

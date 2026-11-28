@@ -1,3 +1,13 @@
+/**
+ * YouTube OAuth refresh-token helper.
+ *
+ * Handles refresh-token rotation, short-lived access-token caching, and the
+ * device-code flow used by NodeLink's TV-oriented YouTube clients.
+ *
+ * @packageDocumentation
+ * @module YouTubeOAuth
+ */
+import process from 'node:process';
 import { logger, makeRequest } from '../../utils.js';
 const CLIENT_ID = '861556708454-d6dlm3lh05idd8npek18k6be8ba3oc68.apps.googleusercontent.com';
 const CLIENT_SECRET = 'SboVhoG9s0rNafixCSGGKXAT';
@@ -52,6 +62,16 @@ export default class OAuth {
         this.currentTokenIndex = 0;
         this.accessToken = null;
         this.tokenExpiry = 0;
+    }
+    /**
+     * Whether any refresh token is configured, without validating it.
+     * OAuth-only clients (TV family) are skipped without one.
+     *
+     * @returns `true` when at least one non-empty refresh token exists.
+     */
+    hasRefreshToken() {
+        return (this.refreshToken.length > 0 &&
+            this.refreshToken.some((token) => typeof token === 'string' && token.startsWith('1//')));
     }
     /**
      * Resolves a valid OAuth access token for authenticated YouTube requests.
@@ -302,3 +322,23 @@ export default class OAuth {
         });
     }
 }
+async function handleYouTubeOAuthCLI(config, getCredentialManagerClass) {
+    const CredentialManagerClass = await getCredentialManagerClass();
+    const credentialManager = new CredentialManagerClass({ options: config });
+    const oauthRuntime = {
+        options: config,
+        credentialManager
+    };
+    const validator = new OAuth(oauthRuntime);
+    await validator.validateCurrentTokens();
+    try {
+        await OAuth.acquireRefreshToken();
+        process.exit(0);
+    }
+    catch (error) {
+        const err = error;
+        logger('error', 'OAuth', `YouTube OAuth token acquisition failed: ${err.message}`);
+        process.exit(1);
+    }
+}
+export { handleYouTubeOAuthCLI };

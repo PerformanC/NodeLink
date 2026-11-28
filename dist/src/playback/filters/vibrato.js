@@ -1,7 +1,9 @@
 import { SAMPLE_RATE } from '../../constants.js';
+import { FLOAT32_HEADROOM_CAPABILITIES } from '../processing/audioContract.js';
 import { AnimatableFilter } from './AnimatableFilter.js';
 import { clamp16Bit } from './dsp/clamp16Bit.js';
 import DelayLine from './dsp/delay.js';
+import { Float64DelayLine } from './dsp/float64Delay.js';
 import LFO from './dsp/lfo.js';
 const CHANNELS = 2;
 const MAX_DELAY_MS = 20;
@@ -12,10 +14,13 @@ const bufferSize = Math.ceil((SAMPLE_RATE * MAX_DELAY_MS) / 1000);
  * @public
  */
 export default class Vibrato extends AnimatableFilter {
+    audioCapabilities = FLOAT32_HEADROOM_CAPABILITIES;
     priority = 10;
     lfo;
     leftDelay;
     rightDelay;
+    leftDelayFloat = null;
+    rightDelayFloat = null;
     targetFrequency = 0;
     targetDepth = 0;
     alpha = 0;
@@ -85,17 +90,43 @@ export default class Vibrato extends AnimatableFilter {
         }
         return chunk;
     }
+    processFloat32(chunk) {
+        if (chunk.length % 8 !== 0)
+            throw new RangeError('Vibrato Float32 input must contain complete stereo frames');
+        super.processAnimation(SAMPLE_RATE, chunk.length, CHANNELS, 'f32le');
+        if (this.alpha <= 0.001)
+            return chunk;
+        this.leftDelayFloat ??= new Float64DelayLine(bufferSize);
+        this.rightDelayFloat ??= new Float64DelayLine(bufferSize);
+        const maxDelayWidth = this.lfo.depth * (SAMPLE_RATE * 0.005);
+        for (let i = 0; i < chunk.length; i += 8) {
+            const delay = maxDelayWidth + this.lfo.getValue() * maxDelayWidth;
+            const left = chunk.readFloatLE(i);
+            this.leftDelayFloat.write(left);
+            const delayedLeft = this.leftDelayFloat.read(delay);
+            chunk.writeFloatLE(left + this.alpha * (delayedLeft - left), i);
+            const right = chunk.readFloatLE(i + 4);
+            this.rightDelayFloat.write(right);
+            const delayedRight = this.rightDelayFloat.read(delay);
+            chunk.writeFloatLE(right + this.alpha * (delayedRight - right), i + 4);
+        }
+        return chunk;
+    }
     /**
      * Clears the vibrato state.
      */
     flush() {
         this.leftDelay.clear();
         this.rightDelay.clear();
+        this.leftDelayFloat?.clear();
+        this.rightDelayFloat?.clear();
         this.lfo.phase = 0;
         return Buffer.alloc(0);
     }
     destroy() {
         this.leftDelay.destroy();
         this.rightDelay.destroy();
+        this.leftDelayFloat?.destroy();
+        this.rightDelayFloat?.destroy();
     }
 }
