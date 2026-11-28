@@ -137,7 +137,6 @@ function textOf(value: unknown): string {
  */
 export function parsePlaylistMeta(html: string): YouTubePlaylistMeta {
   const thumbnail = extractThumbnail(html)
-  let description = extractDescriptionFromHtml(html)
   let author = ''
   let authorUrl = ''
   let totalTracks: number | undefined
@@ -219,12 +218,7 @@ export function parsePlaylistMeta(html: string): YouTubePlaylistMeta {
           }
         | undefined
 
-      if (!description) {
-        const descText = textOf(primarySidebar?.description)
-        if (descText && !isGenericDescription(descText)) {
-          description = descText.trim()
-        }
-      }
+
 
       const statsArray = Array.isArray(primarySidebar?.stats) ? primarySidebar.stats : []
       for (const stat of statsArray) {
@@ -232,23 +226,29 @@ export function parsePlaylistMeta(html: string): YouTubePlaylistMeta {
         const statMatch = str.match(/([\d,]+)\s*(?:video|track|song)s?/i)
         if (statMatch?.[1]) {
           const num = parseInt(statMatch[1].replace(/,/g, ''), 10)
-          if (!Number.isNaN(num) && num > 0) {
+          if (!Number.isNaN(num) && num >= 0) {
             totalTracks = num
             break
           }
         }
       }
 
-      if (!totalTracks) {
-        const header = findKey(data, 'playlistHeaderRenderer') as Record<string, unknown> | undefined
+      if (totalTracks == null) {
+        const header = (findKey(data, 'playlistHeaderRenderer') ??
+          findKey(data, 'musicResponsiveHeaderRenderer') ??
+          findKey(data, 'musicDetailHeaderRenderer')) as Record<string, unknown> | undefined
+
         const numVideos =
           textOf(header?.numVideosText) ||
           textOf((header?.briefStats as unknown[])?.[0]) ||
-          textOf((header?.stats as unknown[])?.[0])
+          textOf((header?.stats as unknown[])?.[0]) ||
+          textOf(header?.secondSubtitle) ||
+          textOf(header?.subtitle)
+
         const statMatch = numVideos.match(/([\d,]+)\s*(?:video|track|song)s?/i)
         if (statMatch?.[1]) {
           const num = parseInt(statMatch[1].replace(/,/g, ''), 10)
-          if (!Number.isNaN(num) && num > 0) {
+          if (!Number.isNaN(num) && num >= 0) {
             totalTracks = num
           }
         }

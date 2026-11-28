@@ -102,7 +102,6 @@ function textOf(value) {
  */
 export function parsePlaylistMeta(html) {
     const thumbnail = extractThumbnail(html);
-    let description = extractDescriptionFromHtml(html);
     let author = '';
     let authorUrl = '';
     let totalTracks;
@@ -141,33 +140,31 @@ export function parsePlaylistMeta(html) {
                 }
             }
             const primarySidebar = findKey(data, 'playlistSidebarPrimaryInfoRenderer');
-            if (!description) {
-                const descText = textOf(primarySidebar?.description);
-                if (descText && !isGenericDescription(descText)) {
-                    description = descText.trim();
-                }
-            }
             const statsArray = Array.isArray(primarySidebar?.stats) ? primarySidebar.stats : [];
             for (const stat of statsArray) {
                 const str = textOf(stat);
                 const statMatch = str.match(/([\d,]+)\s*(?:video|track|song)s?/i);
                 if (statMatch?.[1]) {
                     const num = parseInt(statMatch[1].replace(/,/g, ''), 10);
-                    if (!Number.isNaN(num) && num > 0) {
+                    if (!Number.isNaN(num) && num >= 0) {
                         totalTracks = num;
                         break;
                     }
                 }
             }
-            if (!totalTracks) {
-                const header = findKey(data, 'playlistHeaderRenderer');
+            if (totalTracks == null) {
+                const header = (findKey(data, 'playlistHeaderRenderer') ??
+                    findKey(data, 'musicResponsiveHeaderRenderer') ??
+                    findKey(data, 'musicDetailHeaderRenderer'));
                 const numVideos = textOf(header?.numVideosText) ||
                     textOf(header?.briefStats?.[0]) ||
-                    textOf(header?.stats?.[0]);
+                    textOf(header?.stats?.[0]) ||
+                    textOf(header?.secondSubtitle) ||
+                    textOf(header?.subtitle);
                 const statMatch = numVideos.match(/([\d,]+)\s*(?:video|track|song)s?/i);
                 if (statMatch?.[1]) {
                     const num = parseInt(statMatch[1].replace(/,/g, ''), 10);
-                    if (!Number.isNaN(num) && num > 0) {
+                    if (!Number.isNaN(num) && num >= 0) {
                         totalTracks = num;
                     }
                 }

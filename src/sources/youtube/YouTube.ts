@@ -1683,20 +1683,36 @@ export default class YouTubeSource implements SourceVariantHandler {
     if (!playlistId) return
 
     const current = playlist.pluginInfo ?? {}
+    const hasValidTotal =
+      typeof current.totalTracks === 'number' &&
+      Number.isFinite(current.totalTracks) &&
+      current.totalTracks >= 0
+
     const needsMeta =
       !current.author ||
       !current.artworkUrl ||
-      !current.authorUrl
+      !current.authorUrl ||
+      !hasValidTotal
 
     const meta = needsMeta
       ? await this._fetchPlaylistMeta(playlistId)
       : { author: '', thumbnail: '' }
 
     const isAlbum = playlistId.startsWith('OLAK')
-    const rawTotalTracks =
-      current.totalTracks ??
-      meta.totalTracks ??
-      playlist.tracks.length
+    const rawTotalTracks = hasValidTotal
+      ? (current.totalTracks as number)
+      : typeof meta.totalTracks === 'number' &&
+          Number.isFinite(meta.totalTracks) &&
+          meta.totalTracks >= 0
+        ? meta.totalTracks
+        : null
+
+    const isPartial =
+      typeof current.isPartial === 'boolean'
+        ? current.isPartial
+        : rawTotalTracks !== null
+          ? rawTotalTracks > playlist.tracks.length
+          : undefined
 
     playlist.pluginInfo = {
       ...current,
@@ -1708,7 +1724,7 @@ export default class YouTubeSource implements SourceVariantHandler {
       authorUrl: current.authorUrl || meta.authorUrl || null,
       isAlbum: current.isAlbum ?? isAlbum,
       totalTracks: rawTotalTracks,
-      isPartial: current.isPartial ?? (rawTotalTracks > playlist.tracks.length)
+      ...(typeof isPartial === 'boolean' ? { isPartial } : {})
     }
   }
 
