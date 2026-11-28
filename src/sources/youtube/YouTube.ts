@@ -33,7 +33,6 @@ import type {
   TrackEncodeInput
 } from '../../typings/utils.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -1684,12 +1683,21 @@ export default class YouTubeSource implements SourceVariantHandler {
     if (!playlistId) return
 
     const current = playlist.pluginInfo ?? {}
-    const meta =
-      current.author && current.artworkUrl
-        ? { author: '', thumbnail: '' }
-        : await this._fetchPlaylistMeta(playlistId)
+    const needsMeta =
+      !current.author ||
+      !current.artworkUrl ||
+      !current.authorUrl ||
+      !current.description
+
+    const meta = needsMeta
+      ? await this._fetchPlaylistMeta(playlistId)
+      : { author: '', thumbnail: '' }
 
     const isAlbum = playlistId.startsWith('OLAK')
+    const rawTotalTracks =
+      current.totalTracks ??
+      meta.totalTracks ??
+      playlist.tracks.length
 
     playlist.pluginInfo = {
       ...current,
@@ -1701,10 +1709,8 @@ export default class YouTubeSource implements SourceVariantHandler {
       authorUrl: current.authorUrl || meta.authorUrl || null,
       description: current.description || meta.description || null,
       isAlbum: current.isAlbum ?? isAlbum,
-      totalTracks: capTotalTracks(
-        current.totalTracks ?? playlist.tracks.length,
-        this.nodelink.options.playback?.maxPlaylistLength
-      )
+      totalTracks: rawTotalTracks,
+      isPartial: current.isPartial ?? (rawTotalTracks > playlist.tracks.length)
     }
   }
 

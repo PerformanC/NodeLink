@@ -1,6 +1,6 @@
 import { getLocalToken } from '../modules/spotifyAuth.js';
 import { fetchCanvas } from '../modules/spotifyCanvas.js';
-import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger } from '../utils.js';
 /**
  * Base URL for the official Spotify Web API.
  * Used for standard catalog data and public resource resolution.
@@ -1058,17 +1058,21 @@ export default class SpotifySource {
         let thumbnail = '';
         let totalTracks = 0;
         let releaseDate = '';
-        const buildAlbumPluginInfo = () => ({
-            type: 'album',
-            identifier: id,
-            url: `https://open.spotify.com/album/${id}`,
-            artworkUrl: thumbnail || null,
-            author: author || null,
-            authorUrl: authorUrl || null,
-            totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks),
-            isAlbum: true,
-            createdAt: releaseDate || null
-        });
+        const buildAlbumPluginInfo = () => {
+            const rawTotal = totalTracks || tracks.length;
+            return {
+                type: 'album',
+                identifier: id,
+                url: `https://open.spotify.com/album/${id}`,
+                artworkUrl: thumbnail || null,
+                author: author || null,
+                authorUrl: authorUrl || null,
+                totalTracks: rawTotal,
+                isPartial: rawTotal > tracks.length,
+                isAlbum: true,
+                createdAt: releaseDate || null
+            };
+        };
         if (this.anonymousToken || this.config.sp_dc) {
             let offset = 0;
             const limit = 300;
@@ -1203,16 +1207,20 @@ export default class SpotifySource {
         let description = '';
         let thumbnail = '';
         let totalTracks = 0;
-        const buildPluginInfo = () => ({
-            type: 'playlist',
-            identifier: id,
-            url: `https://open.spotify.com/playlist/${id}`,
-            artworkUrl: thumbnail,
-            author,
-            authorUrl: authorUrl || null,
-            description: description || null,
-            totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
-        });
+        const buildPluginInfo = () => {
+            const rawTotal = totalTracks || tracks.length;
+            return {
+                type: 'playlist',
+                identifier: id,
+                url: `https://open.spotify.com/playlist/${id}`,
+                artworkUrl: thumbnail,
+                author,
+                authorUrl: authorUrl || null,
+                description: description || null,
+                totalTracks: rawTotal,
+                isPartial: rawTotal > tracks.length
+            };
+        };
         if (this.anonymousToken || id.startsWith('37i9dQZ')) {
             let offset = 0;
             const limit = 100;

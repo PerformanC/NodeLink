@@ -1,7 +1,7 @@
 import { PassThrough, Readable } from 'node:stream';
 import HLSHandler from '../../playback/hls/HLSHandler.js';
 import { openMp4HttpAudio } from '../../playback/processing/streamProcessor.js';
-import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../../utils.js';
 import CipherManager from './CipherManager.js';
 import { checkURLType, YOUTUBE_CONSTANTS, YOUTUBE_WEBM_ITAGS } from './common.js';
 import YouTubeLiveChat from './LiveChat.js';
@@ -1386,10 +1386,17 @@ export default class YouTubeSource {
         if (!playlistId)
             return;
         const current = playlist.pluginInfo ?? {};
-        const meta = current.author && current.artworkUrl
-            ? { author: '', thumbnail: '' }
-            : await this._fetchPlaylistMeta(playlistId);
+        const needsMeta = !current.author ||
+            !current.artworkUrl ||
+            !current.authorUrl ||
+            !current.description;
+        const meta = needsMeta
+            ? await this._fetchPlaylistMeta(playlistId)
+            : { author: '', thumbnail: '' };
         const isAlbum = playlistId.startsWith('OLAK');
+        const rawTotalTracks = current.totalTracks ??
+            meta.totalTracks ??
+            playlist.tracks.length;
         playlist.pluginInfo = {
             ...current,
             type: current.type ?? (isAlbum ? 'album' : 'playlist'),
@@ -1400,7 +1407,8 @@ export default class YouTubeSource {
             authorUrl: current.authorUrl || meta.authorUrl || null,
             description: current.description || meta.description || null,
             isAlbum: current.isAlbum ?? isAlbum,
-            totalTracks: capTotalTracks(current.totalTracks ?? playlist.tracks.length, this.nodelink.options.playback?.maxPlaylistLength)
+            totalTracks: rawTotalTracks,
+            isPartial: current.isPartial ?? (rawTotalTracks > playlist.tracks.length)
         };
     }
     /**

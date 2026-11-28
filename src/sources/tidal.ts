@@ -18,7 +18,6 @@ import type {
   TrackEncodeInput
 } from '../typings/utils.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -651,7 +650,10 @@ export default class TidalSource {
           artworkUrl: albumCover ? this.buildImageUrl(albumCover, '1280x1280') : null,
           author: this.asString(albumArtist?.name) ?? '',
           authorUrl: this.asString(albumArtist?.url) ?? null,
-          totalTracks: tracks.length,
+          totalTracks: this.asNumber(albumData.numberOfTracks) ?? tracks.length,
+          isPartial:
+            (this.asNumber(albumData.numberOfTracks) ?? tracks.length) >
+            tracks.length,
           isAlbum: true,
           createdAt: this.asString(albumData.releaseDate) ?? null
         }
@@ -750,10 +752,8 @@ export default class TidalSource {
           description: this.asString(playlistData.description) ?? null,
           createdAt: this.asString(playlistData.created) ?? null,
           updatedAt: this.asString(playlistData.lastUpdated) ?? null,
-          totalTracks: capTotalTracks(
-            totalTracks,
-            this.nodelink.options.playback?.maxPlaylistLength
-          )
+          totalTracks,
+          isPartial: totalTracks > tracks.length
         }
       }
     }

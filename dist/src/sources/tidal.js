@@ -4,7 +4,7 @@
  */
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { capTotalTracks, encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
+import { encodeTrack, getBestMatch, http1makeRequest, logger, makeRequest } from '../utils.js';
 const API_BASE = 'https://api.tidal.com/v1/';
 const CACHE_VALIDITY_DAYS = 7;
 const TIDAL_ASSET_URL = 'https://tidal.com/assets/index-CJ0DsMmf.js';
@@ -510,7 +510,9 @@ export default class TidalSource {
                     artworkUrl: albumCover ? this.buildImageUrl(albumCover, '1280x1280') : null,
                     author: this.asString(albumArtist?.name) ?? '',
                     authorUrl: this.asString(albumArtist?.url) ?? null,
-                    totalTracks: tracks.length,
+                    totalTracks: this.asNumber(albumData.numberOfTracks) ?? tracks.length,
+                    isPartial: (this.asNumber(albumData.numberOfTracks) ?? tracks.length) >
+                        tracks.length,
                     isAlbum: true,
                     createdAt: this.asString(albumData.releaseDate) ?? null
                 }
@@ -583,7 +585,8 @@ export default class TidalSource {
                     description: this.asString(playlistData.description) ?? null,
                     createdAt: this.asString(playlistData.created) ?? null,
                     updatedAt: this.asString(playlistData.lastUpdated) ?? null,
-                    totalTracks: capTotalTracks(totalTracks, this.nodelink.options.playback?.maxPlaylistLength)
+                    totalTracks,
+                    isPartial: totalTracks > tracks.length
                 }
             }
         };

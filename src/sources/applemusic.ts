@@ -10,7 +10,6 @@ import type {
 } from '../typings/sources/source.types.ts'
 import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest
@@ -590,10 +589,8 @@ export default class AppleMusicSource implements SourceInstance {
             null,
           isAlbum: true,
           createdAt: (album.attributes as any)?.releaseDate || null,
-          totalTracks: capTotalTracks(
-            album.attributes?.trackCount ?? tracks.length,
-            this.nodelink.options.playback?.maxPlaylistLength
-          )
+          totalTracks: album.attributes?.trackCount ?? tracks.length,
+          isPartial: (album.attributes?.trackCount ?? tracks.length) > tracks.length
         }
       }
     }
@@ -641,10 +638,10 @@ export default class AppleMusicSource implements SourceInstance {
             (playlist.attributes as any)?.description?.short ||
             null,
           updatedAt: (playlist.attributes as any)?.lastModifiedDate || null,
-          totalTracks: capTotalTracks(
-            playlist.relationships?.tracks?.meta?.total ?? tracks.length,
-            this.nodelink.options.playback?.maxPlaylistLength
-          )
+          totalTracks: playlist.relationships?.tracks?.meta?.total ?? tracks.length,
+          isPartial:
+            (playlist.relationships?.tracks?.meta?.total ?? tracks.length) >
+            tracks.length
         }
       }
     }

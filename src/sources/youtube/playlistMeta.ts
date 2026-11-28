@@ -11,6 +11,8 @@ export interface YouTubePlaylistMeta {
   thumbnail: string
   /** Playlist description, or an empty string when unavailable. */
   description?: string
+  /** Total number of tracks in the playlist, when known from page metadata. */
+  totalTracks?: number
 }
 
 const GENERIC_YOUTUBE_DESCRIPTIONS = [
@@ -140,6 +142,7 @@ export function parsePlaylistMeta(html: string): YouTubePlaylistMeta {
   let description = extractDescriptionFromHtml(html)
   let author = ''
   let authorUrl = ''
+  let totalTracks: number | undefined
 
   const match = html.match(/ytInitialData\s*=\s*(\{[\s\S]*?\});\s*<\/script>/)
   if (match?.[1]) {
@@ -211,13 +214,45 @@ export function parsePlaylistMeta(html: string): YouTubePlaylistMeta {
         }
       }
 
+      const primarySidebar = findKey(data, 'playlistSidebarPrimaryInfoRenderer') as
+        | {
+            description?: unknown
+            stats?: unknown[]
+          }
+        | undefined
+
       if (!description) {
-        const primarySidebar = findKey(data, 'playlistSidebarPrimaryInfoRenderer') as
-          | { description?: unknown }
-          | undefined
         const descText = textOf(primarySidebar?.description)
         if (descText && !isGenericDescription(descText)) {
           description = descText.trim()
+        }
+      }
+
+      const statsArray = Array.isArray(primarySidebar?.stats) ? primarySidebar.stats : []
+      for (const stat of statsArray) {
+        const str = textOf(stat)
+        const statMatch = str.match(/([\d,]+)\s*(?:video|track|song)s?/i)
+        if (statMatch?.[1]) {
+          const num = parseInt(statMatch[1].replace(/,/g, ''), 10)
+          if (!Number.isNaN(num) && num > 0) {
+            totalTracks = num
+            break
+          }
+        }
+      }
+
+      if (!totalTracks) {
+        const header = findKey(data, 'playlistHeaderRenderer') as Record<string, unknown> | undefined
+        const numVideos =
+          textOf(header?.numVideosText) ||
+          textOf((header?.briefStats as unknown[])?.[0]) ||
+          textOf((header?.stats as unknown[])?.[0])
+        const statMatch = numVideos.match(/([\d,]+)\s*(?:video|track|song)s?/i)
+        if (statMatch?.[1]) {
+          const num = parseInt(statMatch[1].replace(/,/g, ''), 10)
+          if (!Number.isNaN(num) && num > 0) {
+            totalTracks = num
+          }
         }
       }
     } catch {}
@@ -231,6 +266,7 @@ export function parsePlaylistMeta(html: string): YouTubePlaylistMeta {
     author,
     authorUrl: authorUrl || undefined,
     thumbnail,
-    description: description || undefined
+    description: description || undefined,
+    totalTracks
   }
 }

@@ -105,6 +105,7 @@ export function parsePlaylistMeta(html) {
     let description = extractDescriptionFromHtml(html);
     let author = '';
     let authorUrl = '';
+    let totalTracks;
     const match = html.match(/ytInitialData\s*=\s*(\{[\s\S]*?\});\s*<\/script>/);
     if (match?.[1]) {
         try {
@@ -139,11 +140,36 @@ export function parsePlaylistMeta(html) {
                     }
                 }
             }
+            const primarySidebar = findKey(data, 'playlistSidebarPrimaryInfoRenderer');
             if (!description) {
-                const primarySidebar = findKey(data, 'playlistSidebarPrimaryInfoRenderer');
                 const descText = textOf(primarySidebar?.description);
                 if (descText && !isGenericDescription(descText)) {
                     description = descText.trim();
+                }
+            }
+            const statsArray = Array.isArray(primarySidebar?.stats) ? primarySidebar.stats : [];
+            for (const stat of statsArray) {
+                const str = textOf(stat);
+                const statMatch = str.match(/([\d,]+)\s*(?:video|track|song)s?/i);
+                if (statMatch?.[1]) {
+                    const num = parseInt(statMatch[1].replace(/,/g, ''), 10);
+                    if (!Number.isNaN(num) && num > 0) {
+                        totalTracks = num;
+                        break;
+                    }
+                }
+            }
+            if (!totalTracks) {
+                const header = findKey(data, 'playlistHeaderRenderer');
+                const numVideos = textOf(header?.numVideosText) ||
+                    textOf(header?.briefStats?.[0]) ||
+                    textOf(header?.stats?.[0]);
+                const statMatch = numVideos.match(/([\d,]+)\s*(?:video|track|song)s?/i);
+                if (statMatch?.[1]) {
+                    const num = parseInt(statMatch[1].replace(/,/g, ''), 10);
+                    if (!Number.isNaN(num) && num > 0) {
+                        totalTracks = num;
+                    }
                 }
             }
         }
@@ -156,6 +182,7 @@ export function parsePlaylistMeta(html) {
         author,
         authorUrl: authorUrl || undefined,
         thumbnail,
-        description: description || undefined
+        description: description || undefined,
+        totalTracks
     };
 }

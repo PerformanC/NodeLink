@@ -30,7 +30,6 @@ import type {
 } from '../typings/sources/spotify.types.ts'
 import type { SourceTestCase } from '../typings/sources/test.types.ts'
 import {
-  capTotalTracks,
   encodeTrack,
   getBestMatch,
   http1makeRequest,
@@ -1293,17 +1292,21 @@ export default class SpotifySource implements SourceInstance {
     let totalTracks = 0
     let releaseDate = ''
 
-    const buildAlbumPluginInfo = (): PlaylistPluginInfo => ({
-      type: 'album',
-      identifier: id,
-      url: `https://open.spotify.com/album/${id}`,
-      artworkUrl: thumbnail || null,
-      author: author || null,
-      authorUrl: authorUrl || null,
-      totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks),
-      isAlbum: true,
-      createdAt: releaseDate || null
-    })
+    const buildAlbumPluginInfo = (): PlaylistPluginInfo => {
+      const rawTotal = totalTracks || tracks.length
+      return {
+        type: 'album',
+        identifier: id,
+        url: `https://open.spotify.com/album/${id}`,
+        artworkUrl: thumbnail || null,
+        author: author || null,
+        authorUrl: authorUrl || null,
+        totalTracks: rawTotal,
+        isPartial: rawTotal > tracks.length,
+        isAlbum: true,
+        createdAt: releaseDate || null
+      }
+    }
 
     if (this.anonymousToken || this.config.sp_dc) {
       let offset = 0
@@ -1462,16 +1465,20 @@ export default class SpotifySource implements SourceInstance {
     let thumbnail = ''
     let totalTracks = 0
 
-    const buildPluginInfo = (): PlaylistPluginInfo => ({
-      type: 'playlist',
-      identifier: id,
-      url: `https://open.spotify.com/playlist/${id}`,
-      artworkUrl: thumbnail,
-      author,
-      authorUrl: authorUrl || null,
-      description: description || null,
-      totalTracks: capTotalTracks(totalTracks || tracks.length, maxTracks)
-    })
+    const buildPluginInfo = (): PlaylistPluginInfo => {
+      const rawTotal = totalTracks || tracks.length
+      return {
+        type: 'playlist',
+        identifier: id,
+        url: `https://open.spotify.com/playlist/${id}`,
+        artworkUrl: thumbnail,
+        author,
+        authorUrl: authorUrl || null,
+        description: description || null,
+        totalTracks: rawTotal,
+        isPartial: rawTotal > tracks.length
+      }
+    }
 
     if (this.anonymousToken || id.startsWith('37i9dQZ')) {
       let offset = 0

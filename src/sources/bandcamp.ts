@@ -20,7 +20,7 @@ import type {
   HttpRequestResult,
   TrackEncodeInput
 } from '../typings/utils.types.ts'
-import { capTotalTracks, encodeTrack, logger, makeRequest } from '../utils.ts'
+import { encodeTrack, logger, makeRequest } from '../utils.ts'
 
 const BANDCAMP_BASE_URL = 'https://bandcamp.com'
 const BANDCAMP_SEARCH_API_URL = `${BANDCAMP_BASE_URL}/api/bcsearch_public_api/1/autocomplete_elastic`
@@ -509,10 +509,10 @@ export default class BandcampSource {
           firstPage.isArt
         ),
         author: this.normalizeText(firstPage.attribution?.name),
-        totalTracks: capTotalTracks(
-          firstPage.tracksSummary?.totalCount ?? tracks.length,
-          max
-        )
+        totalTracks: firstPage.tracksSummary?.totalCount ?? tracks.length,
+        isPartial:
+          (firstPage.tracksSummary?.totalCount ?? tracks.length) >
+          tracks.length
       },
       tracks
     }
