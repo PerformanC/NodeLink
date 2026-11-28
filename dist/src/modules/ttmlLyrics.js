@@ -110,19 +110,43 @@ function inherit(element, context) {
         isBackground: context.isBackground || role.includes('x-bg')
     };
 }
+// TTML parallel containers use parent-relative time. Explicit iTunes lyric
+// timing documents use media-absolute timestamps instead.
+function resolveTiming(element, parent) {
+    const absolute = parent.absolute || /^(word|line)$/i.test(element.attrs['itunes:timing'] ?? '');
+    const origin = absolute ? 0 : (parent.start ?? 0);
+    const begin = parseTtmlTime(element.attrs.begin);
+    const ownEnd = parseTtmlTime(element.attrs.end);
+    const duration = parseTtmlTime(element.attrs.dur);
+    if ((element.attrs.begin !== undefined && begin === undefined) ||
+        (element.attrs.end !== undefined && ownEnd === undefined) ||
+        (element.attrs.dur !== undefined && duration === undefined))
+        return undefined;
+    const start = begin === undefined
+        ? parent.start
+        : Math.max(parent.start ?? 0, origin + begin);
+    const ends = [
+        parent.end,
+        ownEnd === undefined ? undefined : origin + ownEnd,
+        duration === undefined ? undefined : (start ?? origin) + duration
+    ].filter((value) => value !== undefined);
+    const end = ends.length ? Math.min(...ends) : undefined;
+    if ((start !== undefined && !Number.isSafeInteger(start)) ||
+        ends.some((value) => !Number.isSafeInteger(value)) ||
+        (end !== undefined && end < (start ?? 0)))
+        return undefined;
+    return { start, end, absolute };
+}
 export function parseTtmlLyrics(xml) {
     const root = parseTree(xml);
     if (!root)
         return { lines: [], synced: false };
     const result = [];
-    function collectLine(element, context, inheritedStart, inheritedEnd) {
-        const ownStart = parseTtmlTime(element.attrs.begin);
-        const ownEnd = parseTtmlTime(element.attrs.end);
-        const start = ownStart ?? inheritedStart;
-        const end = ownEnd ?? inheritedEnd;
+    function collectLine(element, context, timing) {
+        const { start, end } = timing;
         const words = [];
         const alternatives = [];
-        function collect(node) {
+        function collect(node, current) {
             let text = '';
             for (const child of node.children) {
                 if (typeof child === 'string') {
@@ -155,15 +179,20 @@ export function parseTtmlLyrics(xml) {
                         alternatives.push({ kind, text, ...(language ? { language } : {}) });
                     continue;
                 }
+                const childTiming = resolveTiming(child, current);
+                if (!childTiming)
+                    continue;
                 if ((!context.isBackground && next.isBackground) ||
                     (next.agent && next.agent !== context.agent)) {
-                    collectLine(child, next, start, end);
+                    collectLine(child, next, childTiming);
                     continue;
                 }
                 const before = words.length;
-                const childText = collect(child);
-                const childStart = parseTtmlTime(child.attrs.begin);
-                const childEnd = parseTtmlTime(child.attrs.end);
+                const childText = collect(child, childTiming);
+                const childStart = child.attrs.begin !== undefined ? childTiming.start : undefined;
+                const childEnd = child.attrs.end !== undefined || child.attrs.dur !== undefined
+                    ? childTiming.end
+                    : undefined;
                 const token = normalizeText(childText);
                 // Nested timed leaves take precedence; do not duplicate their parent span.
                 if (words.length === before && token && childStart !== undefined) {
@@ -179,7 +208,7 @@ export function parseTtmlLyrics(xml) {
             }
             return text;
         }
-        const text = normalizeText(collect(element));
+        const text = normalizeText(collect(element, timing));
         if (!text)
             return;
         const tokenStarts = words.flatMap((word) => typeof word.time === 'number' ? [word.time] : []);
@@ -200,17 +229,20 @@ export function parseTtmlLyrics(xml) {
             }
         });
     }
-    function visit(element, context) {
+    function visit(element, context, parent) {
         const next = inherit(element, context);
+        const timing = resolveTiming(element, parent);
+        if (!timing)
+            return;
         if (localName(element) === 'p') {
-            collectLine(element, next);
+            collectLine(element, next, timing);
             return;
         }
         for (const child of element.children)
             if (typeof child !== 'string')
-                visit(child, next);
+                visit(child, next, timing);
     }
-    visit(root, {});
+    visit(root, {}, {});
     // Put primary lines before simultaneous background voices.
     result.sort((a, b) => a.line.time - b.line.time ||
         Number(!!a.line.isBackground) - Number(!!b.line.isBackground));

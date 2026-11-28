@@ -125,6 +125,43 @@ function inherit(element: Element, context: Context): Context {
   }
 }
 
+type Timing = { start?: number; end?: number; absolute?: boolean }
+
+// TTML parallel containers use parent-relative time. Explicit iTunes lyric
+// timing documents use media-absolute timestamps instead.
+function resolveTiming(element: Element, parent: Timing): Timing | undefined {
+  const absolute =
+    parent.absolute ||
+    /^(word|line)$/i.test(element.attrs['itunes:timing'] ?? '')
+  const origin = absolute ? 0 : (parent.start ?? 0)
+  const begin = parseTtmlTime(element.attrs.begin)
+  const ownEnd = parseTtmlTime(element.attrs.end)
+  const duration = parseTtmlTime(element.attrs.dur)
+  if (
+    (element.attrs.begin !== undefined && begin === undefined) ||
+    (element.attrs.end !== undefined && ownEnd === undefined) ||
+    (element.attrs.dur !== undefined && duration === undefined)
+  )
+    return undefined
+  const start =
+    begin === undefined
+      ? parent.start
+      : Math.max(parent.start ?? 0, origin + begin)
+  const ends = [
+    parent.end,
+    ownEnd === undefined ? undefined : origin + ownEnd,
+    duration === undefined ? undefined : (start ?? origin) + duration
+  ].filter((value): value is number => value !== undefined)
+  const end = ends.length ? Math.min(...ends) : undefined
+  if (
+    (start !== undefined && !Number.isSafeInteger(start)) ||
+    ends.some((value) => !Number.isSafeInteger(value)) ||
+    (end !== undefined && end < (start ?? 0))
+  )
+    return undefined
+  return { start, end, absolute }
+}
+
 export function parseTtmlLyrics(xml: string): {
   lines: LyricsLine[]
   synced: boolean
@@ -136,17 +173,13 @@ export function parseTtmlLyrics(xml: string): {
   function collectLine(
     element: Element,
     context: Context,
-    inheritedStart?: number,
-    inheritedEnd?: number
+    timing: Timing
   ): void {
-    const ownStart = parseTtmlTime(element.attrs.begin)
-    const ownEnd = parseTtmlTime(element.attrs.end)
-    const start = ownStart ?? inheritedStart
-    const end = ownEnd ?? inheritedEnd
+    const { start, end } = timing
     const words: NonNullable<LyricsLine['words']> = []
     const alternatives: NonNullable<LyricsLine['alternatives']> = []
 
-    function collect(node: Element): string {
+    function collect(node: Element, current: Timing): string {
       let text = ''
       for (const child of node.children) {
         if (typeof child === 'string') {
@@ -182,17 +215,23 @@ export function parseTtmlLyrics(xml: string): {
             alternatives.push({ kind, text, ...(language ? { language } : {}) })
           continue
         }
+        const childTiming = resolveTiming(child, current)
+        if (!childTiming) continue
         if (
           (!context.isBackground && next.isBackground) ||
           (next.agent && next.agent !== context.agent)
         ) {
-          collectLine(child, next, start, end)
+          collectLine(child, next, childTiming)
           continue
         }
         const before = words.length
-        const childText = collect(child)
-        const childStart = parseTtmlTime(child.attrs.begin)
-        const childEnd = parseTtmlTime(child.attrs.end)
+        const childText = collect(child, childTiming)
+        const childStart =
+          child.attrs.begin !== undefined ? childTiming.start : undefined
+        const childEnd =
+          child.attrs.end !== undefined || child.attrs.dur !== undefined
+            ? childTiming.end
+            : undefined
         const token = normalizeText(childText)
         // Nested timed leaves take precedence; do not duplicate their parent span.
         if (words.length === before && token && childStart !== undefined) {
@@ -210,7 +249,7 @@ export function parseTtmlLyrics(xml: string): {
       return text
     }
 
-    const text = normalizeText(collect(element))
+    const text = normalizeText(collect(element, timing))
     if (!text) return
     const tokenStarts = words.flatMap((word) =>
       typeof word.time === 'number' ? [word.time] : []
@@ -235,17 +274,19 @@ export function parseTtmlLyrics(xml: string): {
     })
   }
 
-  function visit(element: Element, context: Context): void {
+  function visit(element: Element, context: Context, parent: Timing): void {
     const next = inherit(element, context)
+    const timing = resolveTiming(element, parent)
+    if (!timing) return
     if (localName(element) === 'p') {
-      collectLine(element, next)
+      collectLine(element, next, timing)
       return
     }
     for (const child of element.children)
-      if (typeof child !== 'string') visit(child, next)
+      if (typeof child !== 'string') visit(child, next, timing)
   }
 
-  visit(root, {})
+  visit(root, {}, {})
   // Put primary lines before simultaneous background voices.
   result.sort(
     (a, b) =>
