@@ -1461,7 +1461,6 @@ export default class SpotifySource implements SourceInstance {
     let name = 'Unknown Playlist'
     let author = ''
     let authorUrl = ''
-    let description = ''
     let thumbnail = ''
     let totalTracks = 0
 
@@ -1474,7 +1473,6 @@ export default class SpotifySource implements SourceInstance {
         artworkUrl: thumbnail,
         author,
         authorUrl: authorUrl || null,
-        description: description || null,
         totalTracks: rawTotal,
         isPartial: rawTotal > tracks.length
       }
@@ -1509,7 +1507,6 @@ export default class SpotifySource implements SourceInstance {
           const username = rawOwner?.username as string | undefined
           authorUrl = username ? `https://open.spotify.com/user/${username}` : ''
           const rawPlaylist = data.playlistV2 as unknown as Record<string, unknown>
-          description = (rawPlaylist.description as string | undefined)?.trim() || ''
           thumbnail = this._pickLargestImage(
             data.playlistV2.images?.items?.[0]?.sources
           )
@@ -1553,7 +1550,6 @@ export default class SpotifySource implements SourceInstance {
       name = metaRes.name
       author = metaRes.owner?.display_name?.trim() || author
       authorUrl = (metaRes.owner as any)?.external_urls?.spotify || authorUrl
-      description = metaRes.description?.trim() || description
       thumbnail = metaRes.images?.[0]?.url || thumbnail
     }
 

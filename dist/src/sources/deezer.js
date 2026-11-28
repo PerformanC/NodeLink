@@ -426,7 +426,6 @@ export default class DeezerSource {
                             artworkUrl: thumbnail,
                             author,
                             authorUrl: entity.creator?.link ?? entity.artist?.link ?? null,
-                            description: entity.description ?? null,
                             isAlbum: type === 'album',
                             createdAt: entity.release_date ?? null,
                             totalTracks: entity.nb_tracks ?? tracks.length,

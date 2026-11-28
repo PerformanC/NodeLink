@@ -7,8 +7,6 @@
  *
  * @module utils/playlistNormalizer
  */
-export { isGenericDescription } from '../sources/youtube/playlistMeta.js';
-import { isGenericDescription } from '../sources/youtube/playlistMeta.js';
 const KNOWN_ALBUM_TYPES = new Set([
     'album',
     'single',
@@ -213,13 +211,6 @@ export function buildPlaylistInfo(rawInfo = {}, pluginInfo = {}, tracks = [], co
         asNonEmptyString(pluginInfo.artistUrl) ??
         asNonEmptyString(pluginInfo.artist_url) ??
         null;
-    // 8. Description
-    const rawDescription = asNonEmptyString(rawInfo.description) ??
-        asNonEmptyString(pluginInfo.description) ??
-        null;
-    const description = rawDescription && !isGenericDescription(rawDescription)
-        ? rawDescription
-        : null;
     // 9. Source Name
     // Preserve original playlist source even when tracks resolve through another source
     const sourceName = asNonEmptyString(rawInfo.sourceName) ??
@@ -418,6 +409,8 @@ export function normalizePlaylistData(data, context) {
     const tracks = Array.isArray(data.tracks) ? data.tracks : [];
     const pluginInfo = (data.pluginInfo ?? {});
     const rawInfo = (data.info ?? {});
+    delete pluginInfo.description;
+    delete rawInfo.description;
     const normalizedInfo = buildPlaylistInfo(rawInfo, pluginInfo, tracks, context);
     data.info = normalizedInfo;
     data.pluginInfo = pluginInfo;

@@ -9,8 +9,6 @@ export interface YouTubePlaylistMeta {
   authorUrl?: string
   /** Playlist thumbnail URL, or an empty string when unavailable. */
   thumbnail: string
-  /** Playlist description, or an empty string when unavailable. */
-  description?: string
   /** Total number of tracks in the playlist, when known from page metadata. */
   totalTracks?: number
 }
@@ -258,15 +256,10 @@ export function parsePlaylistMeta(html: string): YouTubePlaylistMeta {
     } catch {}
   }
 
-  if (description && isGenericDescription(description)) {
-    description = ''
-  }
-
   return {
     author,
     authorUrl: authorUrl || undefined,
     thumbnail,
-    description: description || undefined,
     totalTracks
   }
 }

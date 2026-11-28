@@ -1123,7 +1123,6 @@ export default class DeezerSource implements SourceVariantHandler {
               artworkUrl: thumbnail,
               author,
               authorUrl: (entity.creator as any)?.link ?? (entity.artist as any)?.link ?? null,
-              description: (entity as any).description ?? null,
               isAlbum: type === 'album',
               createdAt: (entity as any).release_date ?? null,
               totalTracks: entity.nb_tracks ?? tracks.length,

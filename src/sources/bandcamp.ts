@@ -382,7 +382,6 @@ export default class BandcampSource {
             url: (rawTralbum.url as string | undefined) ?? url,
             artworkUrl: artworkUrl || null,
             author: author || this.normalizeText(tralbum.artist) || null,
-            description: this.normalizeText(rawCurrent.about as string | undefined) || null,
             isAlbum,
             createdAt: (rawCurrent.release_date as string | undefined) || null,
             totalTracks: tracks.length

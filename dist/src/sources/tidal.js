@@ -582,7 +582,6 @@ export default class TidalSource {
                     url: `https://tidal.com/playlist/${id}`,
                     artworkUrl: this.getPlaylistCoverUrl(playlistData),
                     author: this.asString(playlistCreator?.name) ?? '',
-                    description: this.asString(playlistData.description) ?? null,
                     createdAt: this.asString(playlistData.created) ?? null,
                     updatedAt: this.asString(playlistData.lastUpdated) ?? null,
                     totalTracks,

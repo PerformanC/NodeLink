@@ -319,8 +319,6 @@ export interface PlaylistInfo {
   author?: string | null
   /** Playlist creator's profile URL. */
   authorUrl?: string | null
-  /** Playlist description. */
-  description?: string | null
   /** Original playlist source. */
   sourceName?: string | null
   /** Total tracks available in the original playlist. */

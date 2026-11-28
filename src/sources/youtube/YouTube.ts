@@ -1686,8 +1686,7 @@ export default class YouTubeSource implements SourceVariantHandler {
     const needsMeta =
       !current.author ||
       !current.artworkUrl ||
-      !current.authorUrl ||
-      !current.description
+      !current.authorUrl
 
     const meta = needsMeta
       ? await this._fetchPlaylistMeta(playlistId)
@@ -1707,7 +1706,6 @@ export default class YouTubeSource implements SourceVariantHandler {
       artworkUrl: current.artworkUrl || meta.thumbnail,
       author: current.author || meta.author,
       authorUrl: current.authorUrl || meta.authorUrl || null,
-      description: current.description || meta.description || null,
       isAlbum: current.isAlbum ?? isAlbum,
       totalTracks: rawTotalTracks,
       isPartial: current.isPartial ?? (rawTotalTracks > playlist.tracks.length)

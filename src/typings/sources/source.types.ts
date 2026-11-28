@@ -536,8 +536,6 @@ export interface PlaylistInfo {
   author?: string | null
   /** Playlist creator's profile URL. */
   authorUrl?: string | null
-  /** Playlist description. */
-  description?: string | null
   /** Original playlist source. */
   sourceName?: string | null
   /** Total tracks available in the original playlist. */
@@ -589,8 +587,6 @@ export interface PlaylistPluginInfo extends Record<string, unknown> {
   author?: string | null
   /** Profile URL of the author/owner. */
   authorUrl?: string | null
-  /** Description of the collection. */
-  description?: string | null
   /** Total tracks in the collection, which can exceed the tracks returned. */
   totalTracks?: number | null
   /** Total duration in milliseconds if known by the source. */

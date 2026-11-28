@@ -175,14 +175,10 @@ export function parsePlaylistMeta(html) {
         }
         catch { }
     }
-    if (description && isGenericDescription(description)) {
-        description = '';
-    }
     return {
         author,
         authorUrl: authorUrl || undefined,
         thumbnail,
-        description: description || undefined,
         totalTracks
     };
 }

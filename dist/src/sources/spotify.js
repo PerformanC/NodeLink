@@ -1204,7 +1204,6 @@ export default class SpotifySource {
         let name = 'Unknown Playlist';
         let author = '';
         let authorUrl = '';
-        let description = '';
         let thumbnail = '';
         let totalTracks = 0;
         const buildPluginInfo = () => {
@@ -1216,7 +1215,6 @@ export default class SpotifySource {
                 artworkUrl: thumbnail,
                 author,
                 authorUrl: authorUrl || null,
-                description: description || null,
                 totalTracks: rawTotal,
                 isPartial: rawTotal > tracks.length
             };
@@ -1241,7 +1239,6 @@ export default class SpotifySource {
                     const username = rawOwner?.username;
                     authorUrl = username ? `https://open.spotify.com/user/${username}` : '';
                     const rawPlaylist = data.playlistV2;
-                    description = rawPlaylist.description?.trim() || '';
                     thumbnail = this._pickLargestImage(data.playlistV2.images?.items?.[0]?.sources);
                     total = data.playlistV2.content?.totalCount || 0;
                     totalTracks = total;
@@ -1281,7 +1278,6 @@ export default class SpotifySource {
             name = metaRes.name;
             author = metaRes.owner?.display_name?.trim() || author;
             authorUrl = metaRes.owner?.external_urls?.spotify || authorUrl;
-            description = metaRes.description?.trim() || description;
             thumbnail = metaRes.images?.[0]?.url || thumbnail;
         }
         let nextUrl = `/playlists/${id}/items?market=${this.market}`;
