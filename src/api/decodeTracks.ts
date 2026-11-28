@@ -39,7 +39,9 @@ function isEncodedTrackList(body: ApiRequest['body']): body is string[] {
  * @returns Normalized list where spaces are replaced with `+`.
  */
 function normalizeEncodedTracks(encodedTracks: string[]): string[] {
-  return encodedTracks.map((encodedTrack) => encodedTrack.replace(/ /g, '+'))
+  return encodedTracks.map((encodedTrack) =>
+    encodedTrack.trim().replace(/ /g, '+')
+  )
 }
 
 /**
