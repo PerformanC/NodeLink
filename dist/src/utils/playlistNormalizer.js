@@ -409,7 +409,6 @@ export function normalizePlaylistData(data, context) {
     const tracks = Array.isArray(data.tracks) ? data.tracks : [];
     const pluginInfo = (data.pluginInfo ?? {});
     const rawInfo = (data.info ?? {});
-    delete pluginInfo.description;
     delete rawInfo.description;
     const normalizedInfo = buildPlaylistInfo(rawInfo, pluginInfo, tracks, context);
     data.info = normalizedInfo;

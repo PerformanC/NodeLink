@@ -487,7 +487,6 @@ export function normalizePlaylistData(
   const pluginInfo = (data.pluginInfo ?? {}) as PlaylistPluginInfo
   const rawInfo = (data.info ?? {}) as Partial<RawPlaylistInfo>
 
-  delete pluginInfo.description
   delete (rawInfo as Record<string, unknown>).description
 
   const normalizedInfo = buildPlaylistInfo(
