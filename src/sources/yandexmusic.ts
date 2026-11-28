@@ -855,8 +855,9 @@ export default class YandexMusicSource implements SourceInstance {
       Number.isFinite(album.trackCount) &&
       album.trackCount >= 0
         ? album.trackCount
-        : tracks.length
-    const isPartial = tracks.length < albumTotal
+        : null
+    const isPartial =
+      albumTotal !== null ? tracks.length < albumTotal : undefined
 
     return {
       loadType: 'playlist',
@@ -865,7 +866,7 @@ export default class YandexMusicSource implements SourceInstance {
         pluginInfo: {
           type: 'album',
           totalTracks: albumTotal,
-          isPartial
+          ...(typeof isPartial === 'boolean' ? { isPartial } : {})
         },
         tracks
       }
