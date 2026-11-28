@@ -29,6 +29,10 @@ function _attachDisconnectHandler(
     const session = context.sessions.get(sessionId)
     if (!session) return
 
+    /* INFO: The session may have been resumed on a newer socket, so a late close
+       from a replaced connection must not pause or destroy it */
+    if (session.socket !== socket) return
+
     const code = typeof args[0] === 'number' ? args[0] : 1000
     const reason = typeof args[1] === 'string' ? args[1] : 'none'
 
