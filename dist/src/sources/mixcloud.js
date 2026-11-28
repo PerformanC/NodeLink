@@ -381,33 +381,52 @@ export default class MixcloudSource {
       }`;
             const tracks = [];
             let cursor = null;
-            let hasNextPage = true;
+            let hasNextPage = false;
+            let stoppedEarly = false;
             let playlistName = 'Mixcloud Playlist';
             const maxTracks = this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH;
-            while (hasNextPage && tracks.length < maxTracks) {
+            while (tracks.length < maxTracks) {
                 const response = await this._request(queryTemplate(cursor));
                 const body = this.parseObjectBody(response.body);
                 const playlist = body?.data?.playlistLookup;
-                if (response.statusCode !== 200 || !playlist?.items)
+                if (response.statusCode !== 200 || !playlist?.items) {
+                    if (tracks.length > 0)
+                        stoppedEarly = true;
                     break;
+                }
                 playlistName = playlist.name || playlistName;
-                for (const edge of playlist.items.edges || []) {
+                const edges = playlist.items.edges || [];
+                for (const edge of edges) {
                     const track = edge.node?.cloudcast;
                     if (!track?.url)
                         continue;
-                    tracks.push(this._parseTrackData(track));
-                    if (tracks.length >= maxTracks)
+                    if (tracks.length >= maxTracks) {
+                        stoppedEarly = true;
                         break;
+                    }
+                    tracks.push(this._parseTrackData(track));
                 }
                 cursor = playlist.items.pageInfo?.endCursor || null;
                 hasNextPage = playlist.items.pageInfo?.hasNextPage === true;
+                if (tracks.length >= maxTracks) {
+                    if (hasNextPage)
+                        stoppedEarly = true;
+                    break;
+                }
+                if (!hasNextPage)
+                    break;
             }
             if (tracks.length === 0)
                 return this.emptyResult();
+            const isPartial = stoppedEarly || hasNextPage;
             return {
                 loadType: 'playlist',
                 data: {
                     info: { name: playlistName, selectedTrack: 0 },
+                    pluginInfo: {
+                        totalTracks: isPartial ? null : tracks.length,
+                        isPartial
+                    },
                     tracks
                 }
             };
@@ -451,34 +470,53 @@ export default class MixcloudSource {
       }`;
             const tracks = [];
             let cursor = null;
-            let hasNextPage = true;
+            let hasNextPage = false;
+            let stoppedEarly = false;
             let userDisplayName = username;
             const maxTracks = this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH;
-            while (hasNextPage && tracks.length < maxTracks) {
+            while (tracks.length < maxTracks) {
                 const response = await this._request(queryTemplate(cursor));
                 const body = this.parseObjectBody(response.body);
                 const userLookup = body?.data?.userLookup;
                 const list = userLookup?.[queryType];
-                if (response.statusCode !== 200 || !list)
+                if (response.statusCode !== 200 || !list) {
+                    if (tracks.length > 0)
+                        stoppedEarly = true;
                     break;
+                }
                 userDisplayName = userLookup?.displayName || userDisplayName;
-                for (const edge of list.edges || []) {
+                const edges = list.edges || [];
+                for (const edge of edges) {
                     const node = edge.node;
                     if (!node?.url)
                         continue;
-                    tracks.push(this._parseTrackData(node));
-                    if (tracks.length >= maxTracks)
+                    if (tracks.length >= maxTracks) {
+                        stoppedEarly = true;
                         break;
+                    }
+                    tracks.push(this._parseTrackData(node));
                 }
                 cursor = list.pageInfo?.endCursor || null;
                 hasNextPage = list.pageInfo?.hasNextPage === true;
+                if (tracks.length >= maxTracks) {
+                    if (hasNextPage)
+                        stoppedEarly = true;
+                    break;
+                }
+                if (!hasNextPage)
+                    break;
             }
             if (tracks.length === 0)
                 return this.emptyResult();
+            const isPartial = stoppedEarly || hasNextPage;
             return {
                 loadType: 'playlist',
                 data: {
                     info: { name: `${userDisplayName} (${type})`, selectedTrack: 0 },
+                    pluginInfo: {
+                        totalTracks: isPartial ? null : tracks.length,
+                        isPartial
+                    },
                     tracks
                 }
             };

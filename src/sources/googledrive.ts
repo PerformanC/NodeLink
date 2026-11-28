@@ -601,7 +601,10 @@ export default class GoogleDriveSource implements SourceInstance {
         data: {
           info: { name: title, selectedTrack: 0 },
           tracks,
-          pluginInfo: {}
+          pluginInfo: {
+            totalTracks: tracks.length,
+            isPartial: false
+          }
         }
       }
     } catch (err) {

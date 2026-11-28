@@ -745,6 +745,12 @@ export default class GaanaSource
     if (tracks.length === 0) return { loadType: 'empty', data: {} }
 
     const album = this.asRecord(data?.album) || {}
+    const upstreamTotal =
+      this.asNumber(album.trackcount) ??
+      this.asNumber(album.total_tracks) ??
+      this.asNumber(data?.count) ??
+      null
+
     return this.buildPlaylist(
       this.asString(album.title) || 'Unknown Album',
       tracks,
@@ -753,7 +759,8 @@ export default class GaanaSource
       this.extractArtwork(album),
       this.asString(
         this.asRecord(this.asArrayRecords(album.artist)[0])?.name
-      ) || null
+      ) || null,
+      upstreamTotal
     )
   }
 
@@ -771,12 +778,20 @@ export default class GaanaSource
     if (tracks.length === 0) return { loadType: 'empty', data: {} }
 
     const playlist = this.asRecord(data?.playlist) || {}
+    const upstreamTotal =
+      this.asNumber(playlist.trackcount) ??
+      this.asNumber(playlist.total_tracks) ??
+      this.asNumber(data?.count) ??
+      null
+
     return this.buildPlaylist(
       this.asString(playlist.title) || 'Unknown Playlist',
       tracks,
       'playlist',
       `https://gaana.com/playlist/${seokey}`,
-      this.extractArtwork(playlist)
+      this.extractArtwork(playlist),
+      null,
+      upstreamTotal
     )
   }
 
@@ -814,12 +829,19 @@ export default class GaanaSource
     const merged = tracksArray.length > 0 ? tracksArray : entitiesArray
     if (merged.length === 0) return { loadType: 'empty', data: {} }
 
+    const upstreamTotal =
+      this.asNumber(tracksData?.count) ??
+      this.asNumber(tracksData?.total) ??
+      null
+
     return this.buildPlaylist(
       this.asString(firstArtist.name) || 'Unknown Artist',
       merged,
       'artist',
       `https://gaana.com/artist/${seokey}`,
-      this.extractArtwork(firstArtist)
+      this.extractArtwork(firstArtist),
+      null,
+      upstreamTotal
     )
   }
 
@@ -831,6 +853,7 @@ export default class GaanaSource
    * @param url - Source URL.
    * @param artwork - Artwork URL.
    * @param author - Optional author label.
+   * @param upstreamTotal - Authoritative upstream collection size if available.
    * @returns Source playlist payload.
    */
   private buildPlaylist(
@@ -839,23 +862,52 @@ export default class GaanaSource
     type: string,
     url: string,
     artwork: string | null,
-    author?: string | null
+    author?: string | null,
+    upstreamTotal?: number | null
   ): SourceResult {
-    const tracks = tracksArray
+    const mappedTracks = tracksArray
       .map((item) =>
         item.track_id || item.track_title
           ? this.mapTrack(item)
           : this.mapEntityTrack(item)
       )
       .filter((item): item is TrackData => item !== null)
-      .slice(0, this.getLoadLimit(type))
+
+    const limit = this.getLoadLimit(type)
+    const tracks = mappedTracks.slice(0, limit)
+    const isSliced = mappedTracks.length > tracks.length
+
+    let totalTracks: number | null = null
+    let isPartial: boolean | undefined = undefined
+
+    if (
+      typeof upstreamTotal === 'number' &&
+      Number.isFinite(upstreamTotal) &&
+      upstreamTotal >= 0
+    ) {
+      totalTracks = Math.floor(upstreamTotal)
+      isPartial = tracks.length < totalTracks
+    } else if (isSliced) {
+      isPartial = true
+      totalTracks = null
+    } else {
+      totalTracks = tracks.length
+      isPartial = false
+    }
 
     const infoName = type === 'artist' ? `${name}'s Top Tracks` : name
     return {
       loadType: 'playlist',
       data: {
         info: { name: infoName, selectedTrack: 0 },
-        pluginInfo: { type, url, artwork, author: author || undefined },
+        pluginInfo: {
+          type,
+          url,
+          artwork,
+          author: author || undefined,
+          totalTracks,
+          ...(typeof isPartial === 'boolean' ? { isPartial } : {})
+        },
         tracks
       }
     }

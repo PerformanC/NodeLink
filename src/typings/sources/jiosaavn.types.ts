@@ -348,7 +348,16 @@ export interface JioSaavnPlaylistData {
     /**
      * Plugin category marker.
      */
-    type: string
+    type?: string
+    /**
+     * Upstream total tracks in the collection.
+     */
+    totalTracks?: number | null
+    /**
+     * Whether only a partial subset was loaded.
+     */
+    isPartial?: boolean
+    [key: string]: unknown
   }
 
   /**

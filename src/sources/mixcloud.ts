@@ -457,38 +457,58 @@ export default class MixcloudSource {
 
       const tracks: MixcloudTrackData[] = []
       let cursor: string | null = null
-      let hasNextPage = true
+      let hasNextPage = false
+      let stoppedEarly = false
       let playlistName = 'Mixcloud Playlist'
       const maxTracks =
         this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
 
-      while (hasNextPage && tracks.length < maxTracks) {
+      while (tracks.length < maxTracks) {
         const response = await this._request(queryTemplate(cursor))
         const body = this.parseObjectBody<MixcloudPlaylistLookupResponse>(
           response.body
         )
         const playlist = body?.data?.playlistLookup
-        if (response.statusCode !== 200 || !playlist?.items) break
+        if (response.statusCode !== 200 || !playlist?.items) {
+          if (tracks.length > 0) stoppedEarly = true
+          break
+        }
 
         playlistName = playlist.name || playlistName
+        const edges = playlist.items.edges || []
 
-        for (const edge of playlist.items.edges || []) {
+        for (const edge of edges) {
           const track = edge.node?.cloudcast
           if (!track?.url) continue
+          if (tracks.length >= maxTracks) {
+            stoppedEarly = true
+            break
+          }
           tracks.push(this._parseTrackData(track))
-          if (tracks.length >= maxTracks) break
         }
 
         cursor = playlist.items.pageInfo?.endCursor || null
         hasNextPage = playlist.items.pageInfo?.hasNextPage === true
+
+        if (tracks.length >= maxTracks) {
+          if (hasNextPage) stoppedEarly = true
+          break
+        }
+        if (!hasNextPage) break
       }
 
       if (tracks.length === 0) return this.emptyResult()
+
+      const isPartial = stoppedEarly || hasNextPage
 
       return {
         loadType: 'playlist',
         data: {
           info: { name: playlistName, selectedTrack: 0 },
+          pluginInfo: {
+            totalTracks: isPartial ? null : tracks.length,
+            isPartial
+          },
           tracks
         }
       }
@@ -535,12 +555,13 @@ export default class MixcloudSource {
 
       const tracks: MixcloudTrackData[] = []
       let cursor: string | null = null
-      let hasNextPage = true
+      let hasNextPage = false
+      let stoppedEarly = false
       let userDisplayName = username
       const maxTracks =
         this.config.playback.maxPlaylistLength || DEFAULT_MAX_PLAYLIST_LENGTH
 
-      while (hasNextPage && tracks.length < maxTracks) {
+      while (tracks.length < maxTracks) {
         const response = await this._request(queryTemplate(cursor))
         const body = this.parseObjectBody<MixcloudUserLookupResponse>(
           response.body
@@ -549,27 +570,46 @@ export default class MixcloudSource {
         const list = userLookup?.[queryType] as
           | MixcloudUserCollection
           | undefined
-        if (response.statusCode !== 200 || !list) break
+        if (response.statusCode !== 200 || !list) {
+          if (tracks.length > 0) stoppedEarly = true
+          break
+        }
 
         userDisplayName = userLookup?.displayName || userDisplayName
+        const edges = list.edges || []
 
-        for (const edge of list.edges || []) {
+        for (const edge of edges) {
           const node = edge.node
           if (!node?.url) continue
+          if (tracks.length >= maxTracks) {
+            stoppedEarly = true
+            break
+          }
           tracks.push(this._parseTrackData(node))
-          if (tracks.length >= maxTracks) break
         }
 
         cursor = list.pageInfo?.endCursor || null
         hasNextPage = list.pageInfo?.hasNextPage === true
+
+        if (tracks.length >= maxTracks) {
+          if (hasNextPage) stoppedEarly = true
+          break
+        }
+        if (!hasNextPage) break
       }
 
       if (tracks.length === 0) return this.emptyResult()
+
+      const isPartial = stoppedEarly || hasNextPage
 
       return {
         loadType: 'playlist',
         data: {
           info: { name: `${userDisplayName} (${type})`, selectedTrack: 0 },
+          pluginInfo: {
+            totalTracks: isPartial ? null : tracks.length,
+            isPartial
+          },
           tracks
         }
       }

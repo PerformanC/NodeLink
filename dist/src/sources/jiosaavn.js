@@ -481,10 +481,40 @@ export default class JioSaavnSource {
         let name = typeof payload?.title === 'string' ? payload.title : payload?.name || '';
         if (type === 'artist')
             name = `${name}'s Top Tracks`;
+        const rawPayload = payload;
+        const rawCount = rawPayload?.list_count ??
+            rawPayload?.song_count ??
+            rawPayload?.count ??
+            rawPayload?.total ??
+            rawPayload?.more_info?.song_count;
+        const upstreamTotal = typeof rawCount === 'number' && Number.isFinite(rawCount) && rawCount >= 0
+            ? Math.floor(rawCount)
+            : typeof rawCount === 'string' && /^\d+$/.test(rawCount.trim())
+                ? parseInt(rawCount.trim(), 10)
+                : null;
+        const limit = type === 'artist' ? this.artistLoadLimit : this.playlistLoadLimit;
+        let isPartial = undefined;
+        let totalTracks = null;
+        if (upstreamTotal !== null) {
+            totalTracks = upstreamTotal;
+            isPartial = tracks.length < upstreamTotal;
+        }
+        else if (tracks.length < limit) {
+            totalTracks = tracks.length;
+            isPartial = false;
+        }
+        else {
+            totalTracks = null;
+        }
         const playlistData = {
             info: {
                 name: this._cleanString(name),
                 selectedTrack: 0
+            },
+            pluginInfo: {
+                type,
+                totalTracks,
+                ...(typeof isPartial === 'boolean' ? { isPartial } : {})
             },
             tracks
         };

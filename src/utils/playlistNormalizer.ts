@@ -309,7 +309,7 @@ export function buildPlaylistInfo(
       (totalTracksRaw !== null && totalTracksRaw <= loadedTracks) ||
       rawInfo.isPartial === false ||
       pluginInfo.isPartial === false ||
-      (totalTracksRaw === null && !hasExplicitNullTotal)
+      (loadedTracks === 0 && !hasExplicitNullTotal)
     )
 
   const isPartial = isConfirmedPartial
